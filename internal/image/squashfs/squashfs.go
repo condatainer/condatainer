@@ -1,0 +1,360 @@
+// Package squashfs stats, reads and packs read-only SquashFS overlay images.
+package squashfs
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/condatainer/condatainer/internal/image/tool"
+	"github.com/condatainer/condatainer/internal/toolpath"
+)
+
+// ============================================================================
+// Low-level SquashFS operations
+// ============================================================================
+
+// PathExists reports whether `entry` exists in a SquashFS archive, by listing it
+// with `unsquashfs -lc -d ""` and matching "/entry" or "/entry/" exactly.
+func PathExists(sqfPath, entry string) bool {
+	bin := unsquashfsBin()
+	if bin == "" {
+		return false
+	}
+	// Normalize entry (strip leading slash)
+	entry = strings.TrimPrefix(entry, "/")
+	want := "/" + entry
+
+	cmd := exec.Command(bin, "-lc", "-d", "", sqfPath, entry)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return false
+	}
+	if err := cmd.Start(); err != nil {
+		return false
+	}
+	defer func() {
+		cmd.Process.Kill() //nolint:errcheck
+		cmd.Wait()         //nolint:errcheck
+	}()
+
+	found := false
+	scanner := bufio.NewScanner(pipe)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == want || strings.HasPrefix(line, want+"/") {
+			found = true
+			break
+		}
+	}
+	if scanner.Err() != nil {
+		return false
+	}
+	return found
+}
+
+// Cat reads a file from a SquashFS archive using unsquashfs -cat.
+// unsquashfs older than 4.5 (e.g. 4.4 on Ubuntu 20.04) has no -cat, so on
+// failure fall back to extracting the file into a temp dir.
+// Returns nil if the file cannot be read.
+func Cat(sqfPath, filePath string) []byte {
+	bin := unsquashfsBin()
+	if bin == "" {
+		return nil
+	}
+	filePath = strings.TrimPrefix(filePath, "/")
+
+	cmd := exec.Command(bin, "-cat", sqfPath, filePath)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.Output()
+	if err == nil {
+		return out
+	}
+	return catExtract(bin, sqfPath, filePath)
+}
+
+// catExtract reads a file from a SquashFS archive by extracting it into a
+// temp dir. In-archive symlinks are resolved manually (single-file extraction
+// yields a dangling link, while -cat follows links itself).
+func catExtract(bin, sqfPath, filePath string) []byte {
+	tmpDir, err := os.MkdirTemp("", "cnt-sqf-cat-")
+	if err != nil {
+		return nil
+	}
+	defer os.RemoveAll(tmpDir) //nolint:errcheck
+
+	for hop := 0; hop < 4; hop++ {
+		dest := filepath.Join(tmpDir, strconv.Itoa(hop))
+		cmd := exec.Command(bin, "-q", "-n", "-d", dest, sqfPath, filePath)
+		cmd.Env = append(os.Environ(), "LC_ALL=C")
+		if err := cmd.Run(); err != nil {
+			return nil
+		}
+		extracted := filepath.Join(dest, filePath)
+		fi, err := os.Lstat(extracted)
+		if err != nil {
+			return nil
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			data, err := os.ReadFile(extracted)
+			if err != nil {
+				return nil
+			}
+			return data
+		}
+		target, err := os.Readlink(extracted)
+		if err != nil {
+			return nil
+		}
+		if filepath.IsAbs(target) {
+			filePath = strings.TrimPrefix(filepath.Clean(target), "/")
+		} else {
+			filePath = filepath.Clean(filepath.Join(filepath.Dir(filePath), target))
+		}
+	}
+	return nil
+}
+
+// unsquashfsBin resolves the unsquashfs binary once per process via
+// toolpath.Resolve: the self-provisioned squashfs-tools copy first
+// (internal/libexec), then PATH, then the FHS fallback directories. Empty
+// when none exists — sync.OnceValue caches only the string, not the error, so
+// each caller that needs a message on the empty case rebuilds one via
+// toolpath.NotFoundMessage("unsquashfs") rather than toolpath.Resolve's own
+// (which would need a second, uncached call to get back).
+var unsquashfsBin = sync.OnceValue(func() string {
+	path, err := toolpath.Resolve("unsquashfs")
+	if err != nil {
+		return ""
+	}
+	return path
+})
+
+// ============================================================================
+// SquashFS stats
+// ============================================================================
+
+// SquashFSStats holds metadata parsed from `unsquashfs -stat`.
+type SquashFSStats struct {
+	CreatedTime         string
+	FilesystemSizeBytes int64
+	Compression         string
+	CompressionLevel    int // 0 means not specified by the file
+	BlockSize           int64
+	NumFragments        int64
+	NumInodes           int64
+	NumIDs              int64
+	DuplicatesRemoved   bool
+	ExportableNFS       bool
+}
+
+// GetSquashFSStats runs `unsquashfs -stat` on the given path and parses its output.
+func GetSquashFSStats(path string) (*SquashFSStats, error) {
+	return GetSquashFSStatsAt(path, 0)
+}
+
+// GetSquashFSStatsAt is GetSquashFSStats for an archive that starts partway into
+// the file, as a SIF's system partition does.
+func GetSquashFSStatsAt(path string, offset int64) (*SquashFSStats, error) {
+	bin := unsquashfsBin()
+	if bin == "" {
+		return nil, fmt.Errorf("%w: %s", toolpath.ErrToolMissing, toolpath.NotFoundMessage("unsquashfs"))
+	}
+	args := []string{"-stat"}
+	if offset > 0 {
+		args = append(args, "-offset", strconv.FormatInt(offset, 10))
+	}
+	cmd := exec.Command(bin, append(args, path)...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "LC_TIME=C")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, &tool.Error{Op: "stat", Path: path, Tool: "unsquashfs", BaseErr: err}
+	}
+
+	stats := &SquashFSStats{}
+	lines := strings.Split(string(out), "\n")
+
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		switch {
+		case strings.HasPrefix(line, "Creation or last append time "):
+			stats.CreatedTime = strings.TrimPrefix(line, "Creation or last append time ")
+
+		case strings.HasPrefix(line, "Filesystem size "):
+			// "Filesystem size 24511225 bytes (23936.74 Kbytes / 23.38 Mbytes)"
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				stats.FilesystemSizeBytes, _ = strconv.ParseInt(parts[2], 10, 64)
+			}
+
+		case strings.HasPrefix(line, "Compression "):
+			stats.Compression = strings.TrimPrefix(line, "Compression ")
+			// Next line may be indented "compression-level N"
+			if i+1 < len(lines) {
+				next := strings.TrimSpace(lines[i+1])
+				if strings.HasPrefix(next, "compression-level ") {
+					lvl, _ := strconv.Atoi(strings.TrimPrefix(next, "compression-level "))
+					stats.CompressionLevel = lvl
+				}
+			}
+
+		case strings.HasPrefix(line, "Block size "):
+			stats.BlockSize, _ = strconv.ParseInt(strings.TrimPrefix(line, "Block size "), 10, 64)
+
+		case strings.HasPrefix(line, "Number of fragments "):
+			stats.NumFragments, _ = strconv.ParseInt(strings.TrimPrefix(line, "Number of fragments "), 10, 64)
+
+		case strings.HasPrefix(line, "Number of inodes "):
+			stats.NumInodes, _ = strconv.ParseInt(strings.TrimPrefix(line, "Number of inodes "), 10, 64)
+
+		case strings.HasPrefix(line, "Number of ids "):
+			stats.NumIDs, _ = strconv.ParseInt(strings.TrimPrefix(line, "Number of ids "), 10, 64)
+
+		case strings.Contains(line, "Duplicates are removed"):
+			stats.DuplicatesRemoved = true
+
+		case strings.HasPrefix(line, "Filesystem is exportable via NFS"):
+			stats.ExportableNFS = true
+		}
+	}
+
+	return stats, nil
+}
+
+// ParseStatTime parses a timestamp string from `unsquashfs -stat` / `tune2fs` output (run with LC_ALL=C).
+//   - It accepts both ISO ("2006-01-02 15:04:05") and C-locale ctime() ("Mon Jan _2 15:04:05 2006") forms.
+//   - Returns false if neither parses.
+func ParseStatTime(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+
+	// Already ISO — parse the leading "2006-01-02 15:04:05".
+	if len(s) >= 19 && s[4] == '-' && s[7] == '-' {
+		if t, err := time.Parse("2006-01-02 15:04:05", s[:19]); err == nil {
+			return t, true
+		}
+	}
+
+	// C-locale ctime(): the day field is space-padded for single-digit days.
+	for _, f := range []string{
+		"Mon Jan _2 15:04:05 2006",
+		"Mon Jan  2 15:04:05 2006",
+		"Mon Jan 02 15:04:05 2006",
+		"Mon Jan 2 15:04:05 2006",
+	} {
+		if t, err := time.Parse(f, s); err == nil {
+			return t, true
+		}
+	}
+
+	return time.Time{}, false
+}
+
+// ============================================================================
+// OS release info
+// ============================================================================
+
+// OSInfo holds distribution identity parsed from /etc/os-release.
+type OSInfo struct {
+	ID        string   // e.g. "ubuntu", "debian", "rhel", "rocky"
+	IDLike    []string // e.g. ["debian"] for ubuntu, ["rhel", "fedora"] for rocky/alma
+	VersionID string   // e.g. "24.04", "12", "9.3"
+	Codename  string   // e.g. "Noble", "Bookworm", "Blue Onyx" (title-cased)
+	Name      string   // e.g. "Ubuntu", "Debian", "Rocky Linux"
+}
+
+// GetOSInfoAt reads /etc/os-release from a SquashFS archive at an offset, as
+// inside a SIF. Returns nil if the file cannot be read or parsed.
+func GetOSInfoAt(sqfPath string, offset int64) *OSInfo {
+	data, err := CatFile(sqfPath, "etc/os-release", offset)
+	if err != nil {
+		return nil
+	}
+	m := parseOSRelease(string(data))
+	if len(m) == 0 {
+		return nil
+	}
+	return newOSInfo(m)
+}
+
+// newOSInfo constructs an OSInfo from a parsed os-release key-value map.
+func newOSInfo(m map[string]string) *OSInfo {
+	o := &OSInfo{
+		ID:        m["ID"],
+		VersionID: m["VERSION_ID"],
+		Name:      strings.ReplaceAll(m["NAME"], " GNU/Linux", ""), // "Debian GNU/Linux" → "Debian"
+	}
+
+	if idLike := m["ID_LIKE"]; idLike != "" {
+		o.IDLike = strings.Fields(idLike)
+	}
+
+	// Prefer VERSION_CODENAME (Debian family); fall back to extracting from VERSION
+	codename := m["VERSION_CODENAME"]
+	if codename == "" {
+		if v := m["VERSION"]; v != "" {
+			if i := strings.Index(v, "("); i >= 0 {
+				if j := strings.Index(v, ")"); j > i {
+					codename = v[i+1 : j]
+				}
+			}
+		}
+	}
+
+	// Title-case each word of the codename
+	if codename != "" {
+		words := strings.Fields(codename)
+		for i, w := range words {
+			if w != "" {
+				words[i] = strings.ToUpper(w[:1]) + w[1:]
+			}
+		}
+		o.Codename = strings.Join(words, " ")
+	}
+
+	return o
+}
+
+// parseOSRelease parses the KEY=VALUE content of an os-release file.
+// Strips surrounding quotes from values; ignores comment and blank lines.
+func parseOSRelease(content string) map[string]string {
+	result := map[string]string{}
+	for line := range strings.SplitSeq(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		result[k] = strings.Trim(v, `"'`)
+	}
+	return result
+}
+
+// String returns a human-readable distro string suitable for CLI display.
+//
+//	"Ubuntu 24.04 (Noble)"
+//	"Debian 12 (Bookworm)"
+//	"Rocky Linux 9.3 (Blue Onyx)"
+//	"Red Hat Enterprise Linux 9.3 (Plow)"
+func (o *OSInfo) String() string {
+	if o == nil {
+		return ""
+	}
+	result := o.Name
+	if o.VersionID != "" {
+		result += " " + o.VersionID
+	}
+	if o.Codename != "" {
+		result += " (" + o.Codename + ")"
+	}
+	return result
+}

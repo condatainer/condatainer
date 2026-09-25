@@ -1,0 +1,144 @@
+package conda
+
+import (
+	"encoding/json"
+	"strings"
+
+	"github.com/condatainer/condatainer/internal/image"
+)
+
+// CondaInfo holds the channels and explicitly-requested packages parsed
+// from a conda-meta/history file inside an image.
+type CondaInfo struct {
+	Channels []string
+	Specs    []string
+}
+
+// CondarcChannels reads the channels list (in priority order) from the .condarc at envPrefix inside the image.
+//   - This is what conda reads as context.channels and orders `env export` by; micromamba ignores it and sorts alphabetically.
+//   - Returns nil if the file is absent or lists no channels.
+func CondarcChannels(overlayPath, envPrefix string) []string {
+	data := image.ReadFile(overlayPath, strings.TrimSuffix(envPrefix, "/")+"/.condarc")
+	if data == nil {
+		return nil
+	}
+	return parseCondarcChannels(string(data))
+}
+
+// parseCondarcChannels extracts the block-list under a top-level `channels:` key
+// from .condarc YAML, preserving order and stopping at the next top-level key.
+func parseCondarcChannels(content string) []string {
+	channels, err := ParseChannels([]byte(content))
+	if err != nil {
+		return nil
+	}
+	return channels
+}
+
+// ReadCondaInfo reads conda-meta/history from envPrefix inside the overlay
+// and returns the channels and explicitly-installed package specs.
+// Returns nil if the history file is absent or contains no specs.
+func ReadCondaInfo(overlayPath, envPrefix string) *CondaInfo {
+	histPath := strings.TrimSuffix(envPrefix, "/") + "/conda-meta/history"
+	data := image.ReadFile(overlayPath, histPath)
+	if data == nil {
+		return nil
+	}
+	return parseCondaHistory(string(data))
+}
+
+// ReadCondaInfoMerged reads conda-meta/history from a snapshot and the writable .img stacked on it, and parses them as one log.
+//   - snapshotPath's entries come first, then imgPath's own.
+//   - The .img's history is the continuation of the snapshot's, since both were the same file at freeze time.
+//   - It returns nil if neither side has a history to read.
+func ReadCondaInfoMerged(snapshotPath, imgPath, envPrefix string) *CondaInfo {
+	histPath := strings.TrimSuffix(envPrefix, "/") + "/conda-meta/history"
+	var combined strings.Builder
+	if data := image.ReadFile(snapshotPath, histPath); data != nil {
+		combined.Write(data)
+		combined.WriteByte('\n')
+	}
+	if data := image.ReadFile(imgPath, histPath); data != nil {
+		combined.Write(data)
+	}
+	if combined.Len() == 0 {
+		return nil
+	}
+	return parseCondaHistory(combined.String())
+}
+
+// parseCondaHistory parses the text of a conda-meta/history file.
+//   - Channels are extracted from installed package URLs (+https://conda.anaconda.org/<channel>/...).
+//   - Explicitly-requested specs come from "# update specs:" JSON arrays, deduplicating by package name and keeping the last-seen spec for each name.
+//   - Packages listed in "# remove specs:" are removed from the result.
+func parseCondaHistory(content string) *CondaInfo {
+	channelsSeen := map[string]bool{}
+	var channels []string
+
+	// specNames preserves insertion order; specMap holds the latest spec per name.
+	var specNames []string
+	specNamesSeen := map[string]bool{}
+	specMap := map[string]string{}
+
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		const condaAnacondaOrg = "+https://conda.anaconda.org/"
+		switch {
+		case strings.HasPrefix(line, condaAnacondaOrg):
+			// URL format: +https://conda.anaconda.org/<channel>/<subdir>::<pkg>
+			rest := strings.TrimPrefix(line, condaAnacondaOrg)
+			if ch, _, ok := strings.Cut(rest, "/"); ok {
+				if !channelsSeen[ch] {
+					channelsSeen[ch] = true
+					channels = append(channels, ch)
+				}
+			}
+
+		case strings.HasPrefix(line, "# update specs:"):
+			after := strings.TrimPrefix(line, "# update specs:")
+			var specs []string
+			if err := json.Unmarshal([]byte(strings.TrimSpace(after)), &specs); err != nil {
+				continue
+			}
+			for _, spec := range specs {
+				// Base package name: everything before the first version operator.
+				name := strings.FieldsFunc(spec, func(r rune) bool {
+					return r == '=' || r == '>' || r == '<' || r == '!'
+				})[0]
+				if !specNamesSeen[name] {
+					specNamesSeen[name] = true
+					specNames = append(specNames, name)
+				}
+				specMap[name] = spec
+			}
+
+		case strings.HasPrefix(line, "# remove specs:"):
+			after := strings.TrimPrefix(line, "# remove specs:")
+			var specs []string
+			if err := json.Unmarshal([]byte(strings.TrimSpace(after)), &specs); err != nil {
+				continue
+			}
+			for _, spec := range specs {
+				name := strings.FieldsFunc(spec, func(r rune) bool {
+					return r == '=' || r == '>' || r == '<' || r == '!'
+				})[0]
+				delete(specMap, name)
+			}
+		}
+	}
+
+	if len(specNames) == 0 {
+		return nil
+	}
+
+	var specs []string
+	for _, name := range specNames {
+		if s, ok := specMap[name]; ok {
+			specs = append(specs, s)
+		}
+	}
+	if len(specs) == 0 {
+		return nil
+	}
+	return &CondaInfo{Channels: channels, Specs: specs}
+}

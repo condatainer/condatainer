@@ -1,0 +1,161 @@
+package squashfs
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/condatainer/condatainer/internal/image/tool"
+	"github.com/condatainer/condatainer/internal/toolpath"
+)
+
+// CatFile reads a file out of a SquashFS archive, distinguishing a missing file
+// from a missing tool, an unreadable file and a corrupt archive, so a caller can
+// tell "predates the manifest format" from "unsquashfs is missing".
+//
+// offset skips that many bytes, which is how a SquashFS partition inside a SIF
+// is read in place; pass 0 for a plain .sqf.
+func CatFile(sqfPath, filePath string, offset int64) ([]byte, error) {
+	bin := unsquashfsBin()
+	if bin == "" {
+		return nil, fmt.Errorf("%w: %s", toolpath.ErrToolMissing, toolpath.NotFoundMessage("unsquashfs"))
+	}
+	if _, err := os.Stat(sqfPath); err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", tool.ErrUnreadable, sqfPath, err)
+	}
+	inner := strings.TrimPrefix(filePath, "/")
+
+	args := offsetArgs(offset)
+	cmd := exec.Command(bin, append(append(args, "-cat", sqfPath), inner)...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err == nil {
+		return out, nil
+	}
+	if cause := classifyStderr(stderr.String(), sqfPath); cause != nil {
+		return nil, cause
+	}
+
+	// Either the file is absent, or this unsquashfs predates -cat (4.5). Only
+	// extraction tells the two apart, and it is the fallback either way.
+	return catExtractFile(bin, sqfPath, inner, offset)
+}
+
+// offsetArgs returns the unsquashfs flags that skip a leading byte offset.
+func offsetArgs(offset int64) []string {
+	if offset <= 0 {
+		return nil
+	}
+	return []string{"-offset", strconv.FormatInt(offset, 10)}
+}
+
+// classifyStderr maps unsquashfs diagnostics to a sentinel, or returns nil when
+// the failure is not conclusive and the extraction fallback should decide.
+func classifyStderr(stderr, sqfPath string) error {
+	low := strings.ToLower(stderr)
+	switch {
+	case strings.Contains(low, "squashfs superblock"),
+		strings.Contains(low, "can't find a squashfs"),
+		strings.Contains(low, "not a squashfs"):
+		return fmt.Errorf("%w: %s: %s", tool.ErrCorrupt, sqfPath, strings.TrimSpace(stderr))
+	case strings.Contains(low, "permission denied"):
+		return fmt.Errorf("%w: %s: %s", tool.ErrUnreadable, sqfPath, strings.TrimSpace(stderr))
+	case strings.Contains(low, "-offset") && strings.Contains(low, "invalid"):
+		return fmt.Errorf("%w: unsquashfs has no -offset support (needs squashfs-tools 4.4+)", toolpath.ErrToolMissing)
+	}
+	return nil
+}
+
+// catExtractFile is catExtract with the cause preserved. In-archive symlinks are
+// resolved manually, since single-file extraction yields a dangling link while
+// -cat follows links itself.
+func catExtractFile(bin, sqfPath, filePath string, offset int64) ([]byte, error) {
+	tmpDir, err := os.MkdirTemp("", "cnt-sqf-cat-")
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", tool.ErrUnreadable, err)
+	}
+	defer os.RemoveAll(tmpDir) //nolint:errcheck
+
+	base := offsetArgs(offset)
+	for hop := 0; hop < 4; hop++ {
+		dest := filepath.Join(tmpDir, strconv.Itoa(hop))
+		args := append(append([]string{}, base...), "-q", "-n", "-no-xattrs", "-d", dest, sqfPath, filePath)
+		cmd := exec.Command(bin, args...)
+		cmd.Env = append(os.Environ(), "LC_ALL=C")
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			if cause := classifyStderr(stderr.String(), sqfPath); cause != nil {
+				return nil, cause
+			}
+			return nil, fmt.Errorf("%w: %s in %s", tool.ErrFileNotFound, filePath, sqfPath)
+		}
+		extracted := filepath.Join(dest, filePath)
+		fi, err := os.Lstat(extracted)
+		if err != nil {
+			// unsquashfs exits 0 when nothing matched, so an absent output path
+			// is how a missing entry actually shows up.
+			return nil, fmt.Errorf("%w: %s in %s", tool.ErrFileNotFound, filePath, sqfPath)
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			data, err := os.ReadFile(extracted)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %w", tool.ErrUnreadable, err)
+			}
+			return data, nil
+		}
+		target, err := os.Readlink(extracted)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", tool.ErrUnreadable, err)
+		}
+		if filepath.IsAbs(target) {
+			filePath = strings.TrimPrefix(filepath.Clean(target), "/")
+		} else {
+			filePath = filepath.Clean(filepath.Join(filepath.Dir(filePath), target))
+		}
+	}
+	return nil, fmt.Errorf("%w: %s in %s: too many symlink hops", tool.ErrFileNotFound, filePath, sqfPath)
+}
+
+// ExtractDir extracts one directory out of a SquashFS archive into destDir, keeping the archive-relative path.
+//   - Extracting ".cnt" into /tmp/x yields /tmp/x/.cnt/…. A missing directory is ErrFileNotFound.
+//   - It is one call, not one per file. Every archive read spawns an unsquashfs process.
+//   - A caller needing several files from one directory extracts it and reads the copies.
+func ExtractDir(sqfPath, dirPath, destDir string, offset int64) error {
+	bin := unsquashfsBin()
+	if bin == "" {
+		return fmt.Errorf("%w: %s", toolpath.ErrToolMissing, toolpath.NotFoundMessage("unsquashfs"))
+	}
+	if _, err := os.Stat(sqfPath); err != nil {
+		return fmt.Errorf("%w: %s: %w", tool.ErrUnreadable, sqfPath, err)
+	}
+	inner := strings.TrimPrefix(dirPath, "/")
+
+	// -no-xattrs because the destination is scratch: an unprivileged user cannot
+	// restore security.* attributes, and without this unsquashfs exits non-zero
+	// over a file it extracted perfectly well.
+	args := append(offsetArgs(offset), "-q", "-n", "-no-xattrs", "-d", destDir, sqfPath, inner)
+	cmd := exec.Command(bin, args...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	if cause := classifyStderr(stderr.String(), sqfPath); cause != nil {
+		return cause
+	}
+	// The output decides, not the exit code: unsquashfs exits 0 when nothing
+	// matched and non-zero over warnings about things it did extract.
+	if _, err := os.Stat(filepath.Join(destDir, inner)); err != nil {
+		if runErr != nil {
+			return fmt.Errorf("%w: %s: %s", tool.ErrUnreadable, sqfPath, strings.TrimSpace(stderr.String()))
+		}
+		return fmt.Errorf("%w: %s in %s", tool.ErrFileNotFound, dirPath, sqfPath)
+	}
+	return nil
+}

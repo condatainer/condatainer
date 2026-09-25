@@ -1,0 +1,126 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"slices"
+
+	"github.com/condatainer/condatainer/internal/build"
+	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/libexec"
+	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/utils"
+)
+
+// nestedPlan is how one container gets apptainer for nested running.
+type nestedPlan struct {
+	BindLibexec bool   // bind libexec/, which has an apptainer
+	Overlay     string // installed apptainer version to mount, "" for none
+	Build       bool   // no provider exists and the overlay must be built first
+}
+
+// planNested applies nested_run: libexec's apptainer wins and is bound; else the
+// newest installed apptainer overlay is mounted; else "true" builds one and
+// "auto" does nothing.
+func planNested(mode string, libexecHasApptainer bool, installed []string) nestedPlan {
+	if mode == config.NestedRunFalse {
+		return nestedPlan{}
+	}
+	if libexecHasApptainer {
+		return nestedPlan{BindLibexec: true}
+	}
+	if len(installed) > 0 {
+		return nestedPlan{Overlay: utils.SortVersionsDescending(installed)[0]}
+	}
+	return nestedPlan{Build: mode == config.NestedRunTrue}
+}
+
+// currentNestedPlan gathers the plan's inputs from the running system.
+func currentNestedPlan() nestedPlan {
+	return planNested(config.Global.NestedRun,
+		libexec.Installed("apptainer"), build.InstalledVersions(nil)("apptainer"))
+}
+
+// describeNested says how a launch would get apptainer for nested running,
+// without building anything; "" when nested running is off or unavailable.
+func describeNested() string {
+	plan := currentNestedPlan()
+	switch {
+	case plan.BindLibexec:
+		return "libexec apptainer (bound)"
+	case plan.Overlay != "":
+		return "apptainer/" + plan.Overlay + " overlay"
+	case plan.Build:
+		return "apptainer overlay (would be built)"
+	}
+	return ""
+}
+
+// ensureNestedProvider builds the apptainer overlay when nested_run is "true"
+// and nothing provides apptainer, like the base image, and fails if it cannot.
+// Callers that submit a job run it first, so the build happens where the
+// network is and before the job is queued.
+func ensureNestedProvider(ctx context.Context) error {
+	if !currentNestedPlan().Build {
+		return nil
+	}
+	utils.PrintNote("Building the apptainer overlay for nested running (nested_run: true)")
+	err := buildNestedApptainer(ctx)
+	build.InvalidateInstalledOverlays()
+	container.InvalidateInstalledOverlaysCache()
+	if err != nil {
+		return fmt.Errorf("nested_run is true but apptainer cannot be provided for nested running: %w; install it with `condatainer install apptainer`, or set nested_run to auto", err)
+	}
+	if plan := currentNestedPlan(); plan.Overlay == "" && !plan.BindLibexec {
+		return fmt.Errorf("nested_run is true but the apptainer overlay build installed nothing")
+	}
+	return nil
+}
+
+// nestedRun adds what nested running needs to one e/exec/run launch: the
+// overlays to mount, and whether to bind libexec. It builds a missing overlay
+// first when ensureNestedProvider has not.
+func nestedRun(ctx context.Context, overlays []string) ([]string, bool, error) {
+	if err := ensureNestedProvider(ctx); err != nil {
+		return nil, false, err
+	}
+	plan := currentNestedPlan()
+	if plan.Overlay != "" {
+		found, err := container.ResolveOverlayPaths([]string{"apptainer/" + plan.Overlay})
+		if err != nil {
+			if config.Global.NestedRun == config.NestedRunTrue {
+				return nil, false, err
+			}
+			return overlays, false, nil
+		}
+		path := found[0]
+		// First in the list, so its bin/ comes after every other overlay's on PATH
+		// (BuildPathEnv prepends in list order) and shadows none of their tools.
+		if !slices.Contains(overlays, path) {
+			overlays = append([]string{path}, overlays...)
+		}
+	}
+	return overlays, plan.BindLibexec, nil
+}
+
+// buildNestedApptainer builds the newest apptainer from the configured channels,
+// locally, the way the default base image is built.
+func buildNestedApptainer(ctx context.Context) error {
+	name, _, err := solveCreateName(ctx, "apptainer")
+	if err != nil {
+		return err
+	}
+	imagesDir, err := config.GetWritableImagesDir()
+	if err != nil {
+		return err
+	}
+	obj, err := build.NewBuildObject(ctx, name, false, imagesDir, false)
+	if err != nil {
+		return err
+	}
+	graph, err := build.NewBuildGraph(ctx, []*build.BuildObject{obj}, imagesDir, false, false)
+	if err != nil {
+		return err
+	}
+	return graph.Run(ctx)
+}

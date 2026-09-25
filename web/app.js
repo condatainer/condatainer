@@ -1,0 +1,431 @@
+/* ── Shared utilities ─────────────────────── */
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+// fmtSize follows the ls -h convention: one decimal below 10 (9.6 MB),
+// whole numbers from 10 up (96 MB), bytes always whole.
+function fmtSize(bytes) {
+  if (!bytes) return '—';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, b = bytes;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return (i > 0 && b < 10 ? b.toFixed(1) : Math.round(b)) + ' ' + u[i];
+}
+// fmtDate formats a timestamp as unambiguous local "YYYY-MM-DD HH:MM".
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+    ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function fmtRelTime(iso) {
+  if (!iso) return '—';
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.floor(h / 24) + 'd ago';
+}
+function pathTailHtml(path, maxWidth, cls) {
+  const s = String(path || '');
+  const style = maxWidth ? ' style="max-width:' + escHtml(maxWidth) + '"' : '';
+  const classes = 'path-tail' + (cls ? ' ' + cls : '');
+  return '<span class="' + classes + '"' + style + ' title="' + escHtml(s) + '"><bdi>' + escHtml(s || '—') + '</bdi></span>';
+}
+function calcDuration(startIso, endIso, status, walltimeStr) {
+  if (!startIso) return '—';
+  if (!endIso && status === 'done') return walltimeStr || '—';
+  if (!endIso && !['pending', 'starting', 'running'].includes(status)) return '—';
+  const s = new Date(startIso).getTime();
+  const e = endIso ? new Date(endIso).getTime() : Date.now();
+  if (!Number.isFinite(s) || !Number.isFinite(e) || e < s) return '—';
+  const diff = e - s;
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  return h ? h + 'h ' + m + 'm' : m + 'm';
+}
+function badgeClass(status) {
+  if (status === 'running') return 'badge-green';
+  if (status === 'pending' || status === 'starting') return 'badge-amber';
+  if (status === 'failed')  return 'badge-red';
+  return 'badge-grey';
+}
+// searchTerms splits a search query into lowercase whitespace-separated terms.
+function searchTerms(query) {
+  return (query || '').toLowerCase().split(/\s+/).filter(Boolean);
+}
+// matchesAllTerms reports whether text contains every term (AND match).
+function matchesAllTerms(text, terms) {
+  const t = text.toLowerCase();
+  return terms.every(term => t.includes(term));
+}
+// clearSearchInput (the × button in a .search-wrap) empties the adjacent
+// input and re-fires its input handler.
+function clearSearchInput(btn) {
+  const input = btn.parentElement.querySelector('input');
+  if (!input) return;
+  input.value = '';
+  input.dispatchEvent(new Event('input'));
+  input.focus();
+}
+function gid(id) { return document.getElementById(id); }
+function _setText(id, val) { const e = gid(id); if (e) e.textContent = val || '—'; }
+function _setVal(id, val)  { const e = gid(id); if (e) e.value = val; }
+// Sets cfg-cwd value and placeholder. Placeholder is always $SCRATCH (or $HOME).
+// Value is set to val if non-empty, otherwise defaults to $SCRATCH/$HOME.
+function _setCwd(val) {
+  const e = gid('cfg-cwd');
+  if (!e) return;
+  const def = srvScratch || srvHome || '';
+  e.placeholder = def;
+  e.value = val || def;
+}
+// fill: true → i-fill-{name} (filled variant); default → i-{name} (outline)
+function iconSvg(name, cls, fill) {
+  const id = fill ? 'fill-' + name : name;
+  return '<svg class="icon' + (cls ? ' ' + cls : '') + '" aria-hidden="true"><use href="#i-' + id + '"></use></svg>';
+}
+
+/* ── Global state ────────────────────────── */
+let allJobs     = [];
+let allHelpers  = [];
+let allOverlays = [];
+let allHistory  = [];
+
+// start section
+let selectedHelper   = null;
+let selectedModules          = [];
+let selectedExternalOverlays = [];
+let _helperParamKeys = [];
+
+// detail panel
+let detailJobId     = null;
+let detailTabActive = 'messages';
+let detailSSE       = null;
+
+// file browser
+let currentPath = '';
+let srvHome    = '';
+let srvScratch = '';
+let srvNotification = '';
+let srvWillSubmit = false; // true when a scheduler is active and scheduler.submit_job isn't disabled
+
+// file picker modal
+let fpTargetId = '', fpMode = 'dir', fpPath = '', fpSuffix = '';
+let _fpOnSelect = null; // when set, picker selection calls this instead of filling fpTargetId (see openFilePickerForCallback)
+
+// overlay picker modal
+let opTargetType  = 'module';
+
+/* ── Theme ───────────────────────────────── */
+const _sysMq      = matchMedia('(prefers-color-scheme: dark)');
+const _savedTheme = localStorage.getItem('conda-theme');
+let theme = _savedTheme || 'system';
+
+function _resolvedTheme() {
+  return theme === 'system' ? (_sysMq.matches ? 'dark' : 'light') : theme;
+}
+function _applyTheme() {
+  document.documentElement.setAttribute('data-theme', _resolvedTheme());
+}
+_applyTheme();
+_updateThemeBtn();
+
+_sysMq.addEventListener('change', () => { if (theme === 'system') { _applyTheme(); _updateThemeBtn(); } });
+
+function toggleTheme() {
+  theme = theme === 'light' ? 'dark' : theme === 'dark' ? 'system' : 'light';
+  localStorage.setItem('conda-theme', theme);
+  _applyTheme();
+  _updateThemeBtn();
+}
+function _updateThemeBtn() {
+  const icon  = gid('theme-icon');
+  const label = document.querySelector('#theme-toggle .sb-btn-label');
+  if (icon)  icon.innerHTML  = iconSvg(theme === 'dark' ? 'dark_mode' : theme === 'light' ? 'light_mode' : 'computer');
+  if (label) label.textContent = theme === 'dark' ? 'Dark Mode' : theme === 'light' ? 'Light Mode' : ('System (' + (_sysMq.matches ? 'Dark' : 'Light') + ')');
+}
+gid('theme-toggle').addEventListener('click', toggleTheme);
+
+/* ── Sidebar collapse ───────────────────── */
+let sidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+const collapseTab = gid('collapse-tab');
+function _updateCollapseTab() {
+  collapseTab.innerHTML = iconSvg(sidebarCollapsed ? 'chevron_right' : 'chevron_left');
+  collapseTab.title = sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+}
+collapseTab.addEventListener('click', () => {
+  sidebarCollapsed = !sidebarCollapsed;
+  localStorage.setItem('sidebarCollapsed', sidebarCollapsed);
+  gid('sidebar').classList.toggle('collapsed', sidebarCollapsed);
+  _updateCollapseTab();
+});
+const sidebar = gid('sidebar');
+sidebar.classList.add('no-transition');
+sidebar.classList.toggle('collapsed', sidebarCollapsed);
+requestAnimationFrame(() => requestAnimationFrame(() => sidebar.classList.remove('no-transition')));
+_updateCollapseTab();
+
+/* ── Navigation ──────────────────────────── */
+document.querySelectorAll('.nav-item').forEach(el => {
+  el.addEventListener('click', () => navigate(el.dataset.section));
+});
+function navigate(id) {
+  document.querySelectorAll('.nav-item').forEach(e =>
+    e.classList.toggle('active', e.dataset.section === id));
+  document.querySelectorAll('.section').forEach(s =>
+    s.classList.toggle('active', s.id === 'sec-' + id));
+  document.querySelectorAll('.sb-btn[data-section]').forEach(b =>
+    b.classList.toggle('active-section', b.dataset.section === id));
+  closeDetail();
+  if (id !== 'files') setHash('#' + id, false); // files: navigateFiles writes the full #files/<path> itself
+  if      (id === 'jobs')     loadJobs();
+  else if (id === 'start')    loadHelpers();
+  else if (id === 'overlays') loadOverlays();
+  else if (id === 'history')  loadHistory();
+  else if (id === 'files')    { renderFileTree(); loadFileBookmarks(); navigateFiles(currentPath); }
+}
+
+/* ── URL hash routing ────────────────────── */
+// #<section>[/<arg>] — arg is a directory path for #files, a job id for
+// #jobs/#history (open detail panel), a helper name for #start. The UI
+// writes the hash as the user acts and the hash is applied on page load,
+// so a reload (e.g. after a tunnel reconnect) restores the place and any
+// state is bookmarkable. Everything replaces the current history entry —
+// except Files directory changes, which push, so Back/Forward walk the
+// directory trail and nothing else.
+let _applyingHash = false; // applying the hash must not write it back
+let _selfHash     = null;  // hash we pushed ourselves — skip re-applying it
+
+// setHash writes the canonical hash for the current UI state; push adds a
+// history entry, otherwise the current one is replaced.
+function setHash(hash, push) {
+  if (_applyingHash || location.hash === hash) return;
+  if (push) { _selfHash = hash; location.hash = hash; }
+  else history.replaceState(null, '', hash);
+}
+
+function _applyHash() {
+  const h = location.hash.slice(1);
+  if (!h) return;
+  const slash   = h.indexOf('/');
+  const section = slash < 0 ? h : h.slice(0, slash);
+  const rawArg  = slash < 0 ? '' : h.slice(slash + 1);
+  if (!['jobs', 'start', 'history', 'overlays', 'files', 'settings'].includes(section)) return;
+  _applyingHash = true;
+  try {
+    if (section === 'files') {
+      if (rawArg !== '') {
+        let p = '/' + rawArg;
+        try { p = decodeURI(p); } catch { /* keep raw */ }
+        currentPath = p;
+      }
+      navigate('files');
+      return;
+    }
+    navigate(section);
+    let arg = rawArg;
+    try { arg = decodeURIComponent(arg); } catch { /* keep raw */ }
+    if (!arg) return;
+    // The lists these act on load asynchronously — retry briefly.
+    if (section === 'jobs' || section === 'history') {
+      _tryUntil(() => {
+        if (!allJobs.some(j => j.id === arg) && !allHistory.some(j => j.id === arg)) return false;
+        openDetail(arg);
+        return true;
+      });
+    } else if (section === 'start') {
+      _tryUntil(() => {
+        if (!allHelpers.some(x => x.name === arg)) return false;
+        selectHelper(arg);
+        return true;
+      });
+    }
+  } finally { _applyingHash = false; }
+}
+
+function _tryUntil(fn, tries) {
+  tries = tries == null ? 15 : tries;
+  if (!fn() && tries > 0) setTimeout(() => _tryUntil(fn, tries - 1), 300);
+}
+
+// Only Files pushes entries, so back/forward land on #files/<path> hashes
+// (or the entry the page was opened with).
+window.addEventListener('hashchange', () => {
+  if (location.hash === _selfHash) { _selfHash = null; return; }
+  _selfHash = null;
+  _applyHash();
+});
+document.addEventListener('DOMContentLoaded', () => {
+  if (location.hash) _applyHash();
+  else history.replaceState(null, '', '#jobs'); // canonical hash for the default section
+});
+
+/* ── Status polling ──────────────────────── */
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/status', { signal: AbortSignal.timeout(2000) });
+    const d = await r.json();
+    _setStatus(true, d);
+  } catch {
+    _setStatus(false, null);
+  }
+}
+function _setStatus(alive, d) {
+  const dot  = gid('status-dot');
+  const text = gid('status-text');
+  if (dot)  dot.classList.toggle('dead', !alive);
+  if (text) text.textContent = alive ? (d.running || 0) + ' running' : 'unreachable';
+  if (d) {
+    if (d.hostname) document.title = d.hostname + ' - CondaTainer';
+    _setText('srv-port',    d.port);
+    _setText('srv-pid',     d.pid);
+    _setText('srv-uptime',  d.uptime);
+    _setText('srv-version', d.version);
+    _setText('ssh-hint', 'LocalForward ' + d.port + ' localhost:' + d.port);
+    if (d.home)    srvHome    = d.home;
+    if (d.scratch) srvScratch = d.scratch;
+    srvWillSubmit = !!d.will_submit;
+    const noSubmitRow = gid('no-submit-row');
+    if (noSubmitRow) noSubmitRow.hidden = !srvWillSubmit;
+    const cwdEl = gid('cfg-cwd');
+    if (cwdEl) {
+      const def = srvScratch || srvHome || '';
+      cwdEl.placeholder = def;
+      if (!cwdEl.value) cwdEl.value = def;
+    }
+    const notif = d.notification || '';
+    srvNotification = notif;
+    _updateNotifCard();
+    renderFileTree();
+  }
+}
+
+/* ── Browser notifications ───────────────── */
+function _updateNotifCard() {
+  const card = gid('notif-card');
+  const statusEl = gid('notif-status');
+  const btn = gid('notif-btn');
+  if (!card) return;
+  const webEnabled = srvNotification === 'web' || srvNotification === 'both';
+  card.style.display = webEnabled ? '' : 'none';
+  if (!webEnabled) return;
+  if (typeof Notification === 'undefined') {
+    statusEl.textContent = 'Browser notifications are not supported.';
+    btn.style.display = 'none';
+    return;
+  }
+  if (Notification.permission === 'granted') {
+    statusEl.textContent = 'Browser notifications are enabled.';
+    btn.style.display = 'none';
+  } else if (Notification.permission === 'denied') {
+    statusEl.textContent = 'Notifications blocked. Allow them in your browser site settings.';
+    btn.style.display = 'none';
+  } else {
+    statusEl.textContent = 'Click below to receive a notification when a helper job starts.';
+    btn.style.display = '';
+  }
+}
+
+function requestNotifPermission() {
+  if (typeof Notification === 'undefined') return;
+  Notification.requestPermission().then(() => _updateNotifCard());
+}
+
+/* ── Modal helpers ───────────────────────── */
+function closeModal(id) { gid(id).classList.remove('open'); }
+
+// Fires handler on a genuine click on the backdrop itself (i.e. outside the
+// modal content) — but NOT when the user starts a text selection by
+// mousedown-ing inside an input/content and drags past the modal edge
+// before releasing. A plain `click` listener checking e.target === el gets
+// that wrong: browsers still fire `click` on the backdrop when mouseup
+// lands there even if mousedown started elsewhere, since click doesn't
+// require mousedown/mouseup to share a target. Requiring mousedown to
+// *also* have started on the backdrop fixes it.
+function onBackdropClick(el, handler) {
+  let downOnBackdrop = false;
+  el.addEventListener('mousedown', e => { downOnBackdrop = (e.target === el); });
+  el.addEventListener('click', e => {
+    if (downOnBackdrop && e.target === el) handler();
+    downOnBackdrop = false;
+  });
+}
+
+document.querySelectorAll('.modal-backdrop').forEach(el => {
+  onBackdropClick(el, () => closeModal(el.id));
+});
+
+/* ── Generic confirm modal ───────────────── */
+// Reusable Cancel/OK confirm dialog, replacing window.confirm() so prompts
+// stay visually consistent with the rest of the app. Returns a Promise
+// resolving true (OK) or false (Cancel/close/backdrop click).
+let _confirmResolve = null;
+
+function askConfirm(message, opts) {
+  opts = opts || {};
+  gid('confirm-modal-title').textContent = opts.title || 'Confirm';
+  gid('confirm-modal-message').textContent = message;
+  gid('confirm-modal-ok-btn').textContent = opts.okLabel || 'OK';
+  gid('confirm-modal').classList.add('open');
+  return new Promise(resolve => { _confirmResolve = resolve; });
+}
+
+function resolveConfirmModal(ok) {
+  gid('confirm-modal').classList.remove('open');
+  if (_confirmResolve) {
+    const resolve = _confirmResolve;
+    _confirmResolve = null;
+    resolve(ok);
+  }
+}
+// The generic backdrop-click handler above only hides the modal — it
+// doesn't resolve the pending promise, which would leave any `await
+// askConfirm(...)` call hanging forever. Resolve it explicitly as a cancel.
+onBackdropClick(gid('confirm-modal'), () => resolveConfirmModal(false));
+
+/* ── Keyboard shortcuts ──────────────────── */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    closeDetail();
+    closeModal('fp-modal');
+    closeModal('op-modal');
+  }
+});
+
+/* ── Outside-click closes detail ────────── */
+gid('app').addEventListener('click', e => {
+  const detail = gid('detail');
+  if (detail.classList.contains('open')
+      && !detail.contains(e.target)
+      && !e.target.closest('.job-card')
+      && !e.target.closest('tr[data-id]')) {
+    closeDetail();
+  }
+});
+
+/* ── Copy helpers ────────────────────────── */
+function initCodeBlocks() {
+  document.querySelectorAll('.code-block').forEach(el => {
+    if (el.querySelector('button')) return;
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm';
+    btn.innerHTML = iconSvg('content_copy');
+    btn.onclick = function() { copyStr(el.querySelector(':not(button)')?.textContent || '', this); };
+    el.appendChild(btn);
+  });
+}
+function copyStr(str, btn) {
+  navigator.clipboard.writeText(str).then(() => {
+    const o = btn.innerHTML;
+    btn.innerHTML = iconSvg('check');
+    setTimeout(() => { btn.innerHTML = o; }, 1500);
+  });
+}
+initCodeBlocks();

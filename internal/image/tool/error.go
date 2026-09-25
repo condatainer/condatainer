@@ -1,0 +1,88 @@
+package tool
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Error represents a failure in filesystem tools (dd, mkfs, debugfs, etc.).
+// It is shared by the image format implementations.
+type Error struct {
+	Op      string // high level intent: "create", "resize"
+	Tool    string // low level tool: "mke2fs", "dd", "debugfs"
+	Path    string // the file being manipulated
+	Output  string // Captured Stderr/Stdout
+	BaseErr error  // The underlying execution error
+}
+
+func (e *Error) Error() string {
+	hint := e.analyze()
+	var msg strings.Builder
+
+	fmt.Fprintf(&msg, "Overlay filesystem operation '%s' failed.\n", e.Op)
+	fmt.Fprintf(&msg, "\tTarget:  %s\n", e.Path)
+	fmt.Fprintf(&msg, "\tTool:    %s\n", e.Tool)
+
+	if e.Output != "" {
+		cleanOut := strings.TrimSpace(e.Output)
+		if len(cleanOut) > 0 {
+			// Indent output slightly for better readability
+			fmt.Fprintf(&msg, "\tOutput:  %s\n", cleanOut)
+		}
+	}
+
+	if hint != "" {
+		fmt.Fprintf(&msg, "\t%s    %s\n", "Hint:", hint)
+	}
+
+	fmt.Fprintf(&msg, "\tError:   %v", e.BaseErr)
+
+	return msg.String()
+}
+
+// Unwrap allows errors.Is/As to see the underlying BaseErr
+func (e *Error) Unwrap() error {
+	return e.BaseErr
+}
+
+func (e *Error) analyze() string {
+	out := e.Output
+
+	// --- General System Errors ---
+	if strings.Contains(out, "No space left on device") {
+		return "Host storage is full. Cannot allocate image file."
+	}
+	if strings.Contains(out, "Permission denied") {
+		return "Check file permissions. You may not have write access to the destination."
+	}
+	if strings.Contains(out, "Read-only file system") {
+		return "Destination filesystem is Read-Only."
+	}
+	// VERY Common: User tries to resize an image while container is running
+	if strings.Contains(out, "Device or resource busy") || strings.Contains(out, "Text file busy") {
+		return "The overlay image is currently in use. Stop any running containers using it first."
+	}
+
+	// --- Tool Specific: Resize2fs ---
+	if strings.Contains(out, "New size smaller than minimum") {
+		return "Cannot shrink image below current usage. Try a larger size."
+	}
+
+	// --- Tool Specific: E2fsck / Tune2fs ---
+	if strings.Contains(out, "Bad magic number") || strings.Contains(out, "Not a valid filesystem") {
+		return "Target file is not a valid ext3 filesystem. Is this an overlay image?"
+	}
+	if strings.Contains(out, "needs human intervention") {
+		return fmt.Sprintf("Filesystem corrupted. Run 'e2fsck -y %s' manually.", e.Path)
+	}
+	if strings.Contains(out, "is mounted") {
+		return "Cannot perform this operation while the image is mounted."
+	}
+
+	// --- Tool Specific: Debugfs ---
+	if strings.Contains(out, "File not found") && strings.Contains(e.Tool, "debugfs") {
+		return "Internal overlay structure is damaged or missing."
+	}
+
+	return ""
+}

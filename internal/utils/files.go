@@ -1,0 +1,377 @@
+package utils
+
+import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
+	"errors"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"golang.org/x/sys/unix"
+)
+
+// Standard default permissions
+// File: u=rw, g=rw, o=r
+const PermFile os.FileMode = 0664
+
+// Dir:  u=rwx, g=rwx, o=rx (Requires +x to traverse)
+const PermDir os.FileMode = 0775
+
+// Exec: u=rwx, g=rwx, o=rx (Executable files with group write access)
+const PermExec os.FileMode = 0775
+
+// --- Extension Checks (String-based) ---
+
+// IsImg checks if the path has an ext3 overlay extension (.img, .ext3).
+// Note: In Apptainer context, these imply a writable ext3 image.
+func IsImg(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".img" || ext == ".ext3"
+}
+
+// IsSqf checks if the path has a SquashFS extension (.sqf, .sqsh, .squashfs).
+// These are read-only compressed images.
+func IsSqf(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".sqf" || ext == ".sqsh" || ext == ".squashfs"
+}
+
+// IsSif checks if the path has a Singularity Image Format extension (.sif).
+// This is the native format for Apptainer/Singularity.
+func IsSif(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".sif"
+}
+
+// SingularityDir is the metadata directory apptainer writes into a container
+// root. Its presence is what makes an unpacked directory runnable as one.
+const SingularityDir = ".singularity.d"
+
+// BashPath is where bash must exist inside any chosen container root —
+// checked wherever one is built, imported, or selected at run time.
+const BashPath = "bin/bash"
+
+// IsSandboxDir reports whether path is an unpacked container root: a directory
+// carrying apptainer's own metadata directory. A bare directory is not one —
+// apptainer would take it and fail on a root with no runscript.
+func IsSandboxDir(path string) bool {
+	info, err := os.Stat(filepath.Join(path, SingularityDir))
+	return err == nil && info.IsDir()
+}
+
+// IsOverlay checks if the path is an overlay file (.img, .sqf, .sqsh, .squashfs).
+// This is used for CondaTainer overlay detection.
+func IsOverlay(path string) bool {
+	return IsImg(path) || IsSqf(path)
+}
+
+// IsCondaFile reports whether path is a Conda environment input file:
+// a YAML environment file (.yaml/.yml) or an explicit/spec text file (.txt,
+// e.g. the @EXPLICIT output of `export -e`). All are accepted by
+// `micromamba create -f`.
+func IsCondaFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".yaml" || ext == ".yml" || ext == ".txt"
+}
+
+// --- Filesystem Checks (OS-based) ---
+
+// ResolveWD returns wd, or the process cwd when wd is "". The one place every
+// env-overlay lookup resolves its working directory — FindEnvOverlay for a
+// `.img`, helper.FindEnvSnapshot for a paired `.sqf` with no `.img` yet — so
+// the two can never disagree about where "here" is.
+func ResolveWD(wd string) string {
+	if wd == "" {
+		wd, _ = os.Getwd()
+	}
+	return wd
+}
+
+// FindEnvOverlay returns the env.img in wd (see ResolveWD).
+//   - {wd}/env-$USER.img is preferred over {wd}/env.img.
+//   - An explicit envImg path is returned as is. "" or "env.img" triggers the search.
+//   - It returns "" when nothing is found.
+func FindEnvOverlay(envImg, wd string) string {
+	if envImg != "" && envImg != "env.img" {
+		return envImg
+	}
+	wd = ResolveWD(wd)
+	if userSuffix := os.Getenv("USER"); userSuffix != "" {
+		if p := filepath.Join(wd, "env-"+userSuffix+".img"); FileExists(p) {
+			return p
+		}
+	}
+	if p := filepath.Join(wd, "env.img"); FileExists(p) {
+		return p
+	}
+	return ""
+}
+
+// FileExists checks if a file exists and is not a directory.
+func FileExists(path string) bool {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return !info.IsDir()
+}
+
+// IsTextFile reports whether the file has no NUL byte in its first 8 KiB.
+// Overlay images and archives carry NULs in their headers; a script in any text encoding does not.
+func IsTextFile(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close() //nolint:errcheck
+	buf := make([]byte, 8192)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return false, err
+	}
+	return !bytes.Contains(buf[:n], []byte{0}), nil
+}
+
+// DirExists checks if a path exists and is a directory.
+func DirExists(path string) bool {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return info.IsDir()
+}
+
+// RemoveDirIfEmpty removes dir if it exists and contains no files or subdirectories.
+// Silently does nothing if dir is not empty or does not exist.
+func RemoveDirIfEmpty(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) > 0 {
+		return
+	}
+	os.Remove(dir)
+}
+
+// RemoveAllWritable removes path like os.RemoveAll. Only when that fails for lack of
+// permission does it give the owner rwx on every directory below path (a directory
+// without owner write cannot lose its entries) and remove again.
+func RemoveAllWritable(path string) error {
+	err := os.RemoveAll(path)
+	if err == nil || !errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+	_ = filepath.WalkDir(path, func(p string, d fs.DirEntry, walkErr error) error {
+		if d == nil || !d.IsDir() {
+			return nil
+		}
+		if info, statErr := d.Info(); statErr == nil && info.Mode().Perm()&0o700 != 0o700 {
+			_ = os.Chmod(p, info.Mode().Perm()|0o700)
+		}
+		return nil
+	})
+	return os.RemoveAll(path)
+}
+
+// CreateFileWritable creates or truncates a file using standard writable file permissions.
+func CreateFileWritable(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, PermFile)
+	if err == nil {
+		ShareWithParentGroup(path)
+	}
+	return f, err
+}
+
+// ShareWithParentGroup grants the group g+rw (plus g+x on dirs and executables) when
+// path's parent is group-writable, and does nothing otherwise — so files land
+// group-writable in a shared "2775" install and untouched in a personal one.
+// Best-effort: errors are ignored (path may be on another owner's dir).
+func ShareWithParentGroup(path string) {
+	pi, err := os.Stat(filepath.Dir(path))
+	if err != nil || pi.Mode()&0020 == 0 { // parent not group-writable
+		return
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	mode := fi.Mode().Perm()
+	if fi.IsDir() {
+		mode |= 0070 // g+rwx
+	} else {
+		mode |= 0060 // g+rw
+		if mode&0100 != 0 {
+			mode |= 0010 // g+x when u+x (executables)
+		}
+	}
+	_ = os.Chmod(path, mode)
+}
+
+// ShareTreeWithParentGroup applies ShareWithParentGroup to root and every entry beneath
+// it, top-down so each level is shared before the next depends on it — for a tree an
+// external tool wrote directly, bypassing this package's own creation helpers.
+func ShareTreeWithParentGroup(root string) error {
+	return filepath.WalkDir(root, func(path string, _ os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		ShareWithParentGroup(path)
+		return nil
+	})
+}
+
+// MakeExecutable adds an execute bit wherever the matching read bit is set (x where r),
+// then shares with the parent group. Mirroring the read bits keeps it umask-respecting,
+// unlike os.Chmod(path, PermExec) which forces 0775 and leaks group/other-write into
+// personal installs — so prefer this whenever a created file must be made executable.
+func MakeExecutable(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	mode := fi.Mode().Perm()
+	if mode&0400 != 0 {
+		mode |= 0100 // u+x when u+r
+	}
+	if mode&0040 != 0 {
+		mode |= 0010 // g+x when g+r
+	}
+	if mode&0004 != 0 {
+		mode |= 0001 // o+x when o+r
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		return err
+	}
+	ShareWithParentGroup(path)
+	return nil
+}
+
+// MkdirAllShared is os.MkdirAll plus ShareWithParentGroup on every level it creates, so nested dirs under a shared "2775" tree all become group-writable.
+//   - Pre-existing dirs are left untouched.
+//   - Prefer this over os.MkdirAll for data/state directories.
+func MkdirAllShared(dir string) error {
+	// Collect the missing levels first, so we only share the ones we create.
+	var created []string // deepest first
+	for p := filepath.Clean(dir); ; {
+		if DirExists(p) {
+			break
+		}
+		created = append(created, p)
+		parent := filepath.Dir(p)
+		if parent == p { // reached filesystem root
+			break
+		}
+		p = parent
+	}
+	if err := os.MkdirAll(dir, PermDir); err != nil {
+		return err
+	}
+	// Shallowest-first, so each level's parent is already shared when we reach it.
+	for i := len(created) - 1; i >= 0; i-- {
+		ShareWithParentGroup(created[i])
+	}
+	return nil
+}
+
+// EnsureWritableDir creates dir if it does not exist, then checks it is writable.
+//   - Permissions are set only when the directory is newly created.
+//   - Returns true if the directory exists (or was created) and is writable.
+func EnsureWritableDir(dir string) bool {
+	if !DirExists(dir) {
+		if err := os.MkdirAll(dir, PermDir); err != nil {
+			return false
+		}
+		ShareWithParentGroup(dir)
+	}
+	return CanWriteToDir(dir)
+}
+
+// CanWriteToDir checks whether an existing directory is writable using a permission check syscall, without creating the directory or writing any files.
+//   - Returns false if the directory does not exist.
+//   - Use this for probe operations (display, bind decisions, search-path scanning).
+//   - Use EnsureWritableDir when you intend to actually create the directory on first use.
+func CanWriteToDir(dir string) bool {
+	if _, err := os.Stat(dir); err != nil {
+		return false
+	}
+	return unix.Access(dir, unix.W_OK|unix.X_OK) == nil
+}
+
+// CanWriteToFile reports whether path can be written to.
+//   - An existing file must itself be writable — a writable parent directory is not enough, since a read-only file (e.g. a frozen shared config) cannot be opened for writing.
+//   - A file that does not exist yet only needs a writable ancestor directory.
+func CanWriteToFile(path string) bool {
+	if _, err := os.Stat(path); err == nil {
+		return unix.Access(path, unix.W_OK) == nil
+	}
+	return CanWriteToExistingAncestor(filepath.Dir(path))
+}
+
+// CanWriteToExistingAncestor walks up the path until it finds an existing
+// directory and checks whether it is writable. Use this when dir may not exist
+// yet but will be created by MkdirAll — a non-existent dir is not read-only,
+// it just needs a writable parent.
+func CanWriteToExistingAncestor(dir string) bool {
+	for d := dir; d != filepath.Dir(d); d = filepath.Dir(d) {
+		if _, err := os.Stat(d); err == nil {
+			return unix.Access(d, unix.W_OK|unix.X_OK) == nil
+		}
+	}
+	return false
+}
+
+// --- Gzip JSON Helpers ---
+
+// ReadGzipJSONFile opens a .json.gz file and decodes JSON into out.
+func ReadGzipJSONFile(path string, out any) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	gzReader, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gzReader.Close()
+
+	return json.NewDecoder(gzReader).Decode(out)
+}
+
+// WriteGzipJSONFileAtomic encodes value as JSON, writes it as .json.gz to a temp file,
+// then atomically renames it to path.
+func WriteGzipJSONFileAtomic(path string, value any) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, PermFile)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp) // no-op after successful rename; cleans up on any error path
+
+	gzWriter, err := gzip.NewWriterLevel(f, gzip.BestSpeed)
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if err := json.NewEncoder(gzWriter).Encode(value); err != nil {
+		gzWriter.Close()
+		f.Close()
+		return err
+	}
+	if err := gzWriter.Close(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	ShareWithParentGroup(path)
+	return nil
+}

@@ -1,0 +1,404 @@
+#!/bin/bash
+set -e
+
+# Colors
+GREEN=$'\033[0;32m'
+BLUE=$'\033[0;34m'
+CYAN=$'\033[0;36m'
+YELLOW=$'\033[1;33m'
+RED=$'\033[0;31m'
+NC=$'\033[0m' # No Color
+
+# Detect OS and Architecture
+detect_platform() {
+    local os arch binary_name
+
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    arch=$(uname -m)
+
+    # Map architecture names
+    case "$arch" in
+        x86_64|amd64) arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        *) arch="$arch" ;;
+    esac
+
+    # Build binary name and check support
+    os_arch="${os}_${arch}"
+    case "${os_arch}" in
+        linux_amd64|linux_arm64) ;;
+        *)
+            echo -e "${RED}[ERROR]${NC} Unsupported platform: ${os} ${arch}"
+            echo -e "Currently only ${BLUE}linux amd64${NC} and ${BLUE}linux arm64${NC} are supported."
+            exit 1
+            ;;
+    esac
+
+    echo "$os_arch"
+}
+
+BINARY_NAME=condatainer_$(detect_platform)
+URL_CONDATAINER="https://github.com/condatainer/condatainer/releases/latest/download/${BINARY_NAME}"
+
+DEFAULT_BASE="${SCRATCH:-$HOME}/condatainer"
+
+# Config Markers
+MARKER_START="# >>> CONDATAINER >>>"
+MARKER_END="# <<< CONDATAINER <<<"
+
+# Detect Shell & Config File early
+SHELL_NAME=$(basename "$SHELL")
+if [ "$SHELL_NAME" = "zsh" ]; then RC_FILE="$HOME/.zshrc"; else RC_FILE="$HOME/.bashrc"; fi
+
+echo -e "========================================"
+echo -e "${BLUE}       CondaTainer Installer${NC}"
+echo -e "========================================"
+
+# ------------------------------------------------------------------
+# 1. Helpers
+# ------------------------------------------------------------------
+
+# True when a terminal can really be opened: /dev/tty exists even with none attached.
+has_tty() { { : < /dev/tty; } 2>/dev/null; }
+
+get_input() {
+    local prompt_text="$1"
+    local default_value="$2"
+    local user_val=""
+
+    if has_tty; then
+        local p_str="${CYAN}${prompt_text}${NC} [${default_value}]: "
+        read -e -p "$p_str" -r user_val < /dev/tty 2> /dev/tty
+    fi
+    echo "${user_val:-$default_value}"
+}
+
+# Generic confirmation handler
+confirm_default() {
+    local prompt_text="$1"
+    local default="$2" # "yes" or "no"
+    local response=""
+
+    # Auto-Yes Logic
+    if [ "${CLI_YES:-false}" = "true" ]; then
+        [ "$default" = "yes" ] && return 0 || return 1
+    fi
+
+    if has_tty; then
+        if [ "$default" = "yes" ]; then
+            printf "${CYAN}%s${NC} [Y/n]: " "$prompt_text" > /dev/tty
+        else
+            printf "${CYAN}%s${NC} [y/N]: " "$prompt_text" > /dev/tty
+        fi
+        read -r response < /dev/tty
+
+        if [ -z "$response" ]; then
+            [ "$default" = "yes" ] && return 0 || return 1
+        fi
+
+        [[ "$response" =~ ^[Yy]$ ]]
+    else
+        [ "$default" = "yes" ]
+    fi
+}
+
+confirm_action() { confirm_default "$1" "yes"; }
+confirm_action_no() { confirm_default "$1" "no"; }
+
+download_failed() {
+    rm -f "$2"
+    echo -e "${RED}[ERROR]${NC} Could not download $1"
+    exit 1
+}
+
+download_file() {
+    local url="$1"
+    local dest="$2"
+    local dest_tmp="${dest}.tmp"
+    echo -e "${BLUE}[INFO]${NC} Downloading $(basename "$dest")..."
+    if command -v wget >/dev/null 2>&1; then
+        wget -qO "$dest_tmp" "$url" || download_failed "$url" "$dest_tmp"
+    elif command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$url" -o "$dest_tmp" || download_failed "$url" "$dest_tmp"
+    else
+        echo -e "${RED}[ERROR]${NC} Neither curl nor wget found."
+        exit 1
+    fi
+    mv "$dest_tmp" "$dest"
+    chmod 0775 "$dest"
+}
+
+resolve_prerelease_url() {
+    local api_url="https://api.github.com/repos/condatainer/condatainer/releases"
+    local release_json tag
+
+    if command -v wget >/dev/null 2>&1; then
+        release_json=$(wget -qO - "$api_url")
+    elif command -v curl >/dev/null 2>&1; then
+        release_json=$(curl -fsSL "$api_url")
+    else
+        echo -e "${RED}[ERROR]${NC} Neither curl nor wget found."
+        exit 1
+    fi
+
+    tag=$(printf '%s' "$release_json" \
+        | tr -d '\n' \
+        | sed 's/},{/}\n{/g' \
+        | awk '{
+            obj=$0
+            gsub(/[[:space:]]+/, "", obj)
+            if (obj ~ /"prerelease":true/ && match(obj, /"tag_name":"[^"]+"/)) {
+                print substr(obj, RSTART + 12, RLENGTH - 13)
+                exit
+            }
+        }')
+
+    if [ -z "$tag" ]; then
+        echo -e "${RED}[ERROR]${NC} Could not find a prerelease tag from GitHub Releases."
+        exit 1
+    fi
+
+    URL_CONDATAINER="https://github.com/condatainer/condatainer/releases/download/${tag}/${BINARY_NAME}"
+    echo -e "${BLUE}[INFO]${NC} Using prerelease: ${BLUE}${tag}${NC}"
+}
+
+update_config_block() {
+    local file="$1"
+    local start="$2"
+    local end="$3"
+    local content="$4"
+    local name="$5"
+    local temp="${file}.tmp"
+
+    if [ -f "$file" ] && grep -Fq "$start" "$file"; then
+        echo -e "${BLUE}[INFO]${NC} Updating $name in $(basename "$file")..."
+        sed "/$start/,/$end/d" "$file" > "$temp"
+        echo "$content" >> "$temp"
+        mv "$temp" "$file"
+        echo -e "${GREEN}[OK]${NC} Updated $name in ${BLUE}$file${NC}"
+    else
+        echo "" >> "$file"
+        echo "$content" >> "$file"
+        echo -e "${GREEN}[OK]${NC} Added $name to ${BLUE}$file${NC}"
+    fi
+}
+
+# ------------------------------------------------------------------
+# 2. Pre-Install Checks
+# ------------------------------------------------------------------
+
+EXISTING_DIR=""
+EXISTING_ROOT=""
+
+# Check for CONDATAINER markers in RC file
+if [ -f "$RC_FILE" ] && grep -Fq "$MARKER_START" "$RC_FILE"; then
+    EXISTING_PATH_LINE=$(sed -n "/$MARKER_START/,/$MARKER_END/p" "$RC_FILE" | grep "export PATH=" | head -n 1)
+    if [ -n "$EXISTING_PATH_LINE" ]; then
+        TEMP_PATH="${EXISTING_PATH_LINE#*\"}"
+        EXISTING_DIR="${TEMP_PATH%%:*}"
+
+        if [ -n "$EXISTING_DIR" ] && [ -d "$EXISTING_DIR" ]; then
+            if [ "$(basename "$EXISTING_DIR")" == "bin" ]; then
+                EXISTING_ROOT="$(dirname "$EXISTING_DIR")"
+            else
+                EXISTING_ROOT="$EXISTING_DIR"
+            fi
+        fi
+    fi
+fi
+
+# If `condatainer` is already available in PATH but RC file lacks our marker,
+# warn the user and ask whether to continue (default: no).
+if command -v condatainer >/dev/null 2>&1 && { [ ! -f "$RC_FILE" ] || ! grep -Fq "$MARKER_START" "$RC_FILE"; }; then
+    echo -e "${YELLOW}[WARNING]${NC} 'condatainer' is available in your PATH but ${RC_FILE} does not contain the CONDATAINER config block."
+    echo -e "This likely means an existing installation was added to PATH outside the installer."
+    if ! confirm_action_no "Continue with the additional installation?"; then
+        echo "Installation aborted."; exit 1
+    fi
+fi
+
+# ------------------------------------------------------------------
+# 3. Configuration Phase
+# ------------------------------------------------------------------
+
+echo -e "\nConfiguration:"
+
+# CLI options parsing
+CLI_PATH=""
+CLI_YES=false
+CLI_DEV=false
+CLI_NO_SHELL=false
+CLI_NO_LIBEXEC=false
+
+show_usage() {
+    cat <<'USAGE'
+Usage: install_condatainer.sh [options]
+Options:
+  -p, --path PATH      Install base path (non-interactive)
+  -d, --dev            Install latest prerelease build
+  -y, --yes            Assume yes for all prompts
+      --no-shell       Do not edit the shell config (PATH and completion)
+      --no-libexec     Do not install the toolchain (apptainer, squashfs tools, fuse-overlayfs)
+  -h, --help           Show this help
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -p|--path)  [ -n "$2" ] && { CLI_PATH="$2"; shift 2; } || { echo -e "${RED}[ERROR]${NC} --path requires an argument."; exit 1; } ;;
+        -d|--dev)   CLI_DEV=true; shift ;;
+        -y|--yes)   CLI_YES=true; shift ;;
+        --no-shell)   CLI_NO_SHELL=true; shift ;;
+        --no-libexec) CLI_NO_LIBEXEC=true; shift ;;
+        -h|--help)  show_usage; exit 0 ;;
+        *)          echo -e "${RED}[ERROR]${NC} Unknown option: $1"; show_usage; exit 1 ;;
+    esac
+done
+
+if [ "${CLI_DEV}" = true ]; then
+    resolve_prerelease_url
+fi
+
+# Determine Install Path
+TARGET_FROM_EXISTING="false"
+if [ -n "$CLI_PATH" ]; then
+    INSTALL_BASE="$CLI_PATH"
+elif [ -n "$EXISTING_ROOT" ]; then
+    echo -e "${BLUE}[INFO]${NC} Found existing installation: ${BLUE}$EXISTING_ROOT${NC}"
+    if [ "${CLI_YES}" = true ]; then
+        INSTALL_BASE="$EXISTING_ROOT"
+    else
+        INSTALL_BASE=$(get_input "Install Path" "$EXISTING_ROOT")
+    fi
+    TARGET_FROM_EXISTING="true"
+elif [ "${CLI_YES}" = true ]; then
+    INSTALL_BASE="$DEFAULT_BASE"
+else
+    INSTALL_BASE=$(get_input "Install Path" "$DEFAULT_BASE")
+fi
+
+INSTALL_BASE="${INSTALL_BASE/#\~/$HOME}"
+
+# Resolve path
+if command -v realpath >/dev/null 2>&1; then
+    if RESOLVED=$(realpath -m "$INSTALL_BASE" 2>/dev/null); then
+        INSTALL_BASE="$RESOLVED"
+    elif [ -e "$INSTALL_BASE" ] && RESOLVED=$(realpath "$INSTALL_BASE" 2>/dev/null); then
+        INSTALL_BASE="$RESOLVED"
+    fi
+fi
+if [[ "$INSTALL_BASE" != /* ]]; then INSTALL_BASE="$PWD/$INSTALL_BASE"; fi
+INSTALL_BIN="$INSTALL_BASE/bin"
+
+# Determine whether to skip adding PATH block (skip when installing to common user bin dirs)
+HOME_BIN_INSTALL=false
+case "$INSTALL_BIN" in
+    "$HOME/bin"|"$HOME/.local/bin")
+        HOME_BIN_INSTALL=true
+        ;;
+esac
+
+# Target exists check
+if [ "$TARGET_FROM_EXISTING" != "true" ] && [ -d "$INSTALL_BASE" ]; then
+    if ! confirm_action_no "Target '$INSTALL_BASE' exists. Continue installation?"; then
+        echo "Installation aborted."; exit 1
+    fi
+fi
+
+# Optional steps: the shell config edit and the toolchain download.
+DO_SHELL=true
+if [ "$HOME_BIN_INSTALL" = true ] || [ "$CLI_NO_SHELL" = true ]; then
+    DO_SHELL=false
+elif ! confirm_action "Add condatainer to PATH in $RC_FILE?"; then
+    DO_SHELL=false
+fi
+DO_LIBEXEC=true
+if [ "$CLI_NO_LIBEXEC" = true ]; then
+    DO_LIBEXEC=false
+elif ! confirm_action "Install the missing toolchain now (apptainer, squashfs tools, ...)?"; then
+    DO_LIBEXEC=false
+fi
+
+# ------------------------------------------------------------------
+# 4. Final Verification
+# ------------------------------------------------------------------
+
+echo -e "\n--------- Installation Summary ---------"
+echo -e "Directory   : ${BLUE}$INSTALL_BIN${NC}"
+if [ "${CLI_DEV}" = true ]; then
+    echo -e "Release     : ${YELLOW}Prerelease (--dev)${NC}"
+else
+    echo -e "Release     : ${GREEN}Stable${NC}"
+fi
+echo -e "Condatainer : ${GREEN}Yes${NC}"
+if [ "$DO_SHELL" = true ]; then echo -e "Shell config: ${BLUE}$RC_FILE${NC}"; else echo -e "Shell config: skipped"; fi
+if [ "$DO_LIBEXEC" = true ]; then echo -e "Toolchain   : ${GREEN}Yes${NC}"; else echo -e "Toolchain   : skipped"; fi
+echo -e "----------------------------------------"
+
+if ! confirm_action "Proceed?"; then echo "Aborted."; exit 0; fi
+
+# ------------------------------------------------------------------
+# 5. Execution Phase
+# ------------------------------------------------------------------
+
+echo -e "\nStarting installation..."
+
+# Prepare Directory
+if [ "$HOME_BIN_INSTALL" = true ]; then
+    mkdir -p "$INSTALL_BIN"
+else
+    mkdir -p -m 0775 "$INSTALL_BIN"
+fi
+
+# Download condatainer
+download_file "$URL_CONDATAINER" "$INSTALL_BIN/condatainer"
+
+# Init the condatainer config
+CONFIG_INIT_ARGS=()
+if [ "${CLI_YES:-false}" = "true" ]; then CONFIG_INIT_ARGS=(-y); fi
+if ! "$INSTALL_BIN/condatainer" config init "${CONFIG_INIT_ARGS[@]}"; then
+    echo -e "${RED}[ERROR]${NC} Failed to initialize CondaTainer config."
+    exit 1
+fi
+
+# Provision the self-provisioned toolchain (mksquashfs, squashfuse, fuse-overlayfs, apptainer)
+# now, while installing already needs network access. Best-effort: a system
+# with no install-time network (e.g. an air-gapped compute node) still gets a
+# working install, just one that names the fix ("run `condatainer update
+# --libexec`") the first time something needs the toolchain.
+if [ "$DO_LIBEXEC" = true ]; then
+    if ! "$INSTALL_BIN/condatainer" update --libexec; then
+        echo -e "${YELLOW}[WARN]${NC} Could not provision the self-provisioned toolchain now."
+        echo "Run 'condatainer update --libexec' once you have network access."
+    fi
+else
+    echo -e "${BLUE}[INFO]${NC} Skipped the toolchain. Run 'condatainer update --libexec' to install it."
+fi
+
+# Update RC with CONDATAINER block (skipped for common PATH directories, --no-shell, or when declined)
+if [ "$DO_SHELL" = true ]; then
+    PATH_BLOCK="$MARKER_START
+if [[ \":\$PATH:\" != *\":$INSTALL_BIN:\"* ]]; then
+    export PATH=\"$INSTALL_BIN:\$PATH\"
+fi
+if command -v condatainer &> /dev/null; then
+    if [ -n \"\$ZSH_VERSION\" ]; then
+        source <(condatainer completion zsh)
+    elif [ -n \"\$BASH_VERSION\" ]; then
+        source <(condatainer completion bash)
+    fi
+fi
+$MARKER_END"
+    update_config_block "$RC_FILE" "$MARKER_START" "$MARKER_END" "$PATH_BLOCK" "CONDATAINER PATH"
+fi
+
+echo -e "----------------------------------------"
+echo -e "${GREEN}Success!${NC}"
+if [ "$DO_SHELL" = true ]; then
+    echo "Run this to apply changes:"
+    echo -e "  ${YELLOW}source $RC_FILE${NC}"
+elif [ "$HOME_BIN_INSTALL" = false ]; then
+    echo "Add condatainer to your PATH:"
+    echo -e "  ${YELLOW}export PATH=\"$INSTALL_BIN:\$PATH\"${NC}"
+fi
+echo -e "========================================"

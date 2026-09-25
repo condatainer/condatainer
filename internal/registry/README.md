@@ -1,0 +1,72 @@
+# internal/registry
+
+Publishes and fetches immutable artifacts through an OCI registry.
+
+## What a public endpoint takes
+
+- `#REDISTRIBUTE:` outranks every type default.
+- The defaults only restate what the author asserted by choosing a `#TYPE:`. They never guess licensing.
+- Nothing overrides a refusal: no flag, no force.
+- The pusher is rarely the party who agreed to the vendor's terms.
+- A public push cannot be taken back.
+
+A Conda build and a frozen environment skip the app default.
+
+- Neither embeds a recipe, so `#REDISTRIBUTE:` has nowhere to travel with the artifact.
+- Applying the default would be a permanent refusal.
+- Channels a tool cannot judge (private, vendor) are reported at push time. A person decides.
+
+These checks are deliberately absent. A tool that guesses permissive cannot take it back.
+
+- **Adjudicating a Conda build's channels.** An allowlist cannot be kept honest, and licence strings need interpreting.
+- **Deriving permission from `#LICENSE:`.** It is an SPDX expression, published verbatim and never parsed.
+- **Letting config list permitted types.** `types: [app]` on a public endpoint would silently erase the rule.
+
+`audience` is a declaration about the registry.
+
+- Nothing verifies it.
+- It is unrelated to a GitHub package's own visibility, which CondaTainer never reads or changes.
+
+## Registry limits
+
+GHCR is the registry these come from.
+
+- **Layer size: 10 GB, documented.** Layers are cut below it.
+- **Upload time: 10 minutes, documented.** A layer that cannot finish inside it is refused up front.
+- An upload timeout is not a rate limit, so nothing retries it. Starting the layer would only waste the bandwidth.
+- **Token lifetime.** ORAS fixes the credential when an upload session opens. A layer that outlives it cannot be saved.
+- **Requests: unpublished.** GHCR applies a secondary rate limit on the number of requests.
+- A 41-layer push was refused at about its 101st request.
+- The limit shows up as a `429`, or as a `403` with GitHub's secondary-limit message.
+- It applies to pushes and to pulls.
+- **Manifest: 4 MB, accepted everywhere.** It bounds the layer count in theory and never binds in practice.
+
+The request limit shapes the design.
+
+- Layers are planned by count, not by size. A bigger artifact gets bigger layers, not more of them.
+- Writes are spaced out.
+- A rate limit is waited out, never treated as a failure.
+
+Only documented limits are recorded per registry. An undocumented guess becomes stale policy.
+
+## Rate limits and fallback
+
+- A caller falls back to a local build only when an artifact is unavailable.
+- A rate limit is not unavailable. Waiting is enough, and falling back would turn a wait into a rebuild.
+- A throttled pull therefore waits. It never falls back.
+- A rate limit is recognized only on positive evidence, never guessed.
+
+## Identity and digest
+
+Identity is defined in `internal/artifact`.
+
+- A digest is the OCI content address. It names exact bytes and survives mirroring.
+- An identity says what the artifact is. It comes from the artifact itself, never from the caller.
+- A mirror cannot claim an artifact by asserting metadata about it.
+
+## Credentials
+
+- Credentials are layered like the rest of config: user, extra-root, app-root, system.
+- A lab installs one shared credential in a shared layer. A person overrides it in the user layer.
+- A more specific key beats a nearer layer, so a personal entry for one repository beats a group's entry for the host.
+- `GITHUB_TOKEN` comes first for `ghcr.io` only. It is unscoped, and CI provides it.

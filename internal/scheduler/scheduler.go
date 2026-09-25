@@ -1,0 +1,804 @@
+// Package scheduler provides a unified interface for HPC job schedulers
+package scheduler
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// SchedulerType represents the type of job scheduler
+type SchedulerType string
+
+const (
+	SchedulerUnknown  SchedulerType = ""
+	SchedulerSLURM    SchedulerType = "SLURM"
+	SchedulerPBS      SchedulerType = "PBS"
+	SchedulerLSF      SchedulerType = "LSF"
+	SchedulerHTCondor SchedulerType = "HTCondor"
+)
+
+// JobStatus represents the current state of a scheduler job.
+type JobStatus int
+
+const (
+	JobStatusUnknown JobStatus = iota // cannot determine (tool unavailable or timeout)
+	JobStatusPending                  // queued, waiting for resources
+	JobStatusRunning                  // currently executing on a node
+	JobStatusDone                     // completed successfully
+	JobStatusFailed                   // completed with failure or was cancelled
+)
+
+// IsAlive returns true if the job is pending or running.
+func (s JobStatus) IsAlive() bool {
+	return s == JobStatusPending || s == JobStatusRunning
+}
+
+// String returns a human-readable job status label.
+func (s JobStatus) String() string {
+	switch s {
+	case JobStatusPending:
+		return "pending"
+	case JobStatusRunning:
+		return "running"
+	case JobStatusDone:
+		return "done"
+	case JobStatusFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
+}
+
+// GpuSpec holds GPU requirements parsed from scheduler directives.
+// Count is per node (not total). Total GPUs = Count * ResourceSpec.Nodes.
+type GpuSpec struct {
+	Type  string // GPU type/model (e.g., "h100", "a100", "v100")
+	Count int    // Number of GPUs per node
+	Raw   string // Raw GPU specification string from scheduler
+}
+
+// GpuInfo holds information about available GPU types in the cluster
+type GpuInfo struct {
+	Type      string // GPU type/model
+	Total     int    // Total number of this GPU type
+	Available int    // Currently available
+	Partition string // Partition/queue name (optional)
+}
+
+// ResourceLimits holds scheduler resource limits per partition/queue.
+// CPU and memory limits are per-node (matching how schedulers report them).
+type ResourceLimits struct {
+	MaxNodes        int           // Maximum nodes per job
+	MaxCpusPerNode  int           // Maximum CPUs per node in this partition
+	MaxMemMBPerNode int64         // Maximum memory per node in MB
+	MaxGpus         int           // Maximum GPUs per job (total across all nodes)
+	DefaultTime     time.Duration // Default walltime if not specified
+	MaxTime         time.Duration // Maximum walltime (e.g., "7-00:00:00")
+	Partition       string        // Partition/queue name these limits apply to
+}
+
+// ResourceSpec holds compute geometry for a job.
+// A nil pointer means resource parsing failed — the job runs in passthrough mode.
+type ResourceSpec struct {
+	Nodes        int           // Number of nodes
+	Ntasks       int           // Total MPI tasks (0 = not set; use Nodes*TasksPerNode)
+	TasksPerNode int           // MPI ranks per node (0 = non-uniform distribution, e.g. multi-chunk PBS)
+	CpusPerTask  int           // CPU threads per task (OpenMP)
+	MemPerCpuMB  int64         // RAM per logical CPU in MB (SLURM --mem-per-cpu, LSF rusage[mem]÷CpusPerTask)
+	MemPerNodeMB int64         // Total RAM per node in MB (SLURM --mem, PBS mem=)
+	Gpu          *GpuSpec      // GPU requirements (nil = no GPU; Count = per node)
+	Time         time.Duration // Job walltime limit
+	Exclusive    bool          // Request exclusive node access (no other jobs on the same node)
+}
+
+// IsMPI returns true if the job requests more than one MPI task.
+func (rs *ResourceSpec) IsMPI() bool {
+	if rs == nil {
+		return false
+	}
+	return rs.GetNtasks() > 1
+}
+
+// IsOpenMP returns true if the job requests more than one CPU per task.
+func (rs *ResourceSpec) IsOpenMP() bool {
+	if rs == nil {
+		return false
+	}
+	return rs.CpusPerTask > 1
+}
+
+// GetNtasks returns the effective total task count.
+// Prefers Ntasks if set; otherwise returns Nodes * TasksPerNode (minimum 1).
+func (rs *ResourceSpec) GetNtasks() int {
+	if rs.Ntasks > 0 {
+		return rs.Ntasks
+	}
+	n := rs.Nodes
+	if n <= 0 {
+		n = 1
+	}
+	t := rs.TasksPerNode
+	if t <= 0 {
+		t = 1
+	}
+	return n * t
+}
+
+// GetMemPerNodeMB returns the effective memory per node in MB.
+//   - Checks MemPerCpuMB × CpusPerTask × TasksPerNode first (requires TasksPerNode > 0), then returns MemPerNodeMB directly.
+//   - Returns 0 if neither is set or geometry is insufficient to derive a value.
+func (rs *ResourceSpec) GetMemPerNodeMB() int64 {
+	if rs.MemPerCpuMB > 0 && rs.TasksPerNode > 0 {
+		cpt := rs.CpusPerTask
+		if cpt <= 0 {
+			cpt = 1
+		}
+		return rs.MemPerCpuMB * int64(cpt*rs.TasksPerNode)
+	}
+	return rs.MemPerNodeMB
+}
+
+// GetMemPerTaskMB returns the effective memory per task in MB.
+//   - Checks MemPerCpuMB × CpusPerTask first, then MemPerNodeMB ÷ TasksPerNode (treats 0 as 1).
+//   - Returns 0 if no memory is specified.
+func (rs *ResourceSpec) GetMemPerTaskMB() int64 {
+	if rs.MemPerCpuMB > 0 {
+		cpt := rs.CpusPerTask
+		if cpt <= 0 {
+			cpt = 1
+		}
+		return rs.MemPerCpuMB * int64(cpt)
+	}
+	if rs.MemPerNodeMB > 0 {
+		tpn := int64(rs.TasksPerNode)
+		if tpn < 1 {
+			tpn = 1
+		}
+		return rs.MemPerNodeMB / tpn
+	}
+	return 0
+}
+
+// RuntimeConfig holds job-level control settings (name, I/O paths, notifications).
+type RuntimeConfig struct {
+	JobName      string // Identifier for the job
+	WorkDir      string // Working directory for the job (e.g. initialdir in HTCondor, --chdir in SLURM)
+	Stdout       string // Standard output file path
+	Stderr       string // Standard error file path
+	EmailOnBegin bool   // Notification on job start
+	EmailOnEnd   bool   // Notification on job end
+	EmailOnFail  bool   // Notification on job failure/abort
+	MailUser     string // Target email/user for notifications (empty = submitting user)
+	Partition    string // Partition/queue to submit to (cleared on cross-scheduler translation)
+	Account      string // Billing/allocation account to submit under (cleared on cross-scheduler translation)
+}
+
+// ClusterInfo holds cluster configuration information
+type ClusterInfo struct {
+	AvailableGpus   []GpuInfo        // Available GPU types
+	Limits          []ResourceLimits // Resource limits per partition
+	MaxCpusPerNode  int              // Maximum CPUs available per node (from node info)
+	MaxMemMBPerNode int64            // Maximum memory available per node in MB (from node info)
+}
+
+// ScriptSpecs holds the full result of parsing a scheduler script.
+type ScriptSpecs struct {
+	ScriptPath     string        // Absolute path of the parsed script (for HTCondor .sub: the executable)
+	Spec           *ResourceSpec // Compute geometry (nil = resource parse failed → passthrough mode)
+	Control        RuntimeConfig // Job control settings
+	HasDirectives  bool          // True if any scheduler directive (#SBATCH, #PBS, etc.) was found
+	RawFlags       []string      // ALL original directives — immutable audit log
+	RemainingFlags []string      // Directives not absorbed by Spec or Control
+	ScriptType     SchedulerType // Scheduler type detected from script directives
+	// ProxyVia, when non-empty, causes writeJobHeader to emit
+	// "condatainer proxy start --via <host>" at the top of the job body.
+	// Set by callers when scheduler.proxy_perjob=true.
+	ProxyVia string
+}
+
+// ResolvePath returns path resolved against WorkDir when the path is relative.
+//   - If WorkDir is empty, falls back to the process CWD via filepath.Abs.
+//   - Already-absolute or empty paths are returned unchanged.
+func (rc *RuntimeConfig) ResolvePath(path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	if rc.WorkDir != "" {
+		return filepath.Join(rc.WorkDir, path)
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
+}
+
+// AbsStdout returns the absolute path for the Stdout file, resolved against WorkDir.
+func (rc *RuntimeConfig) AbsStdout() string { return rc.ResolvePath(rc.Stdout) }
+
+// AbsStderr returns the absolute path for the Stderr file, resolved against WorkDir.
+func (rc *RuntimeConfig) AbsStderr() string { return rc.ResolvePath(rc.Stderr) }
+
+// HasSchedulerSpecs returns true if ScriptSpecs contains meaningful scheduler directives.
+// This is used to determine if a script should be submitted to a scheduler,
+// rather than relying on RawFlags which may be cleared during cross-scheduler translation.
+func HasSchedulerSpecs(specs *ScriptSpecs) bool {
+	if specs == nil {
+		return false
+	}
+	// Check if any scheduler directive was found during parsing
+	return specs.HasDirectives
+}
+
+// IsPassthrough reports having directives but no valid resource spec.
+func IsPassthrough(specs *ScriptSpecs) bool {
+	return specs != nil && specs.HasDirectives && specs.Spec == nil
+}
+
+// specDefaults is the package-level defaults used by all schedulers.
+var specDefaults = ResourceSpec{
+	Ntasks:       1,
+	CpusPerTask:  1,
+	MemPerNodeMB: 2048,
+	Time:         2 * time.Hour,
+}
+
+// GetSpecDefaults returns the current default values for ScriptSpecs.
+func GetSpecDefaults() ResourceSpec {
+	return specDefaults
+}
+
+// Override updates rs in-place with non-zero/non-nil fields from other.
+//   - Fields in other that are zero/nil are skipped (rs retains its value).
+//   - Safe to call with a nil other.
+func (rs *ResourceSpec) Override(other *ResourceSpec) {
+	if other == nil {
+		return
+	}
+	if other.Nodes > 0 {
+		rs.Nodes = other.Nodes
+	}
+	if other.Ntasks > 0 {
+		rs.Ntasks = other.Ntasks
+	}
+	if other.TasksPerNode > 0 {
+		rs.TasksPerNode = other.TasksPerNode
+	}
+	if other.CpusPerTask > 0 {
+		rs.CpusPerTask = other.CpusPerTask
+	}
+	if other.MemPerCpuMB > 0 {
+		rs.MemPerCpuMB = other.MemPerCpuMB
+		if other.MemPerNodeMB == 0 {
+			rs.MemPerNodeMB = 0 // clear default so MemPerCpuMB takes effect
+		}
+	}
+	if other.MemPerNodeMB > 0 {
+		rs.MemPerNodeMB = other.MemPerNodeMB
+	}
+	if other.Gpu != nil {
+		rs.Gpu = other.Gpu
+	}
+	if other.Time > 0 {
+		rs.Time = other.Time
+	}
+	if other.Exclusive {
+		rs.Exclusive = other.Exclusive
+	}
+}
+
+// ArraySpec describes an input-file-driven array job.
+// Each task processes one line from InputFile using the scheduler's
+// native array mechanism. Limit=0 means no concurrency cap.
+type ArraySpec struct {
+	InputFile  string   // Absolute path to input list (one entry per line)
+	Count      int      // Non-empty line count; computed by cmd/run.go
+	Limit      int      // Max concurrently running tasks (0 = unlimited)
+	ArgCount   int      // Number of shell-split tokens per line (all lines must match)
+	SampleArgs []string // Tokens from the first line, for dry-run display
+	BlankLines []int    // 1-based line numbers of all blank lines (nil = none)
+}
+
+// Dependency types for job submission.
+const (
+	DependencyAfterOK    = "afterok"    // Run only if all dependency jobs succeeded
+	DependencyAfterNotOK = "afternotok" // Run only if any dependency job failed
+	DependencyAfterAny   = "afterany"   // Run regardless of dependency job outcome
+)
+
+// Dependency represents a typed job dependency for submission.
+type Dependency struct {
+	Type   string   // DependencyAfterOK, DependencyAfterNotOK, or DependencyAfterAny
+	JobIDs []string // Job IDs to depend on
+}
+
+// dependencyTypes are the Dependency types each scheduler can express. HTCondor
+// has no entry: it needs DAGMan, which is out of scope.
+var dependencyTypes = map[SchedulerType][]string{
+	SchedulerSLURM: {DependencyAfterOK, DependencyAfterNotOK, DependencyAfterAny},
+	SchedulerPBS:   {DependencyAfterOK, DependencyAfterNotOK, DependencyAfterAny},
+	SchedulerLSF:   {DependencyAfterOK, DependencyAfterNotOK, DependencyAfterAny},
+}
+
+// CheckDependencies returns an error for the first dependency in deps that
+// scheduler t cannot express, or nil. Every Submit calls it first, so an
+// unsupported dependency is refused rather than dropped or downgraded.
+func CheckDependencies(t SchedulerType, deps []Dependency) error {
+	for _, dep := range deps {
+		if len(dep.JobIDs) == 0 {
+			continue
+		}
+		if !slices.Contains(dependencyTypes[t], dep.Type) {
+			if len(dependencyTypes[t]) == 0 {
+				return fmt.Errorf("%s does not support job dependencies; nothing was submitted. Re-run once job(s) %s have finished",
+					t, strings.Join(dep.JobIDs, ", "))
+			}
+			return fmt.Errorf("%s does not support %q dependencies; nothing was submitted", t, dep.Type)
+		}
+	}
+	return nil
+}
+
+// JobSpec represents specifications for submitting a batch job
+type JobSpec struct {
+	Name           string            // Job name (for temp and log file naming)
+	Command        string            // Command to execute
+	Specs          *ScriptSpecs      // Job specifications
+	DepJobIDs      []string          // Job IDs this job depends on (always afterok, used by build chain)
+	Metadata       map[string]string // Additional metadata: ScriptPath, BuildSource, etc.
+	OverrideOutput bool              // If true, always set Stdout/Stderr from Name (ignores script directives)
+	Array          *ArraySpec        // Non-nil → emit array job directives
+	KeepScript     bool              // If true, skip self-removal of the generated script after execution
+}
+
+// Scheduler defines the interface for job schedulers
+type Scheduler interface {
+	// IsAvailable checks if the scheduler binary is present on this system.
+	IsAvailable() bool
+
+	// IsInsideJob returns true if the current process is running inside a job
+	// of this specific scheduler type, based on scheduler-set environment variables.
+	IsInsideJob() bool
+
+	// ReadScriptSpecs parses scheduler-specific directives from a build script
+	// Returns ScriptSpecs with parsed scheduler directives (excludes #DEP and module directives)
+	ReadScriptSpecs(scriptPath string) (*ScriptSpecs, error)
+
+	// CreateScriptWithSpec generates a batch script with the given specifications
+	// Returns the path to the created script
+	CreateScriptWithSpec(spec *JobSpec, outputDir string) (string, error)
+
+	// Submit submits a job script with optional typed dependency list.
+	// Returns the job ID assigned by the scheduler.
+	Submit(ctx context.Context, scriptPath string, deps []Dependency) (string, error)
+
+	// GetClusterInfo retrieves cluster configuration (GPUs, limits)
+	// Returns nil if information is not available
+	GetClusterInfo(ctx context.Context) (*ClusterInfo, error)
+
+	// GetType returns the scheduler type.
+	GetType() SchedulerType
+
+	// GetBinary returns the path to the scheduler binary.
+	GetBinary() string
+
+	// GetVersion runs the scheduler version command and returns the version string.
+	// Returns "" on failure. This is slow — only call when the result will be displayed.
+	GetVersion(ctx context.Context) string
+
+	// GetJobResources reads allocated resources from scheduler environment variables.
+	// Fields with value 0 were not exposed by the scheduler.
+	// Returns nil if not running inside a job of this scheduler type.
+	GetJobResources() *ResourceSpec
+
+	// GetJobStatus returns the current status of the given job ID.
+	// Returns JobStatusUnknown conservatively when the status cannot be determined
+	// (tool unavailable, timeout). Returns JobStatusDone when definitely absent.
+	GetJobStatus(ctx context.Context, jobID string) (JobStatus, error)
+
+	// GetCurrentJobID returns the job ID of the currently running job for this
+	// scheduler type, read from the scheduler-specific environment variable.
+	// Returns "" if not inside a job of this type.
+	GetCurrentJobID() string
+
+	// JobIDVar returns the name of the scheduler-assigned job ID environment
+	// variable (e.g. "SLURM_JOB_ID", "PBS_JOBID"). Returns "" if this scheduler
+	// does not expose a job ID variable.
+	JobIDVar() string
+
+	// JobIDEnvExpr returns a shell expression that expands to the job ID at
+	// runtime inside a submitted job (e.g. "${SLURM_JOB_ID}"). Used by the
+	// helper wrapper to set CNT_HELPER_JOB_ID scheduler-specifically.
+	// Derived from JobIDVar() for most schedulers; PBS strips the server suffix.
+	JobIDEnvExpr() string
+
+	// TmpDirVar returns the name of the scheduler-assigned per-job node-local tmpdir
+	// environment variable (e.g. "SLURM_TMPDIR", "PBS_TMPDIR"). Returns "" if this
+	// scheduler does not expose a per-job tmpdir variable.
+	TmpDirVar() string
+
+	// GetTmpDir returns the scheduler-assigned node-local tmp directory for the
+	// current job (e.g. SLURM_TMPDIR, PBS_TMPDIR). Returns "" if not in a job
+	// or if the scheduler does not expose a tmp directory variable.
+	GetTmpDir() string
+
+	// JobExecCommand returns the command prefix that runs a process on the node
+	// of a running job, with its stdin and stdout attached to the caller. The
+	// caller appends the program and its arguments. Returns ErrExecUnsupported
+	// when the scheduler has no such command.
+	JobExecCommand(jobID string) ([]string, error)
+
+	// CancelJob cancels the job with the given ID. Returns nil on success or if
+	// the job is already gone. Returns an error only if the cancel command fails
+	// for a reason other than the job not existing.
+	CancelJob(ctx context.Context, jobID string) error
+}
+
+// ResolveResourceSpecFrom merges resources in priority order. The result is never nil.
+//   - defaults, then scriptSpecs.Spec when HasDirectives is true, then the non-zero fields of jobResources.
+//   - It tests HasDirectives, not Spec != nil. A script without directives gets Spec filled with scheduler defaults, which would replace the caller's.
+func ResolveResourceSpecFrom(defaults ResourceSpec, jobResources *ResourceSpec, scriptSpecs *ScriptSpecs) *ResourceSpec {
+	base := defaults
+	if scriptSpecs != nil && scriptSpecs.HasDirectives && scriptSpecs.Spec != nil {
+		base = *scriptSpecs.Spec
+	}
+	base.Override(jobResources)
+	return &base
+}
+
+// ResolveResourceSpec merges resources using the priority chain:
+//
+//	GetSpecDefaults() → scriptSpecs.Spec (when HasDirectives=true) → jobResources
+//
+// Always returns a non-nil *ResourceSpec.
+func ResolveResourceSpec(jobResources *ResourceSpec, scriptSpecs *ScriptSpecs) *ResourceSpec {
+	return ResolveResourceSpecFrom(GetSpecDefaults(), jobResources, scriptSpecs)
+}
+
+// DetectSchedulerWithBinary attempts to initialize a scheduler using a preferred binary path.
+//   - If preferredBin is empty, detection falls back to the default discovery path.
+//   - Returns a Scheduler instance if the scheduler binary is present, or ErrSchedulerNotFound.
+//   - Use ActiveScheduler() to get the already-initialized instance instead of re-detecting.
+func DetectSchedulerWithBinary(preferredBin string) (Scheduler, error) {
+	// If a preferred binary is specified, infer scheduler type from the binary name
+	if preferredBin != "" {
+		baseName := filepath.Base(preferredBin)
+		switch baseName {
+		case "qsub", "qdel", "qstat":
+			return NewPbsSchedulerWithBinary(preferredBin)
+		case "bsub", "bjobs", "bkill":
+			return NewLsfSchedulerWithBinary(preferredBin)
+		case "condor_submit", "condor_q", "condor_status":
+			return NewHTCondorSchedulerWithBinary(preferredBin)
+		default:
+			// Default to SLURM for sbatch and any other binary
+			return NewSlurmSchedulerWithBinary(preferredBin)
+		}
+	}
+
+	// Try SLURM via PATH (most common)
+	slurm, err := NewSlurmScheduler()
+	if err == nil {
+		return slurm, nil
+	}
+
+	// Try PBS via PATH
+	pbs, pbsErr := NewPbsScheduler()
+	if pbsErr == nil {
+		return pbs, nil
+	}
+
+	// Try LSF via PATH
+	lsf, lsfErr := NewLsfScheduler()
+	if lsfErr == nil {
+		return lsf, nil
+	}
+
+	// Try HTCondor via PATH
+	htcondor, htcondorErr := NewHTCondorScheduler()
+	if htcondorErr == nil {
+		return htcondor, nil
+	}
+
+	return nil, ErrSchedulerNotFound
+}
+
+// Init auto-detects and initializes the active scheduler.
+//   - If preferredBin is provided, it will be used instead of auto-detection.
+//   - Type is derived from the concrete struct — no version subprocess is run.
+//   - Returns the detected scheduler type and any error.
+func Init(preferredBin string) (SchedulerType, error) {
+	sched, err := DetectSchedulerWithBinary(preferredBin)
+	if err != nil {
+		ClearActiveScheduler()
+		return SchedulerUnknown, err
+	}
+
+	SetActiveScheduler(sched)
+
+	// Derive type from the concrete struct — no subprocess needed.
+	switch sched.(type) {
+	case *SlurmScheduler:
+		return SchedulerSLURM, nil
+	case *PbsScheduler:
+		return SchedulerPBS, nil
+	case *LsfScheduler:
+		return SchedulerLSF, nil
+	case *HTCondorScheduler:
+		return SchedulerHTCondor, nil
+	}
+	return SchedulerUnknown, nil
+}
+
+// DetectType returns the type of scheduler available on the system without initializing it.
+// This is useful for checking what scheduler is available before deciding to use it.
+func DetectType() SchedulerType {
+	// Check for SLURM (sbatch)
+	if _, err := exec.LookPath("sbatch"); err == nil {
+		return SchedulerSLURM
+	}
+
+	// Check for PBS (qsub with PBS-specific behavior)
+	if _, err := exec.LookPath("qsub"); err == nil {
+		// TODO: Distinguish PBS from other qsub implementations (SGE, etc.)
+		return SchedulerPBS
+	}
+
+	// Check for LSF (bsub)
+	if _, err := exec.LookPath("bsub"); err == nil {
+		return SchedulerLSF
+	}
+
+	// Check for HTCondor (condor_submit)
+	if _, err := exec.LookPath("condor_submit"); err == nil {
+		return SchedulerHTCondor
+	}
+
+	return SchedulerUnknown
+}
+
+// CurrentJobID returns the job ID of the currently running scheduler job,
+// or "" if not inside a scheduler job or no scheduler is configured.
+func CurrentJobID() string {
+	if s := ActiveScheduler(); s != nil {
+		return s.GetCurrentJobID()
+	}
+	return ""
+}
+
+// ActiveTmpDir returns the scheduler-assigned node-local tmp directory for the current job,
+// or "" if not inside a job or no tmp dir is exposed by the active scheduler.
+func ActiveTmpDir() string {
+	if s := ActiveScheduler(); s != nil {
+		return s.GetTmpDir()
+	}
+	return ""
+}
+
+// IsInsideJob checks if we're currently running inside a scheduler job.
+// This is useful to avoid nested job submission.
+func IsInsideJob() bool {
+	// Check SLURM
+	if _, ok := os.LookupEnv("SLURM_JOB_ID"); ok {
+		return true
+	}
+	// Check PBS
+	if _, ok := os.LookupEnv("PBS_JOBID"); ok {
+		return true
+	}
+	// Check LSF
+	if _, ok := os.LookupEnv("LSB_JOBID"); ok {
+		return true
+	}
+	// Check HTCondor
+	if _, ok := os.LookupEnv("_CONDOR_JOB_AD"); ok {
+		return true
+	}
+	return false
+}
+
+// ParsedScript contains the normalized specs and detected script type
+type ParsedScript struct {
+	Specs      *ScriptSpecs  // Normalized scheduler specifications
+	ScriptType SchedulerType // Detected scheduler type from script directives
+}
+
+// ParseScriptAny parses scheduler directives with the current scheduler's parser, then the others.
+//   - A script written for one scheduler can run on another.
+//   - No directives returns nil, nil.
+func ParseScriptAny(scriptPath string) (*ParsedScript, error) {
+	// Determine current scheduler type — use active scheduler if already initialized.
+	var currentType SchedulerType
+	if s := ActiveScheduler(); s != nil {
+		currentType = s.GetType()
+	} else {
+		currentType = DetectType()
+	}
+
+	// Try current scheduler first, then others
+	tryOrder := []SchedulerType{}
+
+	// Add current scheduler first (if known)
+	if currentType != SchedulerUnknown {
+		tryOrder = append(tryOrder, currentType)
+	}
+
+	// Add other schedulers
+	allTypes := []SchedulerType{SchedulerSLURM, SchedulerPBS, SchedulerLSF, SchedulerHTCondor}
+	for _, st := range allTypes {
+		if st != currentType {
+			tryOrder = append(tryOrder, st)
+		}
+	}
+
+	// Try each scheduler parser
+	for _, schedType := range tryOrder {
+		var specs *ScriptSpecs
+		var err error
+
+		switch schedType {
+		case SchedulerSLURM:
+			specs, err = TryParseSlurmScript(scriptPath)
+		case SchedulerPBS:
+			specs, err = TryParsePbsScript(scriptPath)
+		case SchedulerLSF:
+			specs, err = TryParseLsfScript(scriptPath)
+		case SchedulerHTCondor:
+			// Only parse as HTCondor if the file has the native .sub extension.
+			if strings.HasSuffix(scriptPath, ".sub") {
+				specs, err = TryParseHTCondorScript(scriptPath)
+			}
+		default:
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		// If we found directives, return the result
+		if specs != nil && HasSchedulerSpecs(specs) {
+			return &ParsedScript{
+				Specs:      specs,
+				ScriptType: schedType,
+			}, nil
+		}
+	}
+
+	// No scheduler directives found in any format
+	return nil, nil
+}
+
+// getEnvInt reads an environment variable and parses it as a positive int.
+// Returns nil if unset, empty, or not a valid positive integer.
+func getEnvInt(key string) *int {
+	val := os.Getenv(key)
+	if val == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil || n <= 0 {
+		return nil
+	}
+	return &n
+}
+
+// getEnvInt64 reads an environment variable and parses it as a positive int64.
+// Returns nil if unset, empty, or not a valid positive integer.
+func getEnvInt64(key string) *int64 {
+	val := os.Getenv(key)
+	if val == "" {
+		return nil
+	}
+	n, err := strconv.ParseInt(val, 10, 64)
+	if err != nil || n <= 0 {
+		return nil
+	}
+	return &n
+}
+
+// getCudaDeviceCount parses CUDA_VISIBLE_DEVICES and returns the number of devices.
+// Returns nil if the variable is unset or empty.
+func getCudaDeviceCount() *int {
+	val := os.Getenv("CUDA_VISIBLE_DEVICES")
+	if val == "" {
+		return nil
+	}
+	// Count comma-separated items (e.g., "0,1,2" → 3)
+	count := len(strings.Split(val, ","))
+	if count <= 0 {
+		return nil
+	}
+	return &count
+}
+
+// getMpiCommSize returns the total MPI communicator size from MPI library environment variables.
+//   - Checks OpenMPI (OMPI_COMM_WORLD_SIZE) and MPICH/Intel MPI (PMI_SIZE) variables.
+//   - These variables are set by the MPI library and are consistent across all MPI ranks, unlike scheduler-specific variables which may be task-local.
+//   - Returns nil if no MPI environment is detected.
+func getMpiCommSize() *int {
+	// OpenMPI sets OMPI_COMM_WORLD_SIZE
+	if v := getEnvInt("OMPI_COMM_WORLD_SIZE"); v != nil {
+		return v
+	}
+	// MPICH and Intel MPI set PMI_SIZE
+	if v := getEnvInt("PMI_SIZE"); v != nil {
+		return v
+	}
+	// MVAPICH2 also uses PMI_SIZE, but also sets MV2_COMM_WORLD_SIZE
+	if v := getEnvInt("MV2_COMM_WORLD_SIZE"); v != nil {
+		return v
+	}
+	return nil
+}
+
+// getMpiLocalSize returns the number of MPI ranks on the current node.
+//   - This corresponds to TasksPerNode in scheduler terminology.
+//   - Returns nil if no MPI environment is detected.
+func getMpiLocalSize() *int {
+	// OpenMPI sets OMPI_COMM_WORLD_LOCAL_SIZE
+	if v := getEnvInt("OMPI_COMM_WORLD_LOCAL_SIZE"); v != nil {
+		return v
+	}
+	// MPICH sets MPI_LOCALNRANKS
+	if v := getEnvInt("MPI_LOCALNRANKS"); v != nil {
+		return v
+	}
+	return nil
+}
+
+// ReadScriptSpecsFromPath reads a script's scheduler specs, translating from whichever scheduler wrote it.
+//   - The result is never nil.
+//   - A different script scheduler gives a warning, not an error.
+//   - Without directives HasDirectives is false and Spec holds GetSpecDefaults().
+//   - HasDirectives and IsPassthrough tell the three states apart.
+func ReadScriptSpecsFromPath(scriptPath string) (*ScriptSpecs, error) {
+	// Parse script using any available parser
+	parsed, err := ParseScriptAny(scriptPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// No scheduler directives found — return a default spec with HasDirectives=false.
+	// Callers must check HasDirectives (not nil) to distinguish from normal/passthrough mode.
+	if parsed == nil {
+		d := GetSpecDefaults()
+		d.Nodes = 1 // single-node default for local scripts
+		return &ScriptSpecs{
+			ScriptPath:    scriptPath,
+			HasDirectives: false,
+			Spec:          &d,
+		}, nil
+	}
+
+	// Carry the original scheduler type forward so callers can inspect it.
+	parsed.Specs.ScriptType = parsed.ScriptType
+
+	// Check for scheduler mismatch
+	var hostType SchedulerType
+	if s := ActiveScheduler(); s != nil {
+		hostType = s.GetType()
+	} else {
+		hostType = DetectType()
+	}
+	if hostType != SchedulerUnknown && parsed.ScriptType != hostType {
+		// Clear RemainingFlags on cross-scheduler translation:
+		// scheduler-specific unrecognized flags cannot be translated.
+		// RawFlags is the immutable audit log — never cleared.
+		parsed.Specs.RemainingFlags = nil
+		// Clear Partition: the original partition name is scheduler-specific
+		// and cannot be translated to the host scheduler's partition names.
+		parsed.Specs.Control.Partition = ""
+		// Clear Account: the original account name is scheduler-specific
+		// and cannot be translated to the host scheduler's account names.
+		parsed.Specs.Control.Account = ""
+	}
+
+	return parsed.Specs, nil
+}

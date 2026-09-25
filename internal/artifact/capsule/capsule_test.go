@@ -1,0 +1,223 @@
+package capsule
+
+import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/artifact/key"
+	"github.com/condatainer/condatainer/internal/artifact/meta"
+)
+
+// staged reads a dependency's /.cnt straight from ImagePath, standing in for
+// the extraction Compose runs first.
+func staged(dep Dep) (string, func(), error) { return dep.ImagePath, func() {}, nil }
+
+// depImage stages the metadata a dependency image would carry, plus any capsule
+// entries of its own. It returns the /.cnt directory rather than an archive:
+// Compose extracts one before reading it, and packing here would only add an
+// mksquashfs run and an unsquashfs run around the same files.
+func depImage(t *testing.T, name string, files map[string]string, inherited map[string]string, complete bool) (string, meta.KeyRef) {
+	t.Helper()
+	root := t.TempDir()
+	cnt := filepath.Join(root, meta.DirName)
+	if err := os.MkdirAll(cnt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest := meta.Manifest{
+		SchemaVersion:      meta.SchemaVersion,
+		Name:               name,
+		Type:               catalog.TypeData,
+		BuildType:          "script",
+		Platform:           meta.NativePlatform(),
+		Source:             meta.Source{Files: []string{meta.RecipeFileName}},
+		ProvenanceComplete: &complete,
+	}
+	recipe, ok := files[meta.RecipeFileName]
+	if !ok {
+		t.Fatal("dependency fixture has no recipe")
+	}
+	derived, err := key.Generate(manifest, key.Sources{meta.RecipeFileName: []byte(recipe)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Keys = derived.Keys()
+	if err := meta.StageManifest(cnt, manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.StageRuntime(cnt, meta.Runtime{
+		SchemaVersion: meta.SchemaVersion,
+		Name:          name,
+		Type:          catalog.TypeData,
+		Platform:      meta.NativePlatform(),
+		Prefix:        "/cnt/" + name,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for file, body := range files {
+		if err := os.WriteFile(filepath.Join(cnt, file), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, body := range inherited {
+		full := filepath.Join(cnt, DirName, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return cnt, manifest.Keys.Identity
+}
+
+func TestEntryName(t *testing.T) {
+	tests := []struct {
+		name, identity, want string
+	}{
+		{"grch38/gtf-gencode/49", "sha256:41ab1c2d3e4f5a6b7c8d", "grch38--gtf-gencode--49@41ab1c2d3e4f"},
+		{"star/2.7.11b", "sha256:0c19a7f34b02aaaa", "star--2.7.11b@0c19a7f34b02"},
+		// A name with slashes must never become directory levels.
+		{"a/b/c/d", "sha256:abcdef012345678", "a--b--c--d@abcdef012345"},
+		// Short digests are taken as they are; truncation is addressing only.
+		{"x/1", "sha256:abc", "x--1@abc"},
+	}
+	for _, tt := range tests {
+		if got := EntryName(tt.name, tt.identity); got != tt.want {
+			t.Errorf("EntryName(%q, %q) = %q, want %q", tt.name, tt.identity, got, tt.want)
+		}
+		if strings.Contains(EntryName(tt.name, tt.identity), "/") {
+			t.Errorf("%q produced a nested path", tt.name)
+		}
+	}
+}
+
+// The capsule is a dependency's records, plus that dependency's own capsule
+// copied across unchanged. Nothing is re-derived and no payload comes with it.
+func TestComposeUnionsRecordsAndInheritedEntries(t *testing.T) {
+	dep, identity := depImage(t, "grch38/gtf-gencode/49",
+		map[string]string{
+			meta.RecipeFileName: "#DESC:gtf\necho build\n",
+		},
+		map[string]string{
+			"grch38--genome--gencode@aaaabbbbcccc/" + meta.FileName:       "{}\n",
+			"grch38--genome--gencode@aaaabbbbcccc/" + meta.RecipeFileName: "echo genome\n",
+		}, true)
+
+	metaDir := t.TempDir()
+	complete, err := compose(metaDir, []Dep{{
+		Name:      "grch38/gtf-gencode/49",
+		Identity:  identity,
+		ImagePath: dep,
+	}}, staged)
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if !complete {
+		t.Error("a fully recorded dependency produced an incomplete capsule")
+	}
+
+	entries, err := Entries(filepath.Join(metaDir, DirName))
+	if err != nil {
+		t.Fatalf("Entries: %v", err)
+	}
+	var dirs []string
+	for _, e := range entries {
+		dirs = append(dirs, e.Dir)
+	}
+	want := []string{"grch38--genome--gencode@aaaabbbbcccc", EntryName("grch38/gtf-gencode/49", identity.Digest())}
+	if !slices.Equal(dirs, want) {
+		t.Fatalf("entries = %v, want %v", dirs, want)
+	}
+
+	// The direct dependency's manifest and recipe came across.
+	direct := entries[1]
+	for _, file := range []string{meta.FileName, meta.RecipeFileName} {
+		if !slices.Contains(direct.Files, file) {
+			t.Errorf("%s is missing %s (has %v)", direct.Dir, file, direct.Files)
+		}
+	}
+	// ...and its runtime did not. A capsule entry exists to rebuild an artifact,
+	// never to mount one.
+	if slices.Contains(direct.Files, meta.RuntimeFileName) {
+		t.Errorf("%s copied runtime.json", direct.Dir)
+	}
+	// The name round-trips out of the directory name.
+	if direct.Name != "grch38/gtf-gencode/49" {
+		t.Errorf("name = %q", direct.Name)
+	}
+
+	// No payload rides along.
+	if _, err := os.Stat(filepath.Join(metaDir, DirName, direct.Dir, "data")); err == nil {
+		t.Error("a dependency payload reached the capsule")
+	}
+}
+
+// A diamond stores the shared dependency once: deduplication is by directory
+// name, which is (name, identity).
+func TestComposeDeduplicatesADiamond(t *testing.T) {
+	shared := map[string]string{
+		"grch38--genome--gencode@aaaabbbbcccc/" + meta.FileName: "{}\n",
+	}
+	left, leftIdentity := depImage(t, "grch38/gtf/49", map[string]string{meta.RecipeFileName: "echo left\n"}, shared, true)
+	right, rightIdentity := depImage(t, "grch38/vcf/49", map[string]string{meta.RecipeFileName: "echo right\n"}, shared, true)
+
+	metaDir := t.TempDir()
+	if _, err := compose(metaDir, []Dep{
+		{Name: "grch38/gtf/49", Identity: leftIdentity, ImagePath: left},
+		{Name: "grch38/vcf/49", Identity: rightIdentity, ImagePath: right},
+	}, staged); err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+
+	entries, err := Entries(filepath.Join(metaDir, DirName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		var dirs []string
+		for _, e := range entries {
+			dirs = append(dirs, e.Dir)
+		}
+		t.Errorf("entries = %v, want the shared dependency stored once", dirs)
+	}
+}
+
+// An unrecorded dependency has nothing to copy and nothing to name it by, so it
+// contributes no entry — and makes the closure incomplete, which is what the
+// manifest says out loud.
+func TestComposeWithAnUnrecordedDependency(t *testing.T) {
+	metaDir := t.TempDir()
+	complete, err := Compose(metaDir, []Dep{{Name: "samtools/1.23.1"}})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if complete {
+		t.Error("an unrecorded dependency produced a complete capsule")
+	}
+	if entries, err := Entries(filepath.Join(metaDir, DirName)); err != nil || len(entries) != 0 {
+		t.Errorf("entries = %v, err = %v", entries, err)
+	}
+}
+
+// Incompleteness is inherited one level up: if a dependency's own manifest says
+// its closure is incomplete, so is everything built on it.
+func TestComposeInheritsIncompleteness(t *testing.T) {
+	out, identity := depImage(t, "grch38/gtf/49",
+		map[string]string{meta.RecipeFileName: "echo gtf\n"}, nil, false)
+
+	complete, err := compose(t.TempDir(), []Dep{{
+		Name: "grch38/gtf/49", Identity: identity, ImagePath: out,
+	}}, staged)
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if complete {
+		t.Error("a dependency with an incomplete closure did not propagate")
+	}
+}

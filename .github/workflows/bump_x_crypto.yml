@@ -1,0 +1,82 @@
+name: Bump x-crypto Fork
+
+# go.mod replaces golang.org/x/crypto with condatainer/x-crypto, whose
+# `-hostbased.N` tags Dependabot does not follow. This opens a PR when the fork
+# has a newer tag.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    name: Bump x-crypto Fork
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Find latest fork tag
+        id: latest
+        run: |
+          latest=$(go list -m -versions github.com/condatainer/x-crypto | tr ' ' '\n' | grep -- '-hostbased\.' | tail -n 1)
+          if [ -z "$latest" ]; then
+            echo "::error::no -hostbased tag found on github.com/condatainer/x-crypto"
+            exit 1
+          fi
+          echo "VERSION=${latest}" >> $GITHUB_OUTPUT
+
+      - name: Update go.mod
+        id: update
+        run: |
+          latest="${{ steps.latest.outputs.VERSION }}"
+          go mod edit \
+            -replace "golang.org/x/crypto=github.com/condatainer/x-crypto@${latest}" \
+            -require "golang.org/x/crypto@${latest}"
+          go mod tidy
+          if git diff --quiet -- go.mod go.sum; then
+            echo "x-crypto is already at ${latest}"
+            echo "CHANGED=false" >> $GITHUB_OUTPUT
+          else
+            echo "CHANGED=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and test
+        if: steps.update.outputs.CHANGED == 'true'
+        run: |
+          go build ./...
+          go test ./...
+
+      - name: Open pull request
+        if: steps.update.outputs.CHANGED == 'true'
+        run: |
+          latest="${{ steps.latest.outputs.VERSION }}"
+          branch="bump/x-crypto-${latest}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "Branch ${branch} already exists; nothing to do"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add go.mod go.sum
+          git commit -m "chore: bump x-crypto to ${latest}"
+          git push origin "$branch"
+          gh pr create \
+            --base "${{ github.event.repository.default_branch }}" \
+            --head "$branch" \
+            --title "chore: bump x-crypto to ${latest}" \
+            --body "Bumps the \`golang.org/x/crypto\` replacement to \`github.com/condatainer/x-crypto@${latest}\`."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

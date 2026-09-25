@@ -1,0 +1,483 @@
+package cmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/build"
+	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/spf13/cobra"
+)
+
+var (
+	checkAutoInstall bool
+	checkProjectDir  string
+)
+
+var scriptCheckCmd = &cobra.Command{
+	Use:   "check [flags] <script|dir|name>...",
+	Short: "Check if the dependencies of script(s) are installed",
+	Long: `Check the dependencies declared with #DEP: in scripts.
+
+- Dependencies from all scripts are checked together.
+- Exits with code 3 if creation jobs were submitted to a scheduler.`,
+	Example: `  condatainer check script.sh              # Check one script
+  condatainer check samtools/1.22          # Check a recipe by name
+  condatainer check script1.sh script2.sh  # Check several scripts
+  condatainer check ./my-scripts/          # Check all .sh files in a directory
+  condatainer check -a script.sh           # Install missing dependencies`,
+	Args:         cobra.MinimumNArgs(1),
+	SilenceUsage: true, // Runtime errors should not show usage
+	RunE:         runCheck,
+}
+
+func init() {
+	rootCmd.AddCommand(scriptCheckCmd)
+	scriptCheckCmd.Flags().BoolVarP(&checkAutoInstall, "auto-install", "a", false, "Automatically install missing dependencies")
+	scriptCheckCmd.Flags().BoolVar(&noSubmitMode, "no-submit", false, "Disable job submission (build locally)")
+	RegisterProjectFlags(scriptCheckCmd, &checkProjectDir)
+}
+
+func runCheck(cmd *cobra.Command, args []string) error {
+	if err := applyProjectRelocation(checkProjectDir); err != nil {
+		return err
+	}
+
+	// Resolve all args to concrete script paths and metadata deps
+	scriptPaths, remotePaths, metaDeps, err := resolveAllScriptPaths(cmd.Context(), args)
+	if err != nil {
+		return err
+	}
+	for _, rp := range remotePaths {
+		defer os.Remove(rp)
+	}
+
+	if len(scriptPaths) == 0 && len(metaDeps) == 0 {
+		utils.PrintWarning("No scripts found to check.")
+		return nil
+	}
+
+	// A locked project answers per script and refuses -a.
+	if handled, err := projectCheck(cmd.Context(), scriptPaths, metaDeps); handled {
+		return err
+	}
+
+	// Collect and deduplicate deps across all scripts
+	deps, err := collectDeps(scriptPaths, metaDeps)
+	if err != nil {
+		return err
+	}
+	if len(deps) == 0 {
+		utils.PrintMessage("No dependencies found in script.")
+		return nil
+	}
+
+	// Check which deps are installed and print status. A bare or partial name
+	// counts as installed when an installed overlay answers it, as it does for run.
+	solved, err := resolveOverlayValues(cmd.Context(), deps, nil, true)
+	if err != nil {
+		return err
+	}
+	missingDeps := checkDeps(deps, solved)
+
+	if len(missingDeps) == 0 {
+		utils.PrintSuccess("All dependencies are installed.")
+		return nil
+	}
+
+	if !checkAutoInstall {
+		utils.PrintHint("Run the command again with `-a` or `--auto-install` to install missing dependencies.")
+		return nil
+	}
+
+	// Auto-install missing dependencies
+	utils.PrintMessage("Attempting to auto-install missing dependencies...")
+
+	hasUnresolvable := false
+	var packageDeps []string
+	for _, dep := range missingDeps {
+		if utils.IsOverlay(dep) || utils.IsSif(dep) {
+			if !autoCreateExternalOverlay(cmd.Context(), dep) {
+				hasUnresolvable = true
+			}
+		} else {
+			packageDeps = append(packageDeps, dep)
+		}
+	}
+
+	if len(packageDeps) > 0 {
+		if err := autoInstallPackages(cmd.Context(), packageDeps); err != nil {
+			return err
+		}
+	}
+
+	if hasUnresolvable {
+		return fmt.Errorf("some external overlays could not be auto-created")
+	}
+	utils.PrintSuccess("All selected overlays installed.")
+	return nil
+}
+
+// collectDeps gathers deduplicated dependencies from all scripts.
+// preSeededDeps are name/version deps from remote metadata (already normalized); they are
+// merged first so script-parsed deps deduplicate against them.
+// Relative overlay paths are resolved per-script using the scheduler WorkDir (if set) or cwd.
+func collectDeps(scriptPaths []string, preSeededDeps []string) ([]string, error) {
+	multiScript := len(scriptPaths) > 1
+	seen := make(map[string]bool)
+	var deps []string
+
+	// Pre-seed with metadata deps (name/version strings, never overlay paths)
+	for _, dep := range preSeededDeps {
+		key := catalog.Normalize(dep)
+		if !seen[key] {
+			seen[key] = true
+			deps = append(deps, dep)
+		}
+	}
+
+	for _, scriptPath := range scriptPaths {
+		if multiScript {
+			utils.PrintMessage("Checking script: %s", scriptPath)
+		}
+		scriptDeps, err := utils.GetDependenciesFromScript(scriptPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse dependencies from %s: %w", scriptPath, err)
+		}
+
+		// Prefer scheduler specs WorkDir if set, else current working directory.
+		workDir, _ := os.Getwd()
+		if specs, _ := scheduler.ReadScriptSpecsFromPath(scriptPath); specs != nil && specs.Control.WorkDir != "" {
+			workDir = specs.Control.WorkDir
+		}
+
+		for _, dep := range scriptDeps {
+			key := dep
+			if utils.IsOverlay(dep) || utils.IsSif(dep) {
+				if !filepath.IsAbs(dep) {
+					dep = filepath.Join(workDir, dep)
+				}
+				key = dep
+			} else {
+				key = catalog.Normalize(dep)
+			}
+			if !seen[key] {
+				seen[key] = true
+				deps = append(deps, dep)
+			}
+		}
+	}
+	return deps, nil
+}
+
+// checkDeps prints the status of each dependency grouped by type and returns the missing ones. solved is deps with every installed name replaced by its overlay path (solveOverlayNames), so an entry left unchanged is not installed.
+//   - Uses ✓/✗ symbols with colors.
+//   - Paths are shown relative to cwd when possible.
+func checkDeps(deps, solved []string) []string {
+	cwd, _ := os.Getwd()
+	depDisplay := func(p string) string {
+		if rel, err := filepath.Rel(cwd, p); err == nil && !strings.HasPrefix(rel, "..") {
+			return rel
+		}
+		return p
+	}
+
+	check := utils.StyleSuccess("✓")
+	cross := utils.StyleError("✗")
+
+	var overlays, packages []string
+	resolved := map[string]string{}
+	for i, dep := range deps {
+		if utils.IsOverlay(dep) || utils.IsSif(dep) {
+			overlays = append(overlays, dep)
+		} else {
+			packages = append(packages, dep)
+			resolved[dep] = solved[i]
+		}
+	}
+
+	var missing []string
+
+	if len(packages) > 0 {
+		fmt.Fprintf(os.Stdout, "%s\n", utils.StyleTitle("Module Overlays:"))
+		for _, dep := range packages {
+			if resolved[dep] != dep {
+				fmt.Fprintf(os.Stdout, "  %s %s\n", check, dep)
+			} else {
+				fmt.Fprintf(os.Stdout, "  %s %s\n", cross, dep)
+				missing = append(missing, dep)
+			}
+		}
+	}
+
+	if len(overlays) > 0 {
+		fmt.Fprintf(os.Stdout, "%s\n", utils.StyleTitle("External Overlays:"))
+		for _, dep := range overlays {
+			if utils.FileExists(dep) {
+				fmt.Fprintf(os.Stdout, "  %s %s\n", check, depDisplay(dep))
+			} else {
+				sibling := findSiblingSourceFile(dep)
+				hint := ""
+				if sibling != "" {
+					ext := filepath.Ext(sibling)
+					if strings.HasSuffix(sibling, ".sh") {
+						if shDeps, _ := utils.GetDependenciesFromScript(sibling); len(shDeps) > 0 {
+							hint = "  (" + ext + " found, but has #DEP - create manually)"
+						} else {
+							hint = "  (" + ext + " found)"
+						}
+					} else {
+						hint = "  (" + ext + " found)"
+					}
+				}
+				fmt.Fprintf(os.Stdout, "  %s %s%s\n", cross, depDisplay(dep), hint)
+				missing = append(missing, dep)
+			}
+		}
+	}
+
+	return missing
+}
+
+// autoCreateExternalOverlay attempts to create a missing external overlay from a sibling
+// source file (.yml, .yaml, .def, .sh). Returns true on success or skip, false if unresolvable.
+func autoCreateExternalOverlay(ctx context.Context, dep string) bool {
+	sibling := findSiblingSourceFile(dep)
+	if sibling == "" {
+		utils.PrintError("External overlay %s not found and no source file (.yml/.yaml/.def/.sh) found - cannot auto-create", dep)
+		return false
+	}
+	absFile, _ := filepath.Abs(sibling)
+	absPrefix, _ := filepath.Abs(dep[:len(dep)-len(filepath.Ext(dep))])
+	outputDir := filepath.Dir(absPrefix)
+	baseName := filepath.Base(absPrefix)
+
+	if strings.HasSuffix(sibling, ".sh") {
+		shDeps, _ := utils.GetDependenciesFromScript(sibling)
+		if len(shDeps) > 0 {
+			utils.PrintError("External overlay %s has .sh with #DEP - create manually:\ncondatainer create -f %s",
+				filepath.Base(dep), sibling)
+			return false
+		}
+	}
+
+	utils.PrintMessage("Auto-creating %s from %s...", filepath.Base(dep), sibling)
+
+	if utils.IsCondaFile(sibling) {
+		bo, err := build.NewCondaObjectWithSource(baseName, absFile, outputDir, false)
+		if err != nil {
+			utils.PrintError("Failed to create build object for %s: %v", dep, err)
+			return false
+		}
+		if err := bo.Build(ctx, false); err != nil {
+			utils.PrintError("Build failed for %s: %v", dep, err)
+			return false
+		}
+		return true
+	}
+
+	// .def or .sh
+	isApptainer := strings.HasSuffix(sibling, ".def")
+	bo, err := build.FromExternalSource(ctx, absPrefix, absFile, isApptainer, outputDir, false)
+	if err != nil {
+		utils.PrintError("Failed to create build object for %s: %v", dep, err)
+		return false
+	}
+	graph, err := build.NewBuildGraph(ctx, []*build.BuildObject{bo}, outputDir, config.Global.SubmitJob, false)
+	if err != nil {
+		utils.PrintError("Failed to create build graph for %s: %v", dep, err)
+		return false
+	}
+	if err := graph.Run(ctx); err != nil {
+		if !errors.Is(err, build.ErrBuildCancelled) {
+			utils.PrintError("Build failed for %s: %v", dep, err)
+			return false
+		}
+	}
+	return true
+}
+
+// autoInstallPackages installs named package dependencies via BuildGraph.
+func autoInstallPackages(ctx context.Context, packages []string) error {
+	imagesDir, err := config.GetWritableImagesDir()
+	if err != nil {
+		return fmt.Errorf("no writable images directory found: %w", err)
+	}
+	buildObjects := make([]*build.BuildObject, 0, len(packages))
+	for _, pkg := range packages {
+		bo, err := build.NewBuildObject(ctx, pkg, false, imagesDir, false)
+		if err != nil {
+			return fmt.Errorf("failed to create build object for %s: %w", pkg, err)
+		}
+		buildObjects = append(buildObjects, bo)
+	}
+
+	graph, err := build.NewBuildGraph(ctx, buildObjects, imagesDir, config.Global.SubmitJob, false)
+	if err != nil {
+		return fmt.Errorf("failed to create build graph: %w", err)
+	}
+
+	if err := graph.Run(ctx); err != nil {
+		if errors.Is(err, build.ErrBuildCancelled) ||
+			errors.Is(ctx.Err(), context.Canceled) ||
+			strings.Contains(err.Error(), "signal: killed") ||
+			strings.Contains(err.Error(), "context canceled") {
+			utils.PrintWarning("Installation cancelled.")
+			return nil
+		}
+		return fmt.Errorf("some overlays failed to install: %w", err)
+	}
+
+	ExitIfJobsSubmitted(graph)
+	return nil
+}
+
+// findSiblingSourceFile looks for the first source file (.yml, .yaml, .def, .sh) with the same
+// base name as the given overlay path. Returns empty string if none found.
+func findSiblingSourceFile(overlayPath string) string {
+	base := overlayPath[:len(overlayPath)-len(filepath.Ext(overlayPath))]
+	for _, ext := range []string{".yml", ".yaml", ".def", ".sh"} {
+		if utils.FileExists(base + ext) {
+			return base + ext
+		}
+	}
+	return ""
+}
+
+// findScriptsInDir finds all .sh files directly inside dir (non-recursive).
+// If no scripts are found, a warning is printed but an empty slice is returned without error.
+func findScriptsInDir(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read directory %s: %w", dir, err)
+	}
+	var found []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sh") {
+			found = append(found, filepath.Join(dir, e.Name()))
+		}
+	}
+	if len(found) == 0 {
+		utils.PrintWarning("No .sh files found in directory %s", dir)
+	}
+	return found, nil
+}
+
+// resolveAllScriptPaths resolves all positional arguments to concrete file paths.
+//   - Directories are expanded to all .sh files directly inside them (not recursive).
+//   - Other args are resolved via resolveScriptPath (a file, or a recipe).
+//   - A file that is not text is refused.
+//   - Returns scriptPaths (deduplicated), tempPaths (to defer-remove), metaDeps (deps taken from the index without reading a recipe), and any error.
+func resolveAllScriptPaths(ctx context.Context, args []string) (scriptPaths []string, remotePaths []string, metaDeps []string, err error) {
+	seen := make(map[string]bool)
+
+	for _, arg := range args {
+		if utils.DirExists(arg) {
+			dirScripts, dirErr := findScriptsInDir(arg)
+			if dirErr != nil {
+				return nil, remotePaths, metaDeps, dirErr
+			}
+			for _, p := range dirScripts {
+				if err := requireTextScript(p); err != nil {
+					return nil, remotePaths, metaDeps, err
+				}
+				if !seen[p] {
+					seen[p] = true
+					scriptPaths = append(scriptPaths, p)
+				}
+			}
+			continue
+		}
+
+		resolved, isTemp, argMetaDeps, resolveErr := resolveScriptPath(ctx, arg)
+		if resolveErr != nil {
+			return nil, remotePaths, metaDeps, resolveErr
+		}
+		if !isTemp && argMetaDeps == nil {
+			if err := requireTextScript(resolved); err != nil {
+				return nil, remotePaths, metaDeps, err
+			}
+		}
+		if argMetaDeps != nil {
+			// Indexed deps available — no recipe to read
+			metaDeps = append(metaDeps, argMetaDeps...)
+			continue
+		}
+		if isTemp {
+			remotePaths = append(remotePaths, resolved)
+		}
+		if !seen[resolved] {
+			seen[resolved] = true
+			scriptPaths = append(scriptPaths, resolved)
+		}
+	}
+
+	return scriptPaths, remotePaths, metaDeps, nil
+}
+
+// requireTextScript refuses a file that is not text, such as a writable overlay image or archive
+// passed where a script is expected.
+func requireTextScript(path string) error {
+	text, err := utils.IsTextFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	switch {
+	case text:
+		return nil
+	case utils.IsImg(path):
+		return fmt.Errorf("%s is not a text file; to check an overlay image, run `condatainer overlay fsck %s`", path, path)
+	case utils.IsSqf(path):
+		return fmt.Errorf("%s is not a text file; to check an overlay, run `condatainer info %s --validate`", path, path)
+	}
+	return fmt.Errorf("%s is not a text file", path)
+}
+
+// resolveScriptPath resolves a script path or name to an actual file path.
+//   - Returns (path, isTemp, metaDeps, error).
+//   - When metaDeps is non-nil, deps came from the index — no recipe was read and path will be empty.
+func resolveScriptPath(ctx context.Context, scriptPathOrName string) (string, bool, []string, error) {
+	// If it's a file, use it directly
+	if utils.FileExists(scriptPathOrName) {
+		return scriptPathOrName, false, nil, nil
+	}
+
+	normalized := catalog.Normalize(scriptPathOrName)
+	utils.PrintDebug("[CHECK] Checking for recipe %s...", normalized)
+
+	cat, err := config.OpenCatalog(ctx)
+	if err != nil {
+		return "", false, nil, err
+	}
+	match, found, err := cat.Lookup(ctx, normalized)
+	if err != nil {
+		return "", false, nil, err
+	}
+	if !found {
+		return "", false, nil, fmt.Errorf("no recipe for %s in any source", normalized)
+	}
+
+	// The index carries deps, so the common case needs no recipe at all.
+	if match.Entry.Deps != nil {
+		utils.PrintDebug("[CHECK] Using indexed deps for %s (no fetch)", normalized)
+		return "", false, match.Entry.Deps, nil
+	}
+
+	recipe, err := cat.Open(ctx, normalized, nil)
+	if err != nil {
+		return "", false, nil, fmt.Errorf("failed to read recipe: %w", err)
+	}
+	tmpPath := filepath.Join(config.GetWritableTmpDir(), "check--"+strings.ReplaceAll(recipe.Name, "/", "--"))
+	if err := os.WriteFile(tmpPath, recipe.Script(), utils.PermFile); err != nil {
+		return "", false, nil, fmt.Errorf("failed to write recipe: %w", err)
+	}
+	utils.PrintDebug("[CHECK] Wrote recipe to %s", tmpPath)
+	return tmpPath, true, nil, nil
+}

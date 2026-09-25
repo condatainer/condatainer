@@ -1,0 +1,230 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"log/slog"
+
+	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/image/ext3"
+	"github.com/condatainer/condatainer/internal/logging"
+	"github.com/condatainer/condatainer/internal/logging/weblog"
+	"github.com/condatainer/condatainer/internal/runtime/container"
+	cntexec "github.com/condatainer/condatainer/internal/runtime/exec"
+	"github.com/condatainer/condatainer/internal/utils"
+)
+
+// handleOverlayEdit serves POST /api/overlay/edit — resize, remove, or add packages
+// on an existing writable .img image. Returns a task ID immediately; progress is
+// streamed via GET /api/tasks/{id}/stream.
+func (s *srv) handleOverlayEdit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	type editReq struct {
+		Path           string `json:"path"`
+		Size           string `json:"size"`            // new size e.g. "30G"; empty = no resize
+		AddPackages    string `json:"add_packages"`    // space-separated
+		RemovePackages string `json:"remove_packages"` // space-separated
+	}
+	var req editReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request body", http.StatusBadRequest)
+		return
+	}
+	if req.Path == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	if !utils.IsImg(req.Path) {
+		http.Error(w, "only writable .img overlays can be edited", http.StatusBadRequest)
+		return
+	}
+
+	var newSizeMB int
+	if req.Size != "" {
+		var err error
+		newSizeMB, err = utils.ParseSizeToMB(req.Size)
+		if err != nil {
+			http.Error(w, "invalid size: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	addPkgs := strings.Fields(req.AddPackages)
+	removePkgs := strings.Fields(req.RemovePackages)
+	if newSizeMB == 0 && len(addPkgs) == 0 && len(removePkgs) == 0 {
+		http.Error(w, "nothing to do: specify size, add_packages, or remove_packages", http.StatusBadRequest)
+		return
+	}
+
+	taskID := fmt.Sprintf("edit-%d", time.Now().UnixNano())
+	broker := newSSEBroker()
+	ctx, cancel := context.WithCancel(s.ctx)
+	s.tasks.Store(taskID, &taskEntry{broker: broker, cancel: cancel})
+	writeJSON(w, map[string]string{"id": taskID})
+
+	bw := &brokerWriter{broker}
+	ctx = logging.WithLogger(ctx, slog.New(weblog.New(bw)))
+	ctx = logging.WithWriter(ctx, bw)
+	io := cntexec.IO{Stdout: bw, Stderr: bw}
+
+	go func() {
+		defer cancel()
+		defer s.scheduleTaskCleanup(taskID)
+
+		if newSizeMB > 0 {
+			fmt.Fprintf(bw, "Resizing %s to %s...\n", req.Path, req.Size)
+			if err := ext3.Resize(ctx, req.Path, newSizeMB, false); err != nil {
+				broadcastResult(broker, ctx, fmt.Errorf("resize: %w", err))
+				return
+			}
+		}
+		if len(removePkgs) > 0 {
+			fmt.Fprintf(bw, "Removing packages: %s\n", strings.Join(removePkgs, " "))
+			if err := cntexec.RemovePackages(ctx, req.Path, removePkgs, false, io); err != nil {
+				broadcastResult(broker, ctx, fmt.Errorf("remove packages: %w", err))
+				return
+			}
+		}
+		if len(addPkgs) > 0 {
+			fmt.Fprintf(bw, "Installing packages: %s\n", strings.Join(addPkgs, " "))
+			if err := cntexec.InstallPackages(ctx, req.Path, addPkgs, false, io); err != nil {
+				broadcastResult(broker, ctx, fmt.Errorf("add packages: %w", err))
+				return
+			}
+		}
+		fmt.Fprintf(bw, "Done.\n")
+		result, _ := json.Marshal(map[string]interface{}{"t": "done", "ok": true, "path": req.Path})
+		broker.publishFinal(result)
+	}()
+}
+
+// handleRemove serves POST /api/remove — deletes an installed .sqf module overlay and its .env sidecar (mirrors `condatainer remove`).
+//   - The path must be one of the currently installed overlays.
+//   - Returns 403 when the overlay's directory is read-only and 409 when the overlay is in use (lock held).
+func (s *srv) handleRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	type removeReq struct {
+		Path string `json:"path"`
+	}
+	var req removeReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request body", http.StatusBadRequest)
+		return
+	}
+	if req.Path == "" || !utils.IsSqf(req.Path) {
+		http.Error(w, "path of an installed .sqf overlay required", http.StatusBadRequest)
+		return
+	}
+
+	// Only allow deleting overlays known to the installed-overlay map, not arbitrary files.
+	installed, err := container.InstalledOverlays()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	known := false
+	for _, p := range installed {
+		if p == req.Path {
+			known = true
+			break
+		}
+	}
+	if !known {
+		http.Error(w, "not an installed overlay: "+req.Path, http.StatusBadRequest)
+		return
+	}
+
+	if !utils.CanWriteToDir(filepath.Dir(req.Path)) {
+		http.Error(w, "overlay directory is read-only", http.StatusForbidden)
+		return
+	}
+	if lock, err := image.AcquireLock(req.Path, true); err != nil {
+		// Protected is the caller's answer to change, in use is not.
+		status := http.StatusConflict
+		if errors.Is(err, image.ErrProtected) {
+			status = http.StatusForbidden
+		}
+		http.Error(w, err.Error(), status)
+		return
+	} else {
+		lock.Close()
+	}
+	if err := os.Remove(req.Path); err != nil {
+		http.Error(w, "failed to remove overlay: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	envPath := req.Path + ".env"
+	if utils.FileExists(envPath) {
+		os.Remove(envPath) //nolint:errcheck
+	}
+	container.InvalidateInstalledOverlaysCache()
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleOverlaysList serves GET /api/overlays — lists module (.sqf) overlays.
+//
+// Scans directly rather than through container.InstalledOverlays: that map's
+// bare-name aliases exist for name-to-path resolution, and listing through it
+// would show every default-distro OS overlay twice, once under each key
+// pointing at the same file.
+func (s *srv) handleOverlaysList(w http.ResponseWriter, r *http.Request) {
+	scan, err := image.ScanOverlays(image.ScanOptions{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	installed := image.FirstPaths(scan)
+	// Type is what the payload is, Format is the file's container format. These
+	// were one field holding the extension, which conflated the two.
+	type overlayEntry struct {
+		Name        string `json:"name"`
+		Path        string `json:"path"`
+		Size        int64  `json:"size"`
+		Type        string `json:"type"`
+		Format      string `json:"format"`
+		Description string `json:"description,omitempty"`
+	}
+	var entries []overlayEntry
+	for name, path := range installed {
+		if !utils.IsSqf(path) {
+			continue
+		}
+		size := int64(0)
+		if info, err := os.Stat(path); err == nil {
+			size = info.Size()
+		}
+		// An image with no readable metadata still lists, as an app with no
+		// description — it is installed and removable either way.
+		entry := overlayEntry{
+			Name:   name,
+			Path:   path,
+			Size:   size,
+			Type:   string(catalog.TypeApp),
+			Format: strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
+		}
+		if rt, err := meta.ReadRuntime(path); err == nil {
+			entry.Type = string(rt.Type)
+			entry.Description = rt.Description
+		}
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	writeJSON(w, entries)
+}

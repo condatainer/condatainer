@@ -1,0 +1,972 @@
+package cmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+
+	"github.com/chzyer/readline"
+	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/build"
+	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/runtime/apptainer"
+	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+)
+
+// Variables to hold flag values
+var (
+	createName             string
+	createPrefix           string
+	createFile             string
+	createFrom             string
+	createBlockSize        string
+	createDataBlockSize    string
+	createChannels         []string
+	createSources          []string
+	createUpdate           bool
+	createStore            bool
+	createNoPrebuilt       bool
+	createLayer            string
+	createAlwaysSubmitData bool
+
+	// compression flags are generated dynamically from config.CompressOptions
+	compFlags     map[string]*bool
+	compFlagNames map[string]bool
+
+	// buildFlagNames is the set of flags shown under "Build Flags:" in help.
+	buildFlagNames = map[string]bool{
+		"block-size":      true,
+		"data-block-size": true, "always-submit-data": true, "no-submit": true, "store": true, "no-prebuilt": true,
+	}
+)
+
+// compressArgsFromFlags inspects the map of boolean pointers produced by
+// flag registration and returns the corresponding mksquashfs arguments.
+// If more than one compression flag is set, it returns an error.
+func compressArgsFromFlags(flags map[string]*bool) (string, error) {
+	selected := ""
+	for name, ptr := range flags {
+		if ptr != nil && *ptr {
+			if selected != "" {
+				return "", errors.New("multiple compression options specified")
+			}
+			selected = name
+		}
+	}
+	if selected == "" {
+		return "", nil
+	}
+	return config.ArgsForCompress(selected), nil
+}
+
+// createJobFlags are the flags a submitted build has to repeat: the node re-runs
+// create from the name alone, so anything that changes what is built or where it
+// lands has to travel with it. Submission and mode flags are left out — the job
+// is the submission, and it builds by name.
+func createJobFlags() []string {
+	var flags []string
+	for _, channel := range createChannels {
+		flags = append(flags, "--channel", channel)
+	}
+	for _, source := range createSources {
+		flags = append(flags, "--source", source)
+	}
+	if createLayer != "" {
+		flags = append(flags, "--layer", createLayer)
+	}
+	if createBlockSize != "" {
+		flags = append(flags, "--block-size", createBlockSize)
+	}
+	if createDataBlockSize != "" {
+		flags = append(flags, "--data-block-size", createDataBlockSize)
+	}
+	for _, opt := range config.CompressOptions {
+		if ptr := compFlags[opt.Name]; ptr != nil && *ptr {
+			flags = append(flags, "--"+opt.Name)
+		}
+	}
+	return flags
+}
+
+var createCmd = &cobra.Command{
+	Use:     "create [flags] [packages...]",
+	Aliases: []string{"install", "i"},
+	Short:   "Create a new SquashFS overlay",
+	Long: `Create a new SquashFS overlay from a recipe, Conda packages, or an image.
+
+Exits with code 3 if build jobs were submitted to a scheduler.`,
+	Example: `  condatainer create orad/2.7.0                              # From a recipe
+  condatainer create --source lab star/2.7.11b               # From a recipe in the lab source
+  condatainer create -n nvim nvim nodejs                     # Conda packages, named nvim
+  condatainer create matplotlib pandas -p /path              # Conda packages at a custom path
+  condatainer create -f environment.yml -p myenv             # From a Conda file
+  condatainer create --from docker://ubuntu:22.04 -p ubuntu  # From a container image`,
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		return config.SelectSources(createSources)
+	},
+	Run: func(cmd *cobra.Command, args []string) {
+		ctx := cmd.Context()
+		// 1. Validation Logic
+		if len(args) == 0 && createFile == "" && createFrom == "" {
+			ExitWithError("At least one of [packages], --file, or --from must be provided.")
+		}
+		if createFrom != "" && createName == "" && createPrefix == "" {
+			ExitWithError("When using --from, either --name or --prefix must be provided.")
+		}
+		if derived := derivePrefixFromFile(createFile, createPrefix, createName); derived != "" {
+			createPrefix = derived
+		}
+		if createPrefix != "" {
+			resolved, note, err := resolvePrefix(createPrefix, createName, createFile)
+			if err != nil {
+				ExitWithError("%v", err)
+			}
+			createPrefix = resolved
+			if note != "" {
+				utils.PrintNote("%s", note)
+			}
+		}
+		// Checked after the derivation above, which turns a bare `-f env.yml` into
+		// a prefix: it is the prefix that conflicts, however it arrived. A prefix
+		// names an exact output path, while the store generates its filename from
+		// the artifact's keys — the filename there is the address. Everything else
+		// builds into an images directory and can be filed by identity.
+		if createPrefix != "" {
+			if createStore {
+				ExitWithError("--store cannot be used with --prefix: a prefix names the file, and in the store the identity does. Use --name instead.")
+			}
+			if createLayer != "" {
+				ExitWithError("Cannot use both --layer and --prefix: --prefix already names where the overlay goes.")
+			}
+		}
+		if createPrefix != "" && createFile == "" && len(args) == 0 && createFrom == "" {
+			ExitWithError("--prefix requires either packages, --file, or --from to be specified.")
+		}
+
+		// 2. Apptainer runs every build, so fail here rather than after
+		// resolution has already fetched recipes. The base image is not checked:
+		// it is an implicit prerequisite of the plan, built with everything else.
+		if _, err := apptainer.Normal(); err != nil {
+			ExitWithError("cannot build an overlay: %v", err)
+		}
+
+		// 3. Handle Compression Config – consult helper that respects available
+		// options and rejects multiple selections.
+		if args, err := compressArgsFromFlags(compFlags); err != nil {
+			ExitWithError("%v", err)
+		} else if args != "" {
+			config.Global.Build.CompressArgs = args
+		}
+		// If no compression flag provided, the config default (zstd-medium
+		// unless the user overrode build.compress_args) stands.
+
+		// 4. Override channels if -c was provided
+		if len(createChannels) > 0 {
+			config.Global.Build.Channels = createChannels
+		}
+
+		// 5. Handle block sizes
+		if createBlockSize != "" {
+			if !config.IsValidBlockSize(createBlockSize) {
+				ExitWithError("Invalid --block-size %q: must be a power of two between 4096 and 1M (e.g. 64k, 128k, 512k, 1m)", createBlockSize)
+			}
+			config.Global.Build.BlockSize = createBlockSize
+		}
+		if createDataBlockSize != "" {
+			if !config.IsValidBlockSize(createDataBlockSize) {
+				ExitWithError("Invalid --data-block-size %q: must be a power of two between 4096 and 1M (e.g. 64k, 128k, 512k, 1m)", createDataBlockSize)
+			}
+			config.Global.Build.DataBlockSize = createDataBlockSize
+		}
+
+		// 6. Normalize package names (only for build-script mode, not for conda/prefix/source modes)
+		normalizedArgs := args
+		if createName == "" && createPrefix == "" && createFrom == "" {
+			normalizedArgs = make([]string, len(args))
+			for i, arg := range args {
+				normalized, expanded, err := solveCreateName(cmd.Context(), arg)
+				if err != nil {
+					ExitWithError("%v", err)
+				}
+				if expanded {
+					utils.PrintNote("Expanding '%s' to '%s'", catalog.Normalize(arg), normalized)
+				}
+				normalizedArgs[i] = normalized
+			}
+		}
+
+		// 7b. Handle --always-submit-data
+		if createNoPrebuilt {
+			config.Global.Build.SkipPrebuilt = true
+		}
+		if createAlwaysSubmitData {
+			config.Global.Build.AlwaysSubmitData = true
+		}
+
+		// 8. Announce update mode
+		if createUpdate {
+			utils.PrintNote("Update mode: existing overlays will be rebuilt.")
+		}
+
+		// 9. Execute create based on mode
+		if createFrom != "" {
+			// Mode: --from (external image like docker://ubuntu)
+			runCreateFromSource(ctx)
+		} else if createPrefix != "" && len(args) > 0 {
+			// Mode: --prefix + packages (conda env at custom path, like conda create -p)
+			runCreateWithPrefixAndPackages(ctx, args)
+		} else if createPrefix != "" {
+			// Mode: --prefix (with --file for YAML/def/sh)
+			runCreateWithPrefix(ctx)
+		} else if createName != "" {
+			// Mode: --name (multiple packages or YAML into one sqf)
+			// Pass original args for conda package names (not normalized)
+			runCreateWithName(ctx, args)
+		} else {
+			// Mode: Default (each package gets its own sqf via BuildObject)
+			runCreatePackages(ctx, normalizedArgs)
+		}
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(createCmd)
+
+	// Register Flags
+	f := createCmd.Flags()
+	f.StringVarP(&createName, "name", "n", "", "Custom name for the overlay (with --prefix: the name recorded in it)")
+	f.StringVarP(&createPrefix, "prefix", "p", "", "Custom prefix path for the overlay")
+	f.StringVarP(&createFile, "file", "f", "", "Path to definition file (.yaml, .txt, .sh, .def, .sif, or a sandbox dir)")
+	f.StringVar(&createFrom, "from", "", "Build from an external image URI (e.g., docker://ubuntu:22.04)")
+	f.StringVar(&createBlockSize, "block-size", "", "SquashFS block size of all overlays except data (4k to 1m, e.g. 256k)")
+	f.StringVar(&createDataBlockSize, "data-block-size", "", "SquashFS block size of data overlays (4k to 1m, e.g. 512k)")
+	f.StringArrayVarP(&createChannels, "channel", "c", nil, "Conda channel to use (overrides config; repeatable)")
+	f.StringArrayVarP(&createSources, "source", "s", nil,
+		"Use only this configured recipe source, in flag order (repeatable)")
+	f.BoolVarP(&createUpdate, "update", "u", false, "Rebuild overlays even if they already exist")
+	f.BoolVar(&createStore, "store", false, "Build into the store, filed under its identity")
+	f.BoolVar(&createNoPrebuilt, "no-prebuilt", false, "Build from the recipe instead of pulling a prebuilt artifact")
+	f.StringVarP(&createLayer, "layer", "l", "", "Build into this data layer: u/user, r/app-root, e/extra-root")
+	f.BoolVar(&createAlwaysSubmitData, "always-submit-data", false, "Submit data builds as scheduler jobs, even without directives")
+	f.BoolVar(&noSubmitMode, "no-submit", false, "Disable job submission (build locally)")
+
+	// Compression flags: create a bool flag for each known option
+	compFlags = make(map[string]*bool)
+	for _, opt := range config.CompressOptions {
+		compFlags[opt.Name] = f.Bool(opt.Name, false, opt.Description)
+	}
+
+	blockSizeCompletion := func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return config.BlockSizeCompletions, cobra.ShellCompDirectiveNoFileComp
+	}
+	createCmd.RegisterFlagCompletionFunc("block-size", blockSizeCompletion)      //nolint:errcheck
+	createCmd.RegisterFlagCompletionFunc("data-block-size", blockSizeCompletion) //nolint:errcheck
+	createCmd.RegisterFlagCompletionFunc("source", sourceHandleCompletion)       //nolint:errcheck
+
+	// Mark compression flags in their own section
+	compFlagNames = make(map[string]bool, len(config.CompressOptions))
+	for _, opt := range config.CompressOptions {
+		compFlagNames[opt.Name] = true
+	}
+
+	// Custom usage: two labeled sections — "Flags:" and "Build Flags:"
+	createCmd.SetUsageFunc(func(cmd *cobra.Command) error {
+		fmt.Fprintf(cmd.OutOrStderr(), "Usage:\n  %s\n", cmd.UseLine())
+		if len(cmd.Aliases) > 0 {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nAliases:\n  %s\n", cmd.NameAndAliases())
+		}
+		if cmd.HasExample() {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nExamples:\n%s\n", cmd.Example)
+		}
+		general := pflag.NewFlagSet("", pflag.ContinueOnError)
+		build := pflag.NewFlagSet("", pflag.ContinueOnError)
+		compress := pflag.NewFlagSet("", pflag.ContinueOnError)
+		cmd.LocalFlags().VisitAll(func(fl *pflag.Flag) {
+			if compFlagNames[fl.Name] {
+				compress.AddFlag(fl)
+			} else if buildFlagNames[fl.Name] {
+				build.AddFlag(fl)
+			} else {
+				general.AddFlag(fl)
+			}
+		})
+		if general.HasFlags() {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nFlags:\n%s", flagUsages(general))
+		}
+		if build.HasFlags() {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nBuild Flags:\n%s", flagUsages(build))
+		}
+		if compress.HasFlags() {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nCompression Flags:\n%s", flagUsages(compress))
+		}
+		if cmd.HasAvailableInheritedFlags() {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nGlobal Flags:\n%s", cmd.InheritedFlags().FlagUsages())
+		}
+		return nil
+	})
+}
+
+// imagesDirNoteOnce keeps the destination note to one line per command, since the
+// three create paths each resolve the directory independently.
+var imagesDirNoteOnce sync.Once
+
+// writableImagesDirFor resolves where a build installs: the layer named, or the
+// furthest-out writable directory when none is.
+//
+// A layer is the only placement control offered, and it is local — LayerUser is
+// $SCRATCH on one machine and the XDG data dir on another — so it is a choice
+// made per invocation and never recorded anywhere.
+func writableImagesDirFor(layer string) (string, error) {
+	if strings.TrimSpace(layer) == "" {
+		dir, err := config.GetWritableImagesDir()
+		if err != nil {
+			return "", fmt.Errorf("no writable images directory found: %w", err)
+		}
+		return dir, nil
+	}
+	selected, err := config.ParseDataLayer(layer)
+	if err != nil {
+		return "", err
+	}
+	return config.GetWritableImagesDirIn(selected)
+}
+
+// getWritableImagesDir returns the writable images directory or exits with an error.
+// The destination and its data layer are reported once: the target depends on which
+// directories happen to be writable, so "(app-root)" vs "(user)" is the difference
+// between installing for everyone and installing only for yourself.
+func getWritableImagesDir() string {
+	dir, err := writableImagesDirFor(createLayer)
+	if err != nil {
+		ExitWithError("%v", err)
+	}
+	imagesDirNoteOnce.Do(func() {
+		utils.PrintNote("Installing to %s (%s)", dir, config.ClassifyDataDir(dir))
+	})
+	return dir
+}
+
+// readLineWithCompletion reads a line from stdin with tab-completion over completions.
+// Ctrl-C / EOF and context cancellation all return context.Canceled.
+func readLineWithCompletion(ctx context.Context, prompt string, completions []string) (string, error) {
+	items := make([]readline.PrefixCompleterInterface, len(completions))
+	for i, v := range completions {
+		items[i] = readline.PcItem(v)
+	}
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:       prompt,
+		AutoComplete: readline.NewPrefixCompleter(items...),
+	})
+	if err != nil {
+		return "", err
+	}
+	defer rl.Close()
+
+	type result struct {
+		s   string
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		s, err := rl.Readline()
+		ch <- result{strings.TrimSpace(s), err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		rl.Close()
+		return "", context.Canceled
+	case r := <-ch:
+		if r.err == readline.ErrInterrupt || r.err == io.EOF {
+			return "", context.Canceled
+		}
+		return r.s, r.err
+	}
+}
+
+// resolveTemplateInteractively prompts the user to choose a value for each placeholder
+// in a PH template script and returns the interpolated concrete name (from #TARGET:).
+// When --yes is set, defaults are used without prompting.
+func resolveTemplateInteractively(ctx context.Context, info *catalog.Entry) (string, error) {
+	utils.PrintMessage("Placeholder template: %s", info.Name)
+	if info.Description != "" {
+		utils.PrintMessage("%s", info.Description)
+	}
+	if info.TargetTemplate != "" {
+		fmt.Fprintf(os.Stdout, "Target: %s\n", info.TargetTemplate)
+	}
+	tmpl := catalog.NewTemplate(info.TargetTemplate)
+	names := tmpl.Names()
+	chosenVars := make(map[string]string, len(names))
+
+	// Build per-placeholder installed defaults from single-slash tool #DEP: patterns.
+	installedDefaults := map[string]string{}
+	if overlays, err := container.InstalledOverlays(); err == nil {
+		installedVals := map[string][]string{}
+		for _, dep := range info.Deps {
+			if !strings.Contains(dep, "{") || strings.Count(dep, "/") != 1 {
+				continue
+			}
+			depTmpl := catalog.NewTemplate(dep)
+			for name := range overlays {
+				// The dep's tokens are the parent's placeholders, so its declared
+				// values are what an installed name has to be one of.
+				if vars, ok := depTmpl.Match(name, info.PH); ok {
+					for k, v := range vars {
+						installedVals[k] = append(installedVals[k], v)
+					}
+				}
+			}
+		}
+		for k, vals := range installedVals {
+			installedDefaults[k] = utils.SortVersionsDescending(vals)[0]
+		}
+	}
+
+	for _, key := range names {
+		vals, ok := info.PH[key]
+		if !ok {
+			continue
+		}
+
+		// Separate concrete values from "*"
+		var concrete []string
+		hasOpen := false
+		for _, v := range vals {
+			if v == "*" {
+				hasOpen = true
+			} else {
+				concrete = append(concrete, v)
+			}
+		}
+
+		// Determine the default: prefer latest installed, fall back to latest available.
+		var defaultVal string
+		if len(concrete) > 0 {
+			defaultVal = concrete[0]
+		}
+		if iv, ok := installedDefaults[key]; ok {
+			if hasOpen || slices.Contains(concrete, iv) {
+				defaultVal = iv
+			}
+		}
+
+		// Build the prompt string
+		var prompt string
+		n := len(concrete)
+		switch {
+		case hasOpen && n > 0:
+			if n > 8 {
+				prompt = fmt.Sprintf("  %s [suggested: %s-%s, or any value] (default: %s): ",
+					key, concrete[n-1], concrete[0], defaultVal)
+			} else {
+				prompt = fmt.Sprintf("  %s [suggested: %s, or any value] (default: %s): ",
+					key, strings.Join(concrete, ", "), defaultVal)
+			}
+		case hasOpen && n == 0:
+			prompt = fmt.Sprintf("  %s [any value]: ", key)
+		case n > 8:
+			prompt = fmt.Sprintf("  %s [%s-%s] (default: %s): ",
+				key, concrete[n-1], concrete[0], defaultVal)
+		default:
+			prompt = fmt.Sprintf("  %s [%s] (default: %s): ",
+				key, strings.Join(concrete, ", "), defaultVal)
+		}
+
+		if utils.ShouldAnswerYes() {
+			if defaultVal != "" {
+				fmt.Printf("%s%s\n", prompt, defaultVal)
+				chosenVars[key] = defaultVal
+			}
+			continue
+		}
+
+		for {
+			input, err := readLineWithCompletion(ctx, prompt, concrete)
+			if err != nil {
+				return "", err
+			}
+
+			// Empty input → use default
+			if input == "" {
+				if defaultVal == "" {
+					utils.PrintWarning("No default available for %q — please enter a value.", key)
+					continue
+				}
+				chosenVars[key] = defaultVal
+				break
+			}
+
+			// For closed lists, validate against known values
+			if !hasOpen {
+				valid := false
+				for _, v := range concrete {
+					if v == input {
+						valid = true
+						break
+					}
+				}
+				if !valid {
+					utils.PrintWarning("Invalid value %q for %s. Valid values: %s",
+						input, key, strings.Join(concrete, ", "))
+					continue
+				}
+			}
+
+			chosenVars[key] = input
+			break
+		}
+	}
+
+	concrete, err := tmpl.Fill(chosenVars)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(os.Stdout, "  → Creating %s\n", concrete)
+	return concrete, nil
+}
+
+// solveCreateName resolves a create argument as load resolves #REQUIRED_OVERLAYS:
+// catalog.SolveName against what is installed, then anaconda.org's package index, so
+// "r", "rstudio-server" and a bare or partial Conda name like "openjdk/17" each land
+// on one concrete module. A channel-annotated or fully qualified name that resolves
+// nowhere is returned unchanged for the normal Conda fallback.
+func solveCreateName(ctx context.Context, nameVersion string) (string, bool, error) {
+	normalized := catalog.Normalize(nameVersion)
+	if normalized == "" || strings.Contains(normalized, "::") {
+		return normalized, false, nil
+	}
+	cat, err := config.OpenCatalog(ctx)
+	if err != nil {
+		return normalized, false, nil
+	}
+	if res, found, err := cat.SolveName(ctx, build.InstalledVersions(nil), projectDefaultDistro(), normalized); err == nil && found {
+		return res.Name, res.Name != normalized, nil
+	}
+
+	resolved, err := solveCondaName(normalized)
+	if err != nil {
+		return normalized, false, err
+	}
+	if resolved != "" {
+		return resolved, resolved != normalized, nil
+	}
+	return normalized, false, nil
+}
+
+// solveCondaName resolves name against the first configured channel that carries it, picking the newest version Dep.Satisfies admits, so a bare or partial name lands on an exact version before micromamba solves.
+//   - It returns "" when the search fails, so a network hiccup does not block an install, or when name carries its own version.
+//   - A miss on a name with no version is an error: micromamba could not resolve it either, and this fails faster.
+func solveCondaName(name string) (string, error) {
+	dep, err := catalog.ParseDep(name)
+	if err != nil {
+		return "", nil
+	}
+	results, _, err := utils.SearchCondaPackages(dep.Name, config.Global.Build.Channels, false, 0)
+	if err != nil {
+		return "", nil
+	}
+	if len(results) > 0 {
+		for _, v := range results[0].Versions {
+			if dep.Satisfies(v) {
+				return dep.Name + "/" + v, nil
+			}
+		}
+	}
+	if dep.Version != "" {
+		return "", nil
+	}
+	if len(results) == 0 {
+		return "", fmt.Errorf("no conda package named %q found in %s", dep.Name, strings.Join(config.Global.Build.Channels, ", "))
+	}
+	return "", fmt.Errorf("no version of %q in channel %s satisfies %q", dep.Name, results[0].Channel, name)
+}
+
+// runCreatePackages creates separate sqf files for each package using BuildGraph
+// Example: condatainer create samtools/1.16 bcftools/1.15
+func runCreatePackages(ctx context.Context, packages []string) {
+	imagesDir := getWritableImagesDir()
+
+	buildObjects := make([]*build.BuildObject, 0, len(packages))
+	for _, pkg := range packages {
+		// A bare template name does not identify an artifact; ask which member.
+		if cat, err := config.OpenCatalog(ctx); err == nil {
+			if m, found, err := cat.Lookup(ctx, pkg); err == nil && found &&
+				m.Entry.IsTemplate && len(m.Vars) == 0 {
+				resolved, err := resolveTemplateInteractively(ctx, m.Entry)
+				if err != nil {
+					ExitWithError("Template resolution cancelled for %s: %v", pkg, err)
+				}
+				pkg = resolved
+			}
+		}
+
+		var bo *build.BuildObject
+		var err error
+		if createStore {
+			bo, err = build.NewStoreBuildObject(ctx, pkg, imagesDir, createUpdate)
+		} else {
+			bo, err = build.NewBuildObject(ctx, pkg, false, imagesDir, createUpdate)
+		}
+		if err != nil {
+			ExitWithError("Failed to create build object for %s: %v", pkg, err)
+		}
+		applyStoreOverflow(bo)
+		utils.PrintDebug("[CREATE] BuildObject created:\n%s", bo)
+		buildObjects = append(buildObjects, bo)
+	}
+
+	graph, err := build.NewBuildGraph(ctx, buildObjects, imagesDir, config.Global.SubmitJob, createUpdate)
+	if err != nil {
+		ExitWithError("Failed to create build graph: %v", err)
+	}
+	graph.SetJobFlags(createJobFlags())
+
+	if err := graph.Run(ctx); err != nil {
+		exitOnBuildError(err)
+	}
+	// If jobs were submitted to the scheduler, exit with a distinct code so downstream tooling
+	// can detect that overlays will be created asynchronously by scheduler jobs.
+	ExitIfJobsSubmitted(graph)
+}
+
+// derivePrefixFromFile returns the prefix --file implies, or "" when the user
+// already named a target. The mode dispatch tests --prefix before --name, so a
+// prefix derived while --name is set would silently win over it.
+func derivePrefixFromFile(file, prefix, name string) string {
+	if file == "" || prefix != "" || name != "" {
+		return ""
+	}
+	return file[:len(file)-len(filepath.Ext(file))]
+}
+
+// scriptTarget is the name a shell script or definition declares with #TARGET:,
+// or "".
+func scriptTarget(file string) string {
+	if !isExternalBuildFile(file) {
+		return ""
+	}
+	target, _ := utils.GetTargetFromScript(file)
+	return target
+}
+
+// resolvePrefix settles --prefix against what names the artifact: --name, else
+// the script's or definition's #TARGET:, else the basename itself. The first two leave the
+// prefix a plain path, except directly in an images directory, where the
+// filename is the address and has to be the name's. The basename is spelled as
+// the name it reads as (my--env, my=1 and my@1 are name/version spellings), and
+// note says so when that differs from what was typed.
+func resolvePrefix(prefix, name, file string) (resolved, note string, err error) {
+	if name == "" {
+		name = scriptTarget(file)
+	}
+	if name != "" {
+		return prefix, "", checkImageDirPrefix(prefix, catalog.Normalize(name))
+	}
+	base := filepath.Base(prefix)
+	named := catalog.Normalize(base)
+	if named == base {
+		return prefix, "", nil
+	}
+	spelled := image.EncodeArtifactName(named)
+	note = fmt.Sprintf("--prefix '%s' names the overlay '%s'", base, named)
+	if spelled != base {
+		note += fmt.Sprintf("; the file is %s.sqf", spelled)
+	}
+	return filepath.Join(filepath.Dir(prefix), spelled), note, nil
+}
+
+// checkImageDirPrefix refuses a prefix directly in an images directory whose
+// filename is not the one name encodes to.
+func checkImageDirPrefix(prefix, name string) error {
+	abs, err := filepath.Abs(prefix)
+	if err != nil {
+		return nil
+	}
+	dir := filepath.Dir(abs)
+	base := strings.TrimSuffix(filepath.Base(abs), ".sqf")
+	want := image.EncodeArtifactName(name)
+	for _, d := range config.GetImageSearchPaths() {
+		if filepath.Clean(d) == dir && base != want {
+			return fmt.Errorf("--prefix %s is in an images directory, where the filename is the address: it must be %s.sqf to hold %s",
+				prefix, want, name)
+		}
+	}
+	return nil
+}
+
+// prefixBuildOptions names the artifact --name when --prefix places it. Without
+// --prefix the file is named for the artifact already.
+func prefixBuildOptions() []build.Option {
+	if createName == "" || createPrefix == "" {
+		return nil
+	}
+	return []build.Option{build.WithName(createName)}
+}
+
+// prefixJobArgs are the create arguments that rebuild a --prefix script.
+func prefixJobArgs(absPrefix, absFile string) []string {
+	args := []string{"--prefix", absPrefix, "--file", absFile}
+	if createName != "" {
+		args = append(args, "--name", createName)
+	}
+	return args
+}
+
+// normalizedTargetName returns --name in catalog form.
+//   - Any depth is allowed: a restore recreates the catalog's own names, and a data image is several levels deep (grch38/star/2.7.11b/gencode47-101).
+//   - `/` becomes `--` in the filename and Normalize turns it back.
+func normalizedTargetName() string {
+	return catalog.Normalize(createName)
+}
+
+// isExternalBuildFile reports whether a file builds through the external-source
+// path: a shell recipe or an Apptainer definition.
+func isExternalBuildFile(path string) bool {
+	return strings.HasSuffix(path, ".sh") ||
+		strings.HasSuffix(path, ".bash") ||
+		strings.HasSuffix(path, ".def")
+}
+
+// isForeignRoot reports whether path is an already-built container root — a
+// .sif or an Apptainer sandbox directory — that FromForeignRoot packs
+// directly rather than handing to Apptainer's own build.
+func isForeignRoot(path string) bool {
+	return utils.IsSif(path) || utils.IsSandboxDir(path)
+}
+
+// buildForeignSource imports a .sif or sandbox directory into targetPrefix,
+// exiting on failure. outputDir holds the image and its scratch space.
+func buildForeignSource(ctx context.Context, targetPrefix, source, outputDir string) {
+	bo, err := build.FromForeignRoot(ctx, targetPrefix, source, outputDir, createUpdate, prefixBuildOptions()...)
+	if err != nil {
+		ExitWithError("Failed to import %s: %v", source, err)
+	}
+	applyStoreOverflow(bo)
+
+	graph, err := build.NewBuildGraph(ctx, []*build.BuildObject{bo}, outputDir,
+		config.Global.SubmitJob, createUpdate)
+	if err != nil {
+		ExitWithError("Failed to create build graph: %v", err)
+	}
+	if err := graph.Run(ctx); err != nil {
+		exitOnBuildError(err)
+	}
+	ExitIfJobsSubmitted(graph)
+}
+
+// applyStoreOverflow marks a build to be filed under its identity when --store
+// was given.
+func applyStoreOverflow(bo *build.BuildObject) {
+	if !createStore {
+		return
+	}
+	bo.SetStoreOverflow(true)
+}
+
+// buildExternalSource builds one script or definition into targetPrefix, exiting
+// on failure. outputDir holds the image and its scratch space. jobArgs are the
+// create arguments that rebuild it, for a script that a scheduler job is to run.
+func buildExternalSource(ctx context.Context, targetPrefix, source string, isApptainer bool, outputDir string, jobArgs []string) {
+	bo, err := build.FromExternalSource(ctx, targetPrefix, source, isApptainer, outputDir, createUpdate, prefixBuildOptions()...)
+	if err != nil {
+		ExitWithError("Failed to create build object from %s: %v", source, err)
+	}
+	applyStoreOverflow(bo)
+	bo.SetJobArgs(jobArgs)
+
+	graph, err := build.NewBuildGraph(ctx, []*build.BuildObject{bo}, outputDir,
+		config.Global.SubmitJob, createUpdate)
+	if err != nil {
+		ExitWithError("Failed to create build graph: %v", err)
+	}
+	graph.SetJobFlags(createJobFlags())
+
+	if err := graph.Run(ctx); err != nil {
+		exitOnBuildError(err)
+	}
+	// If jobs were submitted to the scheduler, exit with a distinct code so downstream tooling
+	// can detect that overlays will be created asynchronously by scheduler jobs.
+	ExitIfJobsSubmitted(graph)
+}
+
+// runCreateWithName creates a single sqf with multiple packages or from a file
+// Example: condatainer create -n myenv nvim nodejs
+// Example: condatainer create -n myenv -f environment.yml
+// Example: condatainer create -n myenv -f build.sh
+func runCreateWithName(ctx context.Context, packages []string) {
+	imagesDir := getWritableImagesDir()
+
+	normalizedName := normalizedTargetName()
+
+	// Check if already exists (search all paths), skip only when not updating.
+	// --store is asking for a build filed under its own identity, so an installed
+	// artifact of that name is what it expects to find, not a reason to stop.
+	if !createUpdate && !createStore {
+		// Exact names only: an alias would make a bare name look installed when
+		// only <base>/<name> is.
+		scan, _ := image.ScanOverlays(image.ScanOptions{})
+		if existingPath := image.FirstPaths(scan)[normalizedName]; existingPath != "" {
+			utils.PrintMessage("Overlay %s already exists at %s. Skipping creation.",
+				filepath.Base(existingPath), existingPath)
+			return
+		}
+	}
+
+	utils.PrintDebug("[CREATE] Creating overlay with name: %s", createName)
+
+	// A script or definition is not a conda input. It builds the same way --prefix
+	// builds one, targeting the managed images dir instead of a path the user typed.
+	if createFile != "" && !utils.IsCondaFile(createFile) {
+		if !isForeignRoot(createFile) && !isExternalBuildFile(createFile) {
+			ExitWithError("File must be .yml, .yaml, .txt, .sh, .bash, .def, .sif, or a sandbox directory")
+		}
+		absFile, _ := filepath.Abs(createFile)
+		targetPrefix := filepath.Join(imagesDir, strings.ReplaceAll(normalizedName, "/", "--"))
+		if isForeignRoot(createFile) {
+			buildForeignSource(ctx, targetPrefix, absFile, imagesDir)
+		} else {
+			buildExternalSource(ctx, targetPrefix, absFile, strings.HasSuffix(createFile, ".def"), imagesDir,
+				[]string{"--name", createName, "--file", absFile})
+		}
+		return
+	}
+
+	// Create a conda BuildObject with buildSource set appropriately
+	// The buildSource field will contain either:
+	// - Path to YAML file (if -f flag used)
+	// - Comma-separated package list (if packages provided)
+	var buildSource string
+	if createFile != "" {
+		buildSource, _ = filepath.Abs(createFile)
+	} else if len(packages) > 0 {
+		// Multiple packages mode - join with commas
+		buildSource = strings.Join(packages, ",")
+	}
+
+	// Create CondaBuildObject using the new factory function
+	bo, err := build.NewCondaObjectWithSource(normalizedName, buildSource, imagesDir, createUpdate)
+	if err != nil {
+		ExitWithError("Failed to create build object: %v", err)
+	}
+	applyStoreOverflow(bo)
+
+	if err := bo.Build(ctx, false); err != nil {
+		ExitWithError("Build failed: %v", err)
+	}
+}
+
+// runCreateWithPrefix creates a sqf from external source file (.sh, .def, .yml)
+// Example: condatainer create -p myprefix -f environment.yml
+// Example: condatainer create -p myprefix -f build.sh
+func runCreateWithPrefix(ctx context.Context) {
+	absPrefix, _ := filepath.Abs(createPrefix)
+	// Use the directory from prefix path as output directory
+	outputDir := filepath.Dir(absPrefix)
+
+	if !utils.FileExists(createFile) && !utils.IsSandboxDir(createFile) {
+		ExitWithError("File %s not found", createFile)
+	}
+
+	utils.PrintDebug("[CREATE] Creating overlay with prefix: %s", createPrefix)
+
+	// Determine file type and create appropriate BuildObject
+	if utils.IsCondaFile(createFile) {
+		// Conda env/spec file - use NewCondaObjectWithSource
+		absFile, _ := filepath.Abs(createFile)
+		bo, err := build.NewCondaObjectWithSource(filepath.Base(absPrefix), absFile, outputDir, createUpdate, prefixBuildOptions()...)
+		if err != nil {
+			ExitWithError("Failed to create build object: %v", err)
+		}
+		if err := bo.Build(ctx, false); err != nil {
+			ExitWithError("Build failed: %v", err)
+		}
+	} else if isForeignRoot(createFile) {
+		// Already-built .sif or sandbox directory
+		absFile, _ := filepath.Abs(createFile)
+		buildForeignSource(ctx, absPrefix, absFile, outputDir)
+	} else if isExternalBuildFile(createFile) {
+		// Shell script or apptainer def file
+		absFile, _ := filepath.Abs(createFile)
+		buildExternalSource(ctx, absPrefix, absFile, strings.HasSuffix(createFile, ".def"), outputDir,
+			prefixJobArgs(absPrefix, absFile))
+	} else {
+		ExitWithError("File must be .yml, .yaml, .txt, .sh, .bash, .def, .sif, or a sandbox directory")
+	}
+}
+
+// runCreateWithPrefixAndPackages creates a conda sqf from packages at a custom prefix path.
+// Example: condatainer create python=3.11 numpy -p /scratch/myenv
+func runCreateWithPrefixAndPackages(ctx context.Context, packages []string) {
+	absPrefix, _ := filepath.Abs(createPrefix)
+	outputDir := filepath.Dir(absPrefix)
+	baseName := filepath.Base(absPrefix)
+	buildSource := strings.Join(packages, ",")
+
+	bo, err := build.NewCondaObjectWithSource(baseName, buildSource, outputDir, createUpdate, prefixBuildOptions()...)
+	if err != nil {
+		ExitWithError("Failed to create build object: %v", err)
+	}
+	if err := bo.Build(ctx, false); err != nil {
+		ExitWithError("Build failed: %v", err)
+	}
+}
+
+// runCreateFromSource creates a sqf from an external source (def file or remote URI)
+// Example: condatainer create --from docker://ubuntu:22.04 -n myubuntu
+func runCreateFromSource(ctx context.Context) {
+	imagesDir := getWritableImagesDir()
+
+	if createPrefix == "" && createName == "" {
+		ExitWithError("--from requires either --name or --prefix")
+	}
+
+	var targetPrefix string
+	if createPrefix != "" {
+		targetPrefix, _ = filepath.Abs(createPrefix)
+	} else {
+		fileName := strings.ReplaceAll(normalizedTargetName(), "/", "--")
+		targetPrefix = filepath.Join(imagesDir, fileName)
+	}
+
+	source := createFrom
+	isRemote := strings.Contains(source, "://")
+	if !isRemote {
+		source, _ = filepath.Abs(source)
+		if !utils.FileExists(source) && !utils.IsSandboxDir(source) {
+			ExitWithError("Source %s not found", source)
+		}
+		if isForeignRoot(source) {
+			ExitWithError("--from does not import an already-built .sif or sandbox; use -f %s instead", source)
+		}
+	}
+
+	isApptainer := strings.HasSuffix(source, ".def") || isRemote
+	targetOverlayPath := targetPrefix + ".sqf"
+
+	utils.PrintMessage("Creating overlay %s from %s", filepath.Base(targetOverlayPath), source)
+
+	buildExternalSource(ctx, targetPrefix, source, isApptainer, imagesDir, nil)
+}
+
+func exitOnBuildError(err error) {
+	if errors.Is(err, build.ErrBuildCancelled) ||
+		strings.Contains(err.Error(), "signal: killed") ||
+		strings.Contains(err.Error(), "signal: interrupt") ||
+		strings.Contains(err.Error(), "context canceled") {
+		// Suppress output as inner layers handle the "cancelled" messaging
+	} else {
+		utils.PrintError("Build failed: %v", err)
+	}
+	os.Exit(ExitCodeError)
+}

@@ -1,0 +1,47 @@
+name: Build and Release Linux Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0, v2.1.3, etc.
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Linux amd64 and arm64 Binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      # The build is pure Go (CGO_ENABLED=0 in the Makefile), so arm64 is a plain cross-compile.
+      # Asset names are condatainer_{GOOS}_{GOARCH}, as `self-update` and install.sh expect.
+      - name: Build binaries
+        run: |
+          version="${{ steps.get_version.outputs.VERSION }}"
+          version="${version#v}"
+          for goarch in amd64 arm64; do
+            GOOS=linux GOARCH="$goarch" make build GO_LDFLAGS="-X github.com/condatainer/condatainer/internal/config.Version=${version}"
+            mv bin/condatainer_go "bin/condatainer_linux_${goarch}"
+          done
+
+      - name: Upload binaries to release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            bin/condatainer_linux_amd64
+            bin/condatainer_linux_arm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

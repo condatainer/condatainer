@@ -1,0 +1,1333 @@
+package cmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	osexec "os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/image/sif"
+	"github.com/condatainer/condatainer/internal/runtime/apptainer"
+	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
+	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+)
+
+var (
+	runWritableImg bool
+	// runBaseImage holds the resolved default root once ensureRootBaseImage has
+	// run; "" until then, and always "" if the run's own overlays supply a root.
+	runBaseImage   string
+	runEnvSettings []string
+	runBindPaths   []string
+	runFakeroot    bool
+	runStdout      string
+	runStderr      string
+	runAfterOK     string
+	runAfterNotOK  string
+	runAfterAny    string
+	runCPU         int
+	runMem         string
+	runTime        string
+	runGPU         string
+	runAccount     string
+	runPartition   string
+	runDryRun      bool
+	runArray       string
+	runArrayLimit  int
+	runName        string
+	runProjectDir  string
+)
+
+// errRunAborted signals a handled stop (message already printed); caller returns nil.
+var errRunAborted = errors.New("run aborted")
+
+// runJobFlagNames is the set of flags shown under "Job Flags:" in help.
+var runJobFlagNames = map[string]bool{
+	"output": true, "error": true,
+	"afterok": true, "afternotok": true, "afterany": true,
+	"cpu": true, "mem": true, "time": true, "gpu": true, "account": true, "partition": true,
+	"dry-run": true, "name": true, "array": true, "array-limit": true,
+	"no-submit": true,
+}
+
+// jobIDRe matches a single scheduler job ID.
+// Slurm/LSF: pure digits. PBS: digits followed by .hostname (e.g. 12345.school.edu). HTCondor: ClusterID.ProcessID (e.g. 12345.0).
+var jobIDRe = regexp.MustCompile(`^\d+(\.\S+)?$`)
+
+var runCmd = &cobra.Command{
+	Use:   "run [flags] <script> [script-args...]",
+	Short: "Run a script and auto-solve the dependencies by #DEP tags",
+	Long: `Execute a script with automatic dependency resolution.
+
+The script can contain these comment tags:
+  - #DEP: name/version   Declares a dependency, loaded automatically
+  - #DEP: /path/env.img  Declares an overlay file (.sqf or .img)
+  - #CNT <args>          Extra condatainer flags (see Container Flags)`,
+	Example: `  condatainer run script.sh                          # Check dependencies, then run
+  condatainer run script.sh arg1 arg2                # Pass arguments to the script
+  condatainer run -o log/s1.out run_tool.sh sample1  # Override stdout
+  condatainer run -g a100:2 gpu_job.sh               # Override GPUs
+  condatainer run -c 8 -m 16G -t 2h job.sh           # Override resources
+
+  # Run one job after another
+  JOB=$(condatainer run run_align.sh sample1)
+  condatainer run --afterok "$JOB" run_quant.sh sample1`,
+	Args:         cobra.MinimumNArgs(1),
+	SilenceUsage: true, // Runtime errors should not show usage
+	RunE:         runScript,
+}
+
+func init() {
+	rootCmd.AddCommand(runCmd)
+	runCmd.Flags().BoolVarP(&runWritableImg, "writable", "w", false, "Make .img overlays writable (default: read-only)")
+	runCmd.Flags().StringVarP(&runStdout, "output", "o", "", "Override job stdout path (creates parent dir if needed)")
+	runCmd.Flags().StringVarP(&runStderr, "error", "e", "", "Override job stderr path")
+	runCmd.Flags().StringVar(&runAfterOK, "afterok", "", "Run after jobs succeed (colon-separated IDs, e.g. 123:456)")
+	runCmd.Flags().StringVar(&runAfterNotOK, "afternotok", "", "Run after jobs fail (colon-separated IDs)")
+	runCmd.Flags().StringVar(&runAfterAny, "afterany", "", "Run after jobs finish, any outcome (colon-separated IDs)")
+	runCmd.Flags().StringArrayVar(&runEnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
+	runCmd.Flags().StringArrayVar(&runBindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
+	runCmd.Flags().BoolVarP(&runFakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
+	runCmd.Flags().IntVarP(&runCPU, "cpu", "c", 0, "Override CPUs per task (e.g. 4)")
+	runCmd.Flags().StringVarP(&runMem, "mem", "m", "", "Override memory per task (e.g. 4G, 8192M)")
+	runCmd.Flags().StringVarP(&runTime, "time", "t", "", "Override walltime (e.g. 4d12h, 2h30m, 01:30:00)")
+	runCmd.Flags().StringVarP(&runGPU, "gpu", "g", "", "Override GPUs per node (e.g. 1, a100:2, a100)")
+	runCmd.Flags().StringVarP(&runAccount, "account", "A", "", "Override billing/allocation account")
+	runCmd.Flags().StringVarP(&runPartition, "partition", "p", "", "Override partition/queue")
+	runCmd.Flags().BoolVar(&runDryRun, "dry-run", false, "Show what would happen, without doing it")
+	runCmd.Flags().BoolVar(&noSubmitMode, "no-submit", false, "Disable job submission (run locally)")
+	runCmd.Flags().StringVarP(&runName, "name", "n", "", "Override job name")
+	runCmd.Flags().StringVar(&runArray, "array", "", "Input file for array job (one entry per line)")
+	runCmd.Flags().IntVar(&runArrayLimit, "array-limit", 0, "Max concurrent array subjobs (0 = unlimited)")
+	RegisterProjectFlags(runCmd, &runProjectDir)
+	runCmd.Flags().SetInterspersed(false) // Stop flag parsing after script name; remaining args are passed to the script
+
+	// Custom usage: two labeled sections — "Container Flags:" and "Job Flags:"
+	runCmd.SetUsageFunc(func(cmd *cobra.Command) error {
+		fmt.Fprintf(cmd.OutOrStderr(), "Usage:\n  %s\n", cmd.UseLine())
+		if cmd.HasExample() {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nExamples:\n%s\n", cmd.Example)
+		}
+		container := pflag.NewFlagSet("", pflag.ContinueOnError)
+		job := pflag.NewFlagSet("", pflag.ContinueOnError)
+		cmd.LocalFlags().VisitAll(func(fl *pflag.Flag) {
+			if runJobFlagNames[fl.Name] {
+				job.AddFlag(fl)
+			} else {
+				container.AddFlag(fl)
+			}
+		})
+		if container.HasFlags() {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nContainer Flags:\n%s", container.FlagUsages())
+		}
+		if job.HasFlags() {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nJob Flags:\n%s", job.FlagUsages())
+		}
+		if cmd.HasAvailableInheritedFlags() {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nGlobal Flags:\n%s", cmd.InheritedFlags().FlagUsages())
+		}
+		return nil
+	})
+}
+
+func runScript(cmd *cobra.Command, args []string) error {
+	if err := applyProjectRelocation(runProjectDir); err != nil {
+		return err
+	}
+	for _, flagInfo := range []struct{ name, val string }{
+		{"afterok", runAfterOK},
+		{"afternotok", runAfterNotOK},
+		{"afterany", runAfterAny},
+	} {
+		if cmd.Flags().Changed(flagInfo.name) {
+			if flagInfo.val == "" {
+				ExitWithError("--%s is empty; the upstream job may have failed to submit or run locally", flagInfo.name)
+			}
+			for id := range strings.SplitSeq(flagInfo.val, ":") {
+				if id = strings.TrimSpace(id); !jobIDRe.MatchString(id) {
+					ExitWithError("--%s %q is not a valid job ID", flagInfo.name, id)
+				}
+			}
+		}
+	}
+
+	// Build array spec early so we can validate before doing expensive work
+	arraySpec, err := buildArraySpec()
+	if err != nil {
+		ExitWithError("%v", err)
+	}
+
+	scriptPath := args[0]
+	scriptArgs := args[1:] // arguments for the script itself
+
+	// Validate script exists
+	if !utils.FileExists(scriptPath) {
+		ExitWithError("Script file %s not found", scriptPath)
+	}
+	if err := requireTextScript(scriptPath); err != nil {
+		ExitWithError("%v", err)
+	}
+
+	originScriptPath := scriptPath
+	scriptPath, err = filepath.Abs(scriptPath)
+	if err != nil {
+		ExitWithError("Failed to get absolute path: %v", err)
+	}
+
+	// 1. Read specs → resolve the content script (HTCondor: .sub → .sh; others: identity)
+	contentScript, scriptSpecs := resolveScriptAndSpecs(scriptPath)
+
+	// CLI -o/-e/-n override script directives (highest priority)
+	if scriptSpecs != nil {
+		if runName != "" {
+			scriptSpecs.Control.JobName = runName
+		}
+		if runStdout != "" {
+			scriptSpecs.Control.Stdout = runStdout
+		}
+		if runStderr != "" {
+			scriptSpecs.Control.Stderr = runStderr
+		}
+		// CLI -A/-p > script directive > config.Global.Scheduler default.
+		if runAccount != "" {
+			scriptSpecs.Control.Account = runAccount
+		} else if scriptSpecs.Control.Account == "" {
+			scriptSpecs.Control.Account = config.Global.Scheduler.Account
+		}
+		if runPartition != "" {
+			scriptSpecs.Control.Partition = runPartition
+		} else if scriptSpecs.Control.Partition == "" {
+			scriptSpecs.Control.Partition = config.Global.Scheduler.Partition
+		}
+		setDefaultWorkDir(scriptSpecs)
+	}
+
+	// CLI -c/-m/-t/-g resource overrides (highest priority, only when spec is parsed)
+	if scriptSpecs != nil && scriptSpecs.Spec == nil && scriptSpecs.HasDirectives {
+		// Script is in passthrough mode — resource directives could not be fully parsed.
+		// Overrides cannot be applied; warn if the user specified any.
+		if runCPU > 0 || runMem != "" || runTime != "" || runGPU != "" {
+			utils.PrintWarning("resource overrides (-c/-m/-t/-g) have no effect in passthrough mode; edit the script directives directly")
+		}
+	} else if scriptSpecs != nil && scriptSpecs.Spec != nil {
+		override := &scheduler.ResourceSpec{}
+		if runCPU > 0 {
+			override.CpusPerTask = runCPU
+		}
+		if runMem != "" {
+			mb, err := utils.ParseMemoryMB(runMem)
+			if err != nil {
+				ExitWithError("--mem %q: %v", runMem, err)
+			}
+			cpus := runCPU
+			if cpus <= 0 {
+				cpus = 1
+			}
+			override.MemPerCpuMB = (mb + int64(cpus) - 1) / int64(cpus)
+		}
+		if runTime != "" {
+			d, err := utils.ParseWalltime(runTime)
+			if err != nil {
+				ExitWithError("--time %q: %v", runTime, err)
+			}
+			override.Time = d
+		}
+		if runGPU != "" {
+			gpu, err := parseGpuFlag(runGPU)
+			if err != nil {
+				ExitWithError("--gpu %q: %v", runGPU, err)
+			}
+			override.Gpu = gpu
+		}
+		scriptSpecs.Spec.Override(override)
+	}
+
+	// Conflict: --array flag + native scheduler array directive in the script
+	if arraySpec != nil {
+		if found := detectNativeArrayDirective(scriptSpecs); found != "" {
+			ExitWithError("script contains native array directive %q; remove it and use --array flag instead", found)
+		}
+	}
+
+	// A dependency the scheduler cannot express is refused here, before any
+	// overlay is built or job submitted for this run.
+	if deps := runDependencies(); len(deps) > 0 && willSubmitRun(scriptSpecs) {
+		if err := scheduler.CheckDependencies(scheduler.ActiveScheduler().GetType(), deps); err != nil {
+			ExitWithError("%v", err)
+		}
+	}
+
+	// 2. Embedded #CNT args + dependency check/install
+	if err := processEmbeddedArgs(contentScript); err != nil {
+		return err
+	}
+	// A project's lock governs what this script mounts. Resolved before the dry
+	// run so a preview reports the identities the run would actually mount, not
+	// whatever currently answers to their names.
+	projectRun, err := projectRunContext(cmd.Context(), contentScript)
+	if err != nil {
+		return err
+	}
+
+	// Dry run: print summary and exit without executing
+	if runDryRun {
+		printDryRunSummary(cmd.Context(), contentScript, originScriptPath, scriptSpecs, scriptArgs, arraySpec, projectRun)
+		return nil
+	}
+
+	// Passthrough mode: resource directives could not be parsed; condatainer cannot safely
+	// regenerate the scheduler script. Reject submission and direct the user to submit manually.
+	if scheduler.IsPassthrough(scriptSpecs) {
+		ExitWithError("script %q has scheduler directives that could not be fully parsed (passthrough mode); please submit it manually", originScriptPath)
+	}
+
+	// Blank lines in the array input file are only warned about in dry-run; error here
+	if arraySpec != nil && len(arraySpec.BlankLines) > 0 {
+		ExitWithError("--array: blank lines at %v in %s; please remove them", arraySpec.BlankLines, arraySpec.InputFile)
+	}
+
+	// Array jobs require scheduler submission; cannot run locally
+	if arraySpec != nil && (scheduler.IsInsideJob() || config.IsInsideContainer()) {
+		ExitWithError("--array requires scheduler submission; cannot run array jobs locally")
+	}
+	if runWritableImg && getNtasks(scriptSpecs) > 1 {
+		ExitWithError("--writable cannot be used with multi-task jobs (ntasks=%d)", getNtasks(scriptSpecs))
+	}
+	var overlays []string
+	if projectRun != nil {
+		overlays = projectRun.Overlays
+		// A project outside $HOME is otherwise unreachable from the container:
+		// only the script's own directory is bound, and apptainer's automatic
+		// binds cover $HOME and the working directory alone.
+		runBindPaths = append(runBindPaths, projectRun.Root)
+	} else if overlays, err = resolveDeps(cmd.Context(), contentScript, originScriptPath); err != nil {
+		if errors.Is(err, errRunAborted) {
+			os.Exit(ExitCodeError)
+		}
+		return err
+	}
+
+	// After the dependencies, which may already supply a root, and after the
+	// dry run, which must not build one. The script may be submitted to a node
+	// that cannot build, so the default root is pinned here rather than
+	// resolved there — unless the script's own overlays already name one.
+	runBaseImage, err = ensureRootBaseImage(cmd.Context(), overlays)
+	if err != nil {
+		return err
+	}
+
+	// Before submitting, so a nested_run build happens here and not on a node
+	// that may have no network.
+	if err := ensureNestedProvider(cmd.Context()); err != nil {
+		return err
+	}
+
+	// 3. In-job or in-container: always run locally (no nested submission)
+	if scheduler.IsInsideJob() || config.IsInsideContainer() {
+		return runLocally(cmd.Context(), contentScript, overlays, scriptSpecs, scriptArgs)
+	}
+
+	// 4. Submit if scheduler specs present and scheduler available
+	if config.Global.SubmitJob && scheduler.HasSchedulerSpecs(scriptSpecs) {
+		sched := scheduler.ActiveScheduler()
+		if sched == nil {
+			utils.PrintNote("Script has scheduler specs but no scheduler is available. Running locally.")
+		} else {
+			return submitRunJob(cmd.Context(), sched, originScriptPath, contentScript, scriptSpecs, runDependencies(), scriptArgs, arraySpec)
+		}
+	} else if !scheduler.HasSchedulerSpecs(scriptSpecs) {
+		utils.PrintNote("No scheduler specs found in script. Running locally.")
+	}
+	if runStdout != "" || runStderr != "" || runMem != "" || runTime != "" || runGPU != "" || runAccount != "" || runPartition != "" {
+		utils.PrintNote("-o/-e/-m/-t/-g/-A/-p are only used for submitted jobs and will be ignored when running locally.")
+	}
+	return runLocally(cmd.Context(), contentScript, overlays, scriptSpecs, scriptArgs)
+}
+
+// runDependencies returns the typed dependencies given by --afterok,
+// --afternotok and --afterany.
+func runDependencies() []scheduler.Dependency {
+	var deps []scheduler.Dependency
+	for _, flag := range []struct{ val, depType string }{
+		{runAfterOK, scheduler.DependencyAfterOK},
+		{runAfterNotOK, scheduler.DependencyAfterNotOK},
+		{runAfterAny, scheduler.DependencyAfterAny},
+	} {
+		var ids []string
+		for id := range strings.SplitSeq(flag.val, ":") {
+			if id = strings.TrimSpace(id); id != "" {
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) > 0 {
+			deps = append(deps, scheduler.Dependency{Type: flag.depType, JobIDs: ids})
+		}
+	}
+	return deps
+}
+
+// willSubmitRun reports whether this run goes to a scheduler rather than running
+// locally, which is when a dependency has anything to apply to.
+func willSubmitRun(specs *scheduler.ScriptSpecs) bool {
+	return config.Global.SubmitJob && scheduler.HasSchedulerSpecs(specs) &&
+		!scheduler.IsInsideJob() && !config.IsInsideContainer() && scheduler.ActiveScheduler() != nil
+}
+
+// setDefaultWorkDir makes a job run where it was submitted from unless the script
+// names a directory. Without it PBS starts the job in $HOME, unlike the other
+// schedulers.
+func setDefaultWorkDir(specs *scheduler.ScriptSpecs) {
+	if specs.Control.WorkDir != "" {
+		return
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		specs.Control.WorkDir = cwd
+	}
+}
+
+// resolveScriptAndSpecs tries to read scheduler specs and resolves the content script path.
+//   - For HTCondor .sub files: specs.ScriptPath is the bash executable — returned as contentScript.
+//   - For SLURM/PBS/LSF: contentScript == scriptPath.
+//   - On failure: prints a warning and returns (scriptPath, nil).
+func resolveScriptAndSpecs(scriptPath string) (string, *scheduler.ScriptSpecs) {
+	specs, err := scheduler.ReadScriptSpecsFromPath(scriptPath)
+	if err != nil {
+		utils.PrintWarning("Failed to parse scheduler specs: %v", err)
+		return scriptPath, nil
+	}
+	contentScript := scriptPath
+	if specs != nil && specs.ScriptPath != "" && specs.ScriptPath != scriptPath {
+		contentScript = specs.ScriptPath
+	}
+	if !filepath.IsAbs(contentScript) {
+		if abs, err := filepath.Abs(contentScript); err == nil {
+			contentScript = abs
+		}
+	}
+	return contentScript, specs
+}
+
+// processEmbeddedArgs reads #CNT tags from the script and applies them to run options.
+func processEmbeddedArgs(scriptPath string) error {
+	scriptArgs, err := parseArgsInScript(scriptPath)
+	if err != nil {
+		return err
+	}
+	if len(scriptArgs) > 0 {
+		utils.PrintDebug("[RUN] Additional script arguments found: %v", scriptArgs)
+		applyScriptArgs(scriptArgs)
+	}
+	return nil
+}
+
+// resolveDeps parses #DEP dependencies, checks installed overlays, and returns resolved paths.
+// Returns errRunAborted (message already printed) if any dependencies are missing.
+func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (overlays []string, err error) {
+	deps, err := utils.GetDependenciesFromScript(contentScript)
+	if err != nil {
+		utils.PrintError("Failed to parse dependencies: %v", err)
+		return nil, errRunAborted
+	}
+
+	installedOverlays, err := getInstalledOverlaysMap()
+	if err != nil {
+		return nil, err
+	}
+	// A bare or partial name becomes the installed overlay it means; anything
+	// the solver leaves unchanged is checked by exact name below.
+	solved, err := resolveOverlayValues(ctx, deps, nil, false)
+	if err != nil {
+		utils.PrintError("%v", err)
+		return nil, errRunAborted
+	}
+
+	missingDeps := []string{}
+	for i, dep := range deps {
+		if utils.IsOverlay(dep) || utils.IsSif(dep) {
+			if !utils.FileExists(dep) {
+				missingDeps = append(missingDeps, dep)
+			}
+		} else if solved[i] == dep {
+			normalized := catalog.Normalize(dep)
+			if _, ok := installedOverlays[normalized]; !ok {
+				missingDeps = append(missingDeps, dep)
+			}
+		}
+	}
+
+	if len(missingDeps) > 0 {
+		utils.PrintMessage("Missing dependencies:")
+		for _, md := range missingDeps {
+			utils.PrintMessage("  - %s", md)
+		}
+		externalFiles := []string{}
+		for _, md := range missingDeps {
+			if utils.IsOverlay(md) || utils.IsSif(md) {
+				externalFiles = append(externalFiles, md)
+			}
+		}
+		if len(externalFiles) > 0 {
+			fileList := strings.Join(externalFiles, ", ")
+			utils.PrintError("External overlay(s) %s not found - use `condatainer check -a` to create them.", fileList)
+		} else {
+			utils.PrintHint("Please run `condatainer check -a %s` to install missing dependencies.", originScriptPath)
+		}
+		return nil, errRunAborted
+	}
+
+	// Resolve overlay paths
+	overlays = make([]string, len(deps))
+	for i, dep := range deps {
+		if utils.IsOverlay(dep) || utils.IsSif(dep) {
+			overlays[i] = dep
+		} else if solved[i] != dep {
+			overlays[i] = solved[i]
+		} else {
+			normalized := catalog.Normalize(dep)
+			if path, ok := installedOverlays[normalized]; ok {
+				overlays[i] = path
+			} else {
+				overlays[i] = dep
+			}
+		}
+	}
+
+	// Check .img availability, and a .sif root's own /bin/bash, before
+	// submitting or running locally — a .sif here is always the exec root
+	// (ensureAtMostOneSif refuses a second one), and failing now means before
+	// a scheduler queue wait, not after one.
+	for _, ol := range overlays {
+		if utils.IsImg(ol) && utils.FileExists(ol) {
+			if err := image.CheckAvailable(ol, runWritableImg); err != nil {
+				return nil, err
+			}
+		}
+		if utils.IsSif(ol) {
+			if err := sif.RequireBash(ol); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return overlays, nil
+}
+
+// effectiveResourceSpec resolves the resource spec using the priority chain:
+//
+//	JobResources (scheduler env, actual allocation) > specs.Spec (directives) > defaults
+func effectiveResourceSpec(specs *scheduler.ScriptSpecs) *scheduler.ResourceSpec {
+	var jobRes *scheduler.ResourceSpec
+	if sched := scheduler.ActiveScheduler(); sched != nil {
+		jobRes = sched.GetJobResources()
+	}
+	return scheduler.ResolveResourceSpec(jobRes, specs)
+}
+
+// resourceEnvSettings derives NCPUS, MEM, MEM_GB from scheduler specs and returns them as KEY=VALUE strings suitable for EnvSettings.
+//   - In passthrough mode (Spec == nil) it falls back to live job resources.
+//   - Applies priority chain: JobResources > ScriptSpec > Defaults.
+func resourceEnvSettings(specs *scheduler.ScriptSpecs) []string {
+	if specs == nil || specs.Spec == nil {
+		return liveJobResourceEnvSettings()
+	}
+	return scheduler.ResourceEnvVars(effectiveResourceSpec(specs))
+}
+
+// liveJobResourceEnvSettings returns resource env vars from the active scheduler.
+// Returns nil when not in a job or cannot retrieve resources.
+func liveJobResourceEnvSettings() []string {
+	sched := scheduler.ActiveScheduler()
+	if sched == nil {
+		return nil
+	}
+	jobRes := sched.GetJobResources()
+	if jobRes == nil {
+		return nil
+	}
+	// Only expose when the scheduler actually provided at least one resource value.
+	if jobRes.Nodes == 0 && jobRes.TasksPerNode == 0 && jobRes.CpusPerTask == 0 && jobRes.MemPerNodeMB == 0 {
+		return nil
+	}
+	return scheduler.ResourceEnvVars(jobRes)
+}
+
+// runLocally executes the script directly via apptainer with the given overlays.
+func runLocally(ctx context.Context, contentScript string, overlays []string, specs *scheduler.ScriptSpecs, scriptArgs []string) error {
+	// Disable module commands and run the script
+	executionScript := `module() { :; }
+ml() { :; }
+export -f module ml
+`
+	fileInfo, err := os.Stat(contentScript)
+	if err != nil {
+		ExitWithError("Failed to stat script: %v", err)
+	}
+
+	if fileInfo.Mode()&0111 != 0 {
+		// Script is executable: $0 = contentScript, $@ = scriptArgs
+		executionScript += `"$0" "$@"`
+	} else {
+		// Run with bash: $0 = contentScript, $@ = scriptArgs
+		executionScript += `bash "$0" "$@"`
+	}
+
+	// Auto-bind the script's directory so it's accessible inside the container.
+	// (Scheduler will copy the script to a temp location)
+	scriptDir := filepath.Dir(contentScript)
+	bindPaths := append([]string{scriptDir}, runBindPaths...)
+
+	rs := effectiveResourceSpec(specs)
+	gpuRequested := rs.Gpu != nil && rs.Gpu.Count > 0
+
+	// Resolved here, at the real launch, so a submitted job provides nested
+	// running from the node it actually runs on.
+	overlays, bindLibexec, err := nestedRun(ctx, overlays)
+	if err != nil {
+		return err
+	}
+
+	options := execpkg.Options{
+		Overlays:     overlays,
+		BindLibexec:  bindLibexec,
+		Command:      append([]string{"/bin/bash", "-c", executionScript, contentScript}, scriptArgs...),
+		WritableImg:  runWritableImg,
+		EnvSettings:  append(resourceEnvSettings(specs), runEnvSettings...),
+		BindPaths:    bindPaths,
+		Fakeroot:     runFakeroot,
+		BaseImage:    runBaseImage,
+		HidePrompt:   true,
+		GpuRequested: gpuRequested,
+	}
+
+	if err := execpkg.Run(ctx, options, execpkg.IO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}); err != nil {
+		// Propagate exit code from container command
+		if appErr, ok := err.(*apptainer.ApptainerError); ok {
+			if code := appErr.ExitCode(); code >= 0 {
+				os.Exit(code)
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+// printDryRunSummary prints what condatainer run would do without executing.
+// printProjectDependencies lists what a project run will mount.
+//
+// Nothing is checked here: every path came from the lock, and resolution has
+// already failed if any declaration could not be satisfied. baseImg is the
+// caller's own resolution (see printDryRunSummary), not derived again here.
+func printProjectDependencies(baseImg string, projectRun *projectContext) {
+	check, cross := utils.StyleSuccess("✓"), utils.StyleError("✗")
+	fmt.Printf("Project: %s\n", projectRun.Root)
+	fmt.Printf("%s (%d locked):\n", utils.StyleTitle("Dependencies:"), len(projectRun.Overlays))
+	if utils.FileExists(baseImg) {
+		fmt.Printf("  Base:       %s %s\n", check, baseImg)
+	} else {
+		fmt.Printf("  Base:       %s %s %s\n", cross, baseImg, utils.StyleWarning("(not found)"))
+	}
+	for _, overlay := range projectRun.Overlays {
+		fmt.Printf("    %s %s\n", check, overlay)
+	}
+}
+
+func printDryRunSummary(ctx context.Context, contentScript, originScript string, specs *scheduler.ScriptSpecs, scriptArgs []string, arraySpec *scheduler.ArraySpec, projectRun *projectContext) {
+	fmt.Printf("Dry run: %s\n", specs.ScriptPath)
+
+	// Dependencies. A dry run reports the base rather than building it, so an
+	// uninstalled one shows as the error the real run would hit. Standing in a
+	// project this is its pinned root, not the configured default_distro —
+	// previewRootBaseImage is ensureRootBaseImage's read-only counterpart.
+	baseImg := runBaseImage
+	if baseImg == "" {
+		var overlays []string
+		if projectRun != nil {
+			overlays = projectRun.Overlays
+		}
+		switch resolved, err := previewRootBaseImage(ctx, overlays); {
+		case err != nil:
+			baseImg = "(" + err.Error() + ")"
+		case resolved == "":
+			baseImg = "(supplied by one of the mounted overlays)"
+		default:
+			baseImg = resolved
+		}
+	}
+
+	deps, err := utils.GetDependenciesFromScript(contentScript)
+	if projectRun != nil {
+		printProjectDependencies(baseImg, projectRun)
+	} else if err != nil {
+		fmt.Printf("%s Could not parse dependencies: %v\n", utils.StyleError("[ERR]"), err)
+	} else {
+		installedOverlays, _ := getInstalledOverlaysMap()
+		check := utils.StyleSuccess("✓")
+		cross := utils.StyleError("✗")
+
+		// First pass: collect results and compute max dep name width for alignment
+		type depEntry struct {
+			dep, path string
+			ok        bool
+		}
+		// Resolve the working directory for relative overlay path checks.
+		workDir := specs.Control.WorkDir
+		if workDir == "" {
+			workDir, _ = os.Getwd()
+		}
+
+		entries := make([]depEntry, 0, len(deps))
+		for _, dep := range deps {
+			var entry depEntry
+			entry.dep = dep
+			if utils.IsOverlay(dep) || utils.IsSif(dep) {
+				p := dep
+				if !filepath.IsAbs(p) {
+					p = filepath.Join(workDir, p)
+				}
+				entry.ok = utils.FileExists(p)
+				entry.path = p
+			} else {
+				normalized := catalog.Normalize(dep)
+				entry.path, entry.ok = installedOverlays[normalized]
+			}
+			entries = append(entries, entry)
+		}
+
+		found, missing := 0, 0
+		if utils.FileExists(baseImg) {
+			found++
+		} else {
+			missing++
+		}
+		for _, e := range entries {
+			if e.ok {
+				found++
+			} else {
+				missing++
+			}
+		}
+		fmt.Printf("%s (%d found, %d missing):\n", utils.StyleTitle("Dependencies:"), found, missing)
+
+		// Base image
+		if utils.FileExists(baseImg) {
+			fmt.Printf("  Base:       %s %s\n", check, baseImg)
+		} else {
+			fmt.Printf("  Base:       %s %s %s\n", cross, baseImg, utils.StyleWarning("(not found)"))
+		}
+
+		// External overlays (direct path): show under "External:" header; installed: group by folder
+		var externals []string
+		dirOrder := []string{}
+		dirDeps := map[string][]string{}
+		for _, e := range entries {
+			if !e.ok {
+				continue
+			}
+			if utils.IsOverlay(e.dep) || utils.IsSif(e.dep) {
+				externals = append(externals, e.dep)
+			} else {
+				dir := filepath.Dir(e.path)
+				if _, exists := dirDeps[dir]; !exists {
+					dirOrder = append(dirOrder, dir)
+				}
+				dirDeps[dir] = append(dirDeps[dir], e.dep)
+			}
+		}
+		if len(externals) > 0 {
+			fmt.Printf("  %s\n", "External:")
+			for _, dep := range externals {
+				fmt.Printf("    %s %s\n", check, dep)
+			}
+		}
+		for _, dir := range dirOrder {
+			fmt.Printf("  %s\n", (dir + "/"))
+			for _, dep := range dirDeps[dir] {
+				fmt.Printf("    %s %s\n", check, dep)
+			}
+		}
+		// Missing deps listed after found
+		for _, e := range entries {
+			if !e.ok {
+				suffix := utils.StyleWarning("(not installed)")
+				if utils.IsOverlay(e.dep) || utils.IsSif(e.dep) {
+					suffix = utils.StyleWarning("(not found)")
+				}
+				fmt.Printf("  %s %s  %s\n", cross, e.dep, suffix)
+			}
+		}
+	}
+
+	if nested := describeNested(); nested != "" {
+		fmt.Printf("Nested run: %s\n", nested)
+	}
+
+	// Scheduler specs
+	if specs != nil && specs.Spec == nil && specs.HasDirectives {
+		var hostType scheduler.SchedulerType
+		if s := scheduler.ActiveScheduler(); s != nil {
+			hostType = s.GetType()
+		} else {
+			hostType = scheduler.DetectType()
+		}
+		if hostType != scheduler.SchedulerUnknown && specs.ScriptType != hostType {
+			fmt.Printf("Resource specs: %s\n",
+				utils.StyleError(fmt.Sprintf("(passthrough — %s directives cannot be translated to %s)", specs.ScriptType, hostType)))
+		} else {
+			fmt.Printf("Resource specs: %s\n", utils.StyleWarning("(passthrough — directives not parsed)"))
+		}
+	} else if specs != nil && specs.Spec != nil {
+		rs := effectiveResourceSpec(specs)
+		fmt.Printf("%s\n", utils.StyleTitle("Resource specs:"))
+		ntasks := getNtasks(specs)
+		isMPI := ntasks > 1
+
+		if isMPI {
+			// MPI or Hybrid: show task geometry first
+			fmt.Printf("  MPI Tasks:  %d\n", ntasks)
+			if rs.Nodes > 0 {
+				fmt.Printf("  Nodes:      %d\n", rs.Nodes)
+			}
+			if rs.TasksPerNode > 0 {
+				fmt.Printf("  Tasks/Node: %d\n", rs.TasksPerNode)
+			}
+			if rs.CpusPerTask > 1 {
+				// Hybrid: also show per-task thread count
+				fmt.Printf("  CPU/Task:   %d\n", rs.CpusPerTask)
+			}
+		} else {
+			// Pure OpenMP / single-task
+			if rs.CpusPerTask > 0 {
+				fmt.Printf("  CPU:        %d\n", rs.CpusPerTask)
+			}
+		}
+
+		if memPerTaskMB := rs.GetMemPerTaskMB(); memPerTaskMB > 0 {
+			memLabel := "Mem/Task:  "
+			if !isMPI {
+				memLabel = "Mem:       "
+			}
+			if memPerTaskMB >= 1024 && memPerTaskMB%1024 == 0 {
+				fmt.Printf("  %s %d GB\n", memLabel, memPerTaskMB/1024)
+			} else {
+				fmt.Printf("  %s %d MB\n", memLabel, memPerTaskMB)
+			}
+		}
+		if rs.Time > 0 {
+			total := int64(rs.Time.Seconds())
+			fmt.Printf("  Time:       %02d:%02d:%02d\n", total/3600, (total%3600)/60, total%60)
+		}
+		if rs.Gpu != nil {
+			if rs.Gpu.Type != "" {
+				fmt.Printf("  GPU:        %s x%d\n", rs.Gpu.Type, rs.Gpu.Count)
+			} else {
+				fmt.Printf("  GPU:        %d\n", rs.Gpu.Count)
+			}
+		}
+		if rs.Exclusive {
+			fmt.Printf("  Exclusive:  yes\n")
+		}
+		if isMPI {
+			mpiexecPath, ok := detectMpi()
+			if !ok {
+				fmt.Printf("  mpiexec:    %s\n", utils.StyleError("not found"))
+			} else {
+				fmt.Printf("  mpiexec:    %s\n", mpiexecPath)
+			}
+		}
+
+		fmt.Printf("%s\n", utils.StyleTitle("Job control:"))
+		scriptBase := strings.TrimSuffix(filepath.Base(originScript), filepath.Ext(originScript))
+		if specs.Control.JobName != "" {
+			fmt.Printf("  Name:       %s\n", specs.Control.JobName)
+		} else {
+			fmt.Printf("  Name:       %s (default)\n", scriptBase)
+		}
+		if specs.Control.WorkDir != "" {
+			fmt.Printf("  WorkDir:    %s\n", specs.Control.WorkDir)
+		} else {
+			fmt.Printf("  WorkDir:    . (default)\n")
+		}
+		if specs.Control.Account != "" {
+			fmt.Printf("  Account:    %s\n", specs.Control.Account)
+		}
+		if specs.Control.Partition != "" {
+			fmt.Printf("  Partition:  %s\n", specs.Control.Partition)
+		}
+		logsDir := config.Global.LogsDir
+		if logsDir == "" {
+			logsDir = filepath.Join(os.Getenv("HOME"), "logs")
+		}
+		defaultOut := filepath.Join(logsDir, scriptBase+"_<timestamp>.out")
+		if specs.Control.Stdout != "" {
+			fmt.Printf("  Stdout:     %s\n", specs.Control.AbsStdout())
+		} else {
+			fmt.Printf("  Stdout:     %s (default)\n", defaultOut)
+		}
+		if specs.Control.Stderr != "" {
+			fmt.Printf("  Stderr:     %s\n", specs.Control.AbsStderr())
+		} else if specs.Control.Stdout != "" {
+			fmt.Printf("  Stderr:     %s (default)\n", specs.Control.AbsStdout())
+		} else {
+			fmt.Printf("  Stderr:     %s (default)\n", defaultOut)
+		}
+
+		if arraySpec != nil {
+			arrayLine := fmt.Sprintf("  Array:      %d subjobs from %s", arraySpec.Count, arraySpec.InputFile)
+			if arraySpec.Limit > 0 {
+				arrayLine += fmt.Sprintf(" (max %d concurrent)", arraySpec.Limit)
+			}
+			fmt.Println(arrayLine)
+			if len(arraySpec.BlankLines) > 0 {
+				fmt.Printf("  %s blank lines at %v — remove before submitting\n",
+					utils.StyleError("[ERR]"), arraySpec.BlankLines)
+			}
+		}
+		if runAfterOK != "" {
+			fmt.Printf("  AfterOK:     %s\n", runAfterOK)
+		}
+		if runAfterNotOK != "" {
+			fmt.Printf("  AfterNotOK:  %s\n", runAfterNotOK)
+		}
+		if runAfterAny != "" {
+			fmt.Printf("  AfterAny:    %s\n", runAfterAny)
+		}
+
+		// Email Notifications
+		var events []string
+		if specs.Control.EmailOnBegin {
+			events = append(events, "BEGIN")
+		}
+		if specs.Control.EmailOnEnd {
+			events = append(events, "END")
+		}
+		if specs.Control.EmailOnFail {
+			events = append(events, "FAIL")
+		}
+		if len(events) > 0 {
+			mailStr := strings.Join(events, ",")
+			if specs.Control.MailUser != "" {
+				mailStr += " to " + specs.Control.MailUser
+			}
+			fmt.Printf("  Mail:       %s\n", mailStr)
+		}
+	}
+
+	// Container args
+	hasContainerArgs := len(runEnvSettings) > 0 || len(runBindPaths) > 0 || runFakeroot || runWritableImg
+	if hasContainerArgs {
+		fmt.Printf("%s\n", utils.StyleTitle("Container args:"))
+		for _, env := range runEnvSettings {
+			fmt.Printf("  Env:        %s\n", env)
+		}
+		for _, bind := range runBindPaths {
+			fmt.Printf("  Bind:       %s\n", bind)
+		}
+		if runFakeroot {
+			fmt.Printf("  Fakeroot:   yes\n")
+		}
+		if runWritableImg {
+			fmt.Printf("  Writable:   yes\n")
+		}
+	}
+
+	// Script args (array args prepended, then fixed CLI args)
+	hasScriptArgs := arraySpec != nil || len(scriptArgs) > 0
+	if hasScriptArgs {
+		fmt.Printf("%s\n", utils.StyleTitle("Script args:"))
+		if arraySpec != nil {
+			fileBase := filepath.Base(arraySpec.InputFile)
+			maxLen := 0
+			for _, token := range arraySpec.SampleArgs {
+				if len(token) > maxLen {
+					maxLen = len(token)
+				}
+			}
+			for i, token := range arraySpec.SampleArgs {
+				fmt.Printf("  %-*s  (arg%d from %s)\n", maxLen, token, i+1, fileBase)
+			}
+		}
+		for i := 0; i < len(scriptArgs); i++ {
+			arg := scriptArgs[i]
+			fmt.Printf("  %s\n", arg)
+		}
+	}
+
+	// Action
+	if scheduler.IsInsideJob() {
+		fmt.Printf("Action: Would run locally (in job)\n")
+	} else if config.IsInsideContainer() {
+		fmt.Printf("Action: Would run locally (in container)\n")
+	} else if scheduler.IsPassthrough(specs) {
+		fmt.Printf("Action: %s\n",
+			"Would fail — directives not fully parsed (passthrough mode); please submit it manually")
+	} else if config.Global.SubmitJob && scheduler.HasSchedulerSpecs(specs) {
+		sched := scheduler.ActiveScheduler()
+		if sched == nil {
+			fmt.Printf("Action: Would run locally (scheduler not available)\n")
+		} else {
+			fmt.Printf("Action: Would submit to %s\n", sched.GetType())
+		}
+	} else {
+		fmt.Printf("Action: Would run locally\n")
+	}
+}
+
+// applyScriptArgs parses #CNT arguments and applies them to run options
+func applyScriptArgs(scriptArgs []string) {
+	for _, argLine := range scriptArgs {
+		parts := strings.Fields(argLine)
+		for i := 0; i < len(parts); i++ {
+			arg := parts[i]
+			switch arg {
+			case "-w", "--writable":
+				runWritableImg = true
+			case "-f", "--fakeroot":
+				runFakeroot = true
+			case "--env":
+				if i+1 < len(parts) {
+					i++
+					runEnvSettings = append(runEnvSettings, parts[i])
+				}
+			case "--bind":
+				if i+1 < len(parts) {
+					i++
+					runBindPaths = append(runBindPaths, parts[i])
+				}
+			default:
+				// Handle --flag=VALUE formats
+				if v, ok := strings.CutPrefix(arg, "--env="); ok {
+					runEnvSettings = append(runEnvSettings, v)
+				} else if v, ok := strings.CutPrefix(arg, "--bind="); ok {
+					runBindPaths = append(runBindPaths, v)
+				}
+			}
+		}
+	}
+}
+
+// buildArraySpec reads and validates the array input file, returning an ArraySpec.
+//   - All non-empty lines must shell-split into the same number of tokens.
+//   - Returns nil when --array was not provided.
+func buildArraySpec() (*scheduler.ArraySpec, error) {
+	if runArray == "" {
+		return nil, nil
+	}
+	absFile, err := filepath.Abs(runArray)
+	if err != nil {
+		return nil, fmt.Errorf("--array: cannot resolve path %q: %w", runArray, err)
+	}
+	data, err := os.ReadFile(absFile)
+	if err != nil {
+		return nil, fmt.Errorf("--array: cannot read input file %q: %w", absFile, err)
+	}
+	var sampleArgs []string
+	expectedArgCount := -1
+	count := 0
+	var blankLines []int
+	for lineNum, line := range strings.Split(strings.TrimRight(string(data), "\r\n"), "\n") {
+		line = strings.TrimRight(line, "\r") // strip \r from Windows line endings
+		if strings.TrimSpace(line) == "" {
+			blankLines = append(blankLines, lineNum+1)
+			continue
+		}
+		count++
+		tokens := shellSplitLine(line)
+		if expectedArgCount == -1 {
+			expectedArgCount = len(tokens)
+			sampleArgs = tokens
+		} else if len(tokens) != expectedArgCount {
+			return nil, fmt.Errorf("--array: line %d has %d arg(s) but line 1 has %d; all lines must have the same number of arguments",
+				lineNum+1, len(tokens), expectedArgCount)
+		}
+	}
+	if count == 0 {
+		return nil, fmt.Errorf("--array: input file %q is empty", absFile)
+	}
+	return &scheduler.ArraySpec{
+		InputFile:  absFile,
+		Count:      count,
+		Limit:      runArrayLimit,
+		ArgCount:   expectedArgCount,
+		SampleArgs: sampleArgs,
+		BlankLines: blankLines,
+	}, nil
+}
+
+// parseArgsInScript extracts arguments from #CNT comments in the script
+// parseGpuFlag parses --gpu values: "N", "TYPE:N", or "TYPE" (count defaults to 1).
+func parseGpuFlag(s string) (*scheduler.GpuSpec, error) {
+	if before, after, found := strings.Cut(s, ":"); found {
+		// TYPE:N
+		count, err := strconv.Atoi(after)
+		if err != nil || count <= 0 {
+			return nil, fmt.Errorf("invalid GPU count %q (expected TYPE:N, e.g. a100:2)", after)
+		}
+		return &scheduler.GpuSpec{Type: strings.ToLower(before), Count: count}, nil
+	}
+	// bare N or bare TYPE
+	if count, err := strconv.Atoi(s); err == nil {
+		if count <= 0 {
+			return nil, fmt.Errorf("GPU count must be > 0")
+		}
+		return &scheduler.GpuSpec{Count: count}, nil
+	}
+	// TYPE only — default count 1
+	if s == "" {
+		return nil, fmt.Errorf("empty GPU spec")
+	}
+	return &scheduler.GpuSpec{Type: strings.ToLower(s), Count: 1}, nil
+}
+
+func parseArgsInScript(scriptPath string) ([]string, error) {
+	data, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read script: %w", err)
+	}
+
+	args := []string{}
+	lines := strings.Split(string(data), "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#CNT") {
+			argLine := strings.TrimSpace(strings.TrimPrefix(line, "#CNT"))
+			if argLine != "" {
+				args = append(args, argLine)
+			}
+		}
+	}
+
+	return args, nil
+}
+
+// getNtasks returns the total number of MPI tasks using the priority chain:
+// JobResources > ScriptSpec > Defaults. (Skip in passthrough mode)
+func getNtasks(specs *scheduler.ScriptSpecs) int {
+	if specs == nil || specs.Spec == nil {
+		return 1
+	}
+	return effectiveResourceSpec(specs).GetNtasks()
+}
+
+// detectMpi checks whether mpiexec is available in the current PATH.
+// Returns the full path and true when found; empty string and false otherwise.
+func detectMpi() (string, bool) {
+	path, err := osexec.LookPath("mpiexec")
+	if err != nil {
+		return "", false
+	}
+	return path, true
+}
+
+// buildMpiRunCommand returns the shell command to embed in the job script.
+//   - When ntasks > 1 it requires mpiexec in PATH and wraps the condatainer run invocation with the full mpiexec path so compute nodes don't need a matching PATH.
+//   - Returns an error when ntasks > 1 but mpiexec cannot be found.
+//   - The user is responsible for installing the same MPI version inside the container.
+func buildMpiRunCommand(contentScript string, scriptArgs []string, specs *scheduler.ScriptSpecs, prependArrayArgs bool) (string, error) {
+	runCmd := fmt.Sprintf("condatainer run %s", contentScript)
+	if prependArrayArgs {
+		runCmd += " $ARRAY_ARGS"
+	}
+	if len(scriptArgs) > 0 {
+		quoted := make([]string, len(scriptArgs))
+		for i, a := range scriptArgs {
+			quoted[i] = shellQuote(a)
+		}
+		runCmd += " " + strings.Join(quoted, " ")
+	}
+	if getNtasks(specs) <= 1 {
+		return runCmd, nil
+	}
+	mpiexecPath, ok := detectMpi()
+	if !ok {
+		return "", fmt.Errorf("mpiexec not found; load the appropriate MPI module before submitting (ntasks=%d)", getNtasks(specs))
+	}
+	utils.PrintNote("Detected mpiexec: %s", mpiexecPath)
+	return fmt.Sprintf("%s -n %d %s", mpiexecPath, getNtasks(specs), runCmd), nil
+}
+
+// shellQuote returns a single-quoted shell-safe version of s.
+// Embedded single quotes are escaped as '\'.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// shellSplitLine splits a shell-like line into tokens.
+//   - Single- and double-quoted strings are kept as one token (quotes stripped).
+//   - Unquoted whitespace is the delimiter.
+func shellSplitLine(line string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inSingle, inDouble := false, false
+	for _, ch := range line {
+		switch {
+		case ch == '\'' && !inDouble:
+			inSingle = !inSingle
+		case ch == '"' && !inSingle:
+			inDouble = !inDouble
+		case (ch == ' ' || ch == '\t') && !inSingle && !inDouble:
+			if cur.Len() > 0 {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(ch)
+		}
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
+}
+
+// detectNativeArrayDirective returns a non-empty string describing a native scheduler
+// array directive found in specs, or "" if none. Used to detect conflicts when the
+// --array CLI flag is also in use.
+func detectNativeArrayDirective(specs *scheduler.ScriptSpecs) string {
+	if specs == nil {
+		return ""
+	}
+	for _, f := range specs.RemainingFlags {
+		// SLURM: --array=N-M  --array N-M  -a N-M  -a=N-M
+		if strings.HasPrefix(f, "--array") || strings.HasPrefix(f, "-a=") ||
+			f == "-a" || strings.HasPrefix(f, "-a ") {
+			return f
+		}
+		// PBS: -J N-M (PBS job-name flag is -N, not -J)
+		if strings.HasPrefix(f, "-J ") || strings.HasPrefix(f, "-J\t") ||
+			strings.HasPrefix(f, "-J=") {
+			return f
+		}
+	}
+	// LSF: -J name[N-M] — array range embedded in job name with brackets
+	if strings.Contains(specs.Control.JobName, "[") {
+		return fmt.Sprintf("-J %s", specs.Control.JobName)
+	}
+	return ""
+}
+
+// submitRunJob creates and submits a scheduler job to run the script.
+// contentScript is the bash script containing #DEP/#CNT directives — for HTCondor this is the
+// executable referenced in the .sub file, for other schedulers it equals scriptPath.
+func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPath, contentScript string, specs *scheduler.ScriptSpecs, deps []scheduler.Dependency, scriptArgs []string, arraySpec *scheduler.ArraySpec) error {
+	// Capture separate-output intent before CreateScriptWithSpec overrides Stdout/Stderr to /dev/null
+	arraySeparateOutput := arraySpec != nil && specs.Control.Stderr != "" && specs.Control.Stderr != specs.Control.Stdout
+
+	// Determine log directory - use spec's Stdout path if set, otherwise global log path
+	var logsDir string
+	if specs.Control.Stdout != "" {
+		logsDir = filepath.Dir(specs.Control.AbsStdout())
+	} else {
+		// Use global log path
+		logsDir = config.Global.LogsDir
+		if logsDir == "" {
+			logsDir = filepath.Join(os.Getenv("HOME"), "logs")
+		}
+	}
+
+	// Ensure logs directory exists. MkdirAllShared so a group-shared logs dir (2775,
+	// e.g. set via config for a lab-wide run) is group-readable/writable for reviewers.
+	if err := utils.MkdirAllShared(logsDir); err != nil {
+		return fmt.Errorf("failed to create logs directory %s: %w", logsDir, err)
+	}
+
+	// Build the condatainer run command pointing at the bash script.
+	// When the user provided a .sub file, contentScript is the executable .sh — the submitted
+	// job must re-invoke condatainer run on the bash script, not the submit file.
+	runCommand, err := buildMpiRunCommand(contentScript, scriptArgs, specs, arraySpec != nil)
+	if err != nil {
+		utils.PrintError("%v", err)
+		return err
+	}
+
+	if config.Global.ProxyPerJob {
+		if h, err2 := os.Hostname(); err2 == nil && h != "" {
+			specs.ProxyVia = h
+		}
+	}
+
+	// Generate names: short name for job, timestamped name for files
+	baseName := filepath.Base(originScriptPath)
+	ext := filepath.Ext(baseName)
+	nameWithoutExt := strings.TrimSuffix(baseName, ext)
+	timestamp := time.Now().Format("20060102_150405")
+	fileBaseName := fmt.Sprintf("%s_%s", nameWithoutExt, timestamp)
+
+	// Set job name if not already set in script (short name for squeue)
+	if specs.Control.JobName == "" {
+		specs.Control.JobName = nameWithoutExt
+	}
+
+	// Collect all dep IDs for JobSpec metadata (DepJobIDs is afterok-only build chain field)
+	var allDepIDs []string
+	for _, dep := range deps {
+		allDepIDs = append(allDepIDs, dep.JobIDs...)
+	}
+
+	jobSpec := &scheduler.JobSpec{
+		Name:      fileBaseName,
+		Command:   runCommand,
+		Specs:     specs,
+		DepJobIDs: allDepIDs,
+		Metadata:  map[string]string{},
+		Array:     arraySpec,
+	}
+
+	// Create the job script in the same directory as logs
+	jobScriptPath, err := sched.CreateScriptWithSpec(jobSpec, logsDir)
+	if err != nil {
+		return fmt.Errorf("failed to create job script: %w", err)
+	}
+
+	// Submit the job with typed dependencies
+	jobID, err := sched.Submit(ctx, jobScriptPath, deps)
+	if err != nil {
+		return fmt.Errorf("failed to submit job: %w", err)
+	}
+
+	fmt.Fprintln(os.Stdout, jobID)
+	if len(deps) > 0 {
+		var depSummary []string
+		for _, dep := range deps {
+			depSummary = append(depSummary, fmt.Sprintf("%s(%s)", dep.Type, strings.Join(dep.JobIDs, ",")))
+		}
+		utils.PrintSuccess("Submitted %s job %s for %s (after: %s)", sched.GetType(), jobID, originScriptPath, strings.Join(depSummary, " "))
+	} else {
+		utils.PrintSuccess("Submitted %s job %s for %s", sched.GetType(), jobID, originScriptPath)
+	}
+
+	if arraySpec != nil {
+		// Array jobs redirect output per-subjob inside the script; show glob pattern
+		safeName := strings.ReplaceAll(fileBaseName, "/", "--")
+		if arraySeparateOutput {
+			utils.PrintMessage("Per-subjob stdout/err => %s", filepath.Join(logsDir, safeName+"_*.out/*.err"))
+		} else {
+			utils.PrintMessage("Per-subjob stdout&err => %s", filepath.Join(logsDir, safeName+"_*.log"))
+		}
+	} else {
+		stdoutPath := jobSpec.Specs.Control.AbsStdout()
+		stderrPath := jobSpec.Specs.Control.AbsStderr()
+		if stdoutPath != "" {
+			if stderrPath == "" || stdoutPath == stderrPath {
+				utils.PrintMessage("Stdout & Stderr => %s", stdoutPath)
+			} else {
+				utils.PrintMessage("Stdout => %s", stdoutPath)
+				utils.PrintMessage("Stderr => %s", stderrPath)
+			}
+		}
+	}
+
+	return nil
+}

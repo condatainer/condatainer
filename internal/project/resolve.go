@@ -1,0 +1,382 @@
+package project
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/artifact/compare"
+	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/project/lock"
+	"github.com/condatainer/condatainer/internal/store"
+	"github.com/condatainer/condatainer/internal/utils"
+)
+
+// Match is which key a locally available copy has to agree with; a project
+// records its own in the lock.
+type Match = lock.Match
+
+const (
+	MatchEquivalence = lock.MatchEquivalence
+	MatchIdentity    = lock.MatchIdentity
+)
+
+// LookupFunc finds a local artifact answering to keys under a match mode.
+type LookupFunc func(name string, keys meta.Keys, match Match, dirs []string) (store.Candidate, bool)
+
+// LookupAtFunc reports whether the artifact at one exact path satisfies keys.
+type LookupAtFunc func(path, name string, keys meta.Keys, match Match) (store.Candidate, bool)
+
+// LookupLocal finds the locked artifact, or under MatchEquivalence something that can stand in for it.
+//   - The exact identity is tried first in both modes, so a caller can report which it got.
+//   - Equivalent candidates are interchangeable, so the sorted first is taken for a stable answer.
+func LookupLocal(name string, keys meta.Keys, match Match, dirs []string) (store.Candidate, bool) {
+	exact := store.IdentityQuery{Scheme: keys.Identity.Scheme, SHA256: keys.Identity.SHA256}
+	if candidate, _, err := store.ResolveIdentity(name, exact, dirs); err == nil {
+		return candidate, true
+	}
+	if match.Normalize() == MatchIdentity {
+		return store.Candidate{}, false
+	}
+	report, err := store.Equivalent(name,
+		store.IdentityQuery{Scheme: keys.Equiv.Scheme, SHA256: keys.Equiv.SHA256}, dirs)
+	if err != nil || len(report.Candidates) == 0 {
+		return store.Candidate{}, false
+	}
+	store.SortReport(&report)
+	return report.Candidates[0], true
+}
+
+// LookupInput finds a local artifact that may satisfy one dependency edge of a rebuild.
+// Unlike LookupLocal it does not ask about a pinned artifact: a build dependency may
+// be replaced by whatever leaves the dependent's equivalence key unchanged.
+//
+//	RoleData     same equivalence key
+//	RoleApp      same name/version, any build
+//	RoleHistory  any version of that name
+//
+// The exact recorded identity is preferred, since it gives the dependent its exact
+// identity too. Under MatchIdentity nothing else is accepted: a substitution would
+// produce a dependent the mode rejects.
+func LookupInput(dep meta.Dependency, match Match, dirs []string) (store.Candidate, bool) {
+	exact := store.IdentityQuery{Scheme: dep.Identity.Scheme, SHA256: dep.Identity.SHA256}
+	if candidate, _, err := store.ResolveIdentity(dep.Name, exact, dirs); err == nil {
+		return candidate, true
+	}
+	if match.Normalize() == MatchIdentity {
+		return store.Candidate{}, false
+	}
+
+	if dep.Role == meta.RoleData {
+		report, err := store.Equivalent(dep.Name,
+			store.IdentityQuery{Scheme: dep.Equiv.Scheme, SHA256: dep.Equiv.SHA256}, dirs)
+		if err != nil || len(report.Candidates) == 0 {
+			return store.Candidate{}, false
+		}
+		return report.Candidates[0], true
+	}
+
+	// Any build of the recorded name/version, which is all an app contributes and
+	// is closer to the record than another version would be.
+	name := catalog.Normalize(dep.Name)
+	report := store.Scan(store.ScanOptions{Dirs: dirs, Name: name})
+	if len(report.Candidates) > 0 {
+		return report.Candidates[0], true
+	}
+	if dep.Role != meta.RoleHistory {
+		return store.Candidate{}, false
+	}
+	return newestOf(toolName(name), dirs)
+}
+
+// toolName drops the version component, so "samtools/1.21" matches any samtools.
+func toolName(nameVersion string) string {
+	parsed, err := catalog.ParseDep(nameVersion)
+	if err != nil {
+		return nameVersion
+	}
+	return parsed.Name
+}
+
+// newestOf picks the highest installed version of one tool.
+//   - Scan visits the image roots in order, so an earlier root's copy wins a version tie and the nearest one is preferred.
+//   - Newest rather than first because any version is correct by the scheme, and the newest is what a person reaching for the tool would expect.
+func newestOf(tool string, dirs []string) (store.Candidate, bool) {
+	var best store.Candidate
+	var bestVersion string
+	for _, candidate := range store.Scan(store.ScanOptions{Dirs: dirs}).Candidates {
+		parsed, err := catalog.ParseDep(candidate.Name)
+		if err != nil || parsed.Name != tool || parsed.Version == "" {
+			continue
+		}
+		if bestVersion == "" || higher(parsed.Version, bestVersion) {
+			best, bestVersion = candidate, parsed.Version
+		}
+	}
+	return best, bestVersion != ""
+}
+
+// higher reports whether version a sorts above b. Equal versions are not higher,
+// which is what leaves the nearest root's copy in place on a tie.
+func higher(a, b string) bool {
+	return a != b && utils.SortVersionsDescending([]string{a, b})[0] == a
+}
+
+// LookupAt reports whether the artifact a project path declares is there and
+// satisfies the match mode.
+//
+//   - The path is the whole lookup. The artifact is project-owned, so a copy in an images root is not a substitute.
+//   - The filename is an address, never a name: the name comes from the script's #TARGET:, so decoding the filename would reject valid artifacts.
+func LookupAt(path, name string, keys meta.Keys, match Match) (store.Candidate, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return store.Candidate{}, false
+	}
+	artifact, err := compare.Read(path)
+	if err != nil || artifact.Name != name {
+		return store.Candidate{}, false
+	}
+	candidate := store.Candidate{
+		Name: artifact.Name, Path: path, Root: filepath.Dir(path),
+		Layout: store.LayoutFlat, Size: info.Size(),
+		Identity: artifact.IdentityRef(), Equiv: artifact.EquivRef(),
+	}
+	if candidate.Identity == keys.Identity {
+		return candidate, true
+	}
+	if match.Normalize() == MatchEquivalence && candidate.Equiv == keys.Equiv {
+		return candidate, true
+	}
+	return store.Candidate{}, false
+}
+
+// Mount is one declaration resolved to something the runtime can mount.
+type Mount struct {
+	// Request is the pin key this answers.
+	Request string
+	// Name is the artifact name, empty for an unpinnable declaration.
+	Name string
+	// Path is absolute. Inside a project a relative declaration is relative to
+	// the project root, and the runtime resolves a relative overlay against the
+	// process working directory — which a scheduler chooses. Resolving here is
+	// what keeps the two from disagreeing.
+	Path string
+	// Identity is what the lock records; Found is what is actually there, set
+	// only when an equivalent artifact stands in.
+	Identity string
+	Found    string
+	// Unpinned marks a declaration no pin can answer, mounted as the literal
+	// path it names.
+	Unpinned bool
+	// Live marks a name no pin answered, mounted from a live catalog/disk
+	// resolve instead — only ever set when ResolveOptions.LiveResolve asked
+	// for that fallback. Identity is empty: nothing was pinned, so there is
+	// nothing recorded to compare against.
+	Live bool
+}
+
+// Unresolved is one declaration that cannot be mounted, and why.
+type Unresolved struct {
+	Request string
+	Reason  string
+}
+
+// Resolution is everything one script's declarations resolve to.
+type Resolution struct {
+	Root   string
+	Mounts []Mount
+	// Unresolved is non-empty when the project cannot run as locked.
+	Unresolved []Unresolved
+}
+
+// Complete reports whether every declaration resolved.
+func (r *Resolution) Complete() bool { return len(r.Unresolved) == 0 }
+
+// ResolveOptions tunes resolution.
+type ResolveOptions struct {
+	// Match is which key a local copy must agree with. Empty means the lock's.
+	Match Match
+	// SearchDirs overrides the configured image roots.
+	SearchDirs []string
+	// LiveResolve allows a KindName request no pin answers to resolve through
+	// catalog.SolveName instead of refusing — the same fallback an unpinned
+	// name gets outside a project. Off by default: a caller resolving a fixed
+	// requirement (a helper's required overlays, the project's base) leaves
+	// this unset and keeps the ordinary refusal.
+	LiveResolve bool
+	// Distro is what SolveName retries a bare or partial name under when
+	// LiveResolve is set — the project's selected root, or the configured
+	// default. Supplied rather than derived, matching SolveName's own rule
+	// that have and distro are always given, never looked up internally.
+	Distro string
+	// lookup and lookupAt are injected for tests.
+	lookup   LookupFunc
+	lookupAt LookupAtFunc
+}
+
+func (o ResolveOptions) resolver() LookupFunc {
+	if o.lookup != nil {
+		return o.lookup
+	}
+	return LookupLocal
+}
+
+func (o ResolveOptions) pathResolver() LookupAtFunc {
+	if o.lookupAt != nil {
+		return o.lookupAt
+	}
+	return LookupAt
+}
+
+// Resolve turns one script's declarations into absolute paths to mount, using the
+// project's lock and, for a name no pin answers, optionally a live resolve.
+//
+//   - It is the one entry point execution and restore share, so they cannot disagree about a lock.
+//   - It acquires nothing. An absent artifact is reported unresolved, never fetched or built.
+//   - A path with no pin is always an error: a path is a claim to be pinned.
+//   - A name no pin answers resolves live when opts.LiveResolve is set, as outside a project. It errors only when nothing installed answers.
+func Resolve(ctx context.Context, root string, l *lock.Lock, requests []lock.Request, opts ResolveOptions) (*Resolution, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	verified, problems := lock.Verify(root, l)
+	if len(problems) > 0 {
+		resolution := &Resolution{Root: root}
+		for _, problem := range problems {
+			resolution.Unresolved = append(resolution.Unresolved,
+				Unresolved{Request: problem.Request, Reason: problem.Reason})
+		}
+		return resolution, nil
+	}
+
+	match := opts.Match
+	if match == "" {
+		match = l.Match
+	}
+	match = match.Normalize()
+	resolve, resolveAt := opts.resolver(), opts.pathResolver()
+	resolution := &Resolution{Root: root}
+
+	for _, request := range requests {
+		// An unpinnable declaration is mounted as written: there is nowhere for
+		// a pin to point, and the scanner has already reported it as a finding.
+		if !request.Kind.Pinnable() {
+			resolution.Mounts = append(resolution.Mounts, Mount{
+				Request: request.Key, Path: literalPath(root, request), Unpinned: true,
+			})
+			continue
+		}
+		matchedKey, pin, ok := lock.MatchPin(l, request)
+		if !ok {
+			if request.Kind == lock.KindName && opts.LiveResolve {
+				mount, resolved, err := resolveLive(ctx, opts, request)
+				if err != nil {
+					return nil, err
+				}
+				if resolved {
+					resolution.Mounts = append(resolution.Mounts, mount)
+					continue
+				}
+			}
+			resolution.Unresolved = append(resolution.Unresolved, Unresolved{Request: request.Key,
+				Reason: "declared but not pinned; run `condatainer project pin` to pin it"})
+			continue
+		}
+		entry, ok := verified.Entries[pin.Artifact]
+		if !ok {
+			resolution.Unresolved = append(resolution.Unresolved, Unresolved{Request: request.Key,
+				Reason: "the pinned artifact is not vendored"})
+			continue
+		}
+		keys := meta.Keys{Identity: entry.Identity, Equiv: entry.Equiv}
+		mount := Mount{Request: request.Key, Name: entry.Manifest.Name, Identity: entry.Identity.Digest()}
+
+		var candidate store.Candidate
+		if request.Kind == lock.KindPath {
+			// matchedKey, not request.Path: a fallback candidate answers under
+			// a different suffix than the one as scanned, and that is where
+			// restore actually placed the file.
+			suffix := strings.TrimPrefix(matchedKey, lock.PathPrefix)
+			at := filepath.Join(root, filepath.FromSlash(suffix))
+			candidate, ok = resolveAt(at, entry.Manifest.Name, keys, match)
+		} else {
+			candidate, ok = resolve(entry.Manifest.Name, keys, match, opts.SearchDirs)
+		}
+		if !ok {
+			resolution.Unresolved = append(resolution.Unresolved, Unresolved{Request: request.Key,
+				Reason: fmt.Sprintf("%s is locked at %s but no %s copy is available here",
+					entry.Manifest.Name, short(entry.Identity.Digest()), match)})
+			continue
+		}
+		mount.Path = candidate.Path
+		if candidate.Identity != entry.Identity {
+			mount.Found = candidate.Identity.Digest()
+		}
+		resolution.Mounts = append(resolution.Mounts, mount)
+	}
+	return resolution, nil
+}
+
+// ResolveUnlocked resolves declarations for a caller standing outside any
+// project: there is no lock, so a name resolves live exactly as it does inside
+// one when no pin answers it (installed first, never a build), and a path is
+// its own answer. It returns one Mount per request, in request order; a name
+// nothing installed answers has an empty Path, for the caller to report.
+func ResolveUnlocked(ctx context.Context, requests []lock.Request, opts ResolveOptions) ([]Mount, error) {
+	mounts := make([]Mount, 0, len(requests))
+	for _, request := range requests {
+		if request.Kind != lock.KindName {
+			mounts = append(mounts, Mount{Request: request.Key, Path: request.Path, Unpinned: true})
+			continue
+		}
+		mount, resolved, err := resolveLive(ctx, opts, request)
+		if err != nil {
+			return nil, err
+		}
+		if !resolved {
+			mount = Mount{Request: request.Key}
+		}
+		mounts = append(mounts, mount)
+	}
+	return mounts, nil
+}
+
+// resolveLive answers a KindName request no pin matched, through the same
+// catalog.SolveName an unpinned name resolves through outside a project — an
+// installed version first, the catalog's own candidates only once nothing is
+// installed. found is false, with no error, for everything short of "on disk
+// right now": a catalog-only hit has nothing to mount, so it is treated the
+// same as no hit at all rather than triggering a build.
+func resolveLive(ctx context.Context, opts ResolveOptions, request lock.Request) (Mount, bool, error) {
+	scan, err := image.ScanOverlays(image.ScanOptions{Dirs: opts.SearchDirs})
+	if err != nil {
+		return Mount{}, false, err
+	}
+	name, path, found, err := catalog.SolveInstalled(ctx, scan, opts.Distro, request.Dep.NameVersion())
+	if err != nil || !found {
+		return Mount{}, false, err
+	}
+	return Mount{Request: request.Key, Name: name, Path: path, Live: true}, true, nil
+}
+
+// literalPath is where an unpinnable declaration points. A project-relative one
+// is anchored on the root like every other path in a project; an external one
+// already says where it is.
+func literalPath(root string, request lock.Request) string {
+	if filepath.IsAbs(request.Path) {
+		return request.Path
+	}
+	return filepath.Join(root, filepath.FromSlash(request.Path))
+}
+
+func short(digest string) string {
+	if len(digest) > 19 {
+		return digest[:19]
+	}
+	return digest
+}

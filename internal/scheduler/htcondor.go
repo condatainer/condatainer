@@ -1,0 +1,796 @@
+package scheduler
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/condatainer/condatainer/internal/utils"
+)
+
+// HTCondorScheduler implements the Scheduler interface for HTCondor
+// EXPERIMENTAL: HTCondor is not tested on real clusters and may have edge cases. Feedback welcome.
+type HTCondorScheduler struct {
+	condorSubmitBin    string
+	condorQBin         string
+	condorStatusBin    string
+	condorConfigValBin string
+	jobIDRe            *regexp.Regexp
+	cachedClusterInfo  *ClusterInfo
+}
+
+// NewHTCondorScheduler creates a new HTCondor scheduler instance using condor_submit from PATH
+func NewHTCondorScheduler() (*HTCondorScheduler, error) {
+	return newHTCondorSchedulerWithBinary("")
+}
+
+// NewHTCondorSchedulerWithBinary creates an HTCondor scheduler using an explicit condor_submit path
+func NewHTCondorSchedulerWithBinary(condorSubmitBin string) (*HTCondorScheduler, error) {
+	return newHTCondorSchedulerWithBinary(condorSubmitBin)
+}
+
+func newHTCondorSchedulerWithBinary(condorSubmitBin string) (*HTCondorScheduler, error) {
+	binPath := condorSubmitBin
+	if binPath == "" {
+		var err error
+		binPath, err = exec.LookPath("condor_submit")
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrSchedulerNotFound, err)
+		}
+	} else {
+		if absPath, err := filepath.Abs(binPath); err == nil {
+			binPath = absPath
+		}
+		info, err := os.Stat(binPath)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrSchedulerNotFound, err)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("%w: %s is a directory", ErrSchedulerNotFound, binPath)
+		}
+	}
+
+	condorQBin := siblingBin(binPath, "condor_q")
+	condorStatusBin := siblingBin(binPath, "condor_status")
+	condorConfigValBin := siblingBin(binPath, "condor_config_val")
+
+	return &HTCondorScheduler{
+		condorSubmitBin:    binPath,
+		condorQBin:         condorQBin,
+		condorStatusBin:    condorStatusBin,
+		condorConfigValBin: condorConfigValBin,
+		jobIDRe:            regexp.MustCompile(`submitted to cluster (\d+)`),
+	}, nil
+}
+
+// JobIDVar returns the name of the HTCondor job ID environment variable (set inside the job).
+func (h *HTCondorScheduler) JobIDVar() string { return "_CONDOR_JOB_ID" }
+
+// GetCurrentJobID returns the HTCondor job ID of the currently running job, or "".
+func (h *HTCondorScheduler) GetCurrentJobID() string { return os.Getenv(h.JobIDVar()) }
+func (h *HTCondorScheduler) JobIDEnvExpr() string    { return "${" + h.JobIDVar() + "}" }
+
+// TmpDirVar returns the name of the HTCondor per-job node-local tmpdir env var.
+func (h *HTCondorScheduler) TmpDirVar() string { return "_CONDOR_SCRATCH_DIR" }
+
+// GetTmpDir returns the HTCondor node-local tmp directory for the current job, or "".
+func (h *HTCondorScheduler) GetTmpDir() string { return os.Getenv(h.TmpDirVar()) }
+
+// JobExecCommand is unsupported: HTCondor has no command that runs a process in an existing job from outside it.
+func (h *HTCondorScheduler) JobExecCommand(string) ([]string, error) { return nil, ErrExecUnsupported }
+
+// IsAvailable checks if the HTCondor binary is present on this system.
+func (h *HTCondorScheduler) IsAvailable() bool {
+	return h.condorSubmitBin != ""
+}
+
+// IsInsideJob returns true if the current process is running inside an HTCondor job.
+func (h *HTCondorScheduler) IsInsideJob() bool {
+	_, ok := os.LookupEnv("_CONDOR_JOB_AD")
+	return ok
+}
+
+func (h *HTCondorScheduler) GetType() SchedulerType { return SchedulerHTCondor }
+func (h *HTCondorScheduler) GetBinary() string      { return h.condorSubmitBin }
+
+// GetVersion returns the HTCondor version string, or "" on failure.
+func (h *HTCondorScheduler) GetVersion(ctx context.Context) string {
+	if h.condorSubmitBin == "" {
+		return ""
+	}
+	version, err := h.getHTCondorVersion(ctx)
+	if err != nil {
+		return ""
+	}
+	return version
+}
+
+// getHTCondorVersion attempts to get the HTCondor version
+func (h *HTCondorScheduler) getHTCondorVersion(ctx context.Context) (string, error) {
+	output, err := runCommand(ctx, "HTCondor", "get-version", h.condorSubmitBin, "-version")
+	if err != nil {
+		return "", err
+	}
+
+	// Parse version from output like "$CondorVersion: 10.0.0 ..."
+	versionStr := strings.TrimSpace(string(output))
+	lines := strings.Split(versionStr, "\n")
+	if len(lines) > 0 {
+		line := lines[0]
+		// Try to extract version from $CondorVersion: X.Y.Z ...
+		if strings.Contains(line, "$CondorVersion:") {
+			parts := strings.Fields(line)
+			for i, p := range parts {
+				if p == "$CondorVersion:" && i+1 < len(parts) {
+					return parts[i+1], nil
+				}
+			}
+		}
+		// Fallback: return first line
+		return strings.TrimSpace(line), nil
+	}
+
+	return versionStr, nil
+}
+
+// ReadScriptSpecs parses an HTCondor submit file (.sub) in native key=value format.
+//   - The executable line is extracted as the ScriptPath.
+//   - Relative executable paths are resolved: first against initialdir (if set), then against the process CWD — matching real HTCondor behaviour and ensuring ScriptPath is always absolute.
+func (h *HTCondorScheduler) ReadScriptSpecs(scriptPath string) (*ScriptSpecs, error) {
+	lines, err := readFileLines(scriptPath)
+	if err != nil {
+		return nil, err
+	}
+	executable, initialDir := extractHTCondorHeader(lines)
+	if executable != "" && !filepath.IsAbs(executable) {
+		if initialDir != "" {
+			executable = filepath.Join(initialDir, executable)
+		} else if abs, err := filepath.Abs(executable); err == nil {
+			executable = abs
+		}
+	}
+	return parseScript(executable, lines, h.extractDirectives, h.parseRuntimeConfig, h.parseResourceSpec)
+}
+
+// htcondorKnownKeys is the whitelist of submit-file keys that carry resource or
+// control information. Structural keys (universe, executable, queue) are left out:
+// extractHTCondorHeader handles the executable, and the rest are not directives.
+var htcondorKnownKeys = map[string]bool{
+	// Runtime config (parseRuntimeConfig)
+	"output": true, "log": true, "error": true,
+	"notify_user": true, "accounting_group": true, "notification": true,
+	"initialdir": true,
+	// Resource spec (parseResourceSpec)
+	"request_cpus": true, "request_memory": true, "request_gpus": true,
+	"+maxruntime": true,
+}
+
+// extractDirectives parses native HTCondor submit file lines.
+//   - Comments (#), empty lines, and lines whose key is not in htcondorKnownKeys are skipped.
+//   - Returns key=value directive strings for parsing by parseRuntimeConfig and parseResourceSpec.
+func (h *HTCondorScheduler) extractDirectives(lines []string) []string {
+	var out []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Skip comments, empty lines
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		// Parse key from key=value or bare keyword
+		key := trimmed
+		if idx := strings.IndexByte(trimmed, '='); idx >= 0 {
+			key = strings.TrimSpace(trimmed[:idx])
+		}
+		// Only collect lines with a recognized HTCondor key.
+		if !htcondorKnownKeys[strings.ToLower(key)] {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+// extractHTCondorHeader scans submit file lines for the executable and initialdir values.
+// Both may affect relative path resolution: a relative executable is resolved against
+// initialdir when present (HTCondor's documented behaviour).
+func extractHTCondorHeader(lines []string) (executable, initialDir string) {
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || trimmed == "" {
+			continue
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(strings.ToLower(parts[0]))
+		val := strings.TrimSpace(parts[1])
+		switch key {
+		case "executable":
+			executable = val
+		case "initialdir":
+			initialDir = absPath(val)
+		}
+		if executable != "" && initialDir != "" {
+			break
+		}
+	}
+	return
+}
+
+// parseRuntimeConfig consumes job control directives (name, I/O, email) from the directive list.
+// Returns the populated RuntimeConfig, unconsumed directives, and any critical error.
+func (h *HTCondorScheduler) parseRuntimeConfig(directives []string) (RuntimeConfig, []string, error) {
+	var rc RuntimeConfig
+	var unconsumed []string
+
+	for _, flag := range directives {
+		parts := strings.SplitN(flag, "=", 2)
+		if len(parts) != 2 {
+			unconsumed = append(unconsumed, flag)
+			continue
+		}
+
+		key := strings.TrimSpace(strings.ToLower(parts[0]))
+		value := strings.TrimSpace(parts[1])
+		consumed := true
+
+		switch key {
+		case "output":
+			rc.Stdout = value
+		case "error":
+			rc.Stderr = value
+		case "notify_user":
+			rc.MailUser = value
+		case "accounting_group":
+			rc.Partition = value
+		case "initialdir":
+			rc.WorkDir = absPath(value)
+		case "notification":
+			switch strings.ToLower(value) {
+			case "always":
+				rc.EmailOnBegin = true
+				rc.EmailOnEnd = true
+				rc.EmailOnFail = true
+			case "complete":
+				rc.EmailOnEnd = true
+			case "error":
+				rc.EmailOnFail = true
+			case "never":
+				rc.EmailOnBegin = false
+				rc.EmailOnEnd = false
+				rc.EmailOnFail = false
+			}
+		default:
+			consumed = false
+		}
+
+		if !consumed {
+			unconsumed = append(unconsumed, flag)
+		}
+	}
+
+	return rc, unconsumed, nil
+}
+
+// parseResourceSpec consumes compute resource directives from the directive list.
+//   - Returns a populated ResourceSpec and any remaining (unrecognized) directives.
+//   - Returns nil ResourceSpec on parse error (passthrough mode).
+func (h *HTCondorScheduler) parseResourceSpec(directives []string) (*ResourceSpec, []string) {
+	defaults := GetSpecDefaults()
+	rs := &ResourceSpec{
+		Nodes:        1, // HTCondor is inherently single-node
+		TasksPerNode: 1,
+		CpusPerTask:  defaults.CpusPerTask,
+		MemPerNodeMB: defaults.MemPerNodeMB,
+		Time:         defaults.Time,
+	}
+
+	var remaining []string
+
+	for _, flag := range directives {
+		parts := strings.SplitN(flag, "=", 2)
+		if len(parts) != 2 {
+			remaining = append(remaining, flag)
+			continue
+		}
+
+		key := strings.TrimSpace(strings.ToLower(parts[0]))
+		value := strings.TrimSpace(parts[1])
+		recognized := true
+
+		switch key {
+		case "request_cpus":
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				logParseWarning("HTCondor: invalid request_cpus value %q: %v", value, err)
+				return nil, directives
+			}
+			rs.CpusPerTask = n
+
+		case "request_memory":
+			mem, err := parseHTCondorMemory(value)
+			if err != nil {
+				logParseWarning("HTCondor: invalid request_memory value %q: %v", value, err)
+				return nil, directives
+			}
+			rs.MemPerNodeMB = mem
+
+		case "request_gpus":
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				logParseWarning("HTCondor: invalid request_gpus value %q: %v", value, err)
+				return nil, directives
+			}
+			rs.Gpu = &GpuSpec{
+				Type:  "gpu",
+				Count: n,
+				Raw:   value,
+			}
+
+		case "+maxruntime":
+			secs, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				logParseWarning("HTCondor: invalid +MaxRuntime value %q: %v", value, err)
+				return nil, directives
+			}
+			rs.Time = time.Duration(secs) * time.Second
+
+		default:
+			recognized = false
+		}
+
+		if !recognized {
+			remaining = append(remaining, flag)
+		}
+	}
+
+	return rs, remaining
+}
+
+// CreateScriptWithSpec generates an HTCondor submit description file and wrapper script
+func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) (string, error) {
+	specs := jobSpec.Specs
+
+	// Create output directory if specified
+	if outputDir != "" {
+		if err := utils.MkdirAllShared(outputDir); err != nil {
+			return "", NewScriptCreationError(jobSpec.Name, outputDir, err)
+		}
+	}
+
+	// Generate safe name for files
+	name := "job"
+	if jobSpec.Name != "" {
+		name = safeJobName(jobSpec.Name)
+	}
+
+	// Set log path based on job name; only override if caller requests it or script has no output set
+	if jobSpec.Array != nil {
+		// Array job: output/error paths are set per-task in the submit file using $(Process)_$(array_args)
+		specs.Control.Stdout = ""
+		specs.Control.Stderr = ""
+	} else if jobSpec.Name != "" && (jobSpec.OverrideOutput || specs.Control.Stdout == "") {
+		specs.Control.Stdout = filepath.Join(outputDir, fmt.Sprintf("%s.log", name))
+	}
+	if specs.Control.Stderr == "" && specs.Control.Stdout != "" {
+		specs.Control.Stderr = specs.Control.Stdout
+	}
+
+	// === Create wrapper bash script ===
+	shPath := filepath.Join(outputDir, fmt.Sprintf("%s.sh", name))
+	shFile, err := utils.CreateFileWritable(shPath)
+	if err != nil {
+		return "", NewScriptCreationError(jobSpec.Name, shPath, err)
+	}
+
+	shWriter := bufio.NewWriter(shFile)
+	fmt.Fprintln(shWriter, "#!/bin/bash")
+	fmt.Fprintln(shWriter, "")
+
+	// HTCondor is always single-node; synthesize a ResourceSpec with Nodes=1,
+	// TasksPerNode=1, and copy CpusPerTask/MemPerNodeMB from the actual spec if available.
+	htcRS := &ResourceSpec{Nodes: 1, TasksPerNode: 1}
+	if specs.Spec != nil {
+		htcRS.CpusPerTask = specs.Spec.CpusPerTask
+		htcRS.MemPerNodeMB = specs.Spec.MemPerNodeMB
+	}
+
+	// Export resource env vars: the nested "condatainer run <bash_script>" cannot
+	// re-read HTCondor specs (they live in the .sub file, not the bash script).
+	for _, kv := range ResourceEnvVars(htcRS) {
+		fmt.Fprintf(shWriter, "export %s\n", kv)
+	}
+	fmt.Fprintln(shWriter, "")
+
+	// Array job: ARRAY_ARGS is set by HTCondor via the environment directive in the submit file
+	if jobSpec.Array != nil {
+		jobSpec.Metadata["Array Index"] = "$_CONDOR_PROC_ID"
+		jobSpec.Metadata["Array File"] = jobSpec.Array.InputFile
+		jobSpec.Metadata["Array Args"] = "$ARRAY_ARGS"
+	}
+
+	// Print job information at start
+	writeJobHeader(shWriter, "$_CONDOR_CLUSTER_ID.$_CONDOR_PROC_ID", specs, formatHMSTime, jobSpec.Metadata)
+	fmt.Fprintln(shWriter, "")
+
+	// Write the command and capture exit code
+	fmt.Fprintln(shWriter, jobSpec.Command)
+	fmt.Fprintln(shWriter, "_EXIT_CODE=$?")
+
+	// Print completion info
+	fmt.Fprintln(shWriter, "")
+	writeJobFooter(shWriter, "$_CONDOR_CLUSTER_ID.$_CONDOR_PROC_ID")
+
+	shWriter.Flush()
+	shFile.Close()
+
+	if err := utils.MakeExecutable(shPath); err != nil {
+		return "", NewScriptCreationError(jobSpec.Name, shPath, err)
+	}
+
+	// === Create HTCondor submit file ===
+	subPath := filepath.Join(outputDir, fmt.Sprintf("%s.sub", name))
+	subFile, err := utils.CreateFileWritable(subPath)
+	if err != nil {
+		return "", NewScriptCreationError(jobSpec.Name, subPath, err)
+	}
+	defer subFile.Close()
+
+	subWriter := bufio.NewWriter(subFile)
+	defer subWriter.Flush()
+
+	// Write submit file header
+	fmt.Fprintln(subWriter, "# HTCondor Submit File")
+	fmt.Fprintln(subWriter, "universe = vanilla")
+	fmt.Fprintf(subWriter, "executable = %s\n", shPath)
+	fmt.Fprintln(subWriter, "transfer_executable = false")
+	if specs.Control.WorkDir != "" {
+		fmt.Fprintf(subWriter, "initialdir = %s\n", specs.Control.WorkDir)
+	}
+	fmt.Fprintln(subWriter, "")
+
+	// Write unrecognized flags (RemainingFlags only contains flags not parsed into typed fields)
+	for _, flag := range specs.RemainingFlags {
+		fmt.Fprintf(subWriter, "%s\n", flag)
+	}
+
+	// Write resource specifications
+	if specs.Control.JobName != "" {
+		fmt.Fprintf(subWriter, "+JobName = \"%s\"\n", specs.Control.JobName)
+	}
+	if specs.Control.Partition != "" {
+		fmt.Fprintf(subWriter, "accounting_group = %s\n", specs.Control.Partition)
+	}
+
+	// Output/error/log
+	if jobSpec.Array != nil {
+		// Array job: per-task output using $(Process) index and $(array_args) value
+		perTaskLog := fmt.Sprintf("%s/%s_$(Process)_$(array_args).log", outputDir, name)
+		fmt.Fprintf(subWriter, "output = %s\n", perTaskLog)
+		fmt.Fprintf(subWriter, "error = %s\n", perTaskLog)
+	} else {
+		if specs.Control.Stdout != "" {
+			fmt.Fprintf(subWriter, "output = %s\n", specs.Control.AbsStdout())
+		}
+		if specs.Control.Stderr != "" {
+			fmt.Fprintf(subWriter, "error = %s\n", specs.Control.AbsStderr())
+		}
+	}
+	condorLogPath := filepath.Join(outputDir, fmt.Sprintf("%s.condor.log", name))
+	fmt.Fprintf(subWriter, "log = %s\n", condorLogPath)
+
+	// Resource directives -- only when Spec is available
+	if specs.Spec != nil {
+		if specs.Spec.CpusPerTask > 0 {
+			fmt.Fprintf(subWriter, "request_cpus = %d\n", specs.Spec.CpusPerTask)
+		}
+		if specs.Spec.MemPerNodeMB > 0 {
+			fmt.Fprintf(subWriter, "request_memory = %d\n", specs.Spec.MemPerNodeMB)
+		}
+		if specs.Spec.Gpu != nil && specs.Spec.Gpu.Count > 0 {
+			fmt.Fprintf(subWriter, "request_gpus = %d\n", specs.Spec.Gpu.Count)
+		}
+		if specs.Spec.Time > 0 {
+			secs := int64(specs.Spec.Time.Seconds())
+			fmt.Fprintf(subWriter, "+MaxRuntime = %d\n", secs)
+		}
+	}
+
+	// Email notifications
+	if specs.Control.EmailOnBegin || specs.Control.EmailOnEnd || specs.Control.EmailOnFail {
+		if specs.Control.EmailOnBegin && specs.Control.EmailOnEnd && specs.Control.EmailOnFail {
+			fmt.Fprintln(subWriter, "notification = Always")
+		} else if specs.Control.EmailOnEnd {
+			fmt.Fprintln(subWriter, "notification = Complete")
+		} else if specs.Control.EmailOnFail {
+			fmt.Fprintln(subWriter, "notification = Error")
+		}
+	} else {
+		fmt.Fprintln(subWriter, "notification = Never")
+	}
+	if specs.Control.MailUser != "" {
+		fmt.Fprintf(subWriter, "notify_user = %s\n", specs.Control.MailUser)
+	}
+
+	// Queue directive
+	fmt.Fprintln(subWriter, "")
+	if jobSpec.Array != nil {
+		// Array job: use item-based queue; ARRAY_ARGS is set from the queue variable
+		fmt.Fprintln(subWriter, "environment = \"ARRAY_ARGS=$(array_args)\"")
+		fmt.Fprintf(subWriter, "queue array_args from %s\n", jobSpec.Array.InputFile)
+	} else {
+		fmt.Fprintln(subWriter, "queue")
+	}
+
+	// Self-dispose: the wrapper script removes itself (unless in debug mode)
+	shAppend, err := os.OpenFile(shPath, os.O_APPEND|os.O_WRONLY, utils.PermExec)
+	if err == nil {
+		if !debugMode && !jobSpec.KeepScript {
+			fmt.Fprintf(shAppend, "\n# Self-dispose\nrm -f %s %s\n", shPath, subPath)
+		}
+		// Exit with command's exit code
+		fmt.Fprintln(shAppend, "exit $_EXIT_CODE")
+		shAppend.Close()
+	}
+
+	return subPath, nil
+}
+
+// Submit submits an HTCondor job. Any dependency is refused: see dependencyTypes.
+func (h *HTCondorScheduler) Submit(ctx context.Context, scriptPath string, deps []Dependency) (string, error) {
+	if err := CheckDependencies(SchedulerHTCondor, deps); err != nil {
+		return "", err
+	}
+
+	// Execute condor_submit
+	output, err := runCommand(ctx, "HTCondor", "submit", h.condorSubmitBin, scriptPath)
+	if err != nil {
+		return "", NewSubmissionError("HTCondor", filepath.Base(scriptPath), string(output), err)
+	}
+
+	// Parse job ID (cluster ID) from output
+	// Example: "1 job(s) submitted to cluster 12345."
+	matches := h.jobIDRe.FindStringSubmatch(string(output))
+	if len(matches) < 2 {
+		return "", fmt.Errorf("%w: %s", ErrJobIDParseFailed, string(output))
+	}
+
+	jobID := matches[1]
+	return jobID, nil
+}
+
+// GetClusterInfo retrieves HTCondor cluster configuration
+func (h *HTCondorScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, error) {
+	if h.cachedClusterInfo != nil {
+		return h.cachedClusterInfo, nil
+	}
+
+	info := &ClusterInfo{
+		AvailableGpus: make([]GpuInfo, 0),
+		Limits:        make([]ResourceLimits, 0),
+	}
+
+	if h.condorStatusBin == "" {
+		return info, nil
+	}
+
+	// Single condor_status call: CPU, mem, and GPU info per machine.
+	maxCpus, maxMem, gpus, err := h.getNodeAndGpuInfo()
+	if err == nil {
+		info.MaxCpusPerNode = maxCpus
+		info.MaxMemMBPerNode = maxMem
+		info.AvailableGpus = gpus
+	}
+
+	// Get cluster limits (HTCondor uses global/accounting group limits rather than queues)
+	if h.condorConfigValBin != "" || h.condorStatusBin != "" {
+		limits, err := h.getClusterLimits(info.AvailableGpus, maxCpus, maxMem)
+		if err == nil {
+			info.Limits = limits
+		}
+	}
+
+	h.cachedClusterInfo = info
+	return info, nil
+}
+
+// getNodeAndGpuInfo queries HTCondor for CPU, memory, and GPU info in a single condor_status call.
+func (h *HTCondorScheduler) getNodeAndGpuInfo() (int, int64, []GpuInfo, error) {
+	output, err := runCommand(context.Background(), "HTCondor", "query-node-info", h.condorStatusBin,
+		"-compact", "-af", "TotalSlotCpus", "TotalSlotMemory", "TotalGpus", "Machine")
+	if err != nil {
+		return 0, 0, nil, NewClusterError("HTCondor", "query node info", err)
+	}
+
+	var maxCpus int
+	var maxMemMB int64
+	gpuMap := make(map[string]*GpuInfo)
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+
+		var cpus int
+		var memMB int64
+		var gpuCount int
+		fmt.Sscanf(fields[0], "%d", &cpus)
+		fmt.Sscanf(fields[1], "%d", &memMB)
+		fmt.Sscanf(fields[2], "%d", &gpuCount)
+		machine := fields[3]
+
+		if cpus > maxCpus {
+			maxCpus = cpus
+		}
+		if memMB > maxMemMB {
+			maxMemMB = memMB
+		}
+
+		if gpuCount > 0 {
+			key := "gpu:" + machine
+			if existing, ok := gpuMap[key]; ok {
+				existing.Total += gpuCount
+			} else {
+				gpuMap[key] = &GpuInfo{
+					Type:      "gpu",
+					Total:     gpuCount,
+					Partition: machine,
+				}
+			}
+		}
+	}
+
+	gpus := make([]GpuInfo, 0, len(gpuMap))
+	for _, g := range gpuMap {
+		gpus = append(gpus, *g)
+	}
+	return maxCpus, maxMemMB, gpus, nil
+}
+
+// getClusterLimits queries HTCondor for cluster-wide resource limits
+// HTCondor doesn't have partitions/queues like other schedulers, but uses accounting groups
+// and global limits. This function creates a "default" limit representing cluster resources.
+func (h *HTCondorScheduler) getClusterLimits(gpuInfo []GpuInfo, maxCpus int, maxMemMB int64) ([]ResourceLimits, error) {
+	limit := &ResourceLimits{
+		Partition: "default",
+	}
+
+	// Use the max node resources as baseline
+	if maxCpus > 0 {
+		limit.MaxCpusPerNode = maxCpus
+	}
+	if maxMemMB > 0 {
+		limit.MaxMemMBPerNode = maxMemMB
+	}
+
+	// Try to get max walltime from config if condor_config_val is available
+	if h.condorConfigValBin != "" {
+		if maxTime, err := h.getConfigValue("MAX_JOB_RUNTIME"); err == nil && maxTime != "" {
+			// MAX_JOB_RUNTIME is in seconds
+			if seconds, err := strconv.ParseInt(maxTime, 10, 64); err == nil && seconds > 0 {
+				limit.MaxTime = time.Duration(seconds) * time.Second
+			}
+		}
+	}
+
+	// Calculate total GPU count
+	totalGpus := 0
+	for _, gpu := range gpuInfo {
+		totalGpus += gpu.Total
+	}
+	if totalGpus > 0 {
+		limit.MaxGpus = totalGpus
+	}
+
+	// If we have any limits set, return them
+	if limit.MaxCpusPerNode > 0 || limit.MaxMemMBPerNode > 0 || limit.MaxTime > 0 || limit.MaxGpus > 0 {
+		return []ResourceLimits{*limit}, nil
+	}
+
+	return []ResourceLimits{}, nil
+}
+
+// getConfigValue queries HTCondor configuration for a specific parameter
+func (h *HTCondorScheduler) getConfigValue(param string) (string, error) {
+	if h.condorConfigValBin == "" {
+		return "", fmt.Errorf("condor_config_val not available")
+	}
+
+	output, err := runCommand(context.Background(), "HTCondor", "query-config", h.condorConfigValBin, param)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}
+
+// GetJobResources reads allocated resources from HTCondor environment variables.
+// HTCondor is always single-node; Nodes and TasksPerNode are not set.
+func (h *HTCondorScheduler) GetJobResources() *ResourceSpec {
+	if _, ok := os.LookupEnv("_CONDOR_JOB_AD"); !ok {
+		return nil
+	}
+	res := &ResourceSpec{}
+	if v := getEnvInt("_CONDOR_REQUEST_CPUS"); v != nil {
+		res.CpusPerTask = *v
+	}
+	// _CONDOR_REQUEST_MEMORY is in MB
+	if v := getEnvInt64("_CONDOR_REQUEST_MEMORY"); v != nil {
+		res.MemPerNodeMB = *v
+	}
+	if n := getCudaDeviceCount(); n != nil && *n > 0 {
+		res.Gpu = &GpuSpec{Count: *n}
+	}
+	return res
+}
+
+// parseHTCondorMemory parses HTCondor memory specifications.
+// HTCondor default unit is MB if no suffix is provided.
+func parseHTCondorMemory(memStr string) (int64, error) {
+	memStr = strings.TrimSpace(memStr)
+	if memStr == "" {
+		return 0, fmt.Errorf("%w: empty memory string", ErrInvalidMemoryFormat)
+	}
+
+	// Check if it's a plain number (default MB in HTCondor)
+	if val, err := strconv.ParseInt(memStr, 10, 64); err == nil {
+		return val, nil
+	}
+
+	// Try with unit suffix
+	return parseMemoryMB(memStr)
+}
+
+// GetJobStatus returns the current status of the given HTCondor job ID.
+// Uses condor_q; returns JobStatusUnknown conservatively when condor_q is unavailable or times out.
+// condor_q doesn't easily distinguish idle vs running without --format; presence = alive.
+func (h *HTCondorScheduler) GetJobStatus(ctx context.Context, jobID string) (JobStatus, error) {
+	if h.condorQBin == "" {
+		return JobStatusUnknown, nil // conservative: can't check
+	}
+	out, err := runCommand(ctx, "HTCondor", "job-status", h.condorQBin, jobID)
+	if err != nil {
+		if _, ok := err.(*TimeoutError); ok {
+			return JobStatusUnknown, nil // conservative: timed out
+		}
+		return JobStatusDone, nil
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		return JobStatusRunning, nil // in queue (can't distinguish idle vs running without --format)
+	}
+	return JobStatusDone, nil
+}
+
+// CancelJob cancels the HTCondor job with the given ID using condor_rm.
+// Returns nil if the job is already gone.
+func (h *HTCondorScheduler) CancelJob(ctx context.Context, jobID string) error {
+	condorRmBin := siblingBin(h.condorSubmitBin, "condor_rm")
+	if condorRmBin == "" {
+		return fmt.Errorf("condor_rm not found")
+	}
+	_, err := runCommand(ctx, "HTCondor", "cancel-job", condorRmBin, jobID)
+	if err != nil {
+		if _, ok := err.(*TimeoutError); ok {
+			return err
+		}
+		return nil // condor_rm exits non-zero for already-gone jobs
+	}
+	return nil
+}
+
+// TryParseHTCondorScript attempts to parse an HTCondor submit file without requiring HTCondor binaries.
+// This is a static parser that can work in any environment.
+func TryParseHTCondorScript(scriptPath string) (*ScriptSpecs, error) {
+	parser := &HTCondorScheduler{}
+	return parser.ReadScriptSpecs(scriptPath)
+}

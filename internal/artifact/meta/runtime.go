@@ -1,0 +1,188 @@
+package meta
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/condatainer/condatainer/catalog"
+	artifactcache "github.com/condatainer/condatainer/internal/artifact/cache"
+	"github.com/condatainer/condatainer/internal/image/tool"
+)
+
+var runtimeCache = artifactcache.Default()
+
+// RuntimePath is where the runtime document lives inside every image.
+const RuntimePath = "/" + DirName + "/" + RuntimeFileName
+
+// RuntimeFileName is the runtime document's basename, for callers staging it
+// into a directory.
+const RuntimeFileName = "runtime.json"
+
+// Runtime is everything container setup needs, and nothing else. It is the only
+// metadata read on the mount path, so it stays small and stops growing: anything
+// added for provenance belongs in the manifest, which no exec pays for.
+type Runtime struct {
+	SchemaVersion int          `json:"schema_version"`
+	Name          string       `json:"name"`
+	Type          catalog.Type `json:"type"` // os, app, data, env
+	Description   string       `json:"description,omitempty"`
+	Platform      Platform     `json:"platform"`
+	// Prefix is where the payload sits inside the container, /cnt/<name> for app
+	// and data, and what the recipe wrote to as $CNT_PREFIX. Empty for os,
+	// whose files apply at the root. Readers take it as authoritative rather
+	// than reconstructing it from the name.
+	Prefix string `json:"prefix,omitempty"`
+	// Env keeps {prefix} intact; it is substituted when the image is loaded,
+	// because the install prefix is not known when the image is built.
+	Env []EnvVar `json:"env,omitempty"`
+}
+
+// Normalize fills in what a runtime document is allowed to leave out: an absent
+// type means app, and an absent OS means linux.
+func (r *Runtime) Normalize() {
+	r.Type = normalizeType(r.Type)
+	if r.Platform.OS == "" {
+		r.Platform.OS = "linux"
+	}
+}
+
+// ValidateRuntime reports whether r describes a usable mount: a known schema, a
+// name and prefix where they are load-bearing, an architecture, and an
+// environment that applies without collisions. Call Normalize first.
+func ValidateRuntime(r Runtime) error {
+	if r.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("%w: runtime is %d (this build reads %d)", ErrUnsupportedSchema, r.SchemaVersion, SchemaVersion)
+	}
+	if strings.TrimSpace(r.Name) == "" {
+		return fmt.Errorf("%w: runtime name is empty", ErrInvalid)
+	}
+	if r.Platform.Arch == "" {
+		return fmt.Errorf("%w: %q records no architecture", ErrInvalid, r.Name)
+	}
+
+	switch r.Type {
+	case catalog.TypeApp, catalog.TypeData:
+		if r.Prefix == "" {
+			return fmt.Errorf("%w: %s image %q has no runtime prefix", ErrInvalid, r.Type, r.Name)
+		}
+		if !strings.HasPrefix(r.Prefix, "/") {
+			return fmt.Errorf("%w: prefix %q is not absolute", ErrInvalid, r.Prefix)
+		}
+	case catalog.TypeEnv:
+		// An environment records EnvPrefix and only that: it is where its conda
+		// prefix is, so PATH and {prefix} resolve as they did for the .img it came
+		// from, and two environments collide there. One whose payload has no
+		// cnt_env records nothing.
+		if r.Prefix != "" && r.Prefix != EnvPrefix {
+			return fmt.Errorf("%w: %s is an environment and may record only %s as its prefix, not %q",
+				ErrInvalid, r.Name, EnvPrefix, r.Prefix)
+		}
+	case catalog.TypeOS:
+		// No prefix: it applies at the container root. A stray one is ignored
+		// rather than rejected, since nothing reads it for this type.
+	default:
+		return fmt.Errorf("%w: unknown type %q", ErrInvalid, r.Type)
+	}
+
+	return validateEnv(r.Env)
+}
+
+// MarshalRuntime renders a runtime document the way StageRuntime writes it.
+func MarshalRuntime(r Runtime) ([]byte, error) { return marshalJSON("runtime", r) }
+
+// StageRuntime writes the runtime document into dir, ready to be packed into an
+// image at RuntimePath.
+func StageRuntime(dir string, r Runtime) error {
+	data, err := MarshalRuntime(r)
+	if err != nil {
+		return err
+	}
+	return stageFile(dir, RuntimeFileName, data)
+}
+
+// ReadRuntime returns the runtime document embedded in an image.
+//   - Only a genuinely absent one is ErrNoRuntime; a host failure keeps its own cause.
+//   - Cached by path, size and mtime, negative verdicts included.
+func ReadRuntime(imagePath string) (Runtime, error) {
+	return ReadRuntimeWithCache(imagePath, runtimeCache)
+}
+
+// ReadRuntimeWithCache is ReadRuntime using records. A batch lets callers that
+// inspect many images persist all misses once at the end of their scan.
+func ReadRuntimeWithCache(imagePath string, records artifactcache.Access) (Runtime, error) {
+	abs, err := filepath.Abs(imagePath)
+	if err != nil {
+		abs = imagePath
+	}
+	fi, err := os.Lstat(abs)
+	if err != nil {
+		records.Forget(abs)
+		return Runtime{}, fmt.Errorf("%w: %s: %w", tool.ErrUnreadable, imagePath, err)
+	}
+
+	if record, ok := records.Lookup(abs, fi); ok && record.RuntimeKnown {
+		if len(record.Runtime) == 0 {
+			return Runtime{}, fmt.Errorf("%w: %s", ErrNoRuntime, imagePath)
+		}
+		var rt Runtime
+		if err := json.Unmarshal(record.Runtime, &rt); err != nil {
+			records.Forget(abs)
+		} else {
+			rt.Normalize()
+			if err := ValidateRuntime(rt); err == nil {
+				return rt, nil
+			}
+			records.Forget(abs)
+		}
+	}
+
+	rt, err := readRuntimeUncached(abs)
+	switch {
+	case err == nil:
+		data, marshalErr := json.Marshal(rt)
+		if marshalErr == nil {
+			records.Merge(abs, fi, func(record *artifactcache.Record) {
+				record.RuntimeKnown = true
+				record.Runtime = data
+			})
+		}
+	case errors.Is(err, ErrNoRuntime):
+		records.Merge(abs, fi, func(record *artifactcache.Record) {
+			record.RuntimeKnown = true
+			record.Runtime = nil
+		})
+	}
+	return rt, err
+}
+
+// readRuntimeUncached does the archive read and decode, bypassing the cache.
+func readRuntimeUncached(imagePath string) (Runtime, error) {
+	data, err := readRaw(imagePath, RuntimePath)
+	if err != nil {
+		if errors.Is(err, tool.ErrFileNotFound) {
+			return Runtime{}, fmt.Errorf("%w: %s", ErrNoRuntime, imagePath)
+		}
+		return Runtime{}, err
+	}
+	return DecodeRuntime(data, imagePath)
+}
+
+// DecodeRuntime turns a runtime document into a validated, normalized Runtime.
+// source names the document's origin in errors. Split from the archive read so
+// what the bytes mean is decided in one place, whether they came from an image,
+// a staging directory, or a registry blob.
+func DecodeRuntime(data []byte, source string) (Runtime, error) {
+	var rt Runtime
+	if err := json.Unmarshal(data, &rt); err != nil {
+		return Runtime{}, fmt.Errorf("%w: %s: %w", ErrInvalid, source, err)
+	}
+	rt.Normalize()
+	if err := ValidateRuntime(rt); err != nil {
+		return Runtime{}, fmt.Errorf("%s: %w", source, err)
+	}
+	return rt, nil
+}

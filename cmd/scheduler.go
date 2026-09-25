@@ -1,0 +1,358 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/spf13/cobra"
+)
+
+// formatDuration formats a duration with days for readability
+func formatDuration(d time.Duration) string {
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+
+	if days > 0 {
+		if hours > 0 {
+			return fmt.Sprintf("%dd %dh", days, hours)
+		}
+		return fmt.Sprintf("%dd", days)
+	}
+	if hours > 0 {
+		if minutes > 0 {
+			return fmt.Sprintf("%dh %dm", hours, minutes)
+		}
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dm", minutes)
+}
+
+var schedulerShowPartitions bool
+
+// schedulerGpuFilter is a tri-state set from the mutually exclusive --cpu/--gpu
+// flags: unset means show every partition.
+type schedulerGpuFilterMode int
+
+const (
+	schedulerGpuFilterNone schedulerGpuFilterMode = iota
+	schedulerGpuFilterCpuOnly
+	schedulerGpuFilterGpuOnly
+)
+
+var schedulerGpuFilter schedulerGpuFilterMode
+
+var schedulerCmd = &cobra.Command{
+	Use:   "scheduler",
+	Args:  cobra.NoArgs,
+	Short: "Show the detected job scheduler",
+	Long: `Show the detected job scheduler: type, binary path, version, and availability.
+
+- -p also shows the resource limits of each partition (or queue).`,
+	Example: `  condatainer scheduler           # Scheduler information
+  condatainer scheduler -p        # Add per-partition limits
+  condatainer scheduler -p --gpu  # Only GPU partitions
+  condatainer scheduler -p --cpu  # Only CPU-only partitions`,
+	Run: runScheduler,
+}
+
+func init() {
+	rootCmd.AddCommand(schedulerCmd)
+	schedulerCmd.Flags().BoolVarP(&schedulerShowPartitions, "partitions", "p", false, "Show per-partition resource limits")
+	schedulerCmd.Flags().BoolP("queue", "Q", false, "Show per-queue resource limits (alias for -p)")
+	schedulerCmd.Flags().Bool("cpu", false, "Show only CPU-only partitions (no GPUs)")
+	schedulerCmd.Flags().Bool("gpu", false, "Show only GPU partitions")
+	schedulerCmd.MarkFlagsMutuallyExclusive("cpu", "gpu")
+}
+
+func runScheduler(cmd *cobra.Command, args []string) {
+	ResolveFlagAlias(cmd, "partitions", "queue")
+
+	// --cpu and --gpu are mutually exclusive, so at most one can be set here.
+	cpuOnly, _ := cmd.Flags().GetBool("cpu")
+	gpuOnly, _ := cmd.Flags().GetBool("gpu")
+	switch {
+	case cpuOnly:
+		schedulerGpuFilter = schedulerGpuFilterCpuOnly
+	case gpuOnly:
+		schedulerGpuFilter = schedulerGpuFilterGpuOnly
+	}
+
+	// Filtering only makes sense in the per-partition view, so imply -p
+	if schedulerGpuFilter != schedulerGpuFilterNone {
+		schedulerShowPartitions = true
+	}
+
+	// Fast path: check if already inside a job before binary lookup
+	if scheduler.IsInsideJob() {
+		utils.PrintMessage("Scheduler Status: %s", utils.StyleWarning("Unavailable (inside job)"))
+		utils.PrintMessage("")
+		utils.PrintMessage("You are currently inside a scheduled job; job submission is disabled to prevent nested submissions.")
+		return
+	}
+
+	// Use already-initialized scheduler if available; otherwise detect for status display.
+	sched := scheduler.ActiveScheduler()
+	if sched == nil {
+		var err error
+		sched, err = scheduler.DetectSchedulerWithBinary(config.Global.Scheduler.Bin)
+		if err != nil {
+			utils.PrintMessage("Scheduler Status: %s", utils.StyleError("Not Found"))
+			utils.PrintMessage("")
+			utils.PrintMessage("No job scheduler detected on this system.")
+			utils.PrintMessage("Supported schedulers: SLURM (more coming soon)")
+			return
+		}
+	}
+
+	// Display scheduler information (no [CNT] prefix for structured output)
+	fmt.Println("Scheduler Information:")
+	fmt.Printf("  Type:      %s\n", string(sched.GetType()))
+	fmt.Printf("  Binary:    %s\n", sched.GetBinary())
+
+	if version := sched.GetVersion(cmd.Context()); version != "" {
+		fmt.Printf("  Version:   %s\n", version)
+	}
+
+	if sched.IsInsideJob() {
+		fmt.Printf("  Status:    %s (inside job)\n", utils.StyleError("Unavailable"))
+		fmt.Println()
+		fmt.Println("You are currently inside a scheduled job (detected via environment).")
+		fmt.Println("Job submission is disabled to prevent nested job submissions.")
+		// Do not query or print cluster information when inside a job
+		return
+	} else if sched.IsAvailable() {
+		fmt.Printf("  Status:    %s\n", utils.StyleSuccess("Available"))
+		fmt.Println()
+		fmt.Println("The scheduler is available and ready for job submission.")
+	} else {
+		fmt.Printf("  Status:    %s\n", utils.StyleError("Unavailable"))
+		fmt.Println()
+		fmt.Println("Scheduler detected but not available for job submission.")
+	}
+
+	// Try to get cluster info
+	clusterInfo, err := sched.GetClusterInfo(cmd.Context())
+	if err == nil && clusterInfo != nil {
+		// Build GPU map by partition
+		gpusByPartition := make(map[string][]scheduler.GpuInfo)
+		for _, gpu := range clusterInfo.AvailableGpus {
+			partition := gpu.Partition
+			if partition == "" {
+				partition = "default"
+			}
+			gpusByPartition[partition] = append(gpusByPartition[partition], gpu)
+		}
+
+		// Display per-partition limits if requested
+		if schedulerShowPartitions {
+			// Filter limits based on --cpu or --gpu flags (only for per-partition display)
+			filteredLimits := make([]scheduler.ResourceLimits, 0)
+			for _, limit := range clusterInfo.Limits {
+				partitionName := limit.Partition
+				if partitionName == "" {
+					partitionName = "default"
+				}
+
+				hasGpu := len(gpusByPartition[partitionName]) > 0
+
+				// Apply filters only if --cpu or --gpu is set
+				if schedulerGpuFilter == schedulerGpuFilterCpuOnly && hasGpu {
+					continue // Skip GPU partitions when --cpu is set
+				}
+				if schedulerGpuFilter == schedulerGpuFilterGpuOnly && !hasGpu {
+					continue // Skip CPU-only partitions when --gpu is set
+				}
+
+				filteredLimits = append(filteredLimits, limit)
+			}
+
+			if len(filteredLimits) > 0 {
+				fmt.Println()
+				switch schedulerGpuFilter {
+				case schedulerGpuFilterCpuOnly:
+					fmt.Println("Partition Resource Limits (CPU-only):")
+				case schedulerGpuFilterGpuOnly:
+					fmt.Println("Partition Resource Limits (GPU):")
+				default:
+					fmt.Println("Partition Resource Limits:")
+				}
+				fmt.Println()
+
+				// Create table writer
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(w, "PARTITION\tCPUs\tMEMORY\tTIME\tNODES\tGPU TYPES")
+				fmt.Fprintln(w, "---------\t----\t------\t----\t-----\t---------")
+				for _, limit := range filteredLimits {
+					partitionName := limit.Partition
+					if partitionName == "" {
+						partitionName = "default"
+					}
+
+					// Format values
+					cpuStr := "-"
+					if limit.MaxCpusPerNode > 0 {
+						cpuStr = fmt.Sprintf("%d", limit.MaxCpusPerNode)
+					}
+
+					memStr := "-"
+					if limit.MaxMemMBPerNode > 0 {
+						if limit.MaxMemMBPerNode >= 1024 {
+							memStr = fmt.Sprintf("%.0f GB", float64(limit.MaxMemMBPerNode)/1024)
+						} else {
+							memStr = fmt.Sprintf("%d MB", limit.MaxMemMBPerNode)
+						}
+					}
+
+					timeStr := "-"
+					if limit.MaxTime > 0 {
+						timeStr = formatDuration(limit.MaxTime)
+					}
+
+					nodesStr := "-"
+					if limit.MaxNodes > 0 {
+						nodesStr = fmt.Sprintf("%d", limit.MaxNodes)
+					}
+
+					// Collect GPU types for this partition
+					gpuTypesStr := "-"
+					if gpus, ok := gpusByPartition[partitionName]; ok && len(gpus) > 0 {
+						// Merge same GPU types
+						gpuMap := make(map[string]*scheduler.GpuInfo)
+						for _, gpu := range gpus {
+							if existing, ok := gpuMap[gpu.Type]; ok {
+								existing.Total += gpu.Total
+								existing.Available += gpu.Available
+							} else {
+								gpuCopy := gpu
+								gpuMap[gpu.Type] = &gpuCopy
+							}
+						}
+
+						// Sort GPU names
+						gpuNames := make([]string, 0, len(gpuMap))
+						for name := range gpuMap {
+							gpuNames = append(gpuNames, name)
+						}
+						sort.Strings(gpuNames)
+
+						// Format GPU types
+						gpuLines := make([]string, 0)
+						for _, gpuType := range gpuNames {
+							gpu := gpuMap[gpuType]
+							gpuLines = append(gpuLines, fmt.Sprintf("%s (%d)", gpu.Type, gpu.Total))
+						}
+						gpuTypesStr = strings.Join(gpuLines, "\n")
+					}
+
+					// Print row (handle multi-line GPU types)
+					if strings.Contains(gpuTypesStr, "\n") {
+						// Multiple GPU types - print first line with all data
+						gpuTypeLines := strings.Split(gpuTypesStr, "\n")
+						fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+							partitionName, cpuStr, memStr, timeStr, nodesStr, gpuTypeLines[0])
+						// Print remaining GPU types on separate rows
+						for i := 1; i < len(gpuTypeLines); i++ {
+							fmt.Fprintf(w, "\t\t\t\t\t%s\n", gpuTypeLines[i])
+						}
+					} else {
+						// Single or no GPU type - print normally
+						fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+							partitionName, cpuStr, memStr, timeStr, nodesStr, gpuTypesStr)
+					}
+				}
+
+				w.Flush()
+
+				return
+			}
+
+			// No partitions match the filter
+			fmt.Println()
+			switch schedulerGpuFilter {
+			case schedulerGpuFilterGpuOnly:
+				utils.PrintWarning("No GPU partitions available")
+			case schedulerGpuFilterCpuOnly:
+				utils.PrintWarning("No CPU-only partitions available")
+			}
+			return
+		}
+
+		// Display max resource limits (aggregated from all partitions)
+		maxCpusPerNode := 0
+		var maxMemMBPerNode int64 = 0
+		var maxTime time.Duration = 0
+
+		// Find max values across all partitions (not filtered)
+		for _, limit := range clusterInfo.Limits {
+			if limit.MaxCpusPerNode > maxCpusPerNode {
+				maxCpusPerNode = limit.MaxCpusPerNode
+			}
+			if limit.MaxMemMBPerNode > maxMemMBPerNode {
+				maxMemMBPerNode = limit.MaxMemMBPerNode
+			}
+			if limit.MaxTime > maxTime {
+				maxTime = limit.MaxTime
+			}
+		}
+
+		if maxCpusPerNode > 0 || maxMemMBPerNode > 0 || maxTime > 0 {
+			fmt.Println()
+			fmt.Println("Max Resource Limits (across all partitions):")
+			if maxCpusPerNode > 0 {
+				fmt.Printf("  Max CPUs/Node:  %s\n", fmt.Sprintf("%d", maxCpusPerNode))
+			}
+			if maxMemMBPerNode > 0 {
+				var memStr string
+				if maxMemMBPerNode >= 1024 {
+					memStr = fmt.Sprintf("%.0f GB", float64(maxMemMBPerNode)/1024)
+				} else {
+					memStr = fmt.Sprintf("%d MB", maxMemMBPerNode)
+				}
+				fmt.Printf("  Max Mem/Node:   %s\n", memStr)
+			}
+			if maxTime > 0 {
+				fmt.Printf("  Max Time:       %s\n", formatDuration(maxTime))
+			}
+		}
+
+		// Display GPU information if available (merged by type)
+		if len(clusterInfo.AvailableGpus) > 0 {
+			// Merge GPUs with the same type name
+			gpuMap := make(map[string]*scheduler.GpuInfo)
+			for _, gpu := range clusterInfo.AvailableGpus {
+				if existing, ok := gpuMap[gpu.Type]; ok {
+					existing.Total += gpu.Total
+					existing.Available += gpu.Available
+				} else {
+					gpuMap[gpu.Type] = &scheduler.GpuInfo{
+						Type:      gpu.Type,
+						Total:     gpu.Total,
+						Available: gpu.Available,
+					}
+				}
+			}
+
+			// Sort GPU names
+			gpuNames := make([]string, 0, len(gpuMap))
+			for name := range gpuMap {
+				gpuNames = append(gpuNames, name)
+			}
+			sort.Strings(gpuNames)
+
+			fmt.Println()
+			fmt.Println("GPUs:")
+			for _, name := range gpuNames {
+				gpu := gpuMap[name]
+				fmt.Printf("  %s: %d total\n", utils.StyleName(gpu.Type), gpu.Total)
+			}
+		}
+	}
+}

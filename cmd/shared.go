@@ -1,0 +1,643 @@
+package cmd
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"fmt"
+
+	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/build"
+	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/spf13/cobra"
+)
+
+// ============================================================================
+// Search / filter helpers shared by avail, list, and remove
+// ============================================================================
+
+// searchManualURL points to the CLI manual page with the full search rules.
+const searchManualURL = "https://condatainer.readthedocs.io/en/latest/manuals/condatainer.html"
+
+// searchSyntaxHint is the concise search-syntax note shared by the avail and
+// list help text.
+const searchSyntaxHint = `Search terms:
+- Match by substring. Several terms must all match (AND).
+- Wildcards (*, ?) and regex also work. Full rules: ` + searchManualURL
+
+// formatDescription wraps prose at word boundaries and indents every line.
+// Long individual words are left intact rather than split.
+func formatDescription(description string, indent, width int) string {
+	words := strings.Fields(description)
+	if len(words) == 0 {
+		return ""
+	}
+
+	prefix := strings.Repeat(" ", indent)
+	available := max(width-indent, 1)
+	lines := make([]string, 0, 1)
+	line := words[0]
+	for _, word := range words[1:] {
+		if len(line)+1+len(word) <= available {
+			line += " " + word
+			continue
+		}
+		lines = append(lines, prefix+line)
+		line = word
+	}
+	lines = append(lines, prefix+line)
+	return strings.Join(lines, "\n")
+}
+
+// SearchMode describes how a SearchQuery matches candidate names.
+type SearchMode int
+
+const (
+	SearchModeAnd     SearchMode = iota // all terms must substring-match (default)
+	SearchModeExact                     // each term is an exact full-name match (OR across terms)
+	SearchModePattern                   // single term compiled as regex (wildcard or literal regex)
+)
+
+// SearchQuery holds the compiled, normalised search state for one command invocation.
+type SearchQuery struct {
+	Raw     []string // normalised (lowercased) terms
+	Mode    SearchMode
+	pattern *regexp.Regexp // set only when Mode == SearchModePattern
+}
+
+// NewSearchQuery builds a SearchQuery from normalised filter terms. exactLookup(term)
+// reports a case-insensitive exact full name in the candidate set, or is nil to skip it.
+//
+// Detection order (single term):
+//  1. exactLookup match            → SearchModeExact
+//  2. regex metacharacters present → SearchModePattern (regex)
+//  3. '*' or '?' present           → SearchModePattern (wildcard anchored)
+//  4. plain string                 → SearchModeAnd (substring)
+//
+// Multiple terms: exact-first detection only.
+func NewSearchQuery(filters []string, exactLookup func(string) bool) *SearchQuery {
+	q := &SearchQuery{Raw: filters}
+	if len(filters) == 0 {
+		q.Mode = SearchModeAnd
+		return q
+	}
+
+	// Multiple terms: exact-first only
+	if len(filters) > 1 {
+		if exactLookup != nil && exactLookup(filters[0]) {
+			q.Mode = SearchModeExact
+		} else {
+			q.Mode = SearchModeAnd
+		}
+		return q
+	}
+
+	// Single term
+	term := filters[0]
+
+	// 1. Exact lookup takes highest priority
+	if exactLookup != nil && exactLookup(term) {
+		q.Mode = SearchModeExact
+		return q
+	}
+
+	// 2. Regex metacharacters before wildcard check (e.g. ^term.*another)
+	if strings.ContainsAny(term, `^$([+{|`) {
+		re, err := regexp.Compile("(?i)" + term)
+		if err != nil {
+			utils.PrintWarning("Invalid regex pattern %q, using substring match: %v", term, err)
+			q.Mode = SearchModeAnd
+			return q
+		}
+		q.Mode = SearchModePattern
+		q.pattern = re
+		return q
+	}
+
+	// 3. Wildcard (* or ?)
+	if strings.ContainsAny(term, "*?") {
+		re, err := regexp.Compile("(?i)^" + wildcardToRegex(term) + "$")
+		if err != nil {
+			utils.PrintWarning("Invalid wildcard pattern %q, using substring match: %v", term, err)
+			q.Mode = SearchModeAnd
+			return q
+		}
+		q.Mode = SearchModePattern
+		q.pattern = re
+		return q
+	}
+
+	// 4. Plain substring
+	q.Mode = SearchModeAnd
+	return q
+}
+
+// wildcardToRegex converts a glob-style wildcard pattern to a regex fragment.
+// '*' → '.*', '?' → '.', all other characters are escaped.
+func wildcardToRegex(term string) string {
+	var sb strings.Builder
+	for _, ch := range term {
+		switch ch {
+		case '*':
+			sb.WriteString(".*")
+		case '?':
+			sb.WriteByte('.')
+		default:
+			sb.WriteString(regexp.QuoteMeta(string(ch)))
+		}
+	}
+	return sb.String()
+}
+
+// Matches reports whether name satisfies the query.
+func (q *SearchQuery) Matches(name string) bool {
+	if len(q.Raw) == 0 {
+		return true
+	}
+	switch q.Mode {
+	case SearchModePattern:
+		return q.pattern.MatchString(name)
+	case SearchModeExact:
+		nameLower := strings.ToLower(name)
+		for _, term := range q.Raw {
+			if nameLower == term {
+				return true
+			}
+		}
+		return false
+	default: // SearchModeAnd
+		nameLower := strings.ToLower(name)
+		for _, term := range q.Raw {
+			if !strings.Contains(nameLower, term) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// MatchesOrAlias is like Matches but, in exact mode only, also accepts alias as an
+// alternative name (e.g. "rstudio-server" for "ubuntu24/rstudio-server").
+// Pass an empty alias to skip the alias check.
+func (q *SearchQuery) MatchesOrAlias(name, alias string) bool {
+	if q.Matches(name) {
+		return true
+	}
+	if q.Mode == SearchModeExact && alias != "" {
+		return q.Matches(alias)
+	}
+	return false
+}
+
+// MatchesOrAliasWithText is MatchesOrAlias extended to a secondary field such as a description; an empty text skips it.
+//   - In AND mode each term may match either field, so "cellranger index" matches a tool described as an index.
+//   - Other modes test each field alone, since a concatenation would break anchored patterns like "*server".
+func (q *SearchQuery) MatchesOrAliasWithText(name, alias, text string) bool {
+	if q.MatchesOrAlias(name, alias) {
+		return true
+	}
+	if text == "" {
+		return false
+	}
+	if q.Mode != SearchModeAnd {
+		return q.Matches(text)
+	}
+	nameLower := strings.ToLower(name)
+	textLower := strings.ToLower(text)
+	for _, term := range q.Raw {
+		if !strings.Contains(nameLower, term) && !strings.Contains(textLower, term) {
+			return false
+		}
+	}
+	return true
+}
+
+// normalizeFilters lowercases and normalises a slice of raw user-supplied filter strings.
+func normalizeFilters(filters []string) []string {
+	normalized := make([]string, 0, len(filters))
+	for _, filter := range filters {
+		trimmed := strings.TrimSpace(filter)
+		if trimmed == "" {
+			continue
+		}
+		normalized = append(normalized, strings.ToLower(catalog.Normalize(trimmed)))
+	}
+	return normalized
+}
+
+// CommonFlags holds the common flags used by exec
+type CommonFlags struct {
+	Overlays    []string
+	WritableImg bool
+	EnvSettings []string
+	BindPaths   []string
+	Fakeroot    bool
+}
+
+// ResolveFlagAlias copies the value of an alias flag onto its canonical flag when the user set the alias but not the canonical name.
+//   - Both flags must be registered against separate variables so that an explicit `--alias=false` is honoured; when both are given, the canonical flag wins.
+//   - Call it before reading the bound value.
+func ResolveFlagAlias(cmd *cobra.Command, canonical, alias string) {
+	f := cmd.Flags()
+	if !f.Changed(alias) || f.Changed(canonical) {
+		return
+	}
+	if aliasFlag := f.Lookup(alias); aliasFlag != nil {
+		f.Set(canonical, aliasFlag.Value.String()) //nolint:errcheck
+	}
+}
+
+// RegisterCommonFlags registers common flags on a cobra command
+func RegisterCommonFlags(cmd *cobra.Command, flags *CommonFlags) {
+	cmd.Flags().StringSliceVarP(&flags.Overlays, "overlay", "o", nil, "Overlay file to mount (repeatable)")
+	cmd.Flags().BoolVarP(&flags.WritableImg, "writable", "w", false, "Mount .img overlays as writable (default: read-only)")
+	cmd.Flags().StringSliceVar(&flags.EnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
+	cmd.Flags().StringSliceVar(&flags.BindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
+	cmd.Flags().BoolVarP(&flags.Fakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
+
+	// Register completions
+	cmd.RegisterFlagCompletionFunc("overlay", overlayFlagCompletion(true, true))
+
+	// Stop flag parsing after the first positional argument
+	cmd.Flags().SetInterspersed(false)
+
+	// Allow unknown flags to pass through (for apptainer)
+	cmd.FParseErrWhitelist.UnknownFlags = true
+}
+
+// KnownFlags returns a map of all known condatainer flags
+func KnownFlags() map[string]bool {
+	return map[string]bool{
+		"--overlay": true, "-o": true,
+		"--writable": true, "-w": true,
+		"--env":      true,
+		"--bind":     true,
+		"--fakeroot": true, "-f": true,
+		"--gpu":        true,
+		"--activation": true,
+		"--stop-grace": true,
+		"--debug":      true,
+		"--no-submit":  true,
+		"--quiet":      true, "-q": true,
+		"--yes": true, "-y": true,
+	}
+}
+
+// parseActivation validates a raw --activation value against
+// container.ActivationAll/Env/None.
+func parseActivation(raw string) (container.ActivationMode, error) {
+	v := container.ActivationMode(strings.ToLower(strings.TrimSpace(raw)))
+	switch v {
+	case container.ActivationAll, container.ActivationEnv, container.ActivationNone:
+		return v, nil
+	default:
+		return "", fmt.Errorf("invalid activation %q: want all, env, or none", raw)
+	}
+}
+
+// Exit codes used by various commands
+const (
+	// Generic error code
+	ExitCodeError = 1
+	// Returned when jobs were submitted to a scheduler (overlays will be created asynchronously)
+	ExitCodeJobsSubmitted = config.ExitCodeJobsSubmitted
+)
+
+// ExitIfJobsSubmitted exits the process with ExitCodeJobsSubmitted if a scheduler
+// submission was requested and the graph shows job IDs were created.
+func ExitIfJobsSubmitted(graph *build.BuildGraph) {
+	if config.Global.SubmitJob && graph != nil && len(graph.GetJobIDs()) > 0 {
+		utils.PrintNote("%d scheduler job(s) submitted. exiting with code %d",
+			len(graph.GetJobIDs()), ExitCodeJobsSubmitted)
+		os.Exit(ExitCodeJobsSubmitted)
+	}
+}
+
+// ExitWithError prints an error and exits with ExitCodeError
+func ExitWithError(format string, a ...interface{}) {
+	utils.PrintError(format, a...)
+	os.Exit(ExitCodeError)
+}
+
+// ParseCommandArgs parses arguments from os.Args after a given subcommand
+// Returns: commands (positional args), apptainerFlags (unknown flags for apptainer)
+func ParseCommandArgs(subcommand string) ([]string, []string) {
+	var commands, apptainerFlags []string
+
+	// Find where subcommand appears in os.Args
+	cmdIdx := -1
+	for i, arg := range os.Args {
+		if arg == subcommand {
+			cmdIdx = i
+			break
+		}
+	}
+
+	if cmdIdx == -1 {
+		// Fallback: no args found
+		return commands, apptainerFlags
+	}
+
+	knownFlags := KnownFlags()
+
+	// Parse from after subcommand in os.Args
+	commandStarted := false
+	for i := cmdIdx + 1; i < len(os.Args); i++ {
+		arg := os.Args[i]
+
+		// Once we hit the command, everything after is part of the command
+		if commandStarted {
+			commands = append(commands, arg)
+			continue
+		}
+
+		// Skip known flags (already handled by cobra)
+		if knownFlags[arg] || isKnownFlagWithEquals(knownFlags, arg) {
+			// Value flags (space-separated)
+			if knownFlags[arg] && needsValue(arg) && i+1 < len(os.Args) {
+				i++ // Skip value
+			}
+			continue
+		}
+
+		// Unknown flag → must use --flag=value format for apptainer pass-through
+		if strings.HasPrefix(arg, "-") {
+			apptainerFlags = append(apptainerFlags, arg)
+			continue
+		}
+
+		// First non-flag argument starts the command
+		commandStarted = true
+		commands = append(commands, arg)
+	}
+
+	return commands, apptainerFlags
+}
+
+func isKnownFlagWithEquals(knownFlags map[string]bool, arg string) bool {
+	if !strings.Contains(arg, "=") {
+		return false
+	}
+	// Check if prefix matches a known flag
+	parts := strings.SplitN(arg, "=", 2)
+	return knownFlags[parts[0]]
+}
+
+func needsValue(flag string) bool {
+	valueFlags := map[string]bool{
+		"-o": true, "--overlay": true,
+		"--env": true, "--bind": true,
+		"--activation": true, "--stop-grace": true,
+	}
+	return valueFlags[flag]
+}
+
+// ensureRootBaseImage resolves the root a caller did not name: the standing project's
+// locked one, else the configured default, built first when none is installed.
+//
+//   - It returns "" when overlays already names a root (container.HasRequestedRoot). Setup uses the first root-eligible overlay, and building the default would be wasted work or a needless failure.
+//   - Every root is named through the requested overlays.
+//   - projectBaseImage is tried first, so `exec`, `e` and `run` resolve the same root in the same project.
+func ensureRootBaseImage(ctx context.Context, overlays []string) (string, error) {
+	if container.HasRequestedRoot(overlays) {
+		return "", nil
+	}
+	if path, err := projectBaseImage(ctx); path != "" || err != nil {
+		return path, err
+	}
+	return build.ResolveBase(ctx)
+}
+
+// previewRootBaseImage is ensureRootBaseImage's read-only counterpart, for a
+// dry run that must report the root a real run would use without building
+// anything missing: config.GetBaseImage() only ever finds, never builds.
+func previewRootBaseImage(ctx context.Context, overlays []string) (string, error) {
+	if container.HasRequestedRoot(overlays) {
+		return "", nil
+	}
+	if path, err := projectBaseImage(ctx); path != "" || err != nil {
+		return path, err
+	}
+	return config.GetBaseImage()
+}
+
+// PrepareCommandAndHidePrompt prepares the command array and determines if prompt should be hidden
+// If commands is empty, defaults to ["bash"] with hidePrompt=false
+// If commands has 1 element, returns hidePrompt=false
+// Otherwise returns hidePrompt=true
+func PrepareCommandAndHidePrompt(commands []string) ([]string, bool) {
+	hidePrompt := true
+	if len(commands) == 0 {
+		commands = []string{"bash"}
+		hidePrompt = false
+	} else if len(commands) == 1 {
+		hidePrompt = false
+	}
+	return commands, hidePrompt
+}
+
+// ============================================================================
+// Shell Completion Functions
+// ============================================================================
+
+// overlayFlagCompletion returns completion function for -o/--overlay flag
+func overlayFlagCompletion(includeData bool, includeImg bool) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+	return func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return overlaySuggestions(includeData, includeImg, toComplete)
+	}
+}
+
+// completeOverlayArg completes the overlay argument of top-level info/export
+// with installed overlay names and local .sqf/.img files. The 'overlay *'
+// subcommands use completeInfoArgs (files only).
+func completeOverlayArg(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return overlaySuggestions(true, true, toComplete)
+}
+
+// overlaySuggestions returns overlay suggestions including installed overlays and local files
+//
+// Scans unaliased, unlike container.InstalledOverlays: that map's bare-name
+// keys are tied to the ambient config default_distro, which is wrong to
+// suggest while standing in a project that selected a different one.
+// addDistroAliasChoices adds the project-aware aliases instead.
+func overlaySuggestions(includeData bool, includeImg bool, toComplete string) ([]string, cobra.ShellCompDirective) {
+	scan, err := image.ScanOverlays(image.ScanOptions{})
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+	installed := image.FirstPaths(scan)
+
+	choices := map[string]struct{}{}
+	for name, path := range installed {
+		if includeData || isAppOverlay(path) {
+			if toComplete == "" || strings.HasPrefix(name, toComplete) {
+				choices[name] = struct{}{}
+			}
+		}
+	}
+
+	addDistroAliasChoices(installed, choices, toComplete)
+
+	for _, candidate := range localOverlaySuggestions(toComplete, includeImg) {
+		choices[candidate] = struct{}{}
+	}
+
+	suggestions := make([]string, 0, len(choices))
+	for choice := range choices {
+		suggestions = append(suggestions, choice)
+	}
+	sort.Strings(suggestions)
+
+	// Add space after completions (all suggestions are files now, no folders)
+	return suggestions, cobra.ShellCompDirectiveNoFileComp
+}
+
+// findLocalFilesWithFilter is a shared helper for finding local files recursively
+// Includes directories for navigation and recursively finds files up to maxDepth
+func findLocalFilesWithFilter(toComplete string, maxDepth int, fileFilter func(name string) bool) []string {
+	pathDir, _ := filepath.Split(toComplete)
+	dirForRead := pathDir
+	if dirForRead == "" {
+		dirForRead = "."
+	}
+
+	suggestions := []string{}
+
+	// Recursively find files up to maxDepth
+	var findFiles func(dir string, prefix string, currentDepth int)
+	findFiles = func(dir string, prefix string, currentDepth int) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+
+		for _, entry := range entries {
+			name := entry.Name()
+
+			// Skip hidden files/directories (starting with .)
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+
+			candidate := name
+			if prefix != "" {
+				candidate = prefix + name
+			}
+
+			if entry.IsDir() {
+				// Recurse into subdirectories if within depth limit (don't add directories to suggestions)
+				if currentDepth < maxDepth {
+					findFiles(filepath.Join(dir, name), candidate+"/", currentDepth+1)
+				}
+			} else {
+				// Apply file filter
+				if fileFilter(name) {
+					if toComplete == "" || strings.HasPrefix(candidate, toComplete) {
+						suggestions = append(suggestions, candidate)
+					}
+				}
+			}
+		}
+	}
+
+	findFiles(dirForRead, pathDir, 0)
+	return suggestions
+}
+
+// localOverlaySuggestions returns local overlay files (for -o flag)
+// Includes directories for navigation and recursively finds files up to 1 level deep
+func localOverlaySuggestions(toComplete string, includeImg bool) []string {
+	return findLocalFilesWithFilter(toComplete, 1, func(name string) bool {
+		// Filter based on file type. .sif is root-only, same as .img, so it
+		// rides the same includeImg gate.
+		if !utils.IsOverlay(name) && !utils.IsSif(name) {
+			return false
+		}
+
+		if (utils.IsImg(name) || utils.IsSif(name)) && !includeImg {
+			// Skip .img/.sif files when includeImg is false
+			return false
+		}
+
+		return true
+	})
+}
+
+// addDistroAliasChoices adds shorthand aliases for OS overlays matching
+// projectDefaultDistro — the project's selected root when standing in one,
+// else the configured default — so a suggestion never names a bare form for
+// the wrong distro's tools.
+// For each installed OS overlay named "<distro>/<name>", also suggests "<name>".
+func addDistroAliasChoices(installed map[string]string, choices map[string]struct{}, toComplete string) {
+	distro := projectDefaultDistro()
+	if distro == "" {
+		return
+	}
+	for name, path := range installed {
+		if !isOSOverlay(path) {
+			continue
+		}
+		alias := catalog.ShortForm(distro, name)
+		if alias == name {
+			continue
+		}
+		if toComplete == "" || strings.HasPrefix(alias, toComplete) {
+			choices[alias] = struct{}{}
+		}
+	}
+}
+
+// isOSOverlay reports whether an image is an OS layer, from its recorded type.
+//
+// An image with no readable metadata is not an OS layer: it degrades to app, so
+// it stays listed and mountable rather than being misfiled under a category it
+// never claimed.
+func isOSOverlay(overlayPath string) bool {
+	rt, err := meta.ReadRuntime(overlayPath)
+	return err == nil && rt.Type == catalog.TypeOS
+}
+
+// isAppOverlay checks if an overlay path is considered an "app" overlay
+func isAppOverlay(path string) bool {
+	// OS overlays (Apptainer-built SquashFS containing .singularity.d) are
+	// considered "app" overlays regardless of their location
+	if isOSOverlay(path) {
+		return true
+	}
+
+	// Check if path is in any of the image search directories
+	// Regular overlays (created via mksquashfs) are only considered "app" if
+	// they're in the images directory
+	for _, imagesDir := range config.GetImageSearchPaths() {
+		if pathWithinDir(path, imagesDir) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathWithinDir checks if a path is within a directory
+func pathWithinDir(path, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return !(rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
+}

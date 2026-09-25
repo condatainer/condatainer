@@ -1,0 +1,67 @@
+# --- Go ---
+# Binaries built by 'go build'
+bin/
+main
+*.exe
+*.test
+.gocache
+
+# Vendor folder
+vendor/
+
+# --- Python & Micromamba ---
+# Python cache
+__pycache__/
+*.pyc
+
+# Micromamba / Conda environments
+/bin/micromamba
+/conda/**
+
+# --- IDEs & System ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Project Specific (Condatainer Artifacts) ---
+# Temporary build artifacts
+tmp/*
+!tmp/.gitkeep
+
+# Logs and outputs
+logs/
+*.out
+*.log
+
+# --- Heavy Artifacts ---
+# Apptainer/Singularity
+*.sif
+*.img
+*.sqf
+*.sqsh
+*.squashfs
+
+# Package files
+*.deb
+*.rpm
+
+# Generated Environment files
+*.env
+
+# cache folder
+/cache
+
+# Ignore content in image directories but keep the folder structure
+/images
+/libexec*
+
+# Ignore the configuration files
+/config.yaml
+/registry-auth.json
+
+# CondaTainer Recipe and Test
+cnt
+
+# --- NFS Temp Files ---
+.nfs*

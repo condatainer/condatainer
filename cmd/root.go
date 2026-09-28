@@ -201,6 +201,7 @@ func Execute() {
 		}
 	}()
 
+	rejectUnknownSubcommands(rootCmd)
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		// Cobra's automatic error printing is silenced. For Apptainer errors
 		// print only the captured output (trimmed) and exit with non-zero
@@ -222,6 +223,21 @@ func Execute() {
 			}
 		}
 		ExitWithError("%v", err)
+	}
+}
+
+// rejectUnknownSubcommands makes every group below root with no action of its
+// own print its help when called bare and fail on an unknown subcommand. Cobra
+// checks arguments only on a command that runs, so such a group would otherwise
+// print its help for a typo and exit 0.
+func rejectUnknownSubcommands(cmd *cobra.Command) {
+	for _, sub := range cmd.Commands() {
+		if sub.HasSubCommands() && !sub.Runnable() {
+			sub.Args = cobra.NoArgs
+			sub.SilenceUsage = true
+			sub.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+		}
+		rejectUnknownSubcommands(sub)
 	}
 }
 

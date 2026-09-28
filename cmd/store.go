@@ -37,8 +37,9 @@ func newStoreListCmd() *cobra.Command {
 	var all bool
 	var detail bool
 	cmd := &cobra.Command{
-		Use:   "list [flags] [name]",
-		Short: "List store entries, or the builds that can stand in for one",
+		Use:     "list [flags] [name]",
+		Aliases: []string{"ls"},
+		Short:   "List store entries, or the builds that can stand in for one",
 		Long: `List store entries by address, grouped by images directory.
 
 - Give a name to list only its builds.

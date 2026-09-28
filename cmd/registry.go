@@ -225,8 +225,9 @@ Credentials are used in this order:
 	logout.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Config layer to remove from: u/user, r/app-root, e/extra-root, s/system")
 
 	list := &cobra.Command{
-		Use:   "list",
-		Short: "List stored registry credentials",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List stored registry credentials",
 		Long: `List the saved credentials with their layer and username.
 
 - Passwords and tokens are never shown.

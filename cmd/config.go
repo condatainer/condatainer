@@ -284,7 +284,7 @@ var showOrigin bool
 
 var configListCmd = &cobra.Command{
 	Use:     "list",
-	Aliases: []string{"show"},
+	Aliases: []string{"show", "ls"},
 	Args:    cobra.NoArgs,
 	Short:   "List current configuration",
 	Long: `List the current settings and where each comes from.

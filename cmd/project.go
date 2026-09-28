@@ -466,8 +466,9 @@ func orphaned(before, after *lock.Verified) []string {
 func newProjectListCmd() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List pins",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List pins",
 		Long: `List every pin and the artifact it names.
 
 - Works in a fresh clone that has restored nothing.

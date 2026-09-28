@@ -1,7 +1,7 @@
 // Package libexec resolves and provisions CondaTainer's self-provisioned
 // toolchain — micromamba plus, on request, mksquashfs, squashfuse, fuse-overlayfs
-// and an ordinary (non-fakeroot) apptainer, installed via micromamba into one of the
-// four data-directory tiers.
+// and an ordinary (non-fakeroot) apptainer, installed via micromamba into one
+// directory.
 package libexec
 
 import (
@@ -14,13 +14,13 @@ import (
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
-// binMarker is the executable that must exist for a tier's libexec/ to count
-// as provisioned, rather than an empty or half-written directory. micromamba
+// binMarker is the executable that must exist for libexec/ to count as
+// provisioned, rather than an empty or half-written directory. micromamba
 // is the one package every prefix holds.
 const binMarker = "micromamba"
 
-// ErrNotProvisioned is what a container-bound caller returns when nothing is
-// provisioned at any tier. Condatainer never auto-provisions on its own — an
+// ErrNotProvisioned is what a container-bound caller returns when the
+// toolchain is not provisioned. Condatainer never auto-provisions on its own — an
 // ordinary exec/run or a build must never trigger a first-time download — so
 // every message directs the user to the one command that does.
 var ErrNotProvisioned = errors.New("the self-provisioned toolchain is not installed; run `condatainer update --libexec` first")
@@ -37,7 +37,7 @@ func NotProvisionedMessage(name string) string {
 }
 
 // NotInstalledError is what a container-bound caller returns when name is not
-// in the toolchain: ErrNotProvisioned when no tier is provisioned at all,
+// in the toolchain: ErrNotProvisioned when the toolchain is not provisioned,
 // otherwise a message naming the package that installs it.
 func NotInstalledError(name string) error {
 	if _, ok := Dir(); !ok {
@@ -50,26 +50,23 @@ func NotInstalledError(name string) error {
 	return fmt.Errorf("%s is not installed in the self-provisioned toolchain; run `condatainer update --libexec %s`", name, p.name)
 }
 
-// lockFileName is the per-generation lock sentinel a reader holds a shared lock on
-// and Update takes an exclusive one on.
-const lockFileName = ".lock"
-
-// Dir returns the nearest tier's libexec directory that is actually
-// provisioned (has bin/micromamba), resolved to its real (symlink-free) path,
-// and true. Returns "", false if none is.
+// Dir returns the toolchain directory resolved to its real (symlink-free) path,
+// and true when it is provisioned (has bin/micromamba). Returns "", false otherwise.
 func Dir() (string, bool) {
-	for _, dir := range config.GetLibexecSearchPaths() {
-		if _, err := os.Stat(filepath.Join(dir, "bin", binMarker)); err == nil {
-			if real, err := filepath.EvalSymlinks(dir); err == nil {
-				dir = real
-			}
-			return dir, true
-		}
+	dir := config.GetLibexecDir()
+	if dir == "" {
+		return "", false
 	}
-	return "", false
+	if _, err := os.Stat(filepath.Join(dir, "bin", binMarker)); err != nil {
+		return "", false
+	}
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
+	return dir, true
 }
 
-// BinDir returns the nearest provisioned tier's bin/ directory.
+// BinDir returns the provisioned toolchain's bin/ directory.
 func BinDir() (string, bool) {
 	dir, ok := Dir()
 	if !ok {
@@ -106,39 +103,8 @@ func Path(name string) (string, bool) {
 	return path, true
 }
 
-// Installed reports whether the nearest provisioned tier has the binary name.
+// Installed reports whether the provisioned toolchain has the binary name.
 func Installed(name string) bool {
 	_, ok := Path(name)
 	return ok
-}
-
-// LockPath returns the live generation's lock sentinel, and true if a
-// toolchain is provisioned at all.
-func LockPath() (string, bool) {
-	dir, ok := Dir()
-	if !ok {
-		return "", false
-	}
-	return filepath.Join(dir, lockFileName), true
-}
-
-// AcquireUse takes a shared lock on the live toolchain for the duration of one use — one apptainer subprocess call.
-//   - Returns (nil, nil) if nothing is provisioned yet, in which case there is nothing to protect and callers must treat a nil lock as "no lock held," not an error.
-//   - A non-nil error means Update holds the exclusive lock right now.
-func AcquireUse() (*utils.FileLock, error) {
-	path, ok := LockPath()
-	if !ok {
-		return nil, nil
-	}
-	if !utils.FileExists(path) {
-		// Self-heal a generation that predates the lock file.
-		if f, err := utils.CreateFileWritable(path); err == nil {
-			f.Close()
-		}
-	}
-	lock, err := utils.AcquireFileLock(path, false)
-	if err != nil {
-		return nil, fmt.Errorf("the toolchain is being updated right now; try again in a moment: %w", err)
-	}
-	return lock, nil
 }

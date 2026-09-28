@@ -12,15 +12,12 @@ import (
 	"github.com/condatainer/condatainer/internal/config"
 )
 
-// withLibexecTier points the libexec search path at one scratch directory,
-// so a test decides for itself whether the self-provisioned toolchain looks
-// provisioned.
+// withLibexecTier points CNT_LIBEXEC at a fresh directory, so a test decides
+// for itself whether the self-provisioned toolchain looks provisioned.
 func withLibexecTier(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "libexec")
-	prev := config.GlobalDataPaths
-	config.GlobalDataPaths.LibexecDirs = []string{dir}
-	t.Cleanup(func() { config.GlobalDataPaths = prev })
+	t.Setenv("CNT_LIBEXEC", dir)
 	return dir
 }
 
@@ -33,7 +30,7 @@ func writeFakeBin(t *testing.T, dir, name, output string) string {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// micromamba is what marks a libexec tier provisioned.
+	// micromamba is what marks the toolchain provisioned.
 	if err := os.WriteFile(filepath.Join(bin, "micromamba"), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

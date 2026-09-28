@@ -31,15 +31,8 @@ func (e *lockError) Error() string { return e.msg }
 func (e *lockError) Unwrap() error { return e.kind }
 
 // Lock represents a file lock on an overlay image. It must be closed to
-// release the lock.
-//
-// An alias, not a new type: internal/libexec needs the exact same
-// non-blocking file lock for its own toolchain-generation sentinel,
-// and — to stay importable by internal/image/squashfs without cycling back
-// through this package — returns *utils.FileLock directly rather than
-// importing internal/image for it. The alias means both are the same type,
-// interchangeable at any call site (internal/runtime/exec.Prepare holds a
-// single slice of overlay and toolchain locks together) with no conversion.
+// release the lock. It is the utils file lock that other packages take on
+// their own lock files, so no conversion is needed between them.
 type Lock = utils.FileLock
 
 // AcquireLock takes a non-blocking whole-file lock on the overlay image: exclusive when write is true, shared otherwise.

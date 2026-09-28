@@ -32,13 +32,13 @@ var updateCmd = &cobra.Command{
 	Long: `Refresh the recipe and helper script caches, or update the toolchain.
 
 - With no flags, both caches are refreshed.
-- --libexec updates the toolchain instead, and leaves the caches alone.
-- --libexec runs on the host. It installs the tools this system lacks and updates the ones condatainer installed.
-- Tools: apptainer, squashfs-tools, squashfuse, fuse-overlayfs.
-- Name tools after --libexec to install and update just those.`,
-	Example: `  condatainer update                                     # Refresh recipe and helper caches
-  condatainer update --libexec                           # Install missing tools, update the rest
-  condatainer update --libexec apptainer squashfs-tools  # Install and update these two`,
+
+--libexec updates the toolchain instead.
+  Tools: apptainer, squashfs-tools, squashfuse, fuse-overlayfs.
+  Writes to $CNT_ROOT/libexec, or $CNT_LIBEXEC when set.`,
+	Example: `  condatainer update                       # Refresh recipe and helper caches
+  condatainer update --libexec             # Install missing tools, update the rest
+  condatainer update --libexec apptainer   # Install and update apptainer`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 && !updateLibexec {
 			return fmt.Errorf("tools can only be named with --libexec")

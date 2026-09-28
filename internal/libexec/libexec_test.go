@@ -7,84 +7,87 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
-// withScratchTier points only the (uncached) scratch tier at a fresh temp
-// directory and forces config's lazily-cached search paths to recompute.
-// CNT_ROOT/CNT_EXTRA_ROOT are left empty throughout this file rather than
-// varied per test: internal/config memoizes GetRootDir/GetExtraRootDir behind
-// a package-private sync.Once this package cannot reset, so a test that
-// changed them would silently keep reading whichever value a prior test in
-// this binary saw first. internal/config's own tests already cover
-// tier-ordering; this package only needs one uncached tier to exercise
-// Dir/BinDir's own marker-checking logic.
-func withScratchTier(t *testing.T) string {
+// withLibexecDir points CNT_LIBEXEC at a fresh, not yet existing directory and
+// returns it.
+func withLibexecDir(t *testing.T) string {
 	t.Helper()
-	scratch := filepath.Join(t.TempDir(), "condatainer")
-	t.Setenv("SCRATCH", filepath.Dir(scratch))
-	t.Setenv("XDG_DATA_HOME", "")
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("CNT_EXTRA_ROOT", "")
-	t.Setenv("CNT_ROOT", "")
-	config.InitDataPaths()
-	return scratch
+	dir := filepath.Join(t.TempDir(), "libexec")
+	t.Setenv("CNT_LIBEXEC", dir)
+	return dir
 }
 
-// provisionedStub drops a fake bin/micromamba and a lock sentinel under
-// tier/libexec, just enough to satisfy Dir's marker check and let
-// AcquireUse/Update's own locking be exercised without a real bootstrap.
-func provisionedStub(t *testing.T, tier string) {
+// provisionedStub drops a fake bin/micromamba under dir, just enough to
+// satisfy Dir's marker check without a real bootstrap.
+func provisionedStub(t *testing.T, dir string) {
 	t.Helper()
-	bin := filepath.Join(tier, "libexec", "bin")
+	bin := filepath.Join(dir, "bin")
 	if err := utils.MkdirAllShared(bin); err != nil {
 		t.Fatalf("failed to create stub bin dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(bin, "micromamba"), []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatalf("failed to write stub micromamba: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(tier, "libexec", lockFileName), nil, 0644); err != nil {
-		t.Fatalf("failed to write stub lock sentinel: %v", err)
-	}
 }
 
-func TestDirFindsAProvisionedTier(t *testing.T) {
-	scratch := withScratchTier(t)
-	provisionedStub(t, scratch)
+func TestDirFindsAProvisionedToolchain(t *testing.T) {
+	dir := withLibexecDir(t)
+	provisionedStub(t, dir)
 
-	dir, ok := Dir()
+	got, ok := Dir()
 	if !ok {
-		t.Fatal("Dir() = not found, want the scratch tier")
+		t.Fatal("Dir() = not found, want the provisioned directory")
 	}
-	if want := filepath.Join(scratch, "libexec"); dir != want {
-		t.Errorf("Dir() = %s, want %s", dir, want)
-	}
-}
-
-func TestDirIgnoresUnprovisionedTiers(t *testing.T) {
-	withScratchTier(t)
-	if dir, ok := Dir(); ok {
-		t.Fatalf("Dir() = %s, want not found (no tier provisioned)", dir)
+	if want := realPath(t, dir); got != want {
+		t.Errorf("Dir() = %s, want %s", got, want)
 	}
 }
 
-func TestDirIgnoresAnEmptyLibexecDir(t *testing.T) {
-	scratch := withScratchTier(t)
-	// libexec/ exists but was never actually provisioned (no bin/micromamba) —
-	// e.g. a half-finished bootstrap or a stale .new left by a crash.
-	if err := utils.MkdirAllShared(filepath.Join(scratch, "libexec")); err != nil {
+func realPath(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
+func TestDirIgnoresAnUnprovisionedDir(t *testing.T) {
+	dir := withLibexecDir(t)
+	if _, ok := Dir(); ok {
+		t.Fatal("Dir() found a toolchain in a directory that does not exist")
+	}
+	// libexec/ exists but was never provisioned (no bin/micromamba), as a
+	// crashed create leaves it.
+	if err := utils.MkdirAllShared(dir); err != nil {
 		t.Fatalf("failed to create empty libexec dir: %v", err)
 	}
-	if dir, ok := Dir(); ok {
-		t.Fatalf("Dir() = %s, want not found (empty libexec dir)", dir)
+	if got, ok := Dir(); ok {
+		t.Fatalf("Dir() = %s, want not found (empty libexec dir)", got)
+	}
+}
+
+// The baked-in prefix path and the container bind are both the real path.
+func TestDirResolvesASymlinkedLocation(t *testing.T) {
+	real := filepath.Join(t.TempDir(), "real-libexec")
+	provisionedStub(t, real)
+	link := filepath.Join(t.TempDir(), "libexec")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CNT_LIBEXEC", link)
+
+	if got, ok := Dir(); !ok || got != realPath(t, real) {
+		t.Errorf("Dir() = %s, %v; want %s, true", got, ok, realPath(t, real))
 	}
 }
 
 func TestPathReportsOnlyInstalledTools(t *testing.T) {
-	scratch := withScratchTier(t)
-	provisionedStub(t, scratch)
-	bin := filepath.Join(scratch, "libexec", "bin")
+	dir := withLibexecDir(t)
+	provisionedStub(t, dir)
+	bin := filepath.Join(dir, "bin")
 
 	if _, ok := ApptainerPath(); ok {
 		t.Error("ApptainerPath() found an apptainer that is not installed")
@@ -117,59 +120,11 @@ func TestMessagesNameThePackage(t *testing.T) {
 	}
 }
 
-func TestAcquireUseWithNothingProvisioned(t *testing.T) {
-	withScratchTier(t)
-	lock, err := AcquireUse()
-	if lock != nil || err != nil {
-		t.Errorf("AcquireUse() = %v, %v; want nil, nil (nothing to protect)", lock, err)
-	}
-}
-
-func TestAcquireUseSucceedsWhenFree(t *testing.T) {
-	scratch := withScratchTier(t)
-	provisionedStub(t, scratch)
-
-	lock, err := AcquireUse()
-	if err != nil {
-		t.Fatalf("AcquireUse() failed: %v", err)
-	}
-	if lock == nil {
-		t.Fatal("AcquireUse() = nil lock, want a held one")
-	}
-	defer lock.Close()
-
-	// Another concurrent reader is fine — shared locks do not conflict with
-	// each other, only with Update's exclusive one.
-	second, err := AcquireUse()
-	if err != nil {
-		t.Fatalf("a second concurrent reader should not conflict: %v", err)
-	}
-	second.Close()
-}
-
-func TestAcquireUseFailsWhileUpdateHoldsTheLock(t *testing.T) {
-	scratch := withScratchTier(t)
-	provisionedStub(t, scratch)
-
-	writer, err := utils.AcquireFileLock(filepath.Join(scratch, "libexec", lockFileName), true)
-	if err != nil {
-		t.Fatalf("failed to simulate Update's exclusive lock: %v", err)
-	}
-	defer writer.Close()
-
-	if lock, err := AcquireUse(); err == nil {
-		if lock != nil {
-			lock.Close()
-		}
-		t.Error("AcquireUse() succeeded while the exclusive lock was held, want a refusal")
-	}
-}
-
 func TestEnsureMicromambaLeavesAProvisionedToolchainAlone(t *testing.T) {
-	scratch := withScratchTier(t)
-	provisionedStub(t, scratch)
+	dir := withLibexecDir(t)
+	provisionedStub(t, dir)
 
 	if err := EnsureMicromamba(context.Background()); err != nil {
-		t.Fatalf("EnsureMicromamba on a provisioned tier: %v", err)
+		t.Fatalf("EnsureMicromamba on a provisioned toolchain: %v", err)
 	}
 }

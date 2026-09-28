@@ -61,7 +61,7 @@ func TestNestedRunMountsTheInstalledOverlay(t *testing.T) {
 	}
 	prevPaths, prevMode := config.GlobalDataPaths, config.Global.NestedRun
 	config.GlobalDataPaths.ImagesDirs = []string{dir}
-	config.GlobalDataPaths.LibexecDirs = []string{filepath.Join(dir, "libexec")}
+	t.Setenv("CNT_LIBEXEC", filepath.Join(dir, "libexec"))
 	build.InvalidateInstalledOverlays()
 	container.InvalidateInstalledOverlaysCache()
 	t.Cleanup(func() {

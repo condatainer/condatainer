@@ -276,13 +276,21 @@ func TestPackedImageExcludesBuildScratch(t *testing.T) {
 	}
 }
 
-func TestSquashfsShowsProgressWithoutFinalStatistics(t *testing.T) {
+func TestSquashfsProgressFollowsQuietMode(t *testing.T) {
 	script := squashfsScript("mksquashfs", []string{"/cnt"}, "/images/out.sqf", 2, "128k", "-comp zstd", true)
 	if !strings.Contains(script, " -quiet ") {
 		t.Fatalf("mksquashfs command does not suppress final statistics:\n%s", script)
 	}
 	if strings.Contains(script, "-no-progress") {
 		t.Fatalf("mksquashfs command suppresses progress:\n%s", script)
+	}
+
+	prev := utils.QuietMode
+	utils.QuietMode = true
+	t.Cleanup(func() { utils.QuietMode = prev })
+	quiet := squashfsScript("mksquashfs", []string{"/cnt"}, "/images/out.sqf", 2, "128k", "-comp zstd", true)
+	if !strings.Contains(quiet, " -no-progress ") || strings.Contains(quiet, "echo") {
+		t.Fatalf("quiet mode still shows progress or the announcement:\n%s", quiet)
 	}
 }
 

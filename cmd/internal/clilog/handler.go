@@ -95,6 +95,7 @@ func (h *Handler) Enabled(_ context.Context, level slog.Level) bool {
 }
 
 // Handle formats the record and dispatches to the matching utils.Print* call.
+//   - A progress record is drawn in place on a terminal and dropped in quiet mode.
 func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	var kind string
 	var final, last bool
@@ -125,6 +126,10 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	msg := r.Message
 	if len(extras) > 0 {
 		msg = msg + " " + strings.Join(extras, " ")
+	}
+
+	if kind == "progress" && utils.QuietMode {
+		return nil
 	}
 
 	h.state.Lock()

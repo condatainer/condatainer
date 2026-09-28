@@ -417,3 +417,19 @@ func (c *cancellingBlobs) Push(ctx context.Context, expected ocispec.Descriptor,
 	c.pushed++
 	return c.memoryBlobs.Push(ctx, expected, content)
 }
+
+// A layer is gigabytes, so digesting it must answer Ctrl-C between reads.
+func TestDigestRangeStopsOnCancellation(t *testing.T) {
+	path := writeArtifact(t, t.TempDir(), "sample.sqf", "abcdefghijklmnop")
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close() //nolint:errcheck
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := digestRange(ctx, f, 0, 16); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want the cancellation", err)
+	}
+}

@@ -323,3 +323,34 @@ func TestUserAgentIdentifiesCondaTainer(t *testing.T) {
 		t.Errorf("sent User-Agent %q, want %q", sent, userAgent())
 	}
 }
+
+// An interrupted upload gets no response, but its session is still open, and
+// the DELETE that abandons it must go out although the context is cancelled.
+func TestInterruptedUploadAbandonsItsSession(t *testing.T) {
+	var deleted string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deleted = r.URL.Path
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	slot := &failureSlot{}
+	req := newRequest(t, http.MethodPut, srv.URL+"/v2/lab/cnt/blobs/upload/7.abc?digest=sha256%3Adead", nil)
+	transport := &inspectTransport{next: http.DefaultTransport}
+	if _, err := transport.RoundTrip(req.WithContext(withFailureSlot(ctx, slot))); err == nil {
+		t.Fatal("a cancelled request succeeded")
+	}
+
+	failure := slot.get()
+	if failure == nil || failure.cancel == nil {
+		t.Fatal("an interrupted upload offered no way to abandon its session")
+	}
+	failure.cancel(ctx)
+	if deleted != "/v2/lab/cnt/blobs/upload/7.abc" {
+		t.Errorf("abandoned %q after the interrupt, want the session", deleted)
+	}
+}

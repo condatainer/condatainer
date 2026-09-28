@@ -110,7 +110,7 @@ func pushArtifactLayers(ctx context.Context, blobs blobPusher, path, mediaType s
 //   - probe asks whether the blob exists. Skipping it only risks bandwidth.
 //   - Each retry opens a new [io.SectionReader], since ORAS cannot replay a body.
 func pushRange(ctx context.Context, blobs blobPusher, f *os.File, offset, size int64, name, mediaType string, probe bool, parts ...int) (desc ocispec.Descriptor, present bool, err error) {
-	dgst, err := digestRange(f, offset, size)
+	dgst, err := digestRange(ctx, f, offset, size)
 	if err != nil {
 		return ocispec.Descriptor{}, false, err
 	}
@@ -172,11 +172,25 @@ func pushRange(ctx context.Context, blobs blobPusher, f *os.File, offset, size i
 }
 
 // digestRange computes the digest of a byte range without loading it, reading
-// through the same file handle the push will use.
-func digestRange(f *os.File, offset, size int64) (digest.Digest, error) {
+// through the same file handle the push will use. It stops between reads once
+// ctx is cancelled, since a layer is gigabytes.
+func digestRange(ctx context.Context, f *os.File, offset, size int64) (digest.Digest, error) {
 	digester := digest.Canonical.Digester()
-	if _, err := io.Copy(digester.Hash(), io.NewSectionReader(f, offset, size)); err != nil {
+	if _, err := io.Copy(digester.Hash(), ctxReader{ctx, io.NewSectionReader(f, offset, size)}); err != nil {
 		return "", fmt.Errorf("failed to digest bytes %d-%d: %w", offset, offset+size, err)
 	}
 	return digester.Digest(), nil
+}
+
+// ctxReader fails its next read once ctx is done.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }

@@ -142,7 +142,17 @@ func (t *inspectTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	}
 
 	resp, err := t.next.RoundTrip(req)
-	if err != nil || resp.StatusCode < 400 {
+	if err != nil {
+		// An interrupted upload has no response, but its session is still open.
+		if session := uploadSessionURL(req); session != "" && req.Context().Err() != nil {
+			if slot := failureSlotFrom(req.Context()); slot != nil {
+				auth := req.Header.Get("Authorization")
+				slot.set(&transferFailure{cancel: func(ctx context.Context) { t.cancelUpload(ctx, session, auth) }})
+			}
+		}
+		return resp, err
+	}
+	if resp.StatusCode < 400 {
 		return resp, err
 	}
 
@@ -179,8 +189,9 @@ func (t *inspectTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 // cancelUpload abandons a blob upload session, best effort.
 //   - A failed finalize leaves the session open and ORAS never resumes one, so four retries would leave four behind.
 //   - Failures are ignored: this tidies after an error already being handled and must never become the error the caller sees.
+//   - It still runs after an interrupt, which is when the caller's context is already cancelled.
 func (t *inspectTransport) cancelUpload(ctx context.Context, session, authorization string) {
-	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	ctx, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer stop()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, session, nil)

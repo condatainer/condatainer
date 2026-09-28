@@ -376,3 +376,16 @@ func equalDurations(got, want []time.Duration) bool {
 	}
 	return true
 }
+
+// An interrupt ends the attempt at once, abandoning the session it cut off.
+func TestRetryAbandonsTheSessionAnInterruptCutOff(t *testing.T) {
+	abandoned, attempts := 0, 0
+	err := defaultRetryPolicy().run(context.Background(), mutation{verb: verbUpload, do: func(ctx context.Context) error {
+		attempts++
+		failureSlotFrom(ctx).set(&transferFailure{cancel: func(context.Context) { abandoned++ }})
+		return context.Canceled
+	}})
+	if !errors.Is(err, context.Canceled) || attempts != 1 || abandoned != 1 {
+		t.Errorf("err = %v, attempts = %d, abandoned = %d; want the cancellation, 1, 1", err, attempts, abandoned)
+	}
+}

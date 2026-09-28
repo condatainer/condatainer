@@ -11,6 +11,7 @@ import (
 	"github.com/condatainer/condatainer/internal/logging"
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/toolpath"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // createSquashfs packs sourceDir (and metaDir, if any) into targetPath with mksquashfs, run directly on the host — no container, no Apptainer.
@@ -99,16 +100,20 @@ func runHostScript(ctx context.Context, script string, io execpkg.IO) error {
 //     at the root, dotfiles included.
 //   - -no-xattrs: nothing reads them back, and shared filesystems hand mksquashfs
 //     attributes it cannot store and unsquashfs ones it cannot restore unprivileged.
-//   - -quiet hides the final statistics and keeps the progress bar. Do not pair it
-//     with -no-progress: progress is the useful output.
+//   - -quiet hides the final statistics and keeps the progress bar, the useful output.
+//   - Quiet mode adds -no-progress and drops the announcement too.
 func squashfsScript(mksquashfsBin string, sources []string, targetPath string, ncpus int, blockSize, compressArgs string, keepAsDirectory bool) string {
 	keep := ""
 	if keepAsDirectory {
 		keep = "-keep-as-directory "
 	}
+	announce, progress := `echo "Packing overlay to SquashFS..."`, ""
+	if utils.QuietMode {
+		announce, progress = "", "-no-progress "
+	}
 	return fmt.Sprintf(`
 trap 'exit 130' INT TERM
-echo "Packing overlay to SquashFS..."
-%s %s %s -processors %d -b %s %s-all-root -no-xattrs -quiet %s
-`, mksquashfsBin, strings.Join(sources, " "), targetPath, ncpus, blockSize, keep, compressArgs)
+%s
+%s %s %s -processors %d -b %s %s-all-root -no-xattrs -quiet %s%s
+`, announce, mksquashfsBin, strings.Join(sources, " "), targetPath, ncpus, blockSize, keep, progress, compressArgs)
 }

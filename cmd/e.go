@@ -102,12 +102,15 @@ func runE(cmd *cobra.Command, args []string) error {
 					switch {
 					case errors.Is(err, image.ErrProtected):
 						announceAutoload = func() {
-							utils.PrintWarning("%s is write-protected, running without it",
-								filepath.Base(candidate))
+							utils.PrintWarning("%v; running without it (-r mounts it read-only)", err)
+						}
+					case errors.Is(err, image.ErrInUse):
+						announceAutoload = func() {
+							utils.PrintWarning("%s is in use, running without it", filepath.Base(candidate))
 						}
 					case err != nil:
 						announceAutoload = func() {
-							utils.PrintWarning("%s is in use, running without it", filepath.Base(candidate))
+							utils.PrintWarning("%v; running without it", err)
 						}
 					default:
 						if lookup := container.LookupSnapshot(candidate); lookup.Path != "" {

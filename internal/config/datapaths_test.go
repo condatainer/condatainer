@@ -163,3 +163,19 @@ func TestSharedAndPersonalTierCollapseToOnePath(t *testing.T) {
 		t.Errorf("ClassifyDataDir = %s, want %s (writes depend on the shared label)", layer, LayerAppRoot)
 	}
 }
+
+// Peeking names the directory a write would use without creating it.
+func TestPeekWritableDirCreatesNothing(t *testing.T) {
+	scratch, _, _, _ := withAllTiers(t)
+	want := filepath.Join(scratch, "images")
+
+	if got := PeekWritableImagesDir(); got != want {
+		t.Fatalf("PeekWritableImagesDir = %s, want %s", got, want)
+	}
+	if DirExists(want) {
+		t.Fatalf("PeekWritableImagesDir created %s", want)
+	}
+	if got, err := GetWritableImagesDir(); err != nil || got != want {
+		t.Errorf("GetWritableImagesDir = %s, %v; want the peeked %s", got, err, want)
+	}
+}

@@ -1,6 +1,10 @@
 package cmd
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestCompareVersions(t *testing.T) {
 	cases := []struct {
@@ -19,6 +23,26 @@ func TestCompareVersions(t *testing.T) {
 		got := compareVersions(c.v1, c.v2)
 		if got != c.want {
 			t.Errorf("compareVersions(%q,%q) = %d; want %d", c.v1, c.v2, got, c.want)
+		}
+	}
+}
+
+// The replaced binary stays reachable under a hidden name until the next
+// update, which replaces it.
+func TestKeepPreviousHoldsTheReplacedBinary(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "condatainer")
+	prev := filepath.Join(dir, ".condatainer.prev")
+	for _, content := range []string{"v1", "v2"} {
+		if err := os.WriteFile(exe, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		keepPrevious(exe)
+		if err := os.Rename(exe, exe+".gone"); err != nil { // the update's rename drops this name
+			t.Fatal(err)
+		}
+		if got, err := os.ReadFile(prev); err != nil || string(got) != content {
+			t.Fatalf(".prev = %q, %v; want the replaced %q", got, err, content)
 		}
 	}
 }

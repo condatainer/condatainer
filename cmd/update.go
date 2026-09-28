@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"golang.org/x/mod/semver"
 
@@ -136,11 +136,10 @@ var selfUpdateCmd = &cobra.Command{
 	Short: "Update condatainer to the latest version",
 	Long: `Download the latest condatainer from GitHub and replace the current binary.
 
-- No backup of the current version is kept.`,
+- The replaced binary is kept as a hidden .prev beside it.`,
 	Example: `  condatainer self-update        # Update to the latest stable version
   condatainer self-update --yes  # Update without confirmation
-  condatainer self-update -f     # Update even if already on the latest version
-  condatainer self-update --dev  # Include pre-release versions`,
+  condatainer self-update -f     # Update even if already on the latest version`,
 	Args:         cobra.NoArgs,
 	SilenceUsage: true,
 	RunE:         runSelfUpdate,
@@ -164,6 +163,9 @@ func runSelfUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to resolve symlink: %w", err)
 	}
+	if binDir := filepath.Dir(exePath); !utils.CanWriteToDir(binDir) {
+		return fmt.Errorf("%s is not writable", binDir)
+	}
 
 	// Detect OS and architecture
 	osName := runtime.GOOS
@@ -185,7 +187,11 @@ func runSelfUpdate(cmd *cobra.Command, args []string) error {
 		releaseURL = fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", config.GitHubRepo)
 	}
 
-	resp, err := http.Get(releaseURL)
+	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, releaseURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to fetch release information: %w", err)
+	}
+	resp, err := (&http.Client{Timeout: time.Minute}).Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to fetch release information: %w", err)
 	}
@@ -197,6 +203,7 @@ func runSelfUpdate(cmd *cobra.Command, args []string) error {
 
 	type releaseAsset struct {
 		Name               string `json:"name"`
+		Size               int64  `json:"size"`
 		BrowserDownloadURL string `json:"browser_download_url"`
 	}
 
@@ -268,35 +275,31 @@ func runSelfUpdate(cmd *cobra.Command, args []string) error {
 	// Find matching binary for current OS/arch
 	// Expected format: condatainer_{os}_{arch} (e.g., condatainer_linux_amd64)
 	binaryName := fmt.Sprintf("condatainer_%s_%s", osName, arch)
-	var downloadURL string
-
-	for _, asset := range release.Assets {
-		if asset.Name == binaryName {
-			downloadURL = asset.BrowserDownloadURL
+	var asset *releaseAsset
+	for i := range release.Assets {
+		if release.Assets[i].Name == binaryName {
+			asset = &release.Assets[i]
 			break
 		}
 	}
 
-	if downloadURL == "" {
+	if asset == nil {
 		return fmt.Errorf("no binary found for %s/%s in release %s", osName, arch, release.TagName)
 	}
 
 	utils.PrintMessage("Downloading condatainer %s for %s/%s...", release.TagName, osName, arch)
 
-	// Download to temporary file
-	tempPath := fmt.Sprintf("%s.tmp.%d", exePath, os.Getpid())
-	if err := downloadFile(downloadURL, tempPath); err != nil {
+	tempPath := filepath.Join(filepath.Dir(exePath), fmt.Sprintf(".%s.tmp.%d", filepath.Base(exePath), os.Getpid()))
+	if err := utils.DownloadExecutable(cmd.Context(), asset.BrowserDownloadURL, tempPath); err != nil {
+		os.Remove(tempPath)
 		return fmt.Errorf("failed to download latest version: %w", err)
 	}
-
-	// Make executable
-	if err := utils.MakeExecutable(tempPath); err != nil {
+	if info, err := os.Stat(tempPath); err != nil || info.Size() != asset.Size {
 		os.Remove(tempPath)
-		return fmt.Errorf("failed to set executable permissions: %w", err)
+		return fmt.Errorf("the downloaded binary is incomplete; run the update again")
 	}
 
-	// Replace current executable
-	// On Unix systems, we can replace the file while it's running
+	keepPrevious(exePath)
 	if err := os.Rename(tempPath, exePath); err != nil {
 		os.Remove(tempPath)
 		return fmt.Errorf("failed to replace executable: %w", err)
@@ -305,6 +308,17 @@ func runSelfUpdate(cmd *cobra.Command, args []string) error {
 	utils.PrintSuccess("condatainer updated to %s!", release.TagName)
 
 	return nil
+}
+
+// keepPrevious hardlinks exePath to a hidden .prev beside it, so a process
+// still running the old binary on another node keeps a file to read. Best
+// effort: a filesystem without hardlinks updates without one.
+func keepPrevious(exePath string) {
+	prev := filepath.Join(filepath.Dir(exePath), "."+filepath.Base(exePath)+".prev")
+	os.Remove(prev) //nolint:errcheck
+	if err := os.Link(exePath, prev); err != nil {
+		utils.PrintDebug("not keeping the previous binary: %v", err)
+	}
 }
 
 // compareVersions compares two semantic versions: -1 if v1 < v2, 0 if equal, 1 if v1 > v2.
@@ -339,34 +353,4 @@ func compareVersions(v1, v2 string) int {
 		return 1
 	}
 	return 0
-}
-
-// downloadFile downloads a file from a URL to a local path
-func downloadFile(url, destPath string) error {
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
-	}
-
-	// Create parent directory
-	if err := utils.MkdirAllShared(filepath.Dir(destPath)); err != nil {
-		return err
-	}
-
-	// Create destination file
-	out, err := utils.CreateFileWritable(destPath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	// Copy data. Permissions were already set by CreateFileWritable (umask-subject,
-	// shared with the parent group); io.Copy only writes content.
-	_, err = io.Copy(out, resp.Body)
-	return err
 }

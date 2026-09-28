@@ -13,10 +13,9 @@ The self-provisioned toolchain: one micromamba prefix in one directory.
 ## Placement
 
 - There is one toolchain directory, never searched across tiers: `CNT_LIBEXEC`, else `<root>/libexec`, else the user data directory's `libexec`.
-  - It belongs to the install, like the Apptainer binary. A lab or user layer cannot shadow a site toolchain.
-  - A rootless install (binary in `~/bin` or `~/.local/bin`) falls back to the user data directory, not scratch, which HPC sites purge.
+  - It belongs to the install, like the Apptainer binary. No other layer can shadow it.
+  - With no root, it falls back to the user data directory.
 - `CNT_LIBEXEC` is a variable only, with no config key, so no config layer can move it.
-  - An Lmod module sets it to point every user at a site toolchain.
 - A container binds the directory whole, at its real path.
 - The name is `libexec`, not `tools`. "Tool" already means other things here. `libexec` is the FHS term for executables invoked by other programs.
 
@@ -102,9 +101,9 @@ The self-provisioned toolchain: one micromamba prefix in one directory.
   - It lives inside the prefix, so it needs no write access anywhere else. No package record lists it, so micromamba never touches it.
   - A lock that cannot be created or opened for writing is reported as "not writable", never as another update.
 - A run takes no lock on the toolchain.
-  - A reader cannot be required to write, and a site-wide toolchain is read-only to its users.
+  - A reader may be unable to write the toolchain directory.
   - An in-place update unlinks and relinks files, so a running process keeps its old inodes.
-  - A reader lock would also block every update on a busy site.
+  - A reader lock would also block every update while anything runs.
   - The cost is a tool started mid-update that briefly sees a mix of old and new files, which fails loudly.
 
 ## Verification

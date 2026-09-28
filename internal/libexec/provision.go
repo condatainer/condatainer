@@ -259,7 +259,7 @@ func containsPkg(list []pkg, p pkg) bool {
 
 // acquireUpdateLock takes the exclusive update lock, creating its file.
 //   - Only a held lock is reported as another update.
-//   - A lock that cannot be created or opened for writing means the toolchain is not the caller's to update.
+//   - A lock that cannot be created or opened for writing is reported as not writable.
 func acquireUpdateLock(path string) (*utils.FileLock, error) {
 	if !utils.FileExists(path) {
 		f, err := utils.CreateFileWritable(path)
@@ -278,10 +278,10 @@ func acquireUpdateLock(path string) (*utils.FileLock, error) {
 	return lock, nil
 }
 
-// notWritable explains why the toolchain at dir cannot be created or updated.
+// notWritable reports that dir cannot be written.
 func notWritable(dir string, err error) error {
 	if errors.Is(err, fs.ErrPermission) {
-		return fmt.Errorf("%s is not writable, so you cannot install or update the toolchain there; ask whoever installed it, or set CNT_LIBEXEC to a directory you own", dir)
+		return fmt.Errorf("%s is not writable", dir)
 	}
 	return fmt.Errorf("cannot prepare the toolchain in %s: %w", dir, err)
 }

@@ -525,7 +525,7 @@ var configListCmd = &cobra.Command{
 		envVars := getConfigEnvVars()
 		hasEnvOverrides := false
 		// Special vars not derived from config keys (system → group → personal)
-		for _, envVar := range []string{"CNT_ROOT", "CNT_EXTRA_ROOT", "SCRATCH"} {
+		for _, envVar := range []string{"CNT_ROOT", "CNT_LIBEXEC", "CNT_EXTRA_ROOT", "SCRATCH"} {
 			if val := os.Getenv(envVar); val != "" {
 				fmt.Printf("  %s=%s\n", envVar, val)
 				hasEnvOverrides = true
@@ -1021,6 +1021,9 @@ extra-root, app-root, scratch, user.`,
 		}
 		if userDir := config.GetUserDataDir(); userDir != "" {
 			fmt.Printf("  User XDG: %s\n", userDir)
+		}
+		if libexecDir := config.GetLibexecDir(); libexecDir != "" {
+			fmt.Printf("  Libexec:  %s%s\n", libexecDir, pathStatus(libexecDir, ""))
 		}
 	},
 }

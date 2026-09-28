@@ -3,7 +3,9 @@ package libexec
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,7 +41,7 @@ type pkg struct {
 
 // packages lists what a prefix may hold, in install order. micromamba is the
 // base every prefix carries: it installs and updates the rest, and its binary
-// marks a tier as provisioned.
+// marks the toolchain as provisioned.
 var packages = []pkg{
 	{name: "micromamba", bins: []string{"micromamba"}, report: "micromamba"},
 	{
@@ -99,9 +101,9 @@ func versionFlag(name string) string {
 	}
 }
 
-// libexecLockName is the sibling lock that serializes Update calls on a tier,
-// including the first one, when there is no prefix yet to hold a lock.
-const libexecLockName = ".libexec.lock"
+// updateLockName is the lock inside the prefix that serializes Update calls.
+// Micromamba never touches it, since no package record lists it.
+const updateLockName = ".libexec.lock"
 
 // resolveTools maps requested package names to packages.
 func resolveTools(names []string) ([]pkg, error) {
@@ -126,16 +128,15 @@ func resolveTools(names []string) ([]pkg, error) {
 	return out, nil
 }
 
-// Update creates or updates the toolchain prefix in place, under an exclusive lock.
-//   - With no tools it updates what is installed, or creates a prefix holding micromamba on a tier with none; naming tools also installs any that are missing.
-//   - A prefix without conda-meta/ is recreated.
+// Update creates the toolchain prefix, or updates it in place, under an exclusive lock.
+//   - With no tools it updates what is installed, or creates a prefix holding micromamba; naming tools also installs any that are missing.
 func Update(ctx context.Context, tools ...string) error {
 	return run(ctx, tools, false, false)
 }
 
-// EnsureMicromamba creates a toolchain holding micromamba alone when no tier
-// has one, and does nothing otherwise. Callers are serialized in this process
-// and, through the tier lock, across processes: one that loses the race finds
+// EnsureMicromamba creates a toolchain holding micromamba alone when none is
+// provisioned, and does nothing otherwise. Callers are serialized in this process
+// and, through the update lock, across processes: one that loses the race finds
 // the toolchain provisioned and leaves it alone.
 func EnsureMicromamba(ctx context.Context) error {
 	ensureMu.Lock()
@@ -154,7 +155,7 @@ func Sync(ctx context.Context, install ...string) error {
 }
 
 // run is Update and Sync: updateAll updates everything installed rather than
-// only the named packages. ifMissing returns once the tier lock is held if
+// only the named packages. ifMissing returns once the update lock is held if
 // micromamba is by then installed.
 func run(ctx context.Context, tools []string, updateAll, ifMissing bool) error {
 	requested, err := resolveTools(tools)
@@ -162,67 +163,75 @@ func run(ctx context.Context, tools []string, updateAll, ifMissing bool) error {
 		return err
 	}
 
-	live, hadLive := Dir()
-	target := live
-	if !hadLive {
-		dir, err := config.GetWritableLibexecDir()
-		if err != nil {
-			return fmt.Errorf("no writable location for the toolchain: %w", err)
-		}
-		target = dir
-	}
-	parent := filepath.Dir(target)
-	if err := utils.MkdirAllShared(parent); err != nil {
-		return fmt.Errorf("failed to create %s: %w", parent, err)
-	}
-
-	tierLock, err := acquireTierLock(filepath.Join(parent, libexecLockName))
+	target, err := prepareTarget()
 	if err != nil {
 		return err
 	}
-	defer tierLock.Close()
-
-	if ifMissing && Installed("micromamba") {
-		return nil
+	lock, err := acquireUpdateLock(filepath.Join(target, updateLockName))
+	if err != nil {
+		return err
 	}
+	defer lock.Close()
 
-	var useLock *utils.FileLock
-	if hadLive {
-		lockPath := filepath.Join(target, lockFileName)
-		if !utils.FileExists(lockPath) {
-			if f, err := utils.CreateFileWritable(lockPath); err == nil {
-				f.Close()
-			}
+	if _, live := Dir(); live {
+		if ifMissing {
+			return nil
 		}
-		useLock, err = utils.AcquireFileLock(lockPath, true)
-		if err != nil {
-			return fmt.Errorf("condatainer is currently running (toolchain is locked); stop all running condatainer sessions before updating: %w", err)
-		}
-		defer func() {
-			if useLock != nil {
-				useLock.Close()
-			}
-		}()
-	}
-
-	inPlace := hadLive && utils.DirExists(filepath.Join(target, "conda-meta"))
-	if inPlace {
 		return updateInPlace(ctx, target, requested, updateAll)
 	}
+	if err := clearPrefix(target); err != nil {
+		return fmt.Errorf("failed to clear the unfinished toolchain at %s: %w", target, err)
+	}
+	return createPrefix(ctx, target, requested)
+}
 
-	// A prefix with no conda-meta/, or a half-built one, cannot be updated by
-	// micromamba; recreate it holding the same tools plus any requested.
-	want := requested
-	if hadLive {
-		want = mergePackages(installedPackages(target), requested)
-		// The in-prefix lock file goes with the directory, so release it first.
-		useLock.Close()
-		useLock = nil
+// prepareTarget creates the toolchain directory and returns it with symlinks
+// resolved, since that path is baked into the installed binaries.
+//   - A directory holding anything but a toolchain, or the leftovers of one, is refused, so a mistyped CNT_LIBEXEC is never cleared.
+func prepareTarget() (string, error) {
+	target := config.GetLibexecDir()
+	if target == "" {
+		return "", fmt.Errorf("no location for the toolchain; set CNT_LIBEXEC")
 	}
-	if err := utils.RemoveAllWritable(target); err != nil {
-		return fmt.Errorf("failed to remove the old toolchain: %w", err)
+	if entries, err := os.ReadDir(target); err == nil && !isToolchain(target) {
+		for _, e := range entries {
+			if e.Name() != updateLockName {
+				return "", fmt.Errorf("%s exists and is not a toolchain; remove it or set CNT_LIBEXEC elsewhere", target)
+			}
+		}
 	}
-	return createPrefix(ctx, target, want)
+	if err := utils.MkdirAllShared(target); err != nil {
+		return "", notWritable(target, err)
+	}
+	real, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve %s: %w", target, err)
+	}
+	return real, nil
+}
+
+// isToolchain reports whether dir is a toolchain or what a crashed create left:
+// it has bin/micromamba or conda-meta/.
+func isToolchain(dir string) bool {
+	return utils.FileExists(filepath.Join(dir, "bin", binMarker)) || utils.DirExists(filepath.Join(dir, "conda-meta"))
+}
+
+// clearPrefix removes everything in prefix except the update lock, which the
+// caller holds.
+func clearPrefix(prefix string) error {
+	entries, err := os.ReadDir(prefix)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Name() == updateLockName {
+			continue
+		}
+		if err := utils.RemoveAllWritable(filepath.Join(prefix, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // mergePackages returns the packages in a and b, once each, in install order.
@@ -248,23 +257,39 @@ func containsPkg(list []pkg, p pkg) bool {
 	return false
 }
 
-// acquireTierLock takes the tier's exclusive Update lock, creating its file.
-func acquireTierLock(path string) (*utils.FileLock, error) {
+// acquireUpdateLock takes the exclusive update lock, creating its file.
+//   - Only a held lock is reported as another update.
+//   - A lock that cannot be created or opened for writing means the toolchain is not the caller's to update.
+func acquireUpdateLock(path string) (*utils.FileLock, error) {
 	if !utils.FileExists(path) {
-		if f, err := utils.CreateFileWritable(path); err == nil {
-			f.Close()
+		f, err := utils.CreateFileWritable(path)
+		if err != nil {
+			return nil, notWritable(filepath.Dir(path), err)
 		}
+		f.Close()
 	}
 	lock, err := utils.AcquireFileLock(path, true)
-	if err != nil {
+	if errors.Is(err, utils.ErrLockConflict) {
 		return nil, fmt.Errorf("another condatainer update of the toolchain is running: %w", err)
+	}
+	if err != nil {
+		return nil, notWritable(filepath.Dir(path), err)
 	}
 	return lock, nil
 }
 
-// createPrefix builds a new prefix at target (which must not exist) holding
-// micromamba plus want, from a downloaded bootstrap binary, and removes the
-// prefix again if any step fails so nothing half-built looks provisioned.
+// notWritable explains why the toolchain at dir cannot be created or updated.
+func notWritable(dir string, err error) error {
+	if errors.Is(err, fs.ErrPermission) {
+		return fmt.Errorf("%s is not writable, so you cannot install or update the toolchain there; ask whoever installed it, or set CNT_LIBEXEC to a directory you own", dir)
+	}
+	return fmt.Errorf("cannot prepare the toolchain in %s: %w", dir, err)
+}
+
+// createPrefix installs micromamba plus want into target, which holds only the
+// update lock, from a downloaded bootstrap binary.
+//   - It uses install into an empty conda-meta/, since create refuses a directory that is not empty.
+//   - A failed step clears target again, so nothing half-built looks provisioned.
 func createPrefix(ctx context.Context, target string, want []pkg) error {
 	mmBin, cleanup, err := downloadBootstrap(ctx)
 	if err != nil {
@@ -272,14 +297,17 @@ func createPrefix(ctx context.Context, target string, want []pkg) error {
 	}
 	defer cleanup()
 
+	if err := utils.MkdirAllShared(filepath.Join(target, "conda-meta")); err != nil {
+		return fmt.Errorf("failed to prepare the toolchain: %w", err)
+	}
 	names := packageNames(mergePackages(want, packages[:1]))
-	args := append([]string{"create", "-y", "-p", target, "-c", "conda-forge"}, names...)
+	args := append([]string{"install", "-y", "-p", target, "-c", "conda-forge"}, names...)
 	if err := runMicromamba(ctx, mmBin, target, args...); err != nil {
-		utils.RemoveAllWritable(target) //nolint:errcheck
+		clearPrefix(target) //nolint:errcheck
 		return fmt.Errorf("failed to provision the toolchain: %w", err)
 	}
 	if err := finishPrefix(ctx, mmBin, target); err != nil {
-		utils.RemoveAllWritable(target) //nolint:errcheck
+		clearPrefix(target) //nolint:errcheck
 		return err
 	}
 	return nil
@@ -328,8 +356,8 @@ func packageNames(list []pkg) []string {
 }
 
 // finishPrefix runs after a successful create or update: link fusermount3,
-// clean the package cache, share the tree with the group, ensure the lock
-// sentinel, and verify what is installed.
+// clean the package cache, share the tree with the group, and verify what is
+// installed.
 func finishPrefix(ctx context.Context, mmBin, prefix string) error {
 	if err := ensureFusermount3InBin(prefix); err != nil {
 		return fmt.Errorf("failed to link fusermount3: %w", err)
@@ -343,14 +371,6 @@ func finishPrefix(ctx context.Context, mmBin, prefix string) error {
 	// top level picks up group-write on its own.
 	if err := utils.ShareTreeWithParentGroup(prefix); err != nil {
 		return fmt.Errorf("failed to share the toolchain with the group: %w", err)
-	}
-	lockPath := filepath.Join(prefix, lockFileName)
-	if !utils.FileExists(lockPath) {
-		lockFile, err := utils.CreateFileWritable(lockPath)
-		if err != nil {
-			return fmt.Errorf("failed to create the lock sentinel: %w", err)
-		}
-		lockFile.Close()
 	}
 	if err := verifyToolchain(ctx, prefix); err != nil {
 		return fmt.Errorf("the toolchain failed verification; run `condatainer update --libexec` again: %w", err)

@@ -15,21 +15,16 @@ import (
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
-// withProvisionedLibexec points the scratch tier at a fresh temp directory and
+// withProvisionedLibexec points CNT_LIBEXEC at a fresh temp directory and
 // drops stub bin/apptainer and bin/micromamba there, satisfying libexec.Dir's
 // marker check. Mirrors internal/toolpath's own test helper of the same name,
 // duplicated here rather than imported: libexec's test helpers are unexported.
 func withProvisionedLibexec(t *testing.T) {
 	t.Helper()
-	scratch := filepath.Join(t.TempDir(), "condatainer")
-	t.Setenv("SCRATCH", filepath.Dir(scratch))
-	t.Setenv("XDG_DATA_HOME", "")
-	t.Setenv("CNT_EXTRA_ROOT", "")
-	t.Setenv("CNT_ROOT", "")
-	config.InitDataPaths()
-	t.Cleanup(config.InitDataPaths)
+	dir := filepath.Join(t.TempDir(), "libexec")
+	t.Setenv("CNT_LIBEXEC", dir)
 
-	bin := filepath.Join(scratch, "libexec", "bin")
+	bin := filepath.Join(dir, "bin")
 	if err := utils.MkdirAllShared(bin); err != nil {
 		t.Fatalf("failed to create stub bin dir: %v", err)
 	}

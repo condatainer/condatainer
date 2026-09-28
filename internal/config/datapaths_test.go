@@ -107,41 +107,28 @@ func TestHelperScriptsShareTheImageOrder(t *testing.T) {
 	}
 }
 
-// The self-provisioned toolchain uses the same tier order as images: reads
-// nearest-first, writes furthest-first, so one copy serves the whole group.
-func TestLibexecSharesTheImageOrder(t *testing.T) {
-	scratch, user, extraRoot, root := withAllTiers(t)
-
-	wantRead := []string{
-		filepath.Join(scratch, "libexec"),
-		filepath.Join(user, "libexec"),
-		filepath.Join(extraRoot, "libexec"),
-		filepath.Join(root, "libexec"),
-	}
-	got := libexecSearchPaths()
-	if len(got) != len(wantRead) {
-		t.Fatalf("libexecSearchPaths = %v, want %v", got, wantRead)
-	}
-	for i := range wantRead {
-		if got[i] != wantRead[i] {
-			t.Errorf("read order [%d] = %s, want %s", i, got[i], wantRead[i])
-		}
+// The toolchain is one directory: CNT_LIBEXEC, else the root's, else the user
+// data dir's. Extra-root and scratch never hold it.
+func TestLibexecDirResolution(t *testing.T) {
+	_, user, _, root := withAllTiers(t)
+	if got, want := GetLibexecDir(), filepath.Join(root, "libexec"); got != want {
+		t.Errorf("with a root: GetLibexecDir = %s, want %s", got, want)
 	}
 
-	wantWrite := []string{
-		filepath.Join(extraRoot, "libexec"),
-		filepath.Join(root, "libexec"),
-		filepath.Join(scratch, "libexec"),
-		filepath.Join(user, "libexec"),
+	override := filepath.Join(t.TempDir(), "site-libexec")
+	t.Setenv("CNT_LIBEXEC", override)
+	if got := GetLibexecDir(); got != override {
+		t.Errorf("with CNT_LIBEXEC: GetLibexecDir = %s, want %s", got, override)
 	}
-	dirs := libexecWriteDirs()
-	if len(dirs) != len(wantWrite) {
-		t.Fatalf("libexecWriteDirs = %v, want %v", dirs, wantWrite)
+
+	t.Setenv("CNT_LIBEXEC", "")
+	t.Setenv("CNT_ROOT", "")
+	rootDirOnce, rootDirCache = sync.Once{}, ""
+	if GetRootDir() != "" {
+		t.Skip("the test binary sits in an install layout, so a root is detected")
 	}
-	for i := range wantWrite {
-		if dirs[i].Path != wantWrite[i] {
-			t.Errorf("write order [%d] = %s, want %s", i, dirs[i].Path, wantWrite[i])
-		}
+	if got, want := GetLibexecDir(), filepath.Join(user, "libexec"); got != want {
+		t.Errorf("with no root: GetLibexecDir = %s, want %s", got, want)
 	}
 }
 

@@ -43,6 +43,8 @@
 - A personal build shadows a shared one for the person who made it.
 - Tiers, in read order: scratch, user, extra-root, app-root.
 - Recipes are not searched here. They come from `sources`.
+- The toolchain is not searched either. It is one directory, owned by `internal/libexec`.
+- A display command peeks at the write target and never creates it. Only a write creates a directory.
 - Writes go to the first writable directory in reverse order.
   - Personal dirs are created on first use.
   - A shared dir gets its subdirectories only when its parent already exists. The parent is never created.

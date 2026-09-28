@@ -363,7 +363,7 @@ func runHelper(cmd *cobra.Command, args []string) error {
 		}
 
 		// Show writable directory
-		if writableDir, err := config.GetWritableHelperScriptsDir(); err == nil {
+		if writableDir := config.PeekWritableHelperScriptsDir(); writableDir != "" {
 			fmt.Printf("\nWritable directory: %s\n", writableDir)
 		}
 		return nil

@@ -934,6 +934,9 @@ extra-root, app-root, scratch, user.`,
 		// writeTarget is the resolved writable directory for this section (empty = not applicable).
 		pathStatus := func(dir, writeTarget string) string {
 			if !config.DirExists(dir) {
+				if writeTarget != "" && dir == writeTarget {
+					return " " + utils.StyleSuccess("(target, created on first write)")
+				}
 				return " " + utils.StyleWarning("(not found)")
 			}
 			var tags string
@@ -949,9 +952,9 @@ extra-root, app-root, scratch, user.`,
 			return tags
 		}
 
-		imagesWritable, _ := config.GetWritableImagesDir()
-		helperWritable, _ := config.GetWritableHelperScriptsDir()
-		cacheWritable, _ := config.GetWritableCacheDir()
+		imagesWritable := config.PeekWritableImagesDir()
+		helperWritable := config.PeekWritableHelperScriptsDir()
+		cacheWritable := config.PeekWritableCacheDir()
 
 		// withLayer appends the data layer a directory belongs to, matching the
 		// tags in `list` output and the -l/--layer values commands accept.

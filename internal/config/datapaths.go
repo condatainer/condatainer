@@ -446,6 +446,35 @@ func firstWritableDir(dirs []SearchDir) string {
 	return ""
 }
 
+// peekWritableDir returns the path firstWritableDir would pick, without creating anything.
+func peekWritableDir(dirs []SearchDir) string {
+	for _, d := range dirs {
+		if utils.DirExists(d.Path) {
+			if utils.CanWriteToDir(d.Path) {
+				return d.Path
+			}
+			continue
+		}
+		parent := filepath.Dir(d.Path)
+		if d.Personal && utils.CanWriteToExistingAncestor(parent) {
+			return d.Path
+		}
+		if !d.Personal && utils.DirExists(parent) && utils.CanWriteToDir(parent) {
+			return d.Path
+		}
+	}
+	return ""
+}
+
+// PeekWritableImagesDir returns the directory GetWritableImagesDir would pick, without creating it.
+func PeekWritableImagesDir() string { return peekWritableDir(imageWriteDirs()) }
+
+// PeekWritableHelperScriptsDir returns the directory GetWritableHelperScriptsDir would pick, without creating it.
+func PeekWritableHelperScriptsDir() string { return peekWritableDir(helperWriteDirs()) }
+
+// PeekWritableCacheDir returns the directory GetWritableCacheDir would pick, without creating it.
+func PeekWritableCacheDir() string { return peekWritableDir(cacheWriteDirs()) }
+
 // imageWriteDirs returns the ordered write candidates for image directories.
 //   - Shared: CNT_EXTRA_ROOT, root.
 //   - Personal: scratch, user.

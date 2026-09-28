@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -37,6 +38,33 @@ func TestWriteLockTellsProtectedFromInUse(t *testing.T) {
 		t.Fatalf("a protected image must stay readable: %v", err)
 	}
 	lock.Close()
+}
+
+// An image writable by its owner but not the caller is protected too, and the
+// message names the owner instead of a chmod the caller cannot run.
+func TestWriteLockNamesTheOwnerOfSomeoneElsesImage(t *testing.T) {
+	path := ""
+	for _, candidate := range []string{"/etc/passwd", "/etc/hosts", "/etc/group"} {
+		info, err := os.Stat(candidate)
+		if err != nil || info.Mode().Perm()&0o200 == 0 {
+			continue
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Geteuid() {
+			path = candidate
+			break
+		}
+	}
+	if path == "" || os.Geteuid() == 0 {
+		t.Skip("needs a file another user owns and can write")
+	}
+
+	_, err := AcquireLock(path, true)
+	if !errors.Is(err, ErrProtected) {
+		t.Fatalf("want ErrProtected, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "not writable by you (owner: ") || strings.Contains(err.Error(), "chmod") {
+		t.Errorf("got %q, want the owner named and no chmod hint", err)
+	}
 }
 
 // Restoring the write bit releases the pin, so protection stays a reversible

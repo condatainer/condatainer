@@ -40,8 +40,11 @@ func DownloadFile(ctx context.Context, url, destPath string) error {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
 
+	// A shared filesystem reports a failed write at close, so its error counts.
 	_, err = io.Copy(file, resp.Body)
-	file.Close()
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
 	if err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("failed to write file: %w", err)

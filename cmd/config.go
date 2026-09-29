@@ -53,6 +53,7 @@ var configKeyDefs = map[string]bool{
 	"scheduler.mem":            false,
 	"scheduler.time":           false,
 	"channels":                 true,
+	"bind":                     true,
 }
 
 func isArrayKey(key string) bool { return configKeyDefs[key] }
@@ -430,6 +431,14 @@ var configListCmd = &cobra.Command{
 		} else {
 			fmt.Printf("  %-19s %s\n", "channels:", "none")
 		}
+		if len(config.Global.Binds) > 0 {
+			fmt.Printf("  %-19s\n", "bind:")
+			for _, b := range config.Global.Binds {
+				fmt.Printf("    - %s\n", b)
+			}
+		} else {
+			fmt.Printf("  %-19s %s\n", "bind:", "none")
+		}
 		fmt.Println()
 
 		// Helper settings (longest key: notification = 13 chars)
@@ -581,7 +590,11 @@ var configGetCmd = &cobra.Command{
 		if _, known := configKeyDefs[key]; !known {
 			ExitWithError("Unknown config key: %s", key)
 		}
-		if isArrayKey(key) {
+		if key == "bind" {
+			for _, v := range config.Global.Binds {
+				fmt.Println(v)
+			}
+		} else if isArrayKey(key) {
 			for _, v := range viper.GetStringSlice(key) {
 				fmt.Println(v)
 			}

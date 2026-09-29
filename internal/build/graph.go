@@ -422,17 +422,21 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 	lockPath := obj.LockPath()
 	pendingLock := BuildLockInfo{
 		Runner:    string(bg.scheduler.GetType()), // e.g. "slurm", "pbs", "lsf", "htcondor"
-		Node:      shortHostname(),
+		Node:      hostname(),
 		PID:       os.Getpid(),
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	if err := acquireBuildLockFile(lockPath, pendingLock); err != nil {
+	hold, err := acquireBuildLockFile(lockPath, pendingLock)
+	if err != nil {
 		if os.IsExist(err) {
 			return "", fmt.Errorf("build already queued or running for %s (lock exists at %s)",
 				obj.NameVersion(), lockPath)
 		}
 		return "", fmt.Errorf("failed to create build lock for %s: %w", obj.NameVersion(), err)
 	}
+	// Held until submission settles: letting go hands the lock to the job, which
+	// the scheduler then answers for.
+	defer hold.Close() //nolint:errcheck
 	if err := obj.adoptWorkspace(pendingLock); err != nil {
 		os.Remove(lockPath) // release the lock whose workspace could not be adopted
 		return "", err
@@ -475,6 +479,7 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 	// Create batch script
 	scriptPath, err := bg.scheduler.CreateScriptWithSpec(jobSpec, config.Global.LogsDir)
 	if err != nil {
+		os.Remove(lockPath)
 		return "", fmt.Errorf("failed to create batch script: %w", err)
 	}
 

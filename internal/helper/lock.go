@@ -86,8 +86,9 @@ func KillHeadlessProcess(id string) error {
 	if err != nil || info.PID <= 0 {
 		return fmt.Errorf("helper %s has no lock record", id)
 	}
-	if host := producer.ShortHostname(); info.Node != host {
-		return fmt.Errorf("%w: %s runs on %s, this is %s; stop it from there", ErrOtherHost, id, info.Node, host)
+	if host := producer.Hostname(); info.Node != host {
+		return fmt.Errorf("%w: %s runs on %s, this is %s; stop it from there",
+			ErrOtherHost, id, producer.ShortName(info.Node), producer.ShortName(host))
 	}
 	return syscall.Kill(-info.PID, syscall.SIGTERM)
 }

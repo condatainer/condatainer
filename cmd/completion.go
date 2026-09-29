@@ -86,7 +86,7 @@ var completionCmd = &cobra.Command{
 		} else {
 			detected, err := detectCompletionShell()
 			if err != nil {
-				ExitWithError("%v.\nSpecify it explicitly: condatainer completion bash|zsh|fish", err)
+				ExitWithError("%v.\nSpecify it explicitly: `condatainer completion bash|zsh|fish`", err)
 			}
 			shell = detected
 		}

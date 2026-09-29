@@ -87,11 +87,11 @@ var rootCmd = &cobra.Command{
 			} else {
 				utils.PrintWarning("build.system_apptainer %q is not usable, and no apptainer was found on PATH.", bad)
 			}
-			utils.PrintHint("Run: %s", "condatainer config init")
+			utils.PrintHint("Run `condatainer config init`.")
 		} else if !isCompleteRequest && !isConfigCommand && !config.IsInsideContainer() &&
 			!libexec.Installed("apptainer") && !config.ValidateBinary(config.Global.Build.SystemApptainer) {
-			utils.PrintWarning("Apptainer not accessible. The module may have been unloaded or removed.")
-			utils.PrintHint("Run: %s", "condatainer config init")
+			utils.PrintWarning("Apptainer not accessible.")
+			utils.PrintHint("Run `condatainer config init`.")
 		}
 
 		// Everything past config management expands bare names against the

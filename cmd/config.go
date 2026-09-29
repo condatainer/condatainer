@@ -378,7 +378,7 @@ var configListCmd = &cobra.Command{
 			fmt.Printf("  %d. [%s] %s%s\n", i+1, sp.Type, sp.Path, status)
 		}
 		if !foundActive {
-			fmt.Printf("  %s (use 'condatainer config init' to create)\n", utils.StyleWarning("No config file found"))
+			fmt.Printf("  %s (use `condatainer config init` to create)\n", utils.StyleWarning("No config file found"))
 		}
 		fmt.Println()
 
@@ -664,7 +664,6 @@ Time format (for build.time):
 		// Array keys require append/prepend/remove subcommands
 		if isArrayKey(key) {
 			utils.PrintError("'%s' is an array setting. Use append/prepend/remove subcommands.", key)
-			utils.PrintHint("  condatainer config append  %s <value>\n  condatainer config prepend %s <value>\n  condatainer config remove  %s <value>", key, key, key)
 			os.Exit(ExitCodeError)
 		}
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // artifactDir is a directory for pack output, cleaned up with a retry.
@@ -234,6 +235,18 @@ func TestPackScriptAlwaysBudgetsCpus(t *testing.T) {
 				t.Errorf("packScript(Processors=%d) = %q, want it to contain %q", tc.given, script, tc.want)
 			}
 		})
+	}
+}
+
+func TestPackScriptHidesProgressInQuietMode(t *testing.T) {
+	if strings.Contains(packScript([]string{"/src"}, "/out.sqf", nil, PackOptions{}, "mksquashfs"), "-no-progress") {
+		t.Error("packScript hides progress outside quiet mode")
+	}
+	prev := utils.QuietMode
+	utils.QuietMode = true
+	t.Cleanup(func() { utils.QuietMode = prev })
+	if !strings.Contains(packScript([]string{"/src"}, "/out.sqf", nil, PackOptions{}, "mksquashfs"), "-no-progress") {
+		t.Error("packScript shows progress in quiet mode")
 	}
 }
 

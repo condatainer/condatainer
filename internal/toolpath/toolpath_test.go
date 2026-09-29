@@ -30,21 +30,16 @@ func writeFakeExecutable(t *testing.T, dir, name string) string {
 	return p
 }
 
-// withProvisionedLibexec points the scratch tier at a fresh temp directory
-// and drops a stub bin/micromamba + name there, satisfying libexec.Dir's
-// marker check. Mirrors internal/libexec's own withScratchTier/
-// provisionedStub, duplicated here rather than imported: libexec's test
-// helpers are unexported.
+// withProvisionedLibexec points CNT_LIBEXEC at a fresh temp directory and
+// drops a stub bin/micromamba + name there, satisfying libexec.Dir's marker
+// check. Mirrors internal/libexec's own withLibexecDir/provisionedStub,
+// duplicated here rather than imported: libexec's test helpers are unexported.
 func withProvisionedLibexec(t *testing.T, name string) string {
 	t.Helper()
-	scratch := filepath.Join(t.TempDir(), "condatainer")
-	t.Setenv("SCRATCH", filepath.Dir(scratch))
-	t.Setenv("XDG_DATA_HOME", "")
-	t.Setenv("CNT_EXTRA_ROOT", "")
-	t.Setenv("CNT_ROOT", "")
-	config.InitDataPaths()
+	dir := filepath.Join(t.TempDir(), "libexec")
+	t.Setenv("CNT_LIBEXEC", dir)
 
-	bin := filepath.Join(scratch, "libexec", "bin")
+	bin := filepath.Join(dir, "bin")
 	if err := utils.MkdirAllShared(bin); err != nil {
 		t.Fatalf("failed to create stub bin dir: %v", err)
 	}
@@ -177,7 +172,7 @@ func TestResolveSkipsAHostToolBelowItsFloor(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("PATH/exec-bit semantics are POSIX-specific")
 	}
-	withScratchWithoutLibexec(t)
+	withoutLibexec(t)
 	noHostApptainer(t)
 	orig := fhsFallbackDirs
 	fhsFallbackDirs = []string{t.TempDir()}
@@ -206,7 +201,7 @@ func TestResolveFindsAToolBundledWithApptainer(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("PATH/exec-bit semantics are POSIX-specific")
 	}
-	withScratchWithoutLibexec(t)
+	withoutLibexec(t)
 	root := t.TempDir()
 	bundleBin := filepath.Join(root, "libexec", "apptainer", "bin")
 	if err := os.MkdirAll(bundleBin, 0o755); err != nil {
@@ -231,15 +226,10 @@ func TestResolveFindsAToolBundledWithApptainer(t *testing.T) {
 	}
 }
 
-// withScratchWithoutLibexec points the search at an empty scratch tier.
-func withScratchWithoutLibexec(t *testing.T) {
+// withoutLibexec points CNT_LIBEXEC at a directory that does not exist.
+func withoutLibexec(t *testing.T) {
 	t.Helper()
-	scratch := filepath.Join(t.TempDir(), "condatainer")
-	t.Setenv("SCRATCH", filepath.Dir(scratch))
-	t.Setenv("XDG_DATA_HOME", "")
-	t.Setenv("CNT_EXTRA_ROOT", "")
-	t.Setenv("CNT_ROOT", "")
-	config.InitDataPaths()
+	t.Setenv("CNT_LIBEXEC", filepath.Join(t.TempDir(), "libexec"))
 }
 
 // The host apptainer is only asked where its bundled tools are when PATH did
@@ -248,7 +238,7 @@ func TestResolveDoesNotRunApptainerWhenPathHasTheTool(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("PATH/exec-bit semantics are POSIX-specific")
 	}
-	withScratchWithoutLibexec(t)
+	withoutLibexec(t)
 	marker := filepath.Join(t.TempDir(), "asked")
 	fake := writeScript(t, t.TempDir(), "apptainer", "touch "+marker)
 	prev := config.Global.Build.SystemApptainer
@@ -280,7 +270,7 @@ func TestResolveReusesTheOnDiskCache(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("PATH/exec-bit semantics are POSIX-specific")
 	}
-	withScratchWithoutLibexec(t)
+	withoutLibexec(t)
 	cache := filepath.Join(t.TempDir(), "cache", cacheFileName)
 	cachePath = func() string { return cache }
 	t.Cleanup(func() { cachePath = func() string { return "" }; resetMemoryCaches() })

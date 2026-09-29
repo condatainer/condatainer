@@ -231,11 +231,9 @@ func isCancelledByUser(err error) bool {
 	return false
 }
 
-// shortHostname returns the unqualified hostname (strips domain suffix).
-// os.Hostname() may return "cn001" or "cn001.cluster.edu" depending on system
-// configuration; always store/compare the short form to avoid false mismatches.
-func shortHostname() string {
-	return producer.ShortHostname()
+// hostname returns this host's full name, which is what a build lock records.
+func hostname() string {
+	return producer.Hostname()
 }
 
 // buildDefaults holds resource defaults for build operations. Set from config at
@@ -264,11 +262,10 @@ func EffectiveResourceSpec(specs *scheduler.ScriptSpecs) *scheduler.ResourceSpec
 	return scheduler.ResolveResourceSpecFrom(buildDefaults, jobRes, specs)
 }
 
-// acquireBuildLockFile is a package-level helper that creates a lock file
-// atomically (O_CREATE|O_EXCL) and writes JSON metadata.
+// acquireBuildLockFile creates the lock file, holds it and writes JSON metadata.
 // Used by both BuildObject and graph.go's submitJob.
-func acquireBuildLockFile(path string, info BuildLockInfo) error {
-	return producer.Acquire(path, info)
+func acquireBuildLockFile(path string, info BuildLockInfo) (*utils.FileLock, error) {
+	return producer.Claim(path, info)
 }
 
 // overwriteBuildLockFile overwrites an existing lock file with new JSON metadata.
@@ -282,9 +279,9 @@ func readBuildLockFile(path string) (BuildLockInfo, error) {
 	return producer.Read(path)
 }
 
-// isBuildLockStale returns whether the lock is stale, the job's current status, and any
+// isBuildLockStale returns whether the lock at path is stale, the job's current status, and any
 // uncertainty error. Returns (true, Unknown, nil) when definitely stale, (false, status, nil)
 // when definitely alive, or (false, Unknown, err) when the state cannot be verified.
-func isBuildLockStale(info BuildLockInfo) (stale bool, status scheduler.JobStatus, err error) {
-	return producer.IsStale(info)
+func isBuildLockStale(path string, info BuildLockInfo) (stale bool, status scheduler.JobStatus, err error) {
+	return producer.IsStale(path, info)
 }

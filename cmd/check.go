@@ -262,7 +262,7 @@ func autoCreateExternalOverlay(ctx context.Context, dep string) bool {
 	if strings.HasSuffix(sibling, ".sh") {
 		shDeps, _ := utils.GetDependenciesFromScript(sibling)
 		if len(shDeps) > 0 {
-			utils.PrintError("External overlay %s has .sh with #DEP - create manually:\ncondatainer create -f %s",
+			utils.PrintError("External overlay %s has a .sh with #DEP; create it with `condatainer create -f %s`",
 				filepath.Base(dep), sibling)
 			return false
 		}

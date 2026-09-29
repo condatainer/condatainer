@@ -2,7 +2,6 @@ package build
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,27 +184,23 @@ func TestNewBuildObject_ErrorsWhenBuildLockExists(t *testing.T) {
 	setTestSource(t, writeRecipe(t, "cellranger/8.0.1",
 		"#!/bin/bash\n#INPUT:Please enter the license key\n"))
 
-	// Simulate a build in progress: create a live JSON lock file next to the target image.
-	// Use the current process PID and hostname so isBuildLockStale() treats it as active.
-	// The build-in-progress guard checks base.tgt.Lock = target path + ".lock",
-	// which lives in imagesDir.
+	// Simulate a build in progress: claim and hold the lock next to the target
+	// image, as a running build does, so isBuildLockStale() treats it as active.
 	nameVersion := "cellranger/8.0.1"
 	sqfName := strings.ReplaceAll(catalog.Normalize(nameVersion), "/", "--") + ".sqf"
 	lockPath := filepath.Join(imagesDir, sqfName+".lock")
 	liveLock := BuildLockInfo{
 		Runner:    "local",
-		Node:      shortHostname(),
-		PID:       os.Getpid(), // this process is definitely alive
+		Node:      hostname(),
+		PID:       os.Getpid(),
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	lockData, err := json.Marshal(liveLock)
+	hold, err := acquireBuildLockFile(lockPath, liveLock)
 	if err != nil {
-		t.Fatalf("failed to marshal lock: %v", err)
-	}
-	if err := os.WriteFile(lockPath, lockData, 0o664); err != nil {
 		t.Fatalf("failed to create lock file: %v", err)
 	}
 	defer os.Remove(lockPath)
+	defer hold.Close() //nolint:errcheck
 
 	// Re-init data paths so the test's extra base dir is picked up
 	config.InitDataPaths()

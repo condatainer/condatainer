@@ -15,7 +15,7 @@ func TestHeadlessLiveness(t *testing.T) {
 		t.Fatalf("no lock file: got %v, want unknown", live)
 	}
 
-	info := producer.Info{Runner: "local", Node: producer.ShortHostname(), PID: 4242}
+	info := producer.Info{Runner: "local", Node: producer.Hostname(), PID: 4242}
 	lock, err := HoldLock(LockFilePath("t-1"), info)
 	if err != nil {
 		t.Fatal(err)

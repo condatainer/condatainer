@@ -69,7 +69,7 @@ func ensureNestedProvider(ctx context.Context) error {
 	build.InvalidateInstalledOverlays()
 	container.InvalidateInstalledOverlaysCache()
 	if err != nil {
-		return fmt.Errorf("nested_run is true but apptainer cannot be provided for nested running: %w; install it with `condatainer install apptainer`, or set nested_run to auto", err)
+		return fmt.Errorf("nested_run is true but apptainer cannot be provided for nested running: %w", err)
 	}
 	if plan := currentNestedPlan(); plan.Overlay == "" && !plan.BindLibexec {
 		return fmt.Errorf("nested_run is true but the apptainer overlay build installed nothing")

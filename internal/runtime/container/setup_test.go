@@ -450,9 +450,7 @@ func TestSetupBindsLibexecOnlyForNestedRunning(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "bin", "micromamba"), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	prev := config.GlobalDataPaths
-	config.GlobalDataPaths.LibexecDirs = []string{dir}
-	t.Cleanup(func() { config.GlobalDataPaths = prev })
+	t.Setenv("CNT_LIBEXEC", dir)
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		t.Fatal(err)

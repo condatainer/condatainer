@@ -57,81 +57,69 @@ func TmpDirBinds() []string {
 	return binds
 }
 
-// DeduplicateBindPaths resolves, deduplicates, and filters child paths from bind directories.
-// It handles formats: "/path", "/path:/container", "/path:/container:ro"
+// DeduplicateBindPaths resolves host paths, collapses repeats and drops child paths a parent already covers.
+//   - Formats: "/path", "/path:/container", "/path:/container:opts".
+//   - A bind is its host and container path together. When one repeats, the later wins, so an explicit remap or ro replaces an automatic bind.
+//   - A plain child is dropped only under a parent bound at its own path with no options.
 func DeduplicateBindPaths(paths []string) []string {
-	// First pass: resolve all paths and deduplicate by host path
-	seen := make(map[string]bool)
-	resolved := make([]string, 0, len(paths))
-	for _, bind := range paths {
-		if bind == "" {
+	type bind struct{ host, dest, opts string }
+	var binds []bind
+	index := map[[2]string]int{}
+	for _, raw := range paths {
+		if raw == "" {
 			continue
 		}
-		// Parse bind format
-		parts := strings.SplitN(bind, ":", 3)
-		hostPath := parts[0]
-
-		// Resolve host path to absolute and follow symlinks
-		absHostPath, err := filepath.Abs(hostPath)
+		parts := strings.SplitN(raw, ":", 3)
+		host, err := filepath.Abs(parts[0])
 		if err != nil {
-			absHostPath = hostPath
+			host = parts[0]
 		}
-		if realPath, err := filepath.EvalSymlinks(absHostPath); err == nil {
-			absHostPath = realPath
+		if real, err := filepath.EvalSymlinks(host); err == nil {
+			host = real
 		}
-
-		// Skip if host path already seen
-		if seen[absHostPath] {
+		b := bind{host: host, dest: host}
+		if len(parts) >= 2 && parts[1] != "" {
+			b.dest = parts[1]
+		}
+		if len(parts) == 3 {
+			b.opts = parts[2]
+		}
+		key := [2]string{b.host, b.dest}
+		if i, ok := index[key]; ok {
+			binds[i] = b
 			continue
 		}
-		seen[absHostPath] = true
-
-		// Reconstruct the bind string with resolved host path
-		var resolvedBind string
-		switch len(parts) {
-		case 3:
-			resolvedBind = absHostPath + ":" + parts[1] + ":" + parts[2]
-		case 2:
-			resolvedBind = absHostPath + ":" + parts[1]
-		default:
-			resolvedBind = absHostPath
-		}
-		resolved = append(resolved, resolvedBind)
+		index[key] = len(binds)
+		binds = append(binds, b)
 	}
 
-	// Second pass: filter out child paths covered by parent paths.
-	// Binds with an explicit container path (e.g. /host:/container) are deliberate
-	// remaps and must never be filtered — the parent bind does not provide that mapping.
-	filtered := make([]string, 0, len(resolved))
-	for _, bind := range resolved {
-		parts := strings.SplitN(bind, ":", 3)
-		hostPath := parts[0]
-
-		// Explicit remap — always keep
-		if len(parts) >= 2 {
-			filtered = append(filtered, bind)
-			continue
-		}
-
-		isChild := false
-		for _, otherBind := range resolved {
-			otherParts := strings.SplitN(otherBind, ":", 3)
-			otherHostPath := otherParts[0]
-			if hostPath == otherHostPath {
+	plain := func(b bind) bool { return b.dest == b.host && b.opts == "" }
+	out := make([]string, 0, len(binds))
+	for _, b := range binds {
+		if plain(b) {
+			covered := false
+			for _, p := range binds {
+				if p.host == b.host || !plain(p) {
+					continue
+				}
+				if rel, err := filepath.Rel(p.host, b.host); err == nil && !strings.HasPrefix(rel, "..") {
+					covered = true
+					break
+				}
+			}
+			if covered {
 				continue
 			}
-			rel, err := filepath.Rel(otherHostPath, hostPath)
-			if err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-				isChild = true
-				break
-			}
+			out = append(out, b.host)
+			continue
 		}
-		if !isChild {
-			filtered = append(filtered, bind)
+		spec := b.host + ":" + b.dest
+		if b.opts != "" {
+			spec += ":" + b.opts
 		}
+		out = append(out, spec)
 	}
-
-	return filtered
+	return out
 }
 
 // BindPaths collects all directories suitable for --bind flags.

@@ -274,7 +274,7 @@ func (j *jobs) submitStep(ctx context.Context, root string, entry *lock.Entry, s
 	info := producer.Info{
 		Runner:    string(j.sched.GetType()),
 		JobID:     jobID,
-		Node:      producer.ShortHostname(),
+		Node:      producer.Hostname(),
 		PID:       os.Getpid(),
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
@@ -414,7 +414,8 @@ func (r *reservation) detach(info producer.Info) error {
 	if r.tx != nil {
 		return r.tx.Detach(info)
 	}
-	r.guard = nil // the job owns the lock now; releasing it here would free the target
+	r.guard.Handoff() // the job owns the lock now; releasing it here would free the target
+	r.guard = nil
 	return producer.Overwrite(producer.Path(r.path), info)
 }
 

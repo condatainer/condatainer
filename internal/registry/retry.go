@@ -115,6 +115,7 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 //   - Only a rate limit is retried, on positive evidence. Other errors return classified.
 //   - A 401 is retried once, without waiting: a token that expired mid-layer cannot be refreshed in place.
 //   - A second consecutive 401 is reported as a credential problem.
+//   - An interrupt returns at once, abandoning the upload session it cut off.
 func (p retryPolicy) run(ctx context.Context, m mutation) error {
 	log := logging.FromContext(ctx)
 	authRetried := false
@@ -132,6 +133,12 @@ func (p retryPolicy) run(ctx context.Context, m mutation) error {
 			return nil
 		}
 		failure := slot.get()
+		if errors.Is(err, context.Canceled) {
+			if failure != nil && failure.cancel != nil {
+				failure.cancel(ctx)
+			}
+			return err
+		}
 		err = failure.annotate(err)
 
 		switch {

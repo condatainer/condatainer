@@ -66,6 +66,9 @@ type Config struct {
 	// Recipe collections, in order. Earlier entries shadow later ones.
 	Sources []catalog.Spec
 
+	// Binds added to every run, as host[:container[:opts]], merged across layers.
+	Binds []string
+
 	// Default distro for the container root, e.g. "ubuntu24" -> recipes/ubuntu24/base.def.
 	// Empty falls back to the first source declaring a default_distro.
 	DefaultDistro string

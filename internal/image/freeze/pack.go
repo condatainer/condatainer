@@ -297,10 +297,14 @@ func processors(n int) int {
 // packScript renders the mksquashfs invocation. -no-xattrs for the reason
 // build/squashfs.go gives; nothing here needs them, since an opaque directory's
 // xattr is re-expressed as whiteouts precisely because it could not be carried.
+// -quiet keeps the progress bar, which quiet mode hides with -no-progress.
 func packScript(sources []string, target string, translation []string, opts PackOptions, mksquashfsBin string) string {
 	args := []string{
 		strings.Join(sources, " "), target,
 		"-noappend", "-keep-as-directory", "-all-root", "-no-xattrs", "-quiet",
+	}
+	if utils.QuietMode {
+		args = append(args, "-no-progress")
 	}
 	args = append(args, "-processors", fmt.Sprint(processors(opts.Processors)))
 	if opts.BlockSize != "" {

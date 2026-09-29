@@ -1,19 +1,22 @@
 # internal/libexec
 
-The self-provisioned toolchain: one micromamba prefix in one of the four data-directory tiers.
+The self-provisioned toolchain: one micromamba prefix in one directory.
 
 - It always holds `micromamba`.
 - It holds `squashfs-tools`, `squashfuse`, `fuse-overlayfs` and an ordinary (non-fakeroot) `apptainer` only when the system lacks them or they are asked for by name.
 - It never contributes to an artifact's identity. It is host-local infrastructure, like the Apptainer binary itself.
-- A conda or script build creates it with `micromamba` alone when no tier has one.
+- A conda or script build creates it with `micromamba` alone when none is provisioned.
 - A script build can call its `micromamba`, appended to `PATH` so anything the base provides wins.
   - That is a convenience, not an input. The version is not recorded, and a recipe is identified by its text.
 - Nothing is provisioned automatically. An ordinary `exec`, `run` or build never triggers a first-time download.
 
 ## Placement
 
-- `libexec/` sits beside `images/` in each tier, with the same nearest-read, furthest-write order.
-- One copy serves the whole group, which matters more for a toolchain this size than for one image.
+- There is one toolchain directory, never searched across tiers: `CNT_LIBEXEC`, else `<root>/libexec`, else the user data directory's `libexec`.
+  - It belongs to the install, like the Apptainer binary. No other layer can shadow it.
+  - With no root, it falls back to the user data directory.
+- `CNT_LIBEXEC` is a variable only, with no config key, so no config layer can move it.
+- A container binds the directory whole, at its real path.
 - The name is `libexec`, not `tools`. "Tool" already means other things here. `libexec` is the FHS term for executables invoked by other programs.
 
 ## The package table
@@ -22,17 +25,17 @@ The self-provisioned toolchain: one micromamba prefix in one of the four data-di
   - Each entry has the conda name, its binaries, which are checked, which one is version-checked, and the floor.
 - `Provides`, `Installed`, `Versions`, `verifyToolchain` and every message naming a package derive from it.
 - What a prefix holds is read from its `bin/`, not from code. A prefix with only `micromamba` is complete and valid.
-- `micromamba` is the base. Its binary is what `Dir()` treats as "this tier is provisioned".
+- `micromamba` is the base. Its binary is what `Dir()` treats as "the toolchain is provisioned".
 
 ## Create and update
 
-- `update --libexec` takes an exclusive lock on the tier, and on the prefix when one is live.
-- **No prefix yet.** A standalone micromamba, downloaded outside the tier, creates the prefix at its final path.
-  - A failed create removes the prefix, so nothing half-built is reported as provisioned.
-- **A live prefix with `conda-meta/`.** Its own micromamba installs missing named packages, then updates.
+- `update --libexec` takes the update lock first. Only someone who can write the directory can update it.
+- **No prefix yet.** A standalone micromamba, downloaded outside the prefix, installs into it at its final path.
+  - It runs `install` into an empty `conda-meta/`, since `create` refuses a directory that already holds the lock.
+  - A failed install clears the directory except the lock, so nothing half-built is reported as provisioned.
+  - A directory holding anything else is refused, never cleared, so a mistyped `CNT_LIBEXEC` loses nothing.
+- **A live prefix.** Its own micromamba installs missing named packages, then updates.
   - It uses `update`, not `install`, because `install` leaves an already-satisfied spec at its current version.
-- **A live prefix without `conda-meta/`.** Micromamba cannot track it and would forget every installed package.
-  - It is removed and recreated with the tools that were in its `bin/`, plus any named.
 - Afterwards it links `fusermount3` into `bin/`, cleans the package cache, shares the tree with the parent group and verifies.
 - A failed update leaves what micromamba left. Re-running repairs it. There is no rollback copy.
 - `micromamba self-update` is not used. It swaps the binary but leaves `conda-meta/` recording the old version.
@@ -45,7 +48,7 @@ The self-provisioned toolchain: one micromamba prefix in one of the four data-di
 - `-r <prefix>` alone does not contain micromamba.
 - It also sets `CONDA_PKGS_DIRS`, `XDG_CACHE_HOME` and a throwaway `HOME`.
   - Otherwise micromamba writes to `~/.mamba/pkgs` and `~/.cache/conda`, and registers the prefix in `~/.conda/environments.txt`.
-  - No variable turns that registration off. On a shared tier the cache would land in whichever user ran the update.
+  - No variable turns that registration off. On a shared toolchain the cache would land in whichever user ran the update.
 - The throwaway `HOME` cannot live inside the prefix, since an existing directory there makes `create` refuse.
 - `clean -a -f` is required. `-a` alone leaves the unpacked package directories, which micromamba considers in use.
 
@@ -55,7 +58,7 @@ The self-provisioned toolchain: one micromamba prefix in one of the four data-di
   - `libfuse3` looks for `<prefix>/bin/fusermount3` before any `PATH` search.
 - So the prefix is created at the path it keeps and never renamed.
 - `bin/fusermount3` is linked to `../sbin/fusermount3` when the package installs it only in `sbin/`.
-- The path given to `-p` is symlink-resolved, since that string is what gets baked in.
+- The path given to `-p` is symlink-resolved, since that string is what gets baked in and what a container binds.
 
 ## Activation
 
@@ -79,7 +82,7 @@ The self-provisioned toolchain: one micromamba prefix in one of the four data-di
 ## Naming a missing tool
 
 - `Path(name)` returns a path only when the binary is installed in the provisioned `bin/`.
-  - It does not say why a tool is missing. `Provides` says whether the table can install it, and `Installed` whether this tier has it.
+  - It does not say why a tool is missing. `Provides` says whether the table can install it, and `Installed` whether the toolchain has it.
 - `ErrNotProvisioned` is the Go sentinel for a caller that fails before starting a container.
 - `NotProvisionedMessage` is a plain string for a generated script or a host-side caller.
   - `toolpath.NotFoundMessage` re-exports it, so callers that already import `toolpath` need not import this package for a message.
@@ -94,10 +97,14 @@ The self-provisioned toolchain: one micromamba prefix in one of the four data-di
 
 ## Locking
 
-- Two non-blocking locks, so a collision fails at once and nobody waits.
-- `<prefix>/.lock`. A reader holds it shared for one apptainer call. `Update` takes it exclusive and refuses if a reader holds it.
-- `<tier>/.libexec.lock`. `Update` holds it for its whole run, so two updates cannot interleave, including the first one, when no prefix exists yet.
-- When a prefix without `conda-meta/` is recreated, the in-prefix lock is released before the removal. Unlinking an open file leaves a silly-rename on NFS.
+- One non-blocking lock, `<prefix>/.libexec.lock`. `Update` holds it for its whole run, so two updates cannot interleave.
+  - It lives inside the prefix, so it needs no write access anywhere else. No package record lists it, so micromamba never touches it.
+  - A lock that cannot be created or opened for writing is reported as "not writable", never as another update.
+- A run takes no lock on the toolchain.
+  - A reader may be unable to write the toolchain directory.
+  - An in-place update unlinks and relinks files, so a running process keeps its old inodes.
+  - A reader lock would also block every update while anything runs.
+  - The cost is a tool started mid-update that briefly sees a mix of old and new files, which fails loudly.
 
 ## Verification
 

@@ -210,7 +210,7 @@ func OfferSingletonBlocked(name string, running []*helper.HelperRun, serverPort 
 			utils.PrintMessage("  Access: %s", url)
 		}
 	}
-	utils.PrintMessage("Stop the existing instance first, or use 'condatainer helper' to see it.")
+	utils.PrintMessage("Stop the existing instance first, or use `condatainer helper` to see it.")
 	return fmt.Errorf("singleton helper %s is already running", name)
 }
 
@@ -803,7 +803,7 @@ func MonitorHelper(ctx context.Context, id string, detached bool) error {
 	for {
 		select {
 		case <-sig:
-			utils.PrintMessage("Detached; the helper is still running. Stop it with 'condatainer helper stop', or check it with 'condatainer helper'.")
+			utils.PrintMessage("Detached; the helper is still running. Stop it with `condatainer helper stop`, or check it with `condatainer helper`.")
 			return nil
 
 		case <-ctx.Done():

@@ -37,8 +37,15 @@ Builds overlay images from Conda packages, recipes or Apptainer definitions.
 - Each target has a producer lock at the image path plus `.lock`.
 - The lock lives in `internal/image/producer`, so a build and a registry pull serialize on the same path.
 - It is a different lock from the inode lock held while an image is mounted. The producer lock coordinates creation, and the inode lock protects readers at replacement.
-- A stale lock is cleared only when its owner is provably gone: a dead local PID on this node, or a scheduler job that is no longer alive.
-- Anything that cannot be verified is an error, not a guess: a lock from another node, or no scheduler to ask.
+
+Stale detection
+
+- A stale lock is cleared only when its owner is gone.
+- A scheduler job is asked of the scheduler. A scheduler that cannot be asked is an error, not a guess.
+- Anything else is alive exactly while its holder keeps an `fcntl` lock on the file.
+  - The kernel drops it when the holder dies, however it dies, and locks are visible from every host.
+- A stale lock is removed under an exclusive lock, so a claim made in between is never removed.
+- A lock records the full hostname, so two hosts sharing a short name are not one node.
 
 ## Sources
 

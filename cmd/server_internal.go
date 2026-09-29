@@ -229,7 +229,7 @@ var helperHoldCmd = &cobra.Command{
 		signal.Ignore(syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 		lock, err := helper.HoldLock(args[0], producer.Info{
 			Runner:    "local",
-			Node:      producer.ShortHostname(),
+			Node:      producer.Hostname(),
 			PID:       pid,
 			CreatedAt: time.Now().Format(time.RFC3339),
 		})

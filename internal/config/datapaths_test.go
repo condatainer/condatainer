@@ -2,8 +2,11 @@ package config
 
 import (
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 // withAllTiers points each of the four data tiers at its own directory and
@@ -107,41 +110,28 @@ func TestHelperScriptsShareTheImageOrder(t *testing.T) {
 	}
 }
 
-// The self-provisioned toolchain uses the same tier order as images: reads
-// nearest-first, writes furthest-first, so one copy serves the whole group.
-func TestLibexecSharesTheImageOrder(t *testing.T) {
-	scratch, user, extraRoot, root := withAllTiers(t)
-
-	wantRead := []string{
-		filepath.Join(scratch, "libexec"),
-		filepath.Join(user, "libexec"),
-		filepath.Join(extraRoot, "libexec"),
-		filepath.Join(root, "libexec"),
-	}
-	got := libexecSearchPaths()
-	if len(got) != len(wantRead) {
-		t.Fatalf("libexecSearchPaths = %v, want %v", got, wantRead)
-	}
-	for i := range wantRead {
-		if got[i] != wantRead[i] {
-			t.Errorf("read order [%d] = %s, want %s", i, got[i], wantRead[i])
-		}
+// The toolchain is one directory: CNT_LIBEXEC, else the root's, else the user
+// data dir's. Extra-root and scratch never hold it.
+func TestLibexecDirResolution(t *testing.T) {
+	_, user, _, root := withAllTiers(t)
+	if got, want := GetLibexecDir(), filepath.Join(root, "libexec"); got != want {
+		t.Errorf("with a root: GetLibexecDir = %s, want %s", got, want)
 	}
 
-	wantWrite := []string{
-		filepath.Join(extraRoot, "libexec"),
-		filepath.Join(root, "libexec"),
-		filepath.Join(scratch, "libexec"),
-		filepath.Join(user, "libexec"),
+	override := filepath.Join(t.TempDir(), "site-libexec")
+	t.Setenv("CNT_LIBEXEC", override)
+	if got := GetLibexecDir(); got != override {
+		t.Errorf("with CNT_LIBEXEC: GetLibexecDir = %s, want %s", got, override)
 	}
-	dirs := libexecWriteDirs()
-	if len(dirs) != len(wantWrite) {
-		t.Fatalf("libexecWriteDirs = %v, want %v", dirs, wantWrite)
+
+	t.Setenv("CNT_LIBEXEC", "")
+	t.Setenv("CNT_ROOT", "")
+	rootDirOnce, rootDirCache = sync.Once{}, ""
+	if GetRootDir() != "" {
+		t.Skip("the test binary sits in an install layout, so a root is detected")
 	}
-	for i := range wantWrite {
-		if dirs[i].Path != wantWrite[i] {
-			t.Errorf("write order [%d] = %s, want %s", i, dirs[i].Path, wantWrite[i])
-		}
+	if got, want := GetLibexecDir(), filepath.Join(user, "libexec"); got != want {
+		t.Errorf("with no root: GetLibexecDir = %s, want %s", got, want)
 	}
 }
 
@@ -174,5 +164,40 @@ func TestSharedAndPersonalTierCollapseToOnePath(t *testing.T) {
 	}
 	if layer := ClassifyDataDir(shared); layer != LayerAppRoot {
 		t.Errorf("ClassifyDataDir = %s, want %s (writes depend on the shared label)", layer, LayerAppRoot)
+	}
+}
+
+// Peeking names the directory a write would use without creating it.
+func TestPeekWritableDirCreatesNothing(t *testing.T) {
+	scratch, _, _, _ := withAllTiers(t)
+	want := filepath.Join(scratch, "images")
+
+	if got := PeekWritableImagesDir(); got != want {
+		t.Fatalf("PeekWritableImagesDir = %s, want %s", got, want)
+	}
+	if DirExists(want) {
+		t.Fatalf("PeekWritableImagesDir created %s", want)
+	}
+	if got, err := GetWritableImagesDir(); err != nil || got != want {
+		t.Errorf("GetWritableImagesDir = %s, %v; want the peeked %s", got, err, want)
+	}
+}
+
+// Binds merge across layers, highest first and once each; CNT_BIND replaces them.
+func TestBindsMergeAcrossLayers(t *testing.T) {
+	previous := configLayers
+	t.Cleanup(func() { configLayers = previous })
+	user, lab := viper.New(), viper.New()
+	user.Set("bind", []string{"/data", "/ref:/ref:ro"})
+	lab.Set("bind", []string{"/ref:/ref:ro", "/lab"})
+	configLayers = []*viper.Viper{user, lab}
+
+	t.Setenv("CNT_BIND", "")
+	if got, want := layerBinds(), []string{"/data", "/ref:/ref:ro", "/lab"}; !slices.Equal(got, want) {
+		t.Errorf("layerBinds = %v, want %v", got, want)
+	}
+	t.Setenv("CNT_BIND", "/only | /x:/y")
+	if got, want := layerBinds(), []string{"/only", "/x:/y"}; !slices.Equal(got, want) {
+		t.Errorf("layerBinds with CNT_BIND = %v, want %v", got, want)
 	}
 }

@@ -315,6 +315,7 @@ func (tx *Transaction) Detach(info producer.Info) error {
 		return err
 	}
 	tx.Prepared = producer.PreparedPath(tx.TargetPath, info)
+	tx.guard.Handoff()
 	tx.guard, tx.closed = nil, true
 	return nil
 }

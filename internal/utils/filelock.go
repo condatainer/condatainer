@@ -36,21 +36,36 @@ func (h *FileLock) Close() error {
 //   - A failed open returns the raw *fs.PathError, so callers can match fs.ErrNotExist or fs.ErrPermission.
 //   - A held lock wraps ErrLockConflict. Any other lock failure is returned as is.
 func AcquireFileLock(path string, write bool) (*FileLock, error) {
-	flag, ltype := os.O_RDONLY, int16(unix.F_RDLCK)
+	flag := os.O_RDONLY
 	if write {
-		flag, ltype = os.O_RDWR, unix.F_WRLCK
+		flag = os.O_RDWR
 	}
 	f, err := os.OpenFile(path, flag, 0)
 	if err != nil {
 		return nil, err
 	}
+	lock, err := LockOpenFile(f, write)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return lock, nil
+}
+
+// LockOpenFile takes the same non-blocking lock as AcquireFileLock on a file the caller already opened.
+//   - The lock takes ownership of f: closing it releases the lock and closes f. On an error the caller still owns f.
+//   - It locks the file f names, never whatever its path names later.
+func LockOpenFile(f *os.File, write bool) (*FileLock, error) {
+	ltype := int16(unix.F_RDLCK)
+	if write {
+		ltype = unix.F_WRLCK
+	}
 	lock := unix.Flock_t{Type: ltype, Whence: io.SeekStart}
 	if err := unix.FcntlFlock(f.Fd(), unix.F_OFD_SETLK, &lock); err != nil {
-		f.Close()
 		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EACCES) {
 			return nil, fmt.Errorf("%w: %w", ErrLockConflict, err)
 		}
-		return nil, fmt.Errorf("cannot lock %s: %w", path, err)
+		return nil, fmt.Errorf("cannot lock %s: %w", f.Name(), err)
 	}
 	return &FileLock{file: f}, nil
 }

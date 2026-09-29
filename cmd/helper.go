@@ -598,7 +598,7 @@ func runHelper(cmd *cobra.Command, args []string) error {
 				if url := r.AccessURL(serverPort); url != "" {
 					fmt.Printf("%s already running: %s\n", opts.ScriptName, url)
 				} else if r.Status == "pending" || r.Status == "starting" {
-					fmt.Printf("%s already submitted (%s); check with 'condatainer helper'\n",
+					fmt.Printf("%s already submitted (%s); check with `condatainer helper`\n",
 						opts.ScriptName, r.Status)
 				}
 			}
@@ -729,7 +729,7 @@ func runHelper(cmd *cobra.Command, args []string) error {
 			if err := startHelperWatcher(helperID, tty); err != nil {
 				utils.PrintWarning("could not start the background watcher: %v", err)
 			} else {
-				utils.PrintMessage("Started %s. It is printed here when the service is ready; stop it with 'condatainer helper stop'.", helperID)
+				utils.PrintMessage("Started %s. It is printed here when the service is ready; stop it with `condatainer helper stop`.", helperID)
 				return nil
 			}
 		}
@@ -780,9 +780,9 @@ func showHelperStatus(name string) error {
 	}
 	if len(running) == 0 {
 		if name != "" {
-			fmt.Printf("No %s helpers running. Use 'condatainer helper %s' to start.\n", name, name)
+			fmt.Printf("No %s helpers running. Use `condatainer helper %s` to start.\n", name, name)
 		} else {
-			fmt.Println("No helpers running. Use 'condatainer helper <name>' to start.")
+			fmt.Println("No helpers running. Use `condatainer helper <name>` to start.")
 		}
 		return nil
 	}
@@ -853,7 +853,7 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 
 	case "get":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: condatainer helper %s config get <key>", name)
+			return fmt.Errorf("usage: `condatainer helper %s config get <key>`", name)
 		}
 		v, ok := helper.GetHelperConfigKey(name, args[1])
 		if !ok {
@@ -863,7 +863,7 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 
 	case "set":
 		if len(args) < 3 {
-			return fmt.Errorf("usage: condatainer helper %s config set <key> <value>", name)
+			return fmt.Errorf("usage: `condatainer helper %s config set <key> <value>`", name)
 		}
 		if err := helper.SetHelperConfigKey(name, args[1], args[2]); err != nil {
 			return fmt.Errorf("saving config: %w", err)
@@ -932,7 +932,7 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 		}
 
 	default:
-		return fmt.Errorf("unknown config command %q — try: condatainer helper %s config -h", sub, name)
+		return fmt.Errorf("unknown config command %q — try `condatainer helper %s config -h`", sub, name)
 	}
 	return nil
 }

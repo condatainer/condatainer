@@ -1152,7 +1152,7 @@ func buildMpiRunCommand(contentScript string, scriptArgs []string, specs *schedu
 	}
 	mpiexecPath, ok := detectMpi()
 	if !ok {
-		return "", fmt.Errorf("mpiexec not found; load the appropriate MPI module before submitting (ntasks=%d)", getNtasks(specs))
+		return "", fmt.Errorf("ntasks=%d needs mpiexec, which is not on PATH", getNtasks(specs))
 	}
 	utils.PrintNote("Detected mpiexec: %s", mpiexecPath)
 	return fmt.Sprintf("%s -n %d %s", mpiexecPath, getNtasks(specs), runCmd), nil

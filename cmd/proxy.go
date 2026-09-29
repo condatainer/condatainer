@@ -313,7 +313,7 @@ var proxyStatusCmd = &cobra.Command{
 		} else {
 			utils.PrintWarning("Proxy dead — stale PID file at %s", proxy.PidFilePath())
 			proxy.RemovePidFile()
-			utils.PrintMessage("Run: condatainer proxy start")
+			utils.PrintMessage("Run `condatainer proxy start` to start a new one.")
 		}
 	},
 }

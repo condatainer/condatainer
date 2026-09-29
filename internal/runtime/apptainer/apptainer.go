@@ -76,10 +76,7 @@ func unusable(err error) error {
 		}
 		return fmt.Errorf("the apptainer in this container is unusable: %w; start it again with `nested_run` enabled or with an apptainer/<version> overlay mounted", err)
 	}
-	if !found {
-		return errors.New("no apptainer found; install one with `condatainer update --libexec apptainer`, or load an apptainer module (>= 1.4)")
-	}
-	return fmt.Errorf("no usable apptainer: %w; install one with `condatainer update --libexec apptainer`, or load an apptainer module (>= 1.4)", err)
+	return fmt.Errorf("%w; install one with `condatainer update --libexec apptainer`", err)
 }
 
 // Normal returns the apptainer for an ordinary launch: the one installed in
@@ -128,24 +125,23 @@ func ForBuild() (Bin, error) {
 	return remember(bin), nil
 }
 
-// needSystem words a missing system apptainer for an action only that one can
-// do: condatainer cannot install it, so the user has to supply it.
+// needSystem words a missing system apptainer for an action only that one can do.
 func needSystem(what string, err error) error {
-	return fmt.Errorf("%s needs the system apptainer: %w; load an apptainer module or install one on the host (>= 1.4)", what, err)
+	return fmt.Errorf("%s needs the system apptainer: %w", what, err)
 }
 
 // requireZstd refuses singularity and an apptainer that cannot mount
 // condatainer's zstd-compressed overlays. what names the caller in the message.
 func (b Bin) requireZstd(what string) error {
 	if b.IsSingularity() {
-		return fmt.Errorf("%s requires apptainer (found singularity), which cannot mount condatainer's zstd-compressed overlays", what)
+		return fmt.Errorf("%s needs apptainer, not singularity, to mount zstd-compressed overlays", what)
 	}
 	version, err := b.Version()
 	if err != nil {
 		return fmt.Errorf("could not determine the system apptainer's version: %w", err)
 	}
 	if !CheckZstdSupport(version) {
-		return fmt.Errorf("system apptainer %s does not support zstd (>= 1.4 required); a %s must mount condatainer's zstd-compressed overlays with this binary — upgrade apptainer or the loaded module", version, what)
+		return fmt.Errorf("%s needs apptainer >= 1.4 to mount zstd-compressed overlays; the system apptainer is %s", what, version)
 	}
 	return nil
 }

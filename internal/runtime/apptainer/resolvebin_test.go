@@ -60,7 +60,7 @@ func systemApptainer(t *testing.T, path string) {
 }
 
 // With no installed libexec apptainer and no usable system one, Normal refuses
-// and names both ways out.
+// and names the toolchain install.
 func TestNormalRefusesWithNothingUsable(t *testing.T) {
 	withLibexecTier(t)
 	resetApptainerState(t)
@@ -70,7 +70,7 @@ func TestNormalRefusesWithNothingUsable(t *testing.T) {
 	if err == nil {
 		t.Fatal("Normal succeeded with no apptainer anywhere")
 	}
-	for _, want := range []string{"update --libexec apptainer", "module"} {
+	for _, want := range []string{"update --libexec apptainer"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %v, want it to mention %q", err, want)
 		}

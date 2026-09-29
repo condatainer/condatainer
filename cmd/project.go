@@ -635,8 +635,7 @@ func newProjectRegistryCmd() *cobra.Command {
 				return err
 			}
 			if l.OCI.Empty() {
-				utils.PrintMessage("No registry is recorded. Set one with:")
-				utils.PrintMessage("  condatainer project registry set <registry>/<owner>/<repo>")
+				utils.PrintMessage("No registry is recorded. Set one with `condatainer project registry set <registry>/<owner>/<repo>`.")
 				return nil
 			}
 			utils.PrintMessage("push     %s", l.OCI.Push)

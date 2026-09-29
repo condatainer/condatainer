@@ -2,8 +2,11 @@ package config
 
 import (
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 // withAllTiers points each of the four data tiers at its own directory and
@@ -177,5 +180,24 @@ func TestPeekWritableDirCreatesNothing(t *testing.T) {
 	}
 	if got, err := GetWritableImagesDir(); err != nil || got != want {
 		t.Errorf("GetWritableImagesDir = %s, %v; want the peeked %s", got, err, want)
+	}
+}
+
+// Binds merge across layers, highest first and once each; CNT_BIND replaces them.
+func TestBindsMergeAcrossLayers(t *testing.T) {
+	previous := configLayers
+	t.Cleanup(func() { configLayers = previous })
+	user, lab := viper.New(), viper.New()
+	user.Set("bind", []string{"/data", "/ref:/ref:ro"})
+	lab.Set("bind", []string{"/ref:/ref:ro", "/lab"})
+	configLayers = []*viper.Viper{user, lab}
+
+	t.Setenv("CNT_BIND", "")
+	if got, want := layerBinds(), []string{"/data", "/ref:/ref:ro", "/lab"}; !slices.Equal(got, want) {
+		t.Errorf("layerBinds = %v, want %v", got, want)
+	}
+	t.Setenv("CNT_BIND", "/only | /x:/y")
+	if got, want := layerBinds(), []string{"/only", "/x:/y"}; !slices.Equal(got, want) {
+		t.Errorf("layerBinds with CNT_BIND = %v, want %v", got, want)
 	}
 }

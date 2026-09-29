@@ -586,7 +586,7 @@ export -f module ml
 	// Auto-bind the script's directory so it's accessible inside the container.
 	// (Scheduler will copy the script to a temp location)
 	scriptDir := filepath.Dir(contentScript)
-	bindPaths := append([]string{scriptDir}, runBindPaths...)
+	bindPaths := append(append([]string{scriptDir}, configBinds()...), runBindPaths...)
 
 	rs := effectiveResourceSpec(specs)
 	gpuRequested := rs.Gpu != nil && rs.Gpu.Count > 0

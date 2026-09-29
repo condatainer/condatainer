@@ -7,6 +7,7 @@
 - Config files are layered, and every existing file is loaded.
   - Scalar keys: the highest-priority file that sets it wins.
   - `sources`: merged across layers, deduplicated, user entries first.
+  - `bind`: merged the same way, so a site or lab adds binds and a user adds more.
   - `channels`: not merged. The highest-priority file that sets it wins.
 - Priority, highest first: flags, `CNT_*`, user, extra-root, app-root, system, defaults.
 

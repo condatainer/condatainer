@@ -178,7 +178,7 @@ func runE(cmd *cobra.Command, args []string) error {
 		Command:        commands,
 		WritableImg:    !eReadOnly,                                            // Default writable unless -r specified
 		EnvSettings:    append(liveJobResourceEnvSettings(), eEnvSettings...), // Inject live job resources, then user env vars
-		BindPaths:      eBindPaths,
+		BindPaths:      append(configBinds(), eBindPaths...),
 		ApptainerFlags: apptainerFlags,
 		Fakeroot:       eFakeroot,
 		BaseImage:      baseImageResolved,

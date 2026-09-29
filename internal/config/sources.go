@@ -43,6 +43,28 @@ func layerSources() []catalog.Spec {
 	return withDefaultSource(out)
 }
 
+// layerBinds merges the `bind` key across every layer, highest priority first,
+// once each. CNT_BIND replaces the list and is "|"-separated.
+func layerBinds() []string {
+	var raw []string
+	if ev := os.Getenv("CNT_BIND"); ev != "" {
+		raw = strings.Split(ev, "|")
+	} else {
+		for _, v := range configLayers {
+			raw = append(raw, v.GetStringSlice("bind")...)
+		}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, b := range raw {
+		if b = strings.TrimSpace(b); b != "" && !seen[b] {
+			seen[b] = true
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // withDefaultSource appends the default collection when nothing already answers
 // to its handle, so a fresh install resolves recipes unconfigured. Appended,
 // never prepended: every configured entry outranks it.

@@ -233,6 +233,23 @@ func normalizeFilters(filters []string) []string {
 	return normalized
 }
 
+// configBinds returns the configured binds, with $VAR references expanded, whose host path exists here.
+//   - One missing on this machine is skipped with a warning, since the same config serves hosts that differ.
+//   - They go after the automatic binds and before --bind, so an explicit flag wins.
+func configBinds() []string {
+	var out []string
+	for _, b := range config.Global.Binds {
+		b = os.ExpandEnv(b)
+		host, _, _ := strings.Cut(b, ":")
+		if _, err := os.Stat(host); err != nil {
+			utils.PrintWarning("bind %s skipped: %s does not exist here", b, host)
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
 // CommonFlags holds the common flags used by exec
 type CommonFlags struct {
 	Overlays    []string

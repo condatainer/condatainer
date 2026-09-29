@@ -466,8 +466,9 @@ func orphaned(before, after *lock.Verified) []string {
 func newProjectListCmd() *cobra.Command {
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List pins",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List pins",
 		Long: `List every pin and the artifact it names.
 
 - Works in a fresh clone that has restored nothing.
@@ -634,8 +635,7 @@ func newProjectRegistryCmd() *cobra.Command {
 				return err
 			}
 			if l.OCI.Empty() {
-				utils.PrintMessage("No registry is recorded. Set one with:")
-				utils.PrintMessage("  condatainer project registry set <registry>/<owner>/<repo>")
+				utils.PrintMessage("No registry is recorded. Set one with `condatainer project registry set <registry>/<owner>/<repo>`.")
 				return nil
 			}
 			utils.PrintMessage("push     %s", l.OCI.Push)

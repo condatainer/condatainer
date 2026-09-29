@@ -87,11 +87,11 @@ var rootCmd = &cobra.Command{
 			} else {
 				utils.PrintWarning("build.system_apptainer %q is not usable, and no apptainer was found on PATH.", bad)
 			}
-			utils.PrintHint("Run: %s", "condatainer config init")
+			utils.PrintHint("Run `condatainer config init`.")
 		} else if !isCompleteRequest && !isConfigCommand && !config.IsInsideContainer() &&
 			!libexec.Installed("apptainer") && !config.ValidateBinary(config.Global.Build.SystemApptainer) {
-			utils.PrintWarning("Apptainer not accessible. The module may have been unloaded or removed.")
-			utils.PrintHint("Run: %s", "condatainer config init")
+			utils.PrintWarning("Apptainer not accessible.")
+			utils.PrintHint("Run `condatainer config init`.")
 		}
 
 		// Everything past config management expands bare names against the
@@ -201,6 +201,7 @@ func Execute() {
 		}
 	}()
 
+	rejectUnknownSubcommands(rootCmd)
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		// Cobra's automatic error printing is silenced. For Apptainer errors
 		// print only the captured output (trimmed) and exit with non-zero
@@ -222,6 +223,21 @@ func Execute() {
 			}
 		}
 		ExitWithError("%v", err)
+	}
+}
+
+// rejectUnknownSubcommands makes every group below root with no action of its
+// own print its help when called bare and fail on an unknown subcommand. Cobra
+// checks arguments only on a command that runs, so such a group would otherwise
+// print its help for a typo and exit 0.
+func rejectUnknownSubcommands(cmd *cobra.Command) {
+	for _, sub := range cmd.Commands() {
+		if sub.HasSubCommands() && !sub.Runnable() {
+			sub.Args = cobra.NoArgs
+			sub.SilenceUsage = true
+			sub.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+		}
+		rejectUnknownSubcommands(sub)
 	}
 }
 

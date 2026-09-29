@@ -7,7 +7,6 @@ import (
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
-	"github.com/condatainer/condatainer/internal/libexec"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	"github.com/condatainer/condatainer/internal/runtime/container"
@@ -137,15 +136,6 @@ func Prepare(ctx context.Context, options Options) (*Plan, error) {
 			releaseLocks()
 			return nil, err
 		}
-		execLocks = append(execLocks, lock)
-	}
-
-	// Same reason and duration as the overlay locks above; AcquireUse returns
-	// (nil, nil) when nothing is provisioned, so this is a no-op until then.
-	if lock, err := libexec.AcquireUse(); err != nil {
-		releaseLocks()
-		return nil, err
-	} else if lock != nil {
 		execLocks = append(execLocks, lock)
 	}
 

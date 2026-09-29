@@ -7,6 +7,7 @@
 - Config files are layered, and every existing file is loaded.
   - Scalar keys: the highest-priority file that sets it wins.
   - `sources`: merged across layers, deduplicated, user entries first.
+  - `bind`: merged the same way, so a site or lab adds binds and a user adds more.
   - `channels`: not merged. The highest-priority file that sets it wins.
 - Priority, highest first: flags, `CNT_*`, user, extra-root, app-root, system, defaults.
 
@@ -43,6 +44,8 @@
 - A personal build shadows a shared one for the person who made it.
 - Tiers, in read order: scratch, user, extra-root, app-root.
 - Recipes are not searched here. They come from `sources`.
+- The toolchain is not searched either. It is one directory, owned by `internal/libexec`.
+- A display command peeks at the write target and never creates it. Only a write creates a directory.
 - Writes go to the first writable directory in reverse order.
   - Personal dirs are created on first use.
   - A shared dir gets its subdirectories only when its parent already exists. The parent is never created.

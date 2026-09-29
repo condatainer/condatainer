@@ -946,6 +946,7 @@ func LoadFromViper() {
 
 	// Recipe collections, in order; earlier entries shadow later ones.
 	Global.Sources = layerSources()
+	Global.Binds = layerBinds()
 	Global.DefaultDistro = layerString("default_distro")
 
 	// Load build config from Viper

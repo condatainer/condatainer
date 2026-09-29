@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // newTestHandler returns a handler drawing into buf as though it were a
@@ -190,5 +192,20 @@ func TestEndProgressLineIsSafeWhenNothingIsDrawing(t *testing.T) {
 	EndProgressLine()
 	if buf.Len() != 0 {
 		t.Errorf("closed a line that was never open: %q", buf)
+	}
+}
+
+// -q hides progress on a terminal too, and leaves no line open to close.
+func TestQuietModeDrawsNoProgress(t *testing.T) {
+	prev := utils.QuietMode
+	utils.QuietMode = true
+	t.Cleanup(func() { utils.QuietMode = prev })
+	h, buf := newTestHandler()
+
+	if err := h.Handle(context.Background(), progressRecord("download progress done=1.00 GB", false, false)); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() != 0 || h.state.active {
+		t.Errorf("quiet mode drew %q (line open: %v)", buf.String(), h.state.active)
 	}
 }

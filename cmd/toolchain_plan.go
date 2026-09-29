@@ -33,7 +33,11 @@ type systemProbe struct {
 func planToolchain(p systemProbe) (install, report, warnings []string) {
 	if p.ApptainerErr != nil {
 		install = append(install, "apptainer") // brings squashfs-tools, squashfuse and fuse-overlayfs with it
-		report = append(report, fmt.Sprintf("apptainer: none usable (%v) -> install apptainer, with its squashfs tools", p.ApptainerErr))
+		cause := p.ApptainerErr
+		if inner := errors.Unwrap(cause); inner != nil {
+			cause = inner // drop the hint to run the command that printed this
+		}
+		report = append(report, fmt.Sprintf("apptainer: none usable (%v) -> install apptainer, with its squashfs tools", cause))
 	} else {
 		report = append(report, "apptainer: "+p.Apptainer+" ok")
 		if p.Squashfs {

@@ -53,6 +53,7 @@ var configKeyDefs = map[string]bool{
 	"scheduler.mem":            false,
 	"scheduler.time":           false,
 	"channels":                 true,
+	"bind":                     true,
 }
 
 func isArrayKey(key string) bool { return configKeyDefs[key] }
@@ -284,7 +285,7 @@ var showOrigin bool
 
 var configListCmd = &cobra.Command{
 	Use:     "list",
-	Aliases: []string{"show"},
+	Aliases: []string{"show", "ls"},
 	Args:    cobra.NoArgs,
 	Short:   "List current configuration",
 	Long: `List the current settings and where each comes from.
@@ -377,7 +378,7 @@ var configListCmd = &cobra.Command{
 			fmt.Printf("  %d. [%s] %s%s\n", i+1, sp.Type, sp.Path, status)
 		}
 		if !foundActive {
-			fmt.Printf("  %s (use 'condatainer config init' to create)\n", utils.StyleWarning("No config file found"))
+			fmt.Printf("  %s (use `condatainer config init` to create)\n", utils.StyleWarning("No config file found"))
 		}
 		fmt.Println()
 
@@ -429,6 +430,14 @@ var configListCmd = &cobra.Command{
 			}
 		} else {
 			fmt.Printf("  %-19s %s\n", "channels:", "none")
+		}
+		if len(config.Global.Binds) > 0 {
+			fmt.Printf("  %-19s\n", "bind:")
+			for _, b := range config.Global.Binds {
+				fmt.Printf("    - %s\n", b)
+			}
+		} else {
+			fmt.Printf("  %-19s %s\n", "bind:", "none")
 		}
 		fmt.Println()
 
@@ -525,7 +534,7 @@ var configListCmd = &cobra.Command{
 		envVars := getConfigEnvVars()
 		hasEnvOverrides := false
 		// Special vars not derived from config keys (system → group → personal)
-		for _, envVar := range []string{"CNT_ROOT", "CNT_EXTRA_ROOT", "SCRATCH"} {
+		for _, envVar := range []string{"CNT_ROOT", "CNT_LIBEXEC", "CNT_EXTRA_ROOT", "SCRATCH"} {
 			if val := os.Getenv(envVar); val != "" {
 				fmt.Printf("  %s=%s\n", envVar, val)
 				hasEnvOverrides = true
@@ -581,7 +590,11 @@ var configGetCmd = &cobra.Command{
 		if _, known := configKeyDefs[key]; !known {
 			ExitWithError("Unknown config key: %s", key)
 		}
-		if isArrayKey(key) {
+		if key == "bind" {
+			for _, v := range config.Global.Binds {
+				fmt.Println(v)
+			}
+		} else if isArrayKey(key) {
 			for _, v := range viper.GetStringSlice(key) {
 				fmt.Println(v)
 			}
@@ -651,7 +664,6 @@ Time format (for build.time):
 		// Array keys require append/prepend/remove subcommands
 		if isArrayKey(key) {
 			utils.PrintError("'%s' is an array setting. Use append/prepend/remove subcommands.", key)
-			utils.PrintHint("  condatainer config append  %s <value>\n  condatainer config prepend %s <value>\n  condatainer config remove  %s <value>", key, key, key)
 			os.Exit(ExitCodeError)
 		}
 
@@ -934,6 +946,9 @@ extra-root, app-root, scratch, user.`,
 		// writeTarget is the resolved writable directory for this section (empty = not applicable).
 		pathStatus := func(dir, writeTarget string) string {
 			if !config.DirExists(dir) {
+				if writeTarget != "" && dir == writeTarget {
+					return " " + utils.StyleSuccess("(target, created on first write)")
+				}
 				return " " + utils.StyleWarning("(not found)")
 			}
 			var tags string
@@ -949,9 +964,9 @@ extra-root, app-root, scratch, user.`,
 			return tags
 		}
 
-		imagesWritable, _ := config.GetWritableImagesDir()
-		helperWritable, _ := config.GetWritableHelperScriptsDir()
-		cacheWritable, _ := config.GetWritableCacheDir()
+		imagesWritable := config.PeekWritableImagesDir()
+		helperWritable := config.PeekWritableHelperScriptsDir()
+		cacheWritable := config.PeekWritableCacheDir()
 
 		// withLayer appends the data layer a directory belongs to, matching the
 		// tags in `list` output and the -l/--layer values commands accept.
@@ -1021,6 +1036,9 @@ extra-root, app-root, scratch, user.`,
 		}
 		if userDir := config.GetUserDataDir(); userDir != "" {
 			fmt.Printf("  User XDG: %s\n", userDir)
+		}
+		if libexecDir := config.GetLibexecDir(); libexecDir != "" {
+			fmt.Printf("  Libexec:  %s%s\n", libexecDir, pathStatus(libexecDir, ""))
 		}
 	},
 }

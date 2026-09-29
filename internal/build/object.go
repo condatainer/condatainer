@@ -122,6 +122,9 @@ type BuildObject struct {
 	// since it derives from the lock owner.
 	tgt Target
 
+	// lockHold is held while a local build owns its lock, or nil.
+	lockHold *utils.FileLock
+
 	// embedded are the rebuild sources staged into /.cnt verbatim beside the two
 	// metadata documents: a recipe at resolution or a Conda build's exports once
 	// the environment exists.
@@ -344,10 +347,14 @@ type BuildLockInfo = producer.Info
 // LockPath returns the lock file path.
 func (b *BuildObject) LockPath() string { return b.tgt.Lock }
 
-// writeBuildLock atomically creates the lock file and writes JSON metadata.
+// writeBuildLock creates the lock file, holds it and writes JSON metadata.
 // Returns an os.ErrExist-wrapped error if the lock already exists.
 func (b *BuildObject) writeBuildLock(info BuildLockInfo) error {
-	return acquireBuildLockFile(b.tgt.Lock, info)
+	hold, err := acquireBuildLockFile(b.tgt.Lock, info)
+	if err == nil {
+		b.lockHold = hold
+	}
+	return err
 }
 
 // readBuildLock reads and parses the lock file JSON.
@@ -372,23 +379,27 @@ func (b *BuildObject) clearStaleLock(ctx context.Context) error {
 
 	info, readErr := b.readBuildLock()
 	if readErr != nil {
-		// Corrupt or old empty lock → treat as stale.
-		logging.FromContext(ctx).Warn("corrupt build lock, removing", "name", name)
-		b.removeBuildLock()
+		// Corrupt → stale, unless something holds it.
+		if removed, _ := producer.RemoveStale(b.tgt.Lock); !removed {
+			return fmt.Errorf("build lock found for %s.\nLock file: %s", name, b.tgt.Lock)
+		}
+		logging.FromContext(ctx).Warn("corrupt build lock, removed", "name", name)
 		return nil
 	}
 	if info.JobID != "" && info.JobID == scheduler.CurrentJobID() {
 		return nil // our own scheduler lock; createBuildLock() adopts it
 	}
 
-	stale, jobStatus, _ := isBuildLockStale(info)
+	stale, jobStatus, _ := isBuildLockStale(b.tgt.Lock, info)
 	if stale {
+		if removed, _ := producer.RemoveStale(b.tgt.Lock); !removed {
+			return fmt.Errorf("build lock found for %s.\nLock file: %s", name, b.tgt.Lock)
+		}
 		detail := info.JobID
 		if detail == "" {
 			detail = fmt.Sprintf("pid=%d", info.PID)
 		}
-		logging.FromContext(ctx).Warn("stale build lock, removing", "name", name, "detail", detail)
-		b.removeBuildLock()
+		logging.FromContext(ctx).Warn("stale build lock, removed", "name", name, "detail", detail)
 		b.removeOrphanedOutput(ctx, info)
 		b.removeOwnerWorkspace(info)
 		return nil
@@ -414,7 +425,7 @@ func (b *BuildObject) clearStaleLock(ctx context.Context) error {
 func (b *BuildObject) createBuildLock() error {
 	info := BuildLockInfo{
 		Runner:    "local",
-		Node:      shortHostname(),
+		Node:      hostname(),
 		PID:       os.Getpid(),
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
@@ -427,7 +438,7 @@ func (b *BuildObject) createBuildLock() error {
 		if readErr == nil && existing.Runner != "local" && existing.Runner != "" {
 			if myJobID := scheduler.CurrentJobID(); myJobID != "" && existing.JobID == myJobID {
 				// Adopt the lock: update with runtime node + PID.
-				existing.Node = shortHostname()
+				existing.Node = hostname()
 				existing.PID = os.Getpid()
 				if err := b.updateBuildLock(existing); err != nil {
 					return err
@@ -494,6 +505,10 @@ func (b *BuildObject) PreparedPath() string { return b.tgt.Prepared }
 // removeBuildLock removes the lock file on build completion or failure.
 func (b *BuildObject) removeBuildLock() {
 	os.Remove(b.tgt.Lock) //nolint:errcheck
+	if b.lockHold != nil {
+		b.lockHold.Close() //nolint:errcheck
+		b.lockHold = nil
+	}
 }
 
 // removeOrphanedOutput removes the partial output a dead lock owner left behind.

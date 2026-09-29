@@ -554,9 +554,7 @@ func runExportOverlay(cmd *cobra.Command, args []string) error {
 
 	if !utils.IsImg(overlayPath) {
 		cmd.SilenceUsage = true
-		return fmt.Errorf("export needs a writable .img overlay; %s is an installed image.\n"+
-			"Rebuild it from its recipe instead: condatainer info %s shows what it is",
-			overlayPath, filepath.Base(overlayPath))
+		return fmt.Errorf("export needs a writable .img overlay; %s is an installed image", overlayPath)
 	}
 
 	// Reading an .img read-only does not trip Apptainer's ext3 lock, so probe it

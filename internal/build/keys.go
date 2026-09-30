@@ -46,7 +46,7 @@ func (b *BuildObject) keysFromSources(ctx context.Context) {
 	b.keys = meta.Keys{}
 	derived, err := b.generateKeys()
 	if err != nil {
-		logging.FromContext(ctx).Warn("conda environment recorded without keys",
+		logging.FromContext(ctx).Warn("Conda environment recorded without keys",
 			"name", b.spec.Image.Name, "reason", err)
 		return
 	}
@@ -119,7 +119,7 @@ func (b *BuildObject) composeCapsule(ctx context.Context) error {
 			// has no name resolution to fall back on at all.
 			entry.ImagePath = b.depImagePaths[dep.Name]
 			if entry.ImagePath == "" {
-				logging.FromContext(ctx).Warn("dependency vanished before its provenance was read", "dep", dep.Name)
+				logging.FromContext(ctx).Warn("Dependency vanished before its provenance was read", "dep", dep.Name)
 				continue
 			}
 		}
@@ -161,7 +161,7 @@ func (b *BuildObject) dependencyKeys(ctx context.Context) []key.Dep {
 		if !catalog.IsPathDep(raw) {
 			parsed, err := catalog.ParseDep(raw)
 			if err != nil {
-				log.Warn("skipping an unparsable dependency", "dep", raw, "err", err)
+				log.Warn("Skipping an unparsable dependency", "dep", raw, "err", err)
 				continue
 			}
 			requested, constrained = parsed.NameVersion(), parsed.String()
@@ -270,7 +270,7 @@ func (b *BuildObject) skipIfInstalled(ctx context.Context) bool {
 	if !found {
 		return false
 	}
-	logging.FromContext(ctx).Info("this exact build is already installed, skipping",
+	logging.FromContext(ctx).Info("This exact build is already installed, skipping",
 		"kind", "note", "name", b.spec.Image.Name, "identity", identity.Digest(), "path", path)
 	return true
 }

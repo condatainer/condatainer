@@ -360,7 +360,7 @@ func rebuild(ctx context.Context, root string, entry *lock.Entry, step Step, mat
 			// A fresh output: the locked build refuses an occupied one, and the
 			// failed attempt may have left something behind.
 			output = filepath.Join(staging, fmt.Sprintf("artifact-%d.sqf", attempt))
-			log.Info("retrying the Conda replay from the recorded environment", "kind", "note",
+			log.Info("Retrying the Conda replay from the recorded environment", "kind", "note",
 				"name", step.Name, "source", condaSource, "err", buildErr)
 		}
 		object, err := build.NewLockedObject(ctx, build.LockedSpec{
@@ -379,7 +379,7 @@ func rebuild(ctx context.Context, root string, entry *lock.Entry, step Step, mat
 		if err != nil {
 			return nil, fail("%v", err)
 		}
-		log.Info("rebuilding from the lock", "kind", "note",
+		log.Info("Rebuilding from the lock", "kind", "note",
 			"name", step.Name, "identity", step.Identity)
 		if buildErr = object.Build(ctx, false); buildErr == nil {
 			break
@@ -594,7 +594,7 @@ func fetch(ctx context.Context, root string, entry *lock.Entry, step Step, match
 		where := remote.Repository + "@" + remote.ManifestDigest
 		path, err := fetchFrom(ctx, root, entry, step, match, remote)
 		if err == nil {
-			log.Info("fetched", "kind", "note", "name", step.Name, "from", where)
+			log.Info("Fetched", "kind", "note", "name", step.Name, "from", where)
 			result.Outcome = OutcomeFetched
 			result.Path = path.Path
 			result.Layout = path.Layout
@@ -779,7 +779,7 @@ func placeAt(ctx context.Context, destination, output string) (string, error) {
 		// The file is replaced, not merged: say so rather than losing someone's
 		// hand-placed overlay silently. Not a refusal — a drifted project could
 		// then be repaired only by deleting the file first.
-		logging.FromContext(ctx).Warn("replacing the file already at this project path",
+		logging.FromContext(ctx).Warn("Replacing the file already at this project path",
 			"path", destination)
 	} else if !os.IsNotExist(err) {
 		return "", err

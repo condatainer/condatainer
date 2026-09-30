@@ -26,6 +26,9 @@ type Profile struct {
 	ReservedPerc int // -m: percentage (0-100)
 }
 
+// DefaultSize is the size of a new overlay when none is given: the create flag, the helper prompt and the dashboard form.
+const DefaultSize = "10G"
+
 // CreateOptions holds all configuration options for creating an overlay image.
 type CreateOptions struct {
 	Path           string  // Path to the overlay image file
@@ -81,34 +84,32 @@ func validateOpts(opts *CreateOptions) error {
 	return nil
 }
 
-// typeLabel returns a human-readable label for the overlay type (e.g. "Allocated Fakeroot ").
-func typeLabel(opts *CreateOptions) string {
-	label := "Allocated "
+// LogCreating logs the one-line description of the overlay about to be created, unless opts.Quiet.
+func LogCreating(ctx context.Context, opts *CreateOptions) {
+	if opts.Quiet {
+		return
+	}
+	kind := "allocated"
 	if opts.Sparse {
-		label = "Sparse "
+		kind = "sparse"
 	}
 	if opts.UID == 0 && opts.GID == 0 {
-		label += "Fakeroot "
+		kind += " fakeroot"
 	}
-	return label
+	logging.FromContext(ctx).Info(fmt.Sprintf("Creating %s overlay %s | size %d MiB | %s | inode ratio %d | reserved %d%%",
+		kind, filepath.Base(opts.Path), opts.SizeMB, opts.FilesystemType, opts.Profile.InodeRatio, opts.Profile.ReservedPerc))
 }
 
 // createOverlayFile runs dd + mke2fs + debugfs to build a raw overlay at filePath.
-// sparse controls whether dd creates a sparse file (fast, saves local space) or a fully-allocated one.
-func createOverlayFile(ctx context.Context, opts *CreateOptions, filePath string, sparse bool) error {
+// The file is created sparse, then pre-allocated unless opts.Sparse.
+func createOverlayFile(ctx context.Context, opts *CreateOptions, filePath string) error {
 	if err := tool.CheckDependencies([]string{"dd", "mke2fs", "debugfs"}); err != nil {
 		return err
 	}
 	cleanup := func() { os.Remove(filePath) }
 
-	// 1. Create raw file (dd)
-	ddArgs := []string{"if=/dev/zero", "of=" + filePath, "bs=1M"}
-	if sparse {
-		ddArgs = append(ddArgs, "count=0", fmt.Sprintf("seek=%d", opts.SizeMB))
-	} else {
-		ddArgs = append(ddArgs, fmt.Sprintf("count=%d", opts.SizeMB), "status=progress")
-	}
-	if err := tool.RunCommand(ctx, "create_file", opts.Path, "dd", ddArgs...); err != nil {
+	// 1. Create raw file
+	if err := createRawFile(ctx, opts, filePath); err != nil {
 		cleanup()
 		return err
 	}
@@ -169,65 +170,31 @@ func createOverlayFile(ctx context.Context, opts *CreateOptions, filePath string
 // 3. Public API
 // ---------------------------------------------------------
 
-// MoveOverlayCopied moves an overlay to its destination and reports whether a
-// copy was performed — the caller skips AllocateOverlay when one was.
-func MoveOverlayCopied(ctx context.Context, src, dst string, sparse bool) (copied bool, err error) {
-	return utils.MoveFile(ctx, src, dst, sparse)
+// createRawFile makes the empty image file at filePath, sparse when opts.Sparse and pre-allocated otherwise.
+func createRawFile(ctx context.Context, opts *CreateOptions, filePath string) error {
+	err := tool.RunCommand(ctx, "create_file", opts.Path, "dd",
+		"if=/dev/zero", "of="+filePath, "bs=1M", "count=0", fmt.Sprintf("seek=%d", opts.SizeMB))
+	if err != nil {
+		return err
+	}
+	if !opts.Sparse {
+		AllocateOverlay(ctx, filePath, opts.SizeMB)
+	}
+	return nil
 }
 
 // AllocateOverlay pre-allocates disk blocks for a sparse overlay file using fallocate.
 func AllocateOverlay(ctx context.Context, path string, sizeMB int) {
 	log := logging.FromContext(ctx)
-	log.Info(fmt.Sprintf("allocating %s at %s",
-		fmt.Sprintf("%d MiB", sizeMB), filepath.Base(path)))
+	log.Info(fmt.Sprintf("Allocating %s at %s",
+		fmt.Sprintf("%d MiB", sizeMB), strings.TrimSuffix(filepath.Base(path), ".partial")))
 	cmd := exec.CommandContext(ctx, "fallocate", "-l", fmt.Sprintf("%dM", sizeMB), path)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		log.Warn(fmt.Sprintf("fallocate failed, overlay may be sparse: %s", strings.TrimSpace(string(output))))
+		log.Warn(fmt.Sprintf("Could not preallocate the overlay, it may be sparse: %s", strings.TrimSpace(string(output))))
 	}
 }
 
-// CreateInTmp builds the overlay at a local temp path and returns that path.
-//   - The overlay is always created sparse to minimize local disk usage.
-//   - The caller is responsible for running additional init, moving to final destination, and calling AllocateOverlay if needed.
-//   - The caller must remove the temp file on error.
-func CreateInTmp(ctx context.Context, opts *CreateOptions) (tmpPath string, err error) {
-	tmpPath, err = createAtTmp(ctx, opts)
-	return
-}
-
-// createAtTmp builds the overlay at a local temp path under utils.GetTmpDir() and returns
-// that path. Always created sparse to minimize local disk usage.
-func createAtTmp(ctx context.Context, opts *CreateOptions) (tmpPath string, err error) {
-	if err := validateOpts(opts); err != nil {
-		return "", err
-	}
-
-	label := typeLabel(opts)
-	log := logging.FromContext(ctx)
-
-	tmpDir := utils.GetTmpDir()
-	if err := utils.EnsureTmpSubdir(tmpDir); err != nil {
-		return "", fmt.Errorf("failed to create tmp dir %s: %w", tmpDir, err)
-	}
-	tmpPath = filepath.Join(tmpDir, filepath.Base(opts.Path))
-
-	if !opts.Quiet {
-		log.Info(fmt.Sprintf("creating %soverlay %s", label, filepath.Base(opts.Path)))
-		log.Info(fmt.Sprintf("size %s | filesystem %s | inode ratio %d | reserved %s",
-			fmt.Sprintf("%d MiB", opts.SizeMB), opts.FilesystemType,
-			opts.Profile.InodeRatio, fmt.Sprintf("%d%%", opts.Profile.ReservedPerc)))
-		log.Info(fmt.Sprintf("building at local tmp: %s", tmpPath))
-	}
-
-	if err := createOverlayFile(ctx, opts, tmpPath, true); err != nil {
-		utils.RemoveDirIfEmpty(tmpDir)
-		return "", err
-	}
-
-	return tmpPath, nil
-}
-
-// CreateDirectly builds the overlay at opts.Path without using a local tmp directory.
+// CreateDirectly builds a blank overlay at opts.Path.
 func CreateDirectly(ctx context.Context, opts *CreateOptions) error {
 	if err := validateOpts(opts); err != nil {
 		return err
@@ -238,20 +205,7 @@ func CreateDirectly(ctx context.Context, opts *CreateOptions) error {
 		return fmt.Errorf("create destination directory: %w", err)
 	}
 
-	label := typeLabel(opts)
-	log := logging.FromContext(ctx)
+	LogCreating(ctx, opts)
 
-	if !opts.Quiet {
-		log.Info(fmt.Sprintf("creating %soverlay %s", label, filepath.Base(opts.Path)))
-		log.Info(fmt.Sprintf("size %s | filesystem %s | inode ratio %d | reserved %s",
-			fmt.Sprintf("%d MiB", opts.SizeMB), opts.FilesystemType,
-			opts.Profile.InodeRatio, fmt.Sprintf("%d%%", opts.Profile.ReservedPerc)))
-	}
-
-	if err := createOverlayFile(ctx, opts, opts.Path, opts.Sparse); err != nil {
-		return err
-	}
-
-	log.Info(fmt.Sprintf("created %soverlay %s", label, opts.Path), "kind", "success")
-	return nil
+	return createOverlayFile(ctx, opts, opts.Path)
 }

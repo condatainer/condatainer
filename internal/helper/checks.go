@@ -15,13 +15,6 @@ import (
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
-// DefaultOverlaySize is the size offered for a new writable conda overlay
-// when nothing else is specified — the CLI's guided-creation prompt default,
-// the dashboard's create-form default, and the size used for the no-prompt
-// overlay created on top of a found snapshot (the third overlay state) all
-// read this one value rather than each hardcoding "20G" separately.
-const DefaultOverlaySize = "20G"
-
 // EnvStatus describes the state of an env overlay path for UI display.
 // Returned by CheckEnv. Both CLI and server consume this directly.
 //

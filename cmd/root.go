@@ -83,9 +83,9 @@ var rootCmd = &cobra.Command{
 		if bad := config.InvalidSystemApptainer(); bad != "" && !isCompleteRequest && !isConfigCommand &&
 			!config.IsInsideContainer() {
 			if fallback := config.Global.Build.SystemApptainer; fallback != "" {
-				utils.PrintWarning("build.system_apptainer %q is not usable; using %s from PATH instead.", bad, fallback)
+				utils.PrintWarning("The build.system_apptainer setting %q is not usable; using %s from PATH instead.", bad, fallback)
 			} else {
-				utils.PrintWarning("build.system_apptainer %q is not usable, and no apptainer was found on PATH.", bad)
+				utils.PrintWarning("The build.system_apptainer setting %q is not usable, and no apptainer was found on PATH.", bad)
 			}
 			utils.PrintHint("Run `condatainer config init`.")
 		} else if !isCompleteRequest && !isConfigCommand && !config.IsInsideContainer() &&

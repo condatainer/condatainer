@@ -186,7 +186,7 @@ func (b *BuildObject) tryPrebuilt(ctx context.Context) (prebuiltResult, error) {
 		// metadata, and the gigabytes start here. Without this the operator
 		// watches a long transfer with nothing saying what is being fetched or
 		// that it has already been checked against the local recipe.
-		log.Info("prebuilt found and verified", "artifact", b.spec.Image.Name,
+		log.Info("Prebuilt found and verified", "artifact", b.spec.Image.Name,
 			"endpoint", cand.endpoint, "equivalence", describePrebuiltKey(cand.equiv))
 		if err := pullPrebuilt(ctx, cand.endpoint, cand.repo, cand.desc, cand.annotations, b.tgt.Path); err != nil {
 			switch {
@@ -202,7 +202,7 @@ func (b *BuildObject) tryPrebuilt(ctx context.Context) (prebuiltResult, error) {
 			continue
 		}
 		invalidateInstalledOverlays()
-		log.Info("prebuilt image ready", "kind", "success", "path", b.tgt.Path, "endpoint", cand.endpoint)
+		log.Info("Prebuilt image ready", "kind", "success", "path", b.tgt.Path, "endpoint", cand.endpoint)
 		return true, nil
 	}
 	switch {

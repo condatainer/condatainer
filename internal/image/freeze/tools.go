@@ -54,7 +54,7 @@ func mksquashfsVersion(ctx context.Context, bin string) meta.Tool {
 		}
 		err = errEmptyToolVersion
 	}
-	logging.FromContext(ctx).Warn("could not record mksquashfs version", "err", err)
+	logging.FromContext(ctx).Warn("Could not record mksquashfs version", "err", err)
 	return meta.Tool{Version: meta.Unrecorded}
 }
 
@@ -72,7 +72,7 @@ func fuseOverlayfsVersion(ctx context.Context, bin string) meta.Tool {
 	if err == nil {
 		err = errEmptyToolVersion
 	}
-	logging.FromContext(ctx).Warn("could not record fuse-overlayfs version", "err", err)
+	logging.FromContext(ctx).Warn("Could not record fuse-overlayfs version", "err", err)
 	return meta.Tool{Version: meta.Unrecorded}
 }
 
@@ -91,6 +91,6 @@ func fuse2fsVersion(ctx context.Context, bin string) meta.Tool {
 		}
 		err = errEmptyToolVersion
 	}
-	logging.FromContext(ctx).Warn("could not record fuse2fs version", "err", err)
+	logging.FromContext(ctx).Warn("Could not record fuse2fs version", "err", err)
 	return meta.Tool{Version: meta.Unrecorded}
 }

@@ -15,6 +15,7 @@ import (
 
 	"log/slog"
 
+	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/helper"
 	"github.com/condatainer/condatainer/internal/image/ext3"
@@ -614,7 +615,7 @@ func (s *srv) handleOverlayCreate(w http.ResponseWriter, r *http.Request) {
 
 	sizeStr := req.Size
 	if sizeStr == "" {
-		sizeStr = helper.DefaultOverlaySize
+		sizeStr = ext3.DefaultSize
 	}
 	sizeMB, err := utils.ParseSizeToMB(sizeStr)
 	if err != nil {
@@ -656,6 +657,12 @@ func (s *srv) handleOverlayCreate(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(bw, "Installing packages: %s\n", cntexec.DescribeInitialCondaPackages(allPkgs))
 		} else {
 			fmt.Fprintln(bw, "Skipping conda initialization; no packages were requested")
+		}
+		if len(allPkgs) > 0 || req.PostInstall != "" {
+			if _, err := build.ResolveBase(ctx); err != nil {
+				broadcastResult(broker, ctx, fmt.Errorf("create overlay: %w", err))
+				return
+			}
 		}
 		if err := cntexec.CreateCondaOverlay(ctx, opts, allPkgs, req.PostInstall, false, io); err != nil {
 			broadcastResult(broker, ctx, fmt.Errorf("create overlay: %w", err))

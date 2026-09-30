@@ -7,7 +7,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os/exec"
+	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/toolpath"
@@ -38,6 +41,15 @@ func CheckDependencies(tools []string) error {
 //   - When ctx carries a writer (via logging.WithWriter), stdout/stderr are streamed there in real time (web terminal).
 //   - Otherwise output is buffered and only surfaced on error (CLI behaviour unchanged).
 func RunCommand(ctx context.Context, op, path, tool string, args ...string) error {
+	return run(ctx, false, op, path, tool, args)
+}
+
+// RunCommandBound is RunCommand for a tool that must not outlive this process: the kernel kills it with SIGKILL when this process dies, even if that death is itself a SIGKILL.
+func RunCommandBound(ctx context.Context, op, path, tool string, args ...string) error {
+	return run(ctx, true, op, path, tool, args)
+}
+
+func run(ctx context.Context, bound bool, op, path, tool string, args []string) error {
 	cmd, err := toolpath.Command(ctx, tool, args...)
 	if err != nil {
 		return &Error{Op: op, Path: path, Tool: tool, BaseErr: err}
@@ -53,7 +65,11 @@ func RunCommand(ctx context.Context, op, path, tool string, args ...string) erro
 		cmd.Stderr = &errBuf
 	}
 
-	if err := cmd.Run(); err != nil {
+	err = start(cmd, bound)
+	if err == nil {
+		err = cmd.Wait()
+	}
+	if err != nil {
 		return &Error{
 			Op:      op,
 			Path:    path,
@@ -63,4 +79,18 @@ func RunCommand(ctx context.Context, op, path, tool string, args ...string) erro
 		}
 	}
 	return nil
+}
+
+// start launches cmd. A bound child is started from a locked OS thread, since the kernel delivers the parent-death signal when that thread exits, not when the process does.
+func start(cmd *exec.Cmd, bound bool) error {
+	if !bound {
+		return cmd.Start()
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Pdeathsig = syscall.SIGKILL
+	return cmd.Start()
 }

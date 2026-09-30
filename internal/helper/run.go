@@ -309,7 +309,7 @@ func checkAndInstallNamedOverlays(ctx context.Context, names []string, distro st
 
 	// Second pass: build all missing overlays in one condatainer create call.
 	if len(missing) > 0 {
-		logger.Info("required overlays not found, building now", "overlays", strings.Join(missing, " "))
+		logger.Info("Required overlays not found, building now", "overlays", strings.Join(missing, " "))
 		args := append([]string{"create"}, missing...)
 		cmd := exec.CommandContext(ctx, condaBin, args...)
 		cmdOut := logging.WriterFromCtx(ctx)

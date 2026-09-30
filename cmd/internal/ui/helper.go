@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/helper"
 	"github.com/condatainer/condatainer/internal/image/ext3"
@@ -679,7 +680,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 	if err != nil {
 		return "", err
 	}
-	sizeStr, err := promptDefault(ctx, "[?] Overlay size", helper.DefaultOverlaySize)
+	sizeStr, err := promptDefault(ctx, "[?] Overlay size", ext3.DefaultSize)
 	if err != nil {
 		return "", err
 	}
@@ -724,9 +725,15 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 	} else {
 		utils.PrintMessage("Creating overlay; conda initialization will happen on first install")
 	}
+	if len(allPkgs) > 0 || meta.PostInstallCmd != "" {
+		if _, err := build.ResolveBase(ctx); err != nil {
+			return "", fmt.Errorf("overlay creation failed: %w", err)
+		}
+	}
 	if err := cntexec.CreateCondaOverlay(ctx, opts, allPkgs, meta.PostInstallCmd, false, io); err != nil {
 		return "", fmt.Errorf("overlay creation failed: %w", err)
 	}
+	utils.PrintSuccess("Created overlay %s", imgPath)
 
 	return imgPath, nil
 }
@@ -735,7 +742,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 // #IMG_PACKAGES: check. Prints the unsatisfied specs, asks Y/n, then runs
 // micromamba install inside the overlay if confirmed.
 func GuidedInstallMissing(ctx context.Context, e *helper.ErrMissingPackages) error {
-	utils.PrintWarning("conda packages not satisfied in %s:", e.EnvImg)
+	utils.PrintWarning("Conda packages not satisfied in %s:", e.EnvImg)
 	for _, m := range e.Messages {
 		fmt.Printf("  %s\n", m)
 	}

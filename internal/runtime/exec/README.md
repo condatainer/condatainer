@@ -30,8 +30,11 @@ Ephemeral container execution: the container setup pipeline plus Apptainer.
 
 ## Conda overlay creation
 
-- `CreateCondaOverlay` installs into a scratch ext3 image and moves it to the destination only after the install succeeds.
-- The scratch path is disconnected from the destination's paired snapshot, so `Setup`'s autoload beside the given path cannot find it.
-  - `CreateCondaOverlay` looks the snapshot up against the final path and mounts it with the scratch image.
+- `CreateCondaOverlay` installs into a directory overlay on local tmp and packs it into the destination only after the install succeeds.
+  - With nothing to install it makes a blank image in place instead.
+- The staging directory is named like the image, so `Setup` treats it as the writable `.img`.
+  - `ResolveOverlayPaths` accepts an absolute `.img`-named directory for this.
+- The stage is not beside the destination, so `Setup`'s autoload of a paired snapshot cannot find it.
+  - `CreateCondaOverlay` looks the snapshot up against the destination and mounts it with the stage.
   - Without that, an install would repeat everything the snapshot already has, instead of writing only the difference.
 - `InstallPackages` and `RemovePackages` run against the real path, so the ordinary autoload already finds the pairing.

@@ -1,15 +1,16 @@
 package cmd
 
-import (
-	"context"
-	"testing"
+import "testing"
 
-	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
-)
+func TestOverlayInitPackagesBlank(t *testing.T) {
+	pkgs, err := overlayInitPackages("", nil)
+	if err != nil || len(pkgs) != 0 {
+		t.Fatalf("blank overlay: got %v, %v", pkgs, err)
+	}
+}
 
-func TestInitCondaInOverlaySkipsBlankOverlay(t *testing.T) {
-	err := initCondaInOverlay(context.Background(), "/path/that/does/not/exist.img", "/path/that/does/not/exist.img", "", nil, false, execpkg.IO{})
-	if err != nil {
-		t.Fatalf("blank overlay initialization returned %v", err)
+func TestOverlayInitPackagesRejectsMissingFile(t *testing.T) {
+	if _, err := overlayInitPackages("/path/that/does/not/exist.yml", nil); err == nil {
+		t.Fatal("expected an error for a missing environment file")
 	}
 }

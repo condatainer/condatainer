@@ -66,7 +66,6 @@ func registerOverlayCreateFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("fakeroot", false, "Create a fakeroot-compatible overlay (owned by root)")
 	cmd.Flags().BoolP("sparse", "S", false, "Create a sparse overlay image (no pre-allocation)")
 	cmd.Flags().StringP("file", "f", "", "Initialize with a Conda environment file (.yml/.yaml) or explicit spec (.txt)")
-	cmd.Flags().Bool("no-tmp", false, "Create directly at target path (slower on network filesystems)")
 
 	cmd.RegisterFlagCompletionFunc("profile", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		res := make([]string, 0, len(overlayProfiles))
@@ -90,8 +89,7 @@ func overlayProfileFlag(cmd *cobra.Command) string {
 }
 
 // runOverlayCreate implements 'overlay create'. It resolves the target path, parses the flags registered by
-// registerOverlayCreateFlags, then builds the overlay either directly at the target
-// or via a local tmp copy that is moved into place afterwards.
+// registerOverlayCreateFlags, then builds the overlay with exec.CreateCondaOverlay.
 func runOverlayCreate(cmd *cobra.Command, args []string) {
 	// 1. Split args at -- into image path and packages
 	var packages []string
@@ -140,7 +138,6 @@ func runOverlayCreate(cmd *cobra.Command, args []string) {
 	sparse, _ := cmd.Flags().GetBool("sparse")
 	profile := overlayProfileFlag(cmd)
 	envFile, _ := cmd.Flags().GetString("file")
-	noTmp, _ := cmd.Flags().GetBool("no-tmp")
 
 	if envFile != "" && len(packages) > 0 {
 		ExitWithError("Cannot use -f/--file and inline packages (--) at the same time.")
@@ -173,58 +170,25 @@ func runOverlayCreate(cmd *cobra.Command, args []string) {
 		FilesystemType: "ext3",
 	}
 
+	pkgs, err := overlayInitPackages(envFile, packages)
+	if err != nil {
+		ExitWithError("%v", err)
+	}
+	if len(pkgs) > 0 {
+		// The install runs inside the default root, which exec finds but cannot build.
+		if _, err := ensureRootBaseImage(cmd.Context(), nil); err != nil {
+			ExitWithError("%v", err)
+		}
+		describeOverlayInit(path, envFile, packages)
+	}
+
 	condaIO := exec.IO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
-	if noTmp {
-		// 3a. Create directly at target path (no tmp), then conda init there.
-		if err := ext3.CreateDirectly(cmd.Context(), opts); err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
-				utils.PrintWarning("Overlay creation cancelled.")
-				return
-			}
-			ExitWithError("%v", err)
+	if err := exec.CreateCondaOverlay(cmd.Context(), opts, pkgs, "", fakeroot, condaIO); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
+			utils.PrintWarning("Overlay creation cancelled.")
+			return
 		}
-		if err := initCondaInOverlay(cmd.Context(), path, path, envFile, packages, fakeroot, condaIO); err != nil {
-			os.Remove(path)
-			if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
-				utils.PrintWarning("Overlay initialization cancelled.")
-				return
-			}
-			ExitWithError("Failed to initialize overlay with conda environment: %v", err)
-		}
-	} else {
-		// 3b. Create sparse at local tmp (fast I/O), conda init there, then move + allocate.
-		tmpPath, err := ext3.CreateInTmp(cmd.Context(), opts)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
-				utils.PrintWarning("Overlay creation cancelled.")
-				return
-			}
-			ExitWithError("%v", err)
-		}
-
-		if err := initCondaInOverlay(cmd.Context(), tmpPath, path, envFile, packages, fakeroot, condaIO); err != nil {
-			os.Remove(tmpPath)
-			utils.RemoveDirIfEmpty(filepath.Dir(tmpPath))
-			if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
-				utils.PrintWarning("Overlay initialization cancelled.")
-				return
-			}
-			ExitWithError("Failed to initialize overlay with conda environment: %v", err)
-		}
-
-		utils.PrintMessage("Moving overlay to %s", displayPath(path))
-		copied, err := ext3.MoveOverlayCopied(cmd.Context(), tmpPath, path, sparse)
-		if err != nil {
-			os.Remove(tmpPath)
-			utils.RemoveDirIfEmpty(filepath.Dir(tmpPath))
-			ExitWithError("Failed to move overlay to destination: %v", err)
-		}
-		utils.RemoveDirIfEmpty(filepath.Dir(tmpPath))
-
-		// Skip AllocateOverlay when io.Copy was used: zeros already written physically.
-		if !sparse && !copied {
-			ext3.AllocateOverlay(cmd.Context(), path, sizeMB)
-		}
+		ExitWithError("Failed to create overlay: %v", err)
 	}
 
 	utils.PrintSuccess("Created overlay %s", displayPath(path))
@@ -649,72 +613,35 @@ func runExportOverlay(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// initCondaInOverlay initializes a conda environment in an existing overlay when an
-// environment file or package specs were requested. A blank overlay is initialized
-// lazily by the first `condatainer env install`/`mm install`. envFile and packages
-// are mutually exclusive, validated before this call.
-// overlayPath is where the build happens; finalPath is the final destination, used
-// only to find a paired snapshot beside it.
-func initCondaInOverlay(ctx context.Context, overlayPath, finalPath, envFile string, packages []string, fakeroot bool, io exec.IO) error {
-	if envFile == "" && len(packages) == 0 {
-		return nil
+// overlayInitPackages is the install request for a new overlay: the arguments
+// for 'condatainer env install', or nil when Conda is set up on first install.
+// An environment file is checked to exist and to be a Conda file.
+func overlayInitPackages(envFile string, packages []string) ([]string, error) {
+	if envFile == "" {
+		return packages, nil
 	}
-
-	if envFile != "" {
-		absEnvFile, err := filepath.Abs(envFile)
-		if err != nil {
-			return fmt.Errorf("failed to get absolute path of environment file: %w", err)
-		}
-		envFile = absEnvFile
-		if !utils.FileExists(envFile) {
-			return fmt.Errorf("environment file %s not found", envFile)
-		}
-		if !utils.IsCondaFile(envFile) {
-			return fmt.Errorf("environment file must be .yml/.yaml or an explicit spec file (.txt)")
-		}
-	}
-
-	// The conda install runs inside the default root. exec finds it on its own
-	// but cannot build one, so a missing one is resolved here — this mounts
-	// only the writable overlay itself, never a root, so there is nothing for
-	// the request to already supply.
-	if _, err := ensureRootBaseImage(ctx, nil); err != nil {
-		return err
-	}
-
-	absOverlayPath, err := filepath.Abs(overlayPath)
+	absEnvFile, err := filepath.Abs(envFile)
 	if err != nil {
-		return fmt.Errorf("failed to get absolute path of overlay: %w", err)
+		return nil, fmt.Errorf("failed to get absolute path of environment file: %w", err)
 	}
+	if !utils.FileExists(absEnvFile) {
+		return nil, fmt.Errorf("environment file %s not found", absEnvFile)
+	}
+	if !utils.IsCondaFile(absEnvFile) {
+		return nil, fmt.Errorf("environment file must be .yml/.yaml or an explicit spec file (.txt)")
+	}
+	return []string{"-f", absEnvFile}, nil
+}
 
-	// overlayPath may be a scratch tmp path (see runOverlayCreate) — the
-	// paired snapshot lives beside finalPath, not the scratch one, so it's
-	// looked up against finalPath and passed through explicitly rather than
-	// relying on container.Setup's own autoload to find it on its own.
-	snapshot := container.LookupSnapshot(finalPath).Path
-
+// describeOverlayInit announces what a new overlay at path will install.
+func describeOverlayInit(path, envFile string, packages []string) {
+	what := strings.Join(packages, " ")
 	if envFile != "" {
-		if snapshot != "" {
-			utils.PrintMessage("Installing %s on top of the paired snapshot...", displayPath(envFile))
-		} else {
-			utils.PrintMessage("Initializing conda environment using %s...", displayPath(envFile))
-		}
-	} else if len(packages) > 0 {
-		if snapshot != "" {
-			utils.PrintMessage("Installing %s on top of the paired snapshot...", strings.Join(packages, " "))
-		} else {
-			utils.PrintMessage("Initializing conda environment with: %s...", strings.Join(packages, " "))
-		}
+		what = displayPath(envFile)
 	}
-
-	pkgs := packages
-	if envFile != "" {
-		pkgs = []string{"-f", envFile}
+	if container.LookupSnapshot(path).Path != "" {
+		utils.PrintMessage("Installing %s on top of the paired snapshot...", what)
+		return
 	}
-	if err := exec.InitCondaEnv(ctx, absOverlayPath, snapshot, pkgs, fakeroot, io); err != nil {
-		return fmt.Errorf("failed to initialize conda environment: %w", err)
-	}
-
-	utils.PrintSuccess("Conda env is created inside %s.", overlayPath)
-	return nil
+	utils.PrintMessage("Initializing conda environment with: %s...", what)
 }

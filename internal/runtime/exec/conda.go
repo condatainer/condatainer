@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/image/ext3"
+	"github.com/condatainer/condatainer/internal/image/tool"
+	"github.com/condatainer/condatainer/internal/libexec"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -20,57 +23,68 @@ func DescribeInitialCondaPackages(pkgs []string) string {
 	return strings.Join(pkgs, " ")
 }
 
-// CreateCondaOverlay creates a new user-owned ext3 overlay at opts.Path.
-//   - When pkgs is non-empty it initializes the conda environment before moving and allocating the final file; otherwise initialization remains lazy.
-//   - postInstallCmd is run inside the overlay after conda init (empty = skip). fakeroot should be false for normal user-owned overlays.
+// CreateCondaOverlay creates a new ext3 overlay at opts.Path.
+//   - With nothing to install it writes a blank image there, and Conda is set up on the first install.
+//   - Otherwise it checks the host tools and micromamba, installs into a directory overlay on local tmp, then packs that into the image at opts.Path.
+//   - The caller provides the container root the install runs in.
+//   - postInstallCmd runs in the staged overlay after the install (empty = skip).
+//   - fakeroot makes the image root-owned; without it a root uid/gid in opts means the current user.
 func CreateCondaOverlay(ctx context.Context, opts *ext3.CreateOptions, pkgs []string, postInstallCmd string, fakeroot bool, io IO) error {
-	if opts.UID == 0 && opts.GID == 0 {
+	if !fakeroot && opts.UID == 0 && opts.GID == 0 {
 		opts.UID = os.Getuid()
 		opts.GID = os.Getgid()
 	}
-	tmpPath, err := ext3.CreateInTmp(ctx, opts)
-	if err != nil {
-		return err
-	}
-	cleanup := func() {
-		os.Remove(tmpPath)
-		utils.RemoveDirIfEmpty(tmpPath)
+	if len(pkgs) == 0 && postInstallCmd == "" {
+		return ext3.CreateDirectly(ctx, opts)
 	}
 
-	// tmpPath is a scratch path, disconnected from opts.Path — container.Setup's
-	// own autoload looks beside the .img it's given, so it can never find a
-	// snapshot that lives beside the *final* destination instead. Looked up
-	// here and passed through explicitly, so install sees it and writes only
-	// the incremental diff rather than reinstalling what the snapshot already has.
+	// Checked before the install, which is the slow step, so a missing tool fails at once.
+	if err := tool.CheckDependencies([]string{"dd", "mke2fs", "debugfs"}); err != nil {
+		return err
+	}
+	if err := libexec.EnsureMicromamba(ctx); err != nil {
+		return err
+	}
+
+	tmpDir := utils.GetTmpDir()
+	if err := utils.EnsureTmpSubdir(tmpDir); err != nil {
+		return fmt.Errorf("failed to create tmp dir %s: %w", tmpDir, err)
+	}
+	defer utils.RemoveDirIfEmpty(tmpDir)
+	stage, err := os.MkdirTemp(tmpDir, "create-")
+	if err != nil {
+		return fmt.Errorf("create staging dir: %w", err)
+	}
+	defer os.RemoveAll(stage)
+
+	// The stage is named like the image so Setup treats it as the writable one.
+	overlayDir := filepath.Join(stage, filepath.Base(opts.Path))
+	for _, sub := range []string{"upper", "work"} {
+		if err := os.MkdirAll(filepath.Join(overlayDir, sub), 0o755); err != nil {
+			return fmt.Errorf("create staging dir: %w", err)
+		}
+	}
+	ext3.LogCreating(ctx, opts)
+	logging.FromContext(ctx).Info(fmt.Sprintf("Installing in local tmp dir %s, then packing into %s", stage, filepath.Base(opts.Path)))
+
+	// The stage is not beside the destination, so the paired snapshot is looked up
+	// against the destination and mounted explicitly.
 	snapshot := container.LookupSnapshot(opts.Path).Path
 
-	if err := InitCondaEnv(ctx, tmpPath, snapshot, pkgs, fakeroot, io); err != nil {
-		cleanup()
+	if err := InitCondaEnv(ctx, overlayDir, snapshot, pkgs, fakeroot, io); err != nil {
 		return err
 	}
-
 	if postInstallCmd != "" {
-		if err := RunPostInstall(ctx, tmpPath, snapshot, postInstallCmd, fakeroot, io); err != nil {
-			cleanup()
+		if err := RunPostInstall(ctx, overlayDir, snapshot, postInstallCmd, fakeroot, io); err != nil {
 			return fmt.Errorf("post-install failed: %w", err)
 		}
 	}
-
-	logging.FromContext(ctx).Info(fmt.Sprintf("moving overlay to %s", opts.Path))
-	copied, err := ext3.MoveOverlayCopied(ctx, tmpPath, opts.Path, opts.Sparse)
-	if err != nil {
-		cleanup()
-		return err
-	}
-	if !opts.Sparse && !copied {
-		ext3.AllocateOverlay(ctx, opts.Path, opts.SizeMB)
-	}
-	return nil
+	return ext3.Pack(ctx, overlayDir, opts)
 }
 
 // InitCondaEnv creates a new conda environment inside imgPath with `condatainer env install`, then cleans the micromamba package cache to shrink the overlay.
 //   - Use it for the first environment on a fresh image. InstallPackages adds to an existing one.
-//   - snapshot, when non-empty, is mounted read-only beneath imgPath. Pass container.LookupSnapshot's result when imgPath is a scratch path that will not autoload one (see CreateCondaOverlay). Otherwise "".
+//   - snapshot, when non-empty, is mounted read-only beneath imgPath. Pass container.LookupSnapshot's result when imgPath is a staging directory that will not autoload one (see CreateCondaOverlay). Otherwise "".
 func InitCondaEnv(ctx context.Context, imgPath, snapshot string, pkgs []string, fakeroot bool, io IO) error {
 	if len(pkgs) == 0 {
 		return nil

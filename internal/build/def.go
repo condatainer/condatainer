@@ -43,7 +43,7 @@ func (b *BuildObject) buildDef(ctx context.Context) error {
 		return nil
 	}
 
-	log.Info("building image", "image", filepath.Base(targetPath), "source", b.buildSource)
+	log.Info("Building image", "image", filepath.Base(targetPath), "source", b.buildSource)
 
 	done := watchContext(ctx, "def build")
 	defer close(done)
@@ -112,7 +112,7 @@ func (b *BuildObject) buildDef(ctx context.Context) error {
 		return fmt.Errorf("failed to prepare pinned def: %w", err)
 	}
 
-	log.Info("running apptainer build", "source", b.buildSource)
+	log.Info("Running apptainer build", "source", b.buildSource)
 
 	buildOpts := &apptainer.BuildOptions{
 		Bin:       bin,
@@ -128,7 +128,7 @@ func (b *BuildObject) buildDef(ctx context.Context) error {
 	if err := apptainer.Build(ctx, b.ws.Sandbox, buildDefSource, buildOpts); err != nil {
 		b.Cleanup(true)
 		if apptainer.IsBuildCancelled(err) {
-			log.Warn("build cancelled, image unchanged", "image", filepath.Base(targetPath))
+			log.Warn("Build cancelled, image unchanged", "image", filepath.Base(targetPath))
 			return ErrBuildCancelled
 		}
 		return fmt.Errorf("failed to build sandbox from %s: %w", b.buildSource, err)
@@ -154,7 +154,7 @@ func (b *BuildObject) buildDef(ctx context.Context) error {
 		os.Remove(preparedPath) //nolint:errcheck
 		b.Cleanup(true)
 		if errors.Is(err, context.Canceled) || apptainer.IsBuildCancelled(err) {
-			log.Warn("build cancelled, image unchanged", "image", filepath.Base(targetPath))
+			log.Warn("Build cancelled, image unchanged", "image", filepath.Base(targetPath))
 			return ErrBuildCancelled
 		}
 		return err
@@ -167,7 +167,7 @@ func (b *BuildObject) buildDef(ctx context.Context) error {
 		return err
 	}
 
-	log.Info("image ready", "kind", "success", "path", installed)
+	log.Info("Image ready", "kind", "success", "path", installed)
 	b.Cleanup(false)
 	return nil
 }

@@ -65,7 +65,7 @@ var overlayFreezeCmd = &cobra.Command{
 		// freeze still runs, just without that translation.
 		base, err := config.GetBaseImage()
 		if err != nil {
-			utils.PrintWarning("no base image found (%v); a directory deleted wholesale (not file by file) will not be recorded as deleted, and its original contents will come back when this artifact is used", err)
+			utils.PrintWarning("No base image found (%v); a directory deleted wholesale (not file by file) will not be recorded as deleted, and its original contents will come back when this artifact is used", err)
 		}
 		// Held across the whole freeze rather than probed: a payload being written
 		// to has no defined content to pack, and the pack takes minutes, so a
@@ -233,7 +233,7 @@ func imagesDirContaining(path string) string {
 // reportFreeze prints what was produced. What the artifact contains is what
 // `info` is for, read back from the file itself.
 func reportFreeze(res freeze.Result, source string, removed bool) {
-	utils.PrintSuccess("frozen %s → %s", source, res.Path)
+	utils.PrintSuccess("Frozen %s → %s", source, res.Path)
 	if removed {
 		utils.PrintMessage("  %s removed; the next overlay create starts fresh on top of the snapshot", source)
 	}

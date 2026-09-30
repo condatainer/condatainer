@@ -133,7 +133,7 @@ func Run(ctx context.Context, root string, plan *Plan, opts Options) (*Report, e
 			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", step.Name, err))
 			continue
 		}
-		log.Info("publishing", "kind", "note", "name", step.Name, "tags", strings.Join(step.Tags, ", "))
+		log.Info("Publishing", "kind", "note", "name", step.Name, "tags", strings.Join(step.Tags, ", "))
 		desc, err := registry.Publish(ctx, registry.PublishRequest{
 			Path:      path,
 			Base:      base,

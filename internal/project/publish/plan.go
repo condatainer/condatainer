@@ -142,7 +142,7 @@ func Build(ctx context.Context, root string, l *lock.Lock, verified *lock.Verifi
 	}
 	plan.Ambiguous = dropAmbiguousPlainTags(plan)
 	for _, name := range plan.Ambiguous {
-		logging.FromContext(ctx).Warn("two pins share a name, so neither takes the plain tag", "name", name)
+		logging.FromContext(ctx).Warn("Two pins share a name, so neither takes the plain tag", "name", name)
 	}
 	if err := checkTagCollisions(plan); err != nil {
 		plan.Problems = append(plan.Problems, err.Error())

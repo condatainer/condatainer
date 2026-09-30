@@ -118,14 +118,14 @@ func (b *BuildObject) buildScript(ctx context.Context, buildDeps bool) error {
 		return err
 	}
 
-	log.Info("building overlay", "overlay", filepath.Base(targetPath))
+	log.Info("Building overlay", "overlay", filepath.Base(targetPath))
 
 	if err := prepareBuildWorkspace(ctx, b); err != nil {
 		b.Cleanup(true) //nolint:errcheck
 		return err
 	}
 
-	log.Info("populating overlay", "overlay", filepath.Base(targetPath), "source", b.buildSource)
+	log.Info("Populating overlay", "overlay", filepath.Base(targetPath), "source", b.buildSource)
 
 	if err := b.runBuildScript(ctx); err != nil {
 		b.Cleanup(true)
@@ -161,7 +161,7 @@ func (b *BuildObject) buildScript(ctx context.Context, buildDeps bool) error {
 		return err
 	}
 
-	log.Info("overlay ready", "kind", "success", "path", installed)
+	log.Info("Overlay ready", "kind", "success", "path", installed)
 	b.Cleanup(false)
 	return nil
 }
@@ -186,11 +186,11 @@ func (b *BuildObject) buildDependencies(ctx context.Context, buildDeps bool) err
 	}
 
 	if !buildDeps {
-		logging.FromContext(ctx).Error("missing dependencies", "overlay", filepath.Base(b.tgt.Path), "deps", depList)
+		logging.FromContext(ctx).Error("Missing dependencies", "overlay", filepath.Base(b.tgt.Path), "deps", depList)
 		return fmt.Errorf("missing dependencies for %s: %s. Please install them first", b.spec.Image.Name, depList)
 	}
 
-	logging.FromContext(ctx).Info("building missing dependencies", "kind", "note",
+	logging.FromContext(ctx).Info("Building missing dependencies", "kind", "note",
 		"overlay", filepath.Base(b.tgt.Path), "deps", depList)
 
 	writableImagesDir, err := config.GetWritableImagesDir()
@@ -214,7 +214,7 @@ func (b *BuildObject) buildDependencies(ctx context.Context, buildDeps bool) err
 		}
 	}
 
-	logging.FromContext(ctx).Info("all dependencies built", "kind", "success", "overlay", filepath.Base(b.tgt.Path))
+	logging.FromContext(ctx).Info("All dependencies built", "kind", "success", "overlay", filepath.Base(b.tgt.Path))
 	return nil
 }
 
@@ -272,7 +272,7 @@ fi
 
 	depOverlays, err := dependencyOverlays(b.spec.Dependencies)
 	if err != nil {
-		slog.Default().Warn("failed to resolve dependency overlays", "err", err)
+		slog.Default().Warn("Failed to resolve dependency overlays", "err", err)
 	}
 
 	overlays := depOverlays
@@ -359,7 +359,7 @@ func (b *BuildObject) packOutput(ctx context.Context, metaDir, preparedPath stri
 		b.Cleanup(true)
 		return fmt.Errorf("build produced no files in %s", payloadDir)
 	}
-	log.Info("creating SquashFS", "source", b.ws.CntDir, "overlay", filepath.Base(b.tgt.Path))
+	log.Info("Creating SquashFS", "source", b.ws.CntDir, "overlay", filepath.Base(b.tgt.Path))
 	if err := createSquashfs(ctx, b, isData, b.ws.CntDir, metaDir, preparedPath); err != nil {
 		b.Cleanup(true)
 		return err

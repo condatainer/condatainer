@@ -100,7 +100,7 @@ func preflightUpload(ctx context.Context, artifactPath, base string, tags []stri
 	}
 
 	log := logging.FromContext(ctx)
-	log.Info("upload plan",
+	log.Info("Upload plan",
 		"size", utils.FormatSize(plan.Size),
 		"layer-size", fmt.Sprintf("%s (%s)", utils.FormatSize(plan.LayerSize), plan.Reason),
 		"layers", plan.Layers,
@@ -109,7 +109,7 @@ func preflightUpload(ctx context.Context, artifactPath, base string, tags []stri
 	// An expectation, not a failure: the push is correct, it will simply pause,
 	// and an operator told so in advance does not report it as a hang.
 	if plan.Requests > expectedRequestCeiling {
-		log.Warn("this push is larger than registries have been observed to accept in one run; expect it to pause and resume",
+		log.Warn("This push is larger than registries have been observed to accept in one run; expect it to pause and resume",
 			"requests", plan.Requests, "observed-ceiling", expectedRequestCeiling)
 	}
 	return plan, nil

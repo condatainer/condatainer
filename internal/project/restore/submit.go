@@ -91,7 +91,7 @@ func planJobs(ctx context.Context, root string, verified *lock.Verified, plan *P
 	}
 	log := logging.FromContext(ctx)
 	if scheduler.IsInsideJob() {
-		log.Info("already inside a scheduler job, restoring locally", "kind", "note")
+		log.Info("Already inside a scheduler job, restoring locally", "kind", "note")
 		return j
 	}
 	sched := scheduler.ActiveScheduler()
@@ -282,7 +282,7 @@ func (j *jobs) submitStep(ctx context.Context, root string, entry *lock.Entry, s
 		// The job is already queued, so the reservation cannot be given back.
 		// It will run and publish; the lock it could not claim only means a
 		// concurrent producer is not warned off.
-		logging.FromContext(ctx).Warn("could not hand the reservation to the job",
+		logging.FromContext(ctx).Warn("Could not hand the reservation to the job",
 			"name", step.Name, "jobID", jobID, "err", err)
 	}
 	j.ids[step.Artifact] = jobID
@@ -360,7 +360,7 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 	if err != nil {
 		return "", fmt.Errorf("cannot submit: %w", err)
 	}
-	logging.FromContext(ctx).Info("submitted scheduler job", "kind", "note",
+	logging.FromContext(ctx).Info("Submitted scheduler job", "kind", "note",
 		"type", j.sched.GetType(), "jobID", jobID, "name", step.Name)
 	return jobID, nil
 }

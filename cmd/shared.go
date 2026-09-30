@@ -242,7 +242,7 @@ func configBinds() []string {
 		b = os.ExpandEnv(b)
 		host, _, _ := strings.Cut(b, ":")
 		if _, err := os.Stat(host); err != nil {
-			utils.PrintWarning("bind %s skipped: %s does not exist here", b, host)
+			utils.PrintWarning("Bind %s skipped: %s does not exist here", b, host)
 			continue
 		}
 		out = append(out, b)

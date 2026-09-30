@@ -140,7 +140,7 @@ func Unfreeze(ctx context.Context, opts UnfreezeOptions) (UnfreezeResult, error)
 		}
 	}
 
-	log.Info("rebuilding writable overlay", "artifact", opts.Artifact, "target", opts.Target,
+	log.Info("Rebuilding writable overlay", "artifact", opts.Artifact, "target", opts.Target,
 		"payload_mb", payloadMB, "size_mb", size, "entries", entries)
 	if err := buildImage(ctx, opts, artifact, target, stage, size, entries); err != nil {
 		return UnfreezeResult{}, err

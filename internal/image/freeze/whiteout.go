@@ -140,7 +140,7 @@ func Translate(ctx context.Context, imgPath string, entries []Entry, base BaseLi
 	sort.Strings(t.Opaque)
 
 	if len(t.Opaque) > 0 {
-		logging.FromContext(ctx).Info("resolving opaque directories against the base",
+		logging.FromContext(ctx).Info("Resolving opaque directories against the base",
 			"directories", len(t.Opaque))
 		absolute := make([]string, 0, len(t.Opaque))
 		for _, dir := range t.Opaque {

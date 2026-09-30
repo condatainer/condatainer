@@ -191,9 +191,9 @@ func WarnUnreachableSources(ctx context.Context, cat catalog.Catalog) {
 		for _, s := range cat {
 			switch {
 			case s.Err != nil:
-				log.Warn("source unreachable, skipping it", "source", s.Name, "err", s.Err)
+				log.Warn("Source unreachable, skipping it", "source", s.Name, "err", s.Err)
 			case s.Stale:
-				log.Warn("source not refreshed, using the cached index", "source", s.Name)
+				log.Warn("Source not refreshed, using the cached index", "source", s.Name)
 			}
 		}
 	})

@@ -203,7 +203,7 @@ func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error
 	// refused: a malformed provenance URL links nothing either way, and it is not
 	// a reason to block distribution.
 	if err := catalog.ValidSourceURL(annotations[AnnSource]); err != nil {
-		log.Warn("dropping the source annotation", "artifact", m.Name, "err", err)
+		log.Warn("Dropping the source annotation", "artifact", m.Name, "err", err)
 		delete(annotations, AnnSource)
 	}
 	if req.Confirm != nil {
@@ -221,7 +221,7 @@ func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error
 			return ocispec.Descriptor{}, ErrDeclined
 		}
 	}
-	log.Info("publishing", "artifact", m.Name, "reference", FullRef(req.Base, repo, tags[0]))
+	log.Info("Publishing", "artifact", m.Name, "reference", FullRef(req.Base, repo, tags[0]))
 	return Push(ctx, req.Path, req.Base, repo, tags, annotations, m.Platform.Arch == meta.ArchNone)
 }
 

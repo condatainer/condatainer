@@ -58,12 +58,12 @@ func NewBuildGraph(ctx context.Context, buildObjects []*BuildObject, imagesDir s
 	// Assign scheduler if job submission is enabled and we're not inside a job
 	if submitJobs {
 		if scheduler.IsInsideJob() {
-			log.Info("already inside a scheduler job, all builds will run locally", "kind", "note")
+			log.Info("Already inside a scheduler job, all builds will run locally", "kind", "note")
 		} else if sched := scheduler.ActiveScheduler(); sched != nil {
 			bg.scheduler = sched
 			log.Debug("using scheduler", "type", sched.GetType(), "binary", sched.GetBinary())
 		} else {
-			log.Warn("no scheduler detected, all builds will run locally")
+			log.Warn("No scheduler detected, all builds will run locally")
 		}
 	}
 
@@ -79,7 +79,7 @@ func NewBuildGraph(ctx context.Context, buildObjects []*BuildObject, imagesDir s
 			// it needs.
 			hidden[obj.NameVersion()] = true
 		} else if obj.IsInstalled() {
-			log.Info("overlay already installed, skipping", "name", obj.NameVersion())
+			log.Info("Overlay already installed, skipping", "name", obj.NameVersion())
 		}
 	}
 
@@ -175,7 +175,7 @@ func (bg *BuildGraph) resolvePlan(ctx context.Context, roots []string, hidden ma
 		case pull:
 			log.Info(obj.NameVersion()+" will be pulled from "+obj.prebuilt.candidate.endpoint, "kind", "note")
 			if len(obj.prunedDeps) > 0 {
-				log.Info(fmt.Sprintf("its build dependencies are not installed: %s; `condatainer install` adds them",
+				log.Info(fmt.Sprintf("Its build dependencies are not installed: %s; `condatainer install` adds them",
 					strings.Join(obj.prunedDeps, ", ")), "kind", "note")
 			}
 		case scheduled:
@@ -500,7 +500,7 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 	_ = overwriteBuildLockFile(lockPath, pendingLock) // best-effort; we already hold the lock
 	obj.Cleanup(false)                                //nolint:errcheck
 
-	log.Info("submitted scheduler job", "type", bg.scheduler.GetType(), "jobID", jobID, "name", obj.NameVersion())
+	log.Info("Submitted scheduler job", "type", bg.scheduler.GetType(), "jobID", jobID, "name", obj.NameVersion())
 	return jobID, nil
 }
 

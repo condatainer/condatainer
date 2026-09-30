@@ -153,11 +153,11 @@ func (b *BuildObject) resolveUpstream(ctx context.Context, def []byte) {
 	if boot.resolvable() {
 		digest, err := registry.Resolve(ctx, boot.From)
 		if err != nil {
-			logging.FromContext(ctx).Warn("could not resolve the upstream image; building without a pinned base",
+			logging.FromContext(ctx).Warn("Could not resolve the upstream image; building without a pinned base",
 				"from", boot.From, "err", err)
 		} else {
 			from.Digest = digest
-			logging.FromContext(ctx).Info("resolved upstream image", "from", boot.From, "digest", digest)
+			logging.FromContext(ctx).Info("Resolved upstream image", "from", boot.From, "digest", digest)
 		}
 	}
 	b.spec.Source.Definition.From = from

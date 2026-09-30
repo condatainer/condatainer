@@ -79,7 +79,7 @@ func Freeze(ctx context.Context, opts Options) (Result, error) {
 	// The scan reads every inode in the image and resolves opaque directories
 	// against the base, which on a real environment is seconds of silence before
 	// the pack's own progress starts.
-	log.Info("scanning overlay", "image", opts.Image)
+	log.Info("Scanning overlay", "image", opts.Image)
 	entries, err := Walk(ctx, opts.Image)
 	if err != nil {
 		return Result{}, err
@@ -93,7 +93,7 @@ func Freeze(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 	if tr.Deletions() > 0 {
-		log.Info("translating deletions", "count", tr.Deletions(), "convention", string(tr.Convention))
+		log.Info("Translating deletions", "count", tr.Deletions(), "convention", string(tr.Convention))
 	}
 
 	roots := archiveSources(entries, tr)
@@ -111,7 +111,7 @@ func Freeze(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("read %s.env: %w", opts.Image, err)
 	}
 	if len(env) > 0 {
-		log.Info("carrying environment from the sidecar", "variables", len(env))
+		log.Info("Carrying environment from the sidecar", "variables", len(env))
 	}
 
 	scratch := utils.GetTmpDir()
@@ -178,7 +178,7 @@ func Freeze(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	log.Info("identifying the packed payload", "target", opts.Target)
+	log.Info("Identifying the packed payload", "target", opts.Target)
 	m.Keys.Identity, err = TreeIdentity(ctx, opts.Target)
 	if err != nil {
 		os.Remove(opts.Target)
@@ -222,7 +222,7 @@ func stagePayload(ctx context.Context, img, scratch string, payloadMB int) (stri
 		return "", fmt.Errorf("stage payload: %w", err)
 	}
 	utils.WarnNetworkScratch(scratch, "freeze")
-	log.Info("staging payload for the copy route", "dir", dir, "payload_mb", payloadMB)
+	log.Info("Staging payload for the copy route", "dir", dir, "payload_mb", payloadMB)
 	if err := dumpUpper(ctx, img, dir); err != nil {
 		os.RemoveAll(dir)
 		return "", err

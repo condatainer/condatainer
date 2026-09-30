@@ -24,19 +24,19 @@ func (b *BuildObject) captureCommonBuildTools(ctx context.Context) {
 	version, ok := normalizedToolVersion(config.Version)
 	if !ok {
 		version = meta.Unrecorded
-		log.Warn("could not record Condatainer version", "name", b.spec.Image.Name)
+		log.Warn("Could not record CondaTainer version", "name", b.spec.Image.Name)
 	}
 	b.buildTools.Condatainer = meta.Tool{Version: version}
 
 	implementation, rawVersion, err := apptainer.Current()
 	if err != nil {
 		b.buildTools.Apptainer = meta.Tool{Name: "apptainer", Version: meta.Unrecorded}
-		log.Warn("could not identify Apptainer version", "name", b.spec.Image.Name, "err", err)
+		log.Warn("Could not identify Apptainer version", "name", b.spec.Image.Name, "err", err)
 		return
 	}
 	if version, ok = normalizedToolVersion(rawVersion); !ok {
 		version = meta.Unrecorded
-		log.Warn("could not record Apptainer version", "name", b.spec.Image.Name)
+		log.Warn("Could not record Apptainer version", "name", b.spec.Image.Name)
 	}
 	b.buildTools.Apptainer = meta.Tool{Name: implementation, Version: version}
 }
@@ -63,7 +63,7 @@ func (b *BuildObject) captureMicromambaVersion(ctx context.Context) {
 
 	b.buildTools.Micromamba = meta.Tool{Version: version}
 	if err != nil {
-		log.Warn("could not record Micromamba version", "name", b.spec.Image.Name, "err", err)
+		log.Warn("Could not record Micromamba version", "name", b.spec.Image.Name, "err", err)
 	}
 }
 
@@ -89,7 +89,7 @@ func (b *BuildObject) captureMksquashfsVersion(ctx context.Context, mksquashfsBi
 
 	b.buildTools.Mksquashfs = meta.Tool{Version: version}
 	if err != nil {
-		log.Warn("could not record mksquashfs version", "name", b.spec.Image.Name, "err", err)
+		log.Warn("Could not record mksquashfs version", "name", b.spec.Image.Name, "err", err)
 	}
 }
 

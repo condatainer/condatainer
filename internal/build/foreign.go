@@ -185,7 +185,7 @@ func (b *BuildObject) buildForeign(ctx context.Context) error {
 		return nil
 	}
 
-	log.Info("importing image", "kind", "note", "image", filepath.Base(targetPath), "source", fr.path)
+	log.Info("Importing image", "kind", "note", "image", filepath.Base(targetPath), "source", fr.path)
 
 	done := watchContext(ctx, "foreign import")
 	defer close(done)
@@ -251,7 +251,7 @@ func (b *BuildObject) buildForeign(ctx context.Context) error {
 		return err
 	}
 
-	log.Info("image ready", "kind", "success", "path", installed)
+	log.Info("Image ready", "kind", "success", "path", installed)
 	b.Cleanup(false)
 	return nil
 }
@@ -290,7 +290,7 @@ func packFromSIF(ctx context.Context, b *BuildObject, sifPath, metaDir, targetPa
 	blockSize := config.Global.Build.BlockSize
 	io := execpkg.IOFromContext(ctx)
 
-	logging.FromContext(ctx).Info("packing SquashFS", "source", sifPath, "target", targetPath)
+	logging.FromContext(ctx).Info("Packing SquashFS", "source", sifPath, "target", targetPath)
 	script := squashfsScript(mksquashfsBin, []string{mnt, metaDir}, targetPath, ncpus, blockSize, compressArgs, true)
 	offsetArg := "offset=" + strconv.FormatInt(part.Offset, 10)
 

@@ -76,7 +76,7 @@ func (b *BuildObject) buildConda(ctx context.Context) error {
 	defer b.removeBuildLock()
 	preparedPath := b.tgt.Prepared
 
-	log.Info("building overlay", "overlay", filepath.Base(targetPath))
+	log.Info("Building overlay", "overlay", filepath.Base(targetPath))
 
 	if err := prepareBuildWorkspace(ctx, b); err != nil {
 		b.Cleanup(true) //nolint:errcheck
@@ -119,7 +119,7 @@ func (b *BuildObject) buildConda(ctx context.Context) error {
 		return err
 	}
 
-	log.Info("overlay ready", "kind", "success", "path", installed)
+	log.Info("Overlay ready", "kind", "success", "path", installed)
 	b.Cleanup(false)
 	return nil
 }
@@ -225,7 +225,7 @@ func (b *BuildObject) captureCondaExports(ctx context.Context) {
 		}
 	}
 	if err != nil {
-		log.Warn("could not record the installed package set", "name", b.spec.Image.Name, "err", err)
+		log.Warn("Could not record the installed package set", "name", b.spec.Image.Name, "err", err)
 	}
 
 	raw, err = b.condaExport(ctx, "--no-builds")
@@ -240,7 +240,7 @@ func (b *BuildObject) captureCondaExports(ctx context.Context) {
 		}
 	}
 	if err != nil {
-		log.Warn("could not record the installed environment", "name", b.spec.Image.Name, "err", err)
+		log.Warn("Could not record the installed environment", "name", b.spec.Image.Name, "err", err)
 	}
 }
 

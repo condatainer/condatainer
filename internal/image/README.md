@@ -36,13 +36,16 @@ File operations on overlay images: create, resize, chown, check, lock, read a pa
 
 ## Creation
 
-- An overlay is built sparse in the tmp directory first, on local storage with fast random I/O, then moved to its destination.
-  - The caller can run more work, such as conda init, on the tmp image before the move.
-- `MoveOverlayCopied` renames on one filesystem. Across filesystems it copies.
-  - `sparse=false` writes every byte, so the destination is fully allocated.
-  - `sparse=true` preserves holes.
-- `--no-tmp` builds directly when the target is already on fast local storage.
-- `Resize` takes the same `sparse` choice and allocates by default. Growing leaves a hole whatever the image was built as.
+- A blank overlay is made in place. There is nothing to stage.
+- An overlay with packages is installed into a directory on local tmp, then packed into the destination.
+  - Conda's many small writes are slow through an ext3 mount and cheap on a directory.
+  - The pack is one mostly sequential pass, so it writes straight to the destination with no local copy of the image.
+- The pack writes `<name>.partial`, locked, and renames it on success.
+  - A failed or concurrent create never shows at the destination.
+- A root-owned image is packed in a root-mapped user namespace, not chowned afterward.
+  - A chown pass costs several times the pack. It stays as the fallback.
+- The size limit is checked after the install, because the payload is unknown before it.
+- `Resize` takes the same `sparse` choice and allocates by default.
 
 ## External tools
 
@@ -63,9 +66,6 @@ File operations on overlay images: create, resize, chown, check, lock, read a pa
 - `squashfs.PathExists` lists with `unsquashfs -lc -d ""` and requires an exact match on `/entry` or a prefix match on `/entry/`.
   - `-lc` lists only files and empty directories, so a populated directory shows up through its children.
   - unsquashfs 4.4 prints banner lines even when nothing matches, so "there was output" is not a signal.
-- `ext3.crossFsCopy` shells out to `cp` and uses `cmd.Start` with a Wait goroutine, so a long copy stays cancellable.
-  - On Lustre or NFS a `cp` in uninterruptible I/O sleep ignores SIGKILL until the I/O resolves.
-  - `CombinedOutput` would block behind it.
 
 ## Locking
 

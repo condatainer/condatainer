@@ -40,7 +40,7 @@ func getInstalledOverlays() map[string]bool {
 	// satisfied by the distro overlay that happens to share it.
 	scan, err := image.ScanOverlays(image.ScanOptions{})
 	if err != nil {
-		slog.Default().Warn("failed to read image directory", "err", err)
+		slog.Default().Warn("Failed to read image directory", "err", err)
 	}
 	cachedInstalledOverlays = image.Names(scan)
 	return cachedInstalledOverlays
@@ -68,7 +68,7 @@ func checkShouldBuild(b *BuildObject) (skip bool, err error) {
 	// search path, so one supplied by a shared install is not rebuilt into the
 	// user's own directory. Identical to a stat for every other type.
 	if !b.update && !b.storeOverflow && b.IsInstalled() {
-		slog.Default().Info("overlay already exists, skipping",
+		slog.Default().Info("Overlay already exists, skipping",
 			"overlay", filepath.Base(b.tgt.Path), "path", b.tgt.Path)
 		return true, nil
 	}
@@ -89,7 +89,7 @@ func watchContext(ctx context.Context, label string) (done chan struct{}) {
 	go func() {
 		select {
 		case <-ctx.Done():
-			logging.FromContext(ctx).Warn("build cancelled, interrupting", "step", label)
+			logging.FromContext(ctx).Warn("Build cancelled, interrupting", "step", label)
 			// Cleanup is the caller's responsibility after exec returns.
 		case <-done:
 			return
@@ -198,7 +198,7 @@ func prepareBuildWorkspace(ctx context.Context, b *BuildObject) error {
 		if !errors.Is(err, ErrBuildDirExists) {
 			return fmt.Errorf("failed to create build dirs: %w", err)
 		}
-		logging.FromContext(ctx).Warn("stale build directory found, cleaning up", "name", b.spec.Image.Name)
+		logging.FromContext(ctx).Warn("Stale build directory found, cleaning up", "name", b.spec.Image.Name)
 		if err := b.CreateBuildDirs(ctx, true); err != nil {
 			return fmt.Errorf("failed to create build dirs: %w", err)
 		}

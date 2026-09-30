@@ -52,7 +52,7 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 	// allocate: resizing to the current size is how an existing sparse image is
 	// filled in without changing its size.
 	if fsBytes == newSizeBytes && currentFileBytes == newSizeBytes {
-		log.Info(fmt.Sprintf("size unchanged (%s) for %s",
+		log.Info(fmt.Sprintf("Size unchanged (%s) for %s",
 			fmt.Sprintf("%d MiB", newSizeMB), name))
 		if !sparse {
 			AllocateOverlay(ctx, absPath, newSizeMB)
@@ -71,7 +71,7 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 		}
 	}
 
-	log.Info(fmt.Sprintf("resizing %s to %s (filesystem currently %s)",
+	log.Info(fmt.Sprintf("Resizing %s to %s (filesystem currently %s)",
 		name,
 		fmt.Sprintf("%d MiB", newSizeMB),
 		fmt.Sprintf("%d MiB", fsBytes/(1024*1024))))
@@ -115,7 +115,7 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 		AllocateOverlay(ctx, absPath, newSizeMB)
 	}
 
-	log.Info(fmt.Sprintf("overlay image resized to %s: %s",
+	log.Info(fmt.Sprintf("Overlay image resized to %s: %s",
 		fmt.Sprintf("%d MiB", newSizeMB), name), "kind", "success")
 	return nil
 }

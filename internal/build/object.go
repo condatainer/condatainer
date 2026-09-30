@@ -383,7 +383,7 @@ func (b *BuildObject) clearStaleLock(ctx context.Context) error {
 		if removed, _ := producer.RemoveStale(b.tgt.Lock); !removed {
 			return fmt.Errorf("build lock found for %s.\nLock file: %s", name, b.tgt.Lock)
 		}
-		logging.FromContext(ctx).Warn("corrupt build lock, removed", "name", name)
+		logging.FromContext(ctx).Warn("Corrupt build lock, removed", "name", name)
 		return nil
 	}
 	if info.JobID != "" && info.JobID == scheduler.CurrentJobID() {
@@ -399,7 +399,7 @@ func (b *BuildObject) clearStaleLock(ctx context.Context) error {
 		if detail == "" {
 			detail = fmt.Sprintf("pid=%d", info.PID)
 		}
-		logging.FromContext(ctx).Warn("stale build lock, removed", "name", name, "detail", detail)
+		logging.FromContext(ctx).Warn("Stale build lock, removed", "name", name, "detail", detail)
 		b.removeOrphanedOutput(ctx, info)
 		b.removeOwnerWorkspace(info)
 		return nil
@@ -517,7 +517,7 @@ func (b *BuildObject) removeBuildLock() {
 func (b *BuildObject) removeOrphanedOutput(ctx context.Context, info BuildLockInfo) {
 	orphan := preparedPathFor(b.tgt.Path, info)
 	if err := os.Remove(orphan); err == nil {
-		logging.FromContext(ctx).Warn("removed partial output from stale build", "path", orphan)
+		logging.FromContext(ctx).Warn("Removed partial output from stale build", "path", orphan)
 	}
 }
 
@@ -610,7 +610,7 @@ func (b *BuildObject) CreateBuildDirs(ctx context.Context, force bool) error {
 	if err := utils.MkdirAllShared(buildTmpDir); err != nil {
 		return fmt.Errorf("failed to create build tmp dir: %w", err)
 	}
-	logging.FromContext(ctx).Info("build dir created", "path", buildDir)
+	logging.FromContext(ctx).Info("Build dir created", "path", buildDir)
 	return nil
 }
 
@@ -634,14 +634,14 @@ func (b *BuildObject) Cleanup(failed bool) error {
 
 	willClean := (b.tempSource && b.buildSource != "") || b.ws.CntDir != ""
 	if willClean {
-		log.Info("cleaning up temporary files")
+		log.Info("Cleaning up temporary files")
 	}
 
 	// Every generated input and intermediate belongs to this producer root.
 	if b.ws.Root != "" {
 		log.Debug("cleaning up build workspace", "path", b.ws.Root)
 		if err := utils.RemoveAllWritable(b.ws.Root); err != nil && !os.IsNotExist(err) {
-			log.Warn("failed to remove build workspace", "path", b.ws.Root, "err", err)
+			log.Warn("Failed to remove build workspace", "path", b.ws.Root, "err", err)
 		}
 		utils.RemoveDirIfEmpty(filepath.Dir(b.ws.Root))
 		utils.RemoveDirIfEmpty(b.ws.BaseRoot)
@@ -652,12 +652,12 @@ func (b *BuildObject) Cleanup(failed bool) error {
 	// whatever is at targetOverlayPath is a complete image someone may be using.
 	if failed && b.tgt.Prepared != "" {
 		if err := os.Remove(b.tgt.Prepared); err != nil && !os.IsNotExist(err) {
-			log.Warn("failed to remove partial build output", "path", b.tgt.Prepared, "err", err)
+			log.Warn("Failed to remove partial build output", "path", b.tgt.Prepared, "err", err)
 		}
 	}
 
 	if willClean {
-		log.Info("temporary files cleaned")
+		log.Info("Temporary files cleaned")
 	}
 
 	return nil

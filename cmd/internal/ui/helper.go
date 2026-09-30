@@ -742,7 +742,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 // #IMG_PACKAGES: check. Prints the unsatisfied specs, asks Y/n, then runs
 // micromamba install inside the overlay if confirmed.
 func GuidedInstallMissing(ctx context.Context, e *helper.ErrMissingPackages) error {
-	utils.PrintWarning("conda packages not satisfied in %s:", e.EnvImg)
+	utils.PrintWarning("Conda packages not satisfied in %s:", e.EnvImg)
 	for _, m := range e.Messages {
 		fmt.Printf("  %s\n", m)
 	}

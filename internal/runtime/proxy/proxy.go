@@ -184,7 +184,7 @@ func FindActiveProxy() (string, bool) {
 		if ProxyAlive(ps.Host, ps.Port) {
 			return fmt.Sprintf("http://%s:%d", ps.Host, ps.Port), true
 		}
-		slog.Default().Warn("shared proxy is unreachable", "host", ps.Host, "port", ps.Port)
+		slog.Default().Warn("Shared proxy is unreachable", "host", ps.Host, "port", ps.Port)
 	}
 	return "", false
 }

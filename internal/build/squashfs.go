@@ -51,7 +51,7 @@ func createSquashfs(ctx context.Context, b *BuildObject, isData bool, sourceDir,
 	}
 	sources, keepAsDirectory := packSources(b, sourceDir, metaDir)
 	log.Debug("creating SquashFS", "name", b.spec.Image.Name, "sources", sources)
-	log.Info("packing SquashFS", "source", source, "target", targetPath)
+	log.Info("Packing SquashFS", "source", source, "target", targetPath)
 	script := squashfsScript(mksquashfsBin, sources, targetPath, ncpus, blockSize, compressArgs, keepAsDirectory)
 	runErr := runHostScript(ctx, script, io)
 

@@ -100,7 +100,7 @@ func pull(ctx context.Context, base, repo string, desc ocispec.Descriptor, annot
 		// Reported, never fatal: identity already answered whether these are the
 		// wanted bytes, and what an image answers to is decided by where its file
 		// sits, not by what it calls itself.
-		log.Warn("published name disagrees with the artifact's own",
+		log.Warn("Published name disagrees with the artifact's own",
 			"published", name, "embedded", embedded.Name)
 	}
 
@@ -118,7 +118,7 @@ func pull(ctx context.Context, base, repo string, desc ocispec.Descriptor, annot
 		return fmt.Errorf("failed to install pulled artifact: %w", err)
 	}
 	utils.ShareWithParentGroup(destPath)
-	log.Info("installed", "artifact", destPath)
+	log.Info("Installed", "artifact", destPath)
 	return nil
 }
 

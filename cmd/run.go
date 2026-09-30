@@ -219,7 +219,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 		// Script is in passthrough mode — resource directives could not be fully parsed.
 		// Overrides cannot be applied; warn if the user specified any.
 		if runCPU > 0 || runMem != "" || runTime != "" || runGPU != "" {
-			utils.PrintWarning("resource overrides (-c/-m/-t/-g) have no effect in passthrough mode; edit the script directives directly")
+			utils.PrintWarning("Resource overrides (-c/-m/-t/-g) have no effect in passthrough mode; edit the script directives directly")
 		}
 	} else if scriptSpecs != nil && scriptSpecs.Spec != nil {
 		override := &scheduler.ResourceSpec{}

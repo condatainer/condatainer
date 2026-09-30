@@ -33,7 +33,7 @@ func ChownRecursively(ctx context.Context, imagePath string, uid, gid int, inter
 	name := filepath.Base(absPath)
 	log := logging.FromContext(ctx)
 
-	log.Info(fmt.Sprintf("scanning %s inside %s (uid=%d gid=%d)",
+	log.Info(fmt.Sprintf("Scanning %s inside %s (uid=%d gid=%d)",
 		targetPath, name, uid, gid))
 
 	inodes, err := scanInodes(ctx, debugfsPath, absPath, targetPath)
@@ -58,7 +58,7 @@ func ChownRecursively(ctx context.Context, imagePath string, uid, gid int, inter
 		log.Debug(fmt.Sprintf("no inodes found to modify at %s", targetPath))
 	}
 
-	log.Info(fmt.Sprintf("updating %d inodes (uid=%d gid=%d) in %s",
+	log.Info(fmt.Sprintf("Updating %d inodes (uid=%d gid=%d) in %s",
 		len(uniqueInodes), uid, gid, name))
 
 	var cmds []string
@@ -88,7 +88,7 @@ func ChownRecursively(ctx context.Context, imagePath string, uid, gid int, inter
 		}
 	}
 
-	log.Info(fmt.Sprintf("permissions updated for %s", name), "kind", "success")
+	log.Info(fmt.Sprintf("Permissions updated for %s", name), "kind", "success")
 	return nil
 }
 
@@ -166,7 +166,7 @@ func scanInodes(ctx context.Context, debugfsPath, imgPath, startPath string) ([]
 
 			count++
 			if count%1000 == 0 {
-				log.Info(fmt.Sprintf("scanning inodes... %d found", count))
+				log.Info(fmt.Sprintf("Scanning inodes... %d found", count))
 			}
 		}
 	}
@@ -176,7 +176,7 @@ func scanInodes(ctx context.Context, debugfsPath, imgPath, startPath string) ([]
 		inodeList = append(inodeList, inode)
 	}
 
-	log.Info(fmt.Sprintf("finished scanning %d inodes", len(inodeList)))
+	log.Info(fmt.Sprintf("Finished scanning %d inodes", len(inodeList)))
 
 	return inodeList, nil
 }

@@ -223,7 +223,7 @@ func packStacked(ctx context.Context, opts PackOptions, img, target, stage, mksq
 		Sources: plan.Sources,
 	}, packScript([]string{`"${srcs[@]}"`}, target, args, opts, mksquashfsBin))
 
-	log.Info("packing frozen environment", "source", opts.Image, "target", opts.Target,
+	log.Info("Packing frozen environment", "source", opts.Image, "target", opts.Target,
 		"route", "stacked on "+opts.Snapshot, "roots", strings.Join(plan.Sources, " "),
 		"deletions", len(plan.Translation.Pseudo))
 	err = MountedRun(ctx, fuse2fs, []string{"-o", "ro", img}, dirs["mnt"], script, execpkg.IOFromContext(ctx))

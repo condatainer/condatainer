@@ -581,7 +581,7 @@ func InvalidSystemApptainer() string {
 }
 
 func detectApptainerFromModules() string {
-	slog.Default().Info("searching modules for apptainer/singularity via 'module avail'")
+	slog.Default().Info("Searching modules for apptainer/singularity via 'module avail'")
 
 	bestModule := ""
 	bestVersion := ""
@@ -603,7 +603,7 @@ func detectApptainerFromModules() string {
 		return ""
 	}
 
-	slog.Default().Info("using module candidate", "module", bestModule)
+	slog.Default().Info("Using module candidate", "module", bestModule)
 
 	// Resolve the actual binary path after loading the selected module.
 	// Use both names as fallback because module name and binary name can differ.
@@ -976,7 +976,7 @@ func LoadFromViper() {
 		if IsValidBlockSize(v) {
 			Global.Build.BlockSize = v
 		} else {
-			slog.Default().Warn("invalid build.block_size, using default", "value", v, "default", DefaultBlockSize)
+			slog.Default().Warn("Invalid build.block_size, using default", "value", v, "default", DefaultBlockSize)
 			Global.Build.BlockSize = DefaultBlockSize
 		}
 	}
@@ -984,7 +984,7 @@ func LoadFromViper() {
 		if IsValidBlockSize(v) {
 			Global.Build.DataBlockSize = v
 		} else {
-			slog.Default().Warn("invalid build.data_block_size, using default", "value", v, "default", DefaultDataBlockSize)
+			slog.Default().Warn("Invalid build.data_block_size, using default", "value", v, "default", DefaultDataBlockSize)
 			Global.Build.DataBlockSize = DefaultDataBlockSize
 		}
 	}

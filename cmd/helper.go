@@ -727,7 +727,7 @@ func runHelper(cmd *cobra.Command, args []string) error {
 	if !postFlags.waitSet {
 		if tty := stdoutTTY(); tty != "" {
 			if err := startHelperWatcher(helperID, tty); err != nil {
-				utils.PrintWarning("could not start the background watcher: %v", err)
+				utils.PrintWarning("Could not start the background watcher: %v", err)
 			} else {
 				utils.PrintMessage("Started %s. It is printed here when the service is ready; stop it with `condatainer helper stop`.", helperID)
 				return nil

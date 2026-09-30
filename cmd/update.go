@@ -305,7 +305,7 @@ func runSelfUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to replace executable: %w", err)
 	}
 
-	utils.PrintSuccess("condatainer updated to %s!", release.TagName)
+	utils.PrintSuccess("CondaTainer updated to %s!", release.TagName)
 
 	return nil
 }

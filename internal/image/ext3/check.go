@@ -33,7 +33,7 @@ func CheckIntegrity(ctx context.Context, path string, force bool) error {
 	args = append(args, path)
 
 	log := logging.FromContext(ctx)
-	log.Info(fmt.Sprintf("checking integrity of %s", filepath.Base(path)))
+	log.Info(fmt.Sprintf("Checking integrity of %s", filepath.Base(path)))
 	log.Debug("e2fsck " + strings.Join(args, " "))
 
 	cmd := exec.CommandContext(ctx, e2fsckPath, args...)
@@ -57,6 +57,6 @@ func CheckIntegrity(ctx context.Context, path string, force bool) error {
 		log.Debug("e2fsck output: " + string(out))
 	}
 
-	log.Info(fmt.Sprintf("filesystem check completed for %s", filepath.Base(path)), "kind", "success")
+	log.Info(fmt.Sprintf("Filesystem check completed for %s", filepath.Base(path)), "kind", "success")
 	return nil
 }

@@ -124,7 +124,7 @@ func warnIfLinkLacksVersion(log *slog.Logger, name, link string) {
 	if version == "" || linkMentionsVersion(link, version) {
 		return
 	}
-	log.Warn(fmt.Sprintf("the link does not mention version %s of %s; check it is the right download", version, name))
+	log.Warn(fmt.Sprintf("The link does not mention version %s of %s; check it is the right download", version, name))
 }
 
 // versionOf is the last component of a name, or "" when that is not a version:
@@ -183,7 +183,7 @@ func fetchSource(ctx context.Context, src catalog.SourceURL, destPath string) (s
 	if err != nil {
 		return "", fmt.Errorf("cannot fetch source %s from %s: %w", src.Name, hostOf(src.URL), err)
 	}
-	logging.FromContext(ctx).Info("source ready", "source", src.Name, "sha256", sum[:12])
+	logging.FromContext(ctx).Info("Source ready", "source", src.Name, "sha256", sum[:12])
 	return sum, nil
 }
 

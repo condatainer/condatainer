@@ -61,7 +61,7 @@ func displayPath(p string) string {
 // registerOverlayCreateFlags registers the full flag set for creating an overlay.
 // --profile matches image/ext3's Profile vocabulary.
 func registerOverlayCreateFlags(cmd *cobra.Command) {
-	cmd.Flags().StringP("size", "s", "10G", "Set overlay size (e.g., 500M, 10g)")
+	cmd.Flags().StringP("size", "s", ext3.DefaultSize, "Set overlay size (e.g., 500M, 10g)")
 	cmd.Flags().StringP("profile", "p", "balanced", "Overlay profile: small/balanced/large files")
 	cmd.Flags().Bool("fakeroot", false, "Create a fakeroot-compatible overlay (owned by root)")
 	cmd.Flags().BoolP("sparse", "S", false, "Create a sparse overlay image (no pre-allocation)")

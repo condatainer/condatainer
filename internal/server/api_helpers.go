@@ -615,7 +615,7 @@ func (s *srv) handleOverlayCreate(w http.ResponseWriter, r *http.Request) {
 
 	sizeStr := req.Size
 	if sizeStr == "" {
-		sizeStr = helper.DefaultOverlaySize
+		sizeStr = ext3.DefaultSize
 	}
 	sizeMB, err := utils.ParseSizeToMB(sizeStr)
 	if err != nil {

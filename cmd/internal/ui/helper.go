@@ -680,7 +680,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 	if err != nil {
 		return "", err
 	}
-	sizeStr, err := promptDefault(ctx, "[?] Overlay size", helper.DefaultOverlaySize)
+	sizeStr, err := promptDefault(ctx, "[?] Overlay size", ext3.DefaultSize)
 	if err != nil {
 		return "", err
 	}

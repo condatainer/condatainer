@@ -26,6 +26,9 @@ type Profile struct {
 	ReservedPerc int // -m: percentage (0-100)
 }
 
+// DefaultSize is the size of a new overlay when none is given: the create flag, the helper prompt and the dashboard form.
+const DefaultSize = "10G"
+
 // CreateOptions holds all configuration options for creating an overlay image.
 type CreateOptions struct {
 	Path           string  // Path to the overlay image file

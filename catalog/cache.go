@@ -40,13 +40,14 @@ func (c Cache) get(base, path string) (data []byte, fresh bool) {
 }
 
 // put writes bytes for a source path, replacing any previous copy in one step
-// so a concurrent reader never sees a half-written file.
+// so a concurrent reader never sees a half-written file. Files are 0600 in 0700
+// directories: a private source's recipes are cached here too.
 func (c Cache) put(base, path string, data []byte) error {
 	if !c.enabled() {
 		return nil
 	}
 	name := c.file(base, path)
-	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(name), ".tmp-*")

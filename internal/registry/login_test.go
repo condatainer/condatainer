@@ -1,15 +1,13 @@
 package registry
 
 import (
-	"os"
-	"path/filepath"
-	"reflect"
-	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/credential"
 )
 
 func TestLoginAndLogoutRejectATargetThatIsNotAHostOrRepository(t *testing.T) {
-	useLayers(t, map[string]authFile{"user": {}})
+	useLayers(t, map[string]map[string]string{"user": {}})
 	for _, target := range []string{"", "ghcr.io//lab", "ghcr.io/my lab", "https://ghcr.io/lab@x"} {
 		if err := Login(t.Context(), target, "user", "user", "token"); err == nil {
 			t.Errorf("Login(%q) accepted it", target)
@@ -20,83 +18,21 @@ func TestLoginAndLogoutRejectATargetThatIsNotAHostOrRepository(t *testing.T) {
 	}
 }
 
-func TestStoredCredentialsListsKeysAndLayersWithoutSecrets(t *testing.T) {
-	paths := useLayers(t, map[string]authFile{
-		"user":       {Auths: map[string]authEntry{"ghcr.io/my-lab/rnaseq": entry("bob")}},
-		"extra-root": {Auths: map[string]authEntry{"ghcr.io": entry("group")}},
-	})
-	got, err := StoredCredentials(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []StoredCredential{
-		{Key: "ghcr.io", Layer: "extra-root", Username: "group", Path: paths["extra-root"], ReadableBy: "you"},
-		{Key: "ghcr.io/my-lab/rnaseq", Layer: "user", Username: "bob", Path: paths["user"], ReadableBy: "you"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %+v, want %+v", got, want)
-	}
-}
-
 func TestLogoutRemovesOnlyTheNamedKey(t *testing.T) {
-	paths := useLayers(t, map[string]authFile{"user": {Auths: map[string]authEntry{
-		"ghcr.io": entry("host"), "ghcr.io/my-lab/rnaseq": entry("repo"),
-	}}})
+	files := useLayers(t, map[string]map[string]string{"user": {
+		"ghcr.io": "host", "ghcr.io/my-lab/rnaseq": "repo",
+	}})
 	if err := Logout(t.Context(), "ghcr.io/my-lab/rnaseq", "user"); err != nil {
 		t.Fatal(err)
 	}
-	file, err := readAuthFile(paths["user"])
+	stored, err := credential.List([]credential.File{files["user"]}, credential.Registry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := file.Auths["ghcr.io"]; !ok || len(file.Auths) != 1 {
-		t.Errorf("auths = %v, want only the host entry", file.Auths)
+	if len(stored) != 1 || stored[0].Key != "ghcr.io" {
+		t.Errorf("stored = %+v, want only the host entry", stored)
 	}
 	if err := Logout(t.Context(), "ghcr.io/my-lab/rnaseq", "user"); err == nil {
 		t.Error("removing a missing credential succeeded")
-	}
-}
-
-// A shared layer's directory is not ours to create.
-func TestLayerFileRefusesAMissingSharedDirectory(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "nope", credentialFileName)
-	prev := credentialFilePath
-	credentialFilePath = func(string) (string, error) { return missing, nil }
-	t.Cleanup(func() { credentialFilePath = prev })
-
-	if _, err := layerFile("extra-root"); err == nil || !strings.Contains(err.Error(), "does not exist") {
-		t.Fatalf("extra-root: %v", err)
-	}
-	if _, err := layerFile("user"); err != nil {
-		t.Fatalf("user: %v", err)
-	}
-	if info, err := os.Stat(filepath.Dir(missing)); err != nil || info.Mode().Perm() != 0o700 {
-		t.Errorf("the user's directory was not created private: %v", err)
-	}
-}
-
-// A credential file follows its directory: private in a personal one, group
-// read-write in a group-writable one.
-func TestWriteAuthFileFollowsItsDirectory(t *testing.T) {
-	for _, tt := range []struct {
-		dir, want os.FileMode
-	}{
-		{0o700, 0o600},
-		{0o770, 0o660},
-	} {
-		dir := filepath.Join(t.TempDir(), "layer")
-		if err := os.Mkdir(dir, tt.dir); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(dir, tt.dir); err != nil { // Mkdir is subject to the umask
-			t.Fatal(err)
-		}
-		path := filepath.Join(dir, credentialFileName)
-		if err := writeAuthFile(path, authFile{Auths: map[string]authEntry{"ghcr.io": entry("u")}}); err != nil {
-			t.Fatal(err)
-		}
-		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != tt.want {
-			t.Errorf("directory %o: mode = %v, %v; want %o", tt.dir, info.Mode().Perm(), err, tt.want)
-		}
 	}
 }

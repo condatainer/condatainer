@@ -1,4 +1,4 @@
-package registry
+package credential
 
 import (
 	"os"
@@ -14,7 +14,7 @@ func credFile(t *testing.T, fileMode, dirMode os.FileMode) string {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, credentialFileName)
+	path := filepath.Join(dir, FileName)
 	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -98,17 +98,8 @@ func TestFindingsReportWhoCanReplaceTheCredential(t *testing.T) {
 	}
 }
 
-func TestReadableByNamesTheAudience(t *testing.T) {
-	if got := ReadableBy(credFile(t, 0o600, 0o700)); got != "you" {
-		t.Errorf("private = %q", got)
-	}
-	if got := ReadableBy(credFile(t, 0o644, 0o755)); got != "everyone" {
-		t.Errorf("world = %q", got)
-	}
-	if got := ReadableBy(credFile(t, 0o640, 0o750)); !strings.HasPrefix(got, "group ") {
-		t.Errorf("group = %q", got)
-	}
-	if got := ReadableBy(filepath.Join(t.TempDir(), "missing")); got != "" {
-		t.Errorf("missing = %q", got)
+func TestModeShowsTheBitsAndGroup(t *testing.T) {
+	if perm, group, ok := Mode(credFile(t, 0o640, 0o750)); !ok || perm != 0o640 || group == "" {
+		t.Errorf("Mode = %o, %q, %v", perm, group, ok)
 	}
 }

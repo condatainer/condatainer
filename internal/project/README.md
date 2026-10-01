@@ -22,7 +22,7 @@
 - Remotes are keyed by artifact, at the top of `lock.json`. A closure-only dependency can have one too.
 - A remote never lives inside an entry directory. An entry's bytes are the key preimage, and a registry location is mutable information. It must change without the artifact changing.
 - Remotes are written by machines, never typed.
-- One is recorded only when something confirmed the artifact is there: a collection's pull endpoint advertises this exact identity, or `project registry push` just put it there.
+- One is recorded only when something confirmed the artifact is there: a collection's registry advertises this exact identity, or `project registry push` just put it there.
 - A digest nobody verified is a lock entry that fails on someone else's machine.
 - A remote cannot live in the artifact. It is a digest over the pushed content, so embedding it would need the digest before the bytes exist.
 - Order is retry priority. A pin records its upstream remote before any push, so the free location is tried first.

@@ -21,7 +21,8 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - `internal/artifact/`: what an image embeds. Identity, manifests, equivalence comparison.
 - `build/`: name/version to a Conda, Script or Def build. Dependency graphs, remote scripts.
 - `conda/`: the Conda environment mounted at `/cnt_env`.
-- `config/`: layered config (flags > env > user > extra-root > app-root > system > defaults) and data directory search.
+- `config/`: layered config (flags > env > user > extra-root > app-root > defaults) and data directory search.
+- `credential/`: per-layer `credentials.json` for registry logins and recipe-source tokens. Lookup and file permissions.
 - `helper/`, `helperhistory/`: helper service jobs and their shared run history.
 - `image/`: overlay CRUD (ext3, SquashFS, sif), freeze, resize, locking.
 - `libexec/`: self-provisioned toolchain (`mksquashfs`, `squashfuse`, `fuse-overlayfs`, `apptainer`) via micromamba.

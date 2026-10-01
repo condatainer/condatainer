@@ -86,11 +86,17 @@ Resolves a module name to a recipe, and a set of names to a build order.
   - It stays in the list carrying its error. Lookups skip it, and the caller reports it once.
   - A catalog where every source failed is empty, not an error.
 - **A stale index beats a failed fetch.** An expired cache entry with no route out is served with a flag set. That is a compute node, not an error.
-- **The selected source owns its artifact endpoints.**
-  - `source.json` may declare one OCI `push`, ordered `pull` endpoints and an `audience`.
-  - A build keeps the exact source that won first-match lookup and tries only its endpoints.
+- **A private HTTP source is one read with a token.**
+  - Tested on GitHub's raw host only. The status codes below are GitHub's.
+  - No token on a private repository: 404. A wrong URL gives the same.
+  - A bad token: 401. The read is retried once without it, and a refusal after that is reported as the token's.
+  - A host not in the host table is tried with the standard Bearer scheme.
+  - The cache is keyed by URL. Files are `0600` in `0700` directories.
+- **The selected source owns its registry.**
+  - `source.json` may declare one OCI `registry` and an `audience`. Push and pull use the same one.
+  - A build keeps the exact source that won first-match lookup and tries only its registry.
   - A pulled artifact must match the equivalence key derived from that same recipe before it is installed.
-  - An invalid descriptor disables its endpoints without hiding its recipes.
+  - An invalid descriptor disables its registry without hiding its recipes.
 - **`>=` is for reuse, not for widening.**
   - `samtools/1.23.1>=1.10` admits `[1.10, 1.23.1]`. The preferred version is the implicit upper bound.
   - The lower bound only lets an installed artifact satisfy the dependency. It never reaches a fresh solve.

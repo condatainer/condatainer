@@ -35,6 +35,13 @@ type fakeRegistry struct {
 	// onBlob, when set, runs just before a payload blob is served. It is the
 	// seam for a test that needs something to happen *during* a transfer.
 	onBlob func()
+	// bearer makes reads need a token from /token, which is handed out only to
+	// a request with no credential: a public registry refusing a stale one.
+	bearer bool
+	// refuseAnonymous makes /token refuse a request with no credential too.
+	refuseAnonymous bool
+	// acceptUser is the one username /token hands a token to.
+	acceptUser string
 }
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
@@ -61,6 +68,23 @@ func (f *fakeRegistry) serve(w http.ResponseWriter, r *http.Request) {
 		// No Www-Authenticate challenge: there is no token endpoint to retry against.
 		w.WriteHeader(f.status)
 		return
+	}
+	if f.bearer {
+		if r.URL.Path == "/token" {
+			user, _, basic := r.BasicAuth()
+			if basic && (f.acceptUser == "" || user != f.acceptUser) || !basic && f.refuseAnonymous {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"token": "anonymous"}) //nolint:errcheck
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer anonymous" {
+			w.Header().Set("Www-Authenticate", `Bearer realm="`+f.server.URL+`/token",service="fake"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/v2/")
 

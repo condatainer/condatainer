@@ -1,8 +1,7 @@
 package cmd
 
 import (
-	"errors"
-	"fmt"
+	"os"
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/store"
@@ -30,8 +29,8 @@ func newStoreUseCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := confirmSharedPromotion(cmd, name, query); err != nil {
-				return err
+			if !confirmSharedPromotion(cmd, name, query) {
+				return nil
 			}
 			result, err := store.Promote(name, query, nil)
 			if err != nil {
@@ -49,26 +48,22 @@ func newStoreUseCmd() *cobra.Command {
 	return cmd
 }
 
-// confirmSharedPromotion asks before changing what a name means for other people.
+// confirmSharedPromotion asks before changing what a name means for other people,
+// and reports whether to go on.
 //   - A promotion breaks no project lock — those pin identities, and every identity stays resolvable — but everyone addressing the name gets a different build from then on.
 //   - In a personal directory there is nobody else to surprise.
-func confirmSharedPromotion(cmd *cobra.Command, name string, query store.IdentityQuery) error {
+func confirmSharedPromotion(cmd *cobra.Command, name string, query store.IdentityQuery) bool {
 	if utils.ShouldAnswerYes() {
-		return nil
+		return true
 	}
 	candidate, _, err := store.ResolveIdentity(name, query, nil)
 	if err != nil || candidate.Layout == store.LayoutFlat || config.IsPersonalImagesDir(candidate.Root) {
 		// A resolution failure is Promote's to report, with its own message.
-		return nil
+		return true
 	}
 	utils.PrintWarning("%s is shared: everyone reading it gets this build for %s from now on.",
 		candidate.Root, candidate.Name)
-	fmt.Printf("Promote anyway? [y/N]: ")
-	choice, err := utils.ReadLineContext(cmd.Context())
-	if err != nil || (choice != "y" && choice != "yes") {
-		return errors.New("cancelled")
-	}
-	return nil
+	return utils.Confirm(cmd.Context(), os.Stdout, "Promote anyway? [y/N]: ")
 }
 
 func reportPromotion(result store.Promotion) {

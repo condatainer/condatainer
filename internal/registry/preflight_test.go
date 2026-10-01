@@ -191,7 +191,7 @@ func TestProbeReportsWhatTheRegistryWasClearAbout(t *testing.T) {
 		want     error
 		mentions string
 	}{
-		{"no push scope", http.StatusForbidden, "DENIED", ErrUnauthorized, "credential"},
+		{"no push scope", http.StatusForbidden, "DENIED", ErrUnauthorized, "registry login"},
 		{"the repository does not exist", http.StatusNotFound, "NAME_UNKNOWN", ErrNotFound, "created before a push"},
 		{"an unsupported manifest shape", http.StatusBadRequest, "UNSUPPORTED", ErrIncompatibleRegistry, ""},
 	}

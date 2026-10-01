@@ -49,8 +49,8 @@ func Upstream(ctx context.Context, root string, artifacts []string, cat catalog.
 	return out
 }
 
-// upstreamOf walks one artifact's collection endpoints in declared order and
-// returns the first that advertises this exact identity.
+// upstreamOf returns the artifact's collection registry as its remote when that
+// registry advertises this exact identity.
 func upstreamOf(ctx context.Context, entry *lock.Entry, cat catalog.Catalog) (lock.Remote, bool) {
 	source := collectionOf(entry.Manifest, cat)
 	if source == nil {
@@ -61,33 +61,31 @@ func upstreamOf(ctx context.Context, entry *lock.Entry, cat catalog.Catalog) (lo
 		return lock.Remote{}, false
 	}
 	log := logging.FromContext(ctx)
-	for _, endpoint := range source.Desc.OCI.Pull {
-		desc, annotations, err := registry.ResolveArtifact(ctx, endpoint, repo, tag)
-		if err != nil {
-			log.Debug("endpoint did not answer for this artifact", "endpoint", endpoint, "name", entry.Manifest.Name, "err", err)
-			continue
-		}
-		// Identity, not equivalence. A lock remote is an address for one exact
-		// build: an equivalent artifact at that digest is a different build
-		// wearing the right label, and restore would spend the bytes fetching it
-		// and then reject it against the lock.
-		if got := registry.Identity(annotations); got != entry.Identity {
-			log.Debug("endpoint publishes a different build", "endpoint", endpoint,
-				"name", entry.Manifest.Name, "published", describe(got), "locked", entry.Identity.Digest())
-			continue
-		}
-		return lock.Remote{
-			Repository:     strings.TrimRight(registry.TrimBaseScheme(endpoint), "/") + "/" + repo,
-			ManifestDigest: desc.Digest.String(),
-		}, true
+	endpoint := source.Desc.OCI.Registry
+	desc, annotations, err := registry.ResolveArtifact(registry.WithSource(ctx, source.Base), endpoint, repo, tag)
+	if err != nil {
+		log.Debug("registry did not answer for this artifact", "endpoint", endpoint, "name", entry.Manifest.Name, "err", err)
+		return lock.Remote{}, false
 	}
-	return lock.Remote{}, false
+	// Identity, not equivalence. A lock remote is an address for one exact
+	// build: an equivalent artifact at that digest is a different build
+	// wearing the right label, and restore would spend the bytes fetching it
+	// and then reject it against the lock.
+	if got := registry.Identity(annotations); got != entry.Identity {
+		log.Debug("registry publishes a different build", "endpoint", endpoint,
+			"name", entry.Manifest.Name, "published", describe(got), "locked", entry.Identity.Digest())
+		return lock.Remote{}, false
+	}
+	return lock.Remote{
+		Repository:     strings.TrimRight(registry.TrimBaseScheme(endpoint), "/") + "/" + repo,
+		ManifestDigest: desc.Digest.String(),
+	}, true
 }
 
 // collectionOf finds the configured source an artifact was built from, by the
 // collection repository its manifest recorded.
 //
-// A collection that is unreadable, stale, or declares no pull endpoint answers
+// A collection that is unreadable, stale, or declares no registry answers
 // nothing: its registry defaults cannot be trusted, and a coordinate guessed
 // from a broken descriptor would be written into a tracked file.
 func collectionOf(m meta.Manifest, cat catalog.Catalog) *catalog.Source {
@@ -110,7 +108,7 @@ func collectionOf(m meta.Manifest, cat catalog.Catalog) *catalog.Source {
 	if found == nil || found.DescriptorErr != nil || found.Err != nil || found.Stale {
 		return nil
 	}
-	if len(found.Desc.OCI.Pull) == 0 {
+	if found.Desc.OCI.Registry == "" {
 		return nil
 	}
 	return found

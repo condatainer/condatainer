@@ -1,8 +1,12 @@
 package config
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"path/filepath"
+	"reflect"
 
 	"github.com/condatainer/condatainer/catalog"
 	"github.com/spf13/viper"
@@ -27,22 +31,8 @@ func TestDecodeSourceList(t *testing.T) {
 		t.Errorf("second = %+v", got[1])
 	}
 
-	if got := decodeSourceList([]any{"lab=/shared/lab"}); len(got) != 1 ||
-		got[0].Name != "lab" || got[0].Base != "/shared/lab" {
-		t.Errorf("name=base form = %+v", got)
-	}
 	if got := decodeSourceList("not a list"); got != nil {
 		t.Errorf("non-list = %+v, want nil", got)
-	}
-}
-
-func TestParseSourceSpecs(t *testing.T) {
-	got := parseSourceSpecs([]string{"cnt=https://a.invalid/", "lab=/l", "", "broken", "=/x", "n="})
-	if len(got) != 2 {
-		t.Fatalf("got %+v, want the two well-formed pairs", got)
-	}
-	if got[0].Base != "https://a.invalid" || got[1].Name != "lab" {
-		t.Errorf("specs = %+v", got)
 	}
 }
 
@@ -91,19 +81,9 @@ func TestSelectSources(t *testing.T) {
 	})
 }
 
-func TestLayerSourcesEnvWins(t *testing.T) {
-	t.Setenv("CNT_SOURCES", "lab=/shared/lab|cnt=https://a.invalid")
-	got := layerSources()
-	if len(got) != 2 || got[0].Name != "lab" || got[1].Name != "cnt" {
-		t.Errorf("layerSources = %+v", got)
-	}
-}
-
 // Layers concatenate strongest first, and a name already taken is not repeated:
 // a user entry shadows a site entry of the same handle.
-func TestLayerSourcesMergesLayers(t *testing.T) {
-	t.Setenv("CNT_SOURCES", "")
-
+func TestResolvedSourcesMergesLayers(t *testing.T) {
 	user := viper.New()
 	user.SetConfigType("yaml")
 	if err := user.ReadConfig(stringReader(`
@@ -122,18 +102,18 @@ sources:
 		t.Fatal(err)
 	}
 
-	saved := configLayers
-	t.Cleanup(func() { configLayers = saved })
-	configLayers = []*viper.Viper{user, site}
+	saved := loadedLayers
+	t.Cleanup(func() { loadedLayers = saved })
+	loadedLayers = []ConfigLayerInfo{{Type: "user", v: user}, {Type: "app-root", v: site}}
 
-	got := layerSources()
+	got := ResolvedSources()
 	if len(got) != 2 {
 		t.Fatalf("got %+v, want lab and cnt", got)
 	}
-	if got[0].Name != "lab" || got[0].Base != "/user/lab" {
+	if got[0].Name != "lab" || got[0].Base != "/user/lab" || got[0].Layer != "user" {
 		t.Errorf("first = %+v, want the user's lab to win", got[0])
 	}
-	if got[1].Name != "cnt" {
+	if got[1].Name != "cnt" || got[1].Layer != "app-root" {
 		t.Errorf("second = %+v, want the site's cnt to survive", got[1])
 	}
 }
@@ -148,14 +128,13 @@ func TestLayerSourcesAppendsDefault(t *testing.T) {
 		if err := v.ReadConfig(stringReader(yaml)); err != nil {
 			t.Fatal(err)
 		}
-		saved := configLayers
-		t.Cleanup(func() { configLayers = saved })
-		configLayers = []*viper.Viper{v}
+		saved := loadedLayers
+		t.Cleanup(func() { loadedLayers = saved })
+		loadedLayers = []ConfigLayerInfo{{Type: "user", v: v}}
 	}
 
 	// No `sources` key at all: a fresh install resolves recipes unconfigured.
 	t.Run("absent", func(t *testing.T) {
-		t.Setenv("CNT_SOURCES", "")
 		useLayers(t, "base: ubuntu24\n")
 		got := layerSources()
 		if len(got) != 1 || got[0] != defaultSource {
@@ -165,7 +144,6 @@ func TestLayerSourcesAppendsDefault(t *testing.T) {
 
 	// An explicit list keeps its own order and gains the default at the end.
 	t.Run("appended last", func(t *testing.T) {
-		t.Setenv("CNT_SOURCES", "")
 		useLayers(t, "sources:\n  - lab: /shared/lab\n")
 		got := layerSources()
 		if len(got) != 2 || got[0].Name != "lab" || got[1] != defaultSource {
@@ -176,7 +154,6 @@ func TestLayerSourcesAppendsDefault(t *testing.T) {
 	// Redefining the handle replaces the default rather than duplicating it:
 	// that is how a site points `cnt` at its own collection.
 	t.Run("redefined wins", func(t *testing.T) {
-		t.Setenv("CNT_SOURCES", "")
 		useLayers(t, "sources:\n  - cnt: /site/recipes\n")
 		got := layerSources()
 		if len(got) != 1 || got[0].Base != "/site/recipes" {
@@ -184,14 +161,60 @@ func TestLayerSourcesAppendsDefault(t *testing.T) {
 		}
 	})
 
-	// The env form takes the same treatment; it overrides the list, not the default.
-	t.Run("env", func(t *testing.T) {
-		t.Setenv("CNT_SOURCES", "lab=/shared/lab")
-		got := layerSources()
-		if len(got) != 2 || got[0].Name != "lab" || got[1] != defaultSource {
-			t.Fatalf("layerSources = %+v, want lab then the default", got)
-		}
-	})
 }
 
 func stringReader(s string) *strings.Reader { return strings.NewReader(s) }
+
+func TestPlaceSource(t *testing.T) {
+	list := []catalog.Spec{{Name: "a", Base: "/a"}, {Name: "b", Base: "/b"}, {Name: "c", Base: "/c"}}
+	names := func(l []catalog.Spec) string {
+		var out []string
+		for _, s := range l {
+			out = append(out, s.Name)
+		}
+		return strings.Join(out, ",")
+	}
+	tests := []struct {
+		spec catalog.Spec
+		pos  Position
+		want string
+	}{
+		{catalog.Spec{Name: "n", Base: "/n"}, Position{}, "a,b,c,n"},
+		{catalog.Spec{Name: "n", Base: "/n"}, Position{First: true}, "n,a,b,c"},
+		{catalog.Spec{Name: "n", Base: "/n"}, Position{Before: "b"}, "a,n,b,c"},
+		{catalog.Spec{Name: "n", Base: "/n"}, Position{After: "b"}, "a,b,n,c"},
+		{catalog.Spec{Name: "b", Base: "/new"}, Position{}, "a,b,c"},
+		{catalog.Spec{Name: "c", Base: "/c"}, Position{First: true}, "c,a,b"},
+		{catalog.Spec{Name: "a", Base: "/a"}, Position{Last: true}, "b,c,a"},
+		{catalog.Spec{Name: "a", Base: "/a"}, Position{After: "c"}, "b,c,a"},
+	}
+	for _, tt := range tests {
+		got, err := PlaceSource(list, tt.spec, tt.pos)
+		if err != nil || names(got) != tt.want {
+			t.Errorf("%s at %+v = %s, %v; want %s", tt.spec.Name, tt.pos, names(got), err, tt.want)
+		}
+	}
+	if got, _ := PlaceSource(list, catalog.Spec{Name: "b", Base: "/new"}, Position{}); got[1].Base != "/new" {
+		t.Errorf("replacing kept the old base: %+v", got[1])
+	}
+	if _, err := PlaceSource(list, catalog.Spec{Name: "n"}, Position{Before: "z"}); !errors.Is(err, ErrSourceNotFound) {
+		t.Errorf("before a missing source: %v", err)
+	}
+}
+
+func TestLayerSourceListRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	want := []catalog.Spec{{Name: "lab", Base: "/shared/lab"}, {Name: "cnt", Base: "https://mirror.invalid"}}
+	if err := WriteLayerSourceList(path, want); err != nil {
+		t.Fatal(err)
+	}
+	if got := LayerSourceList(path); !reflect.DeepEqual(got, want) {
+		t.Errorf("read back %+v, want %+v", got, want)
+	}
+	if err := WriteLayerSourceList(path, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := LayerSourceList(path); len(got) != 0 {
+		t.Errorf("an empty list left %+v", got)
+	}
+}

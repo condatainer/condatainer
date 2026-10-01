@@ -149,7 +149,7 @@ func collection(t *testing.T, endpoint string) catalog.Catalog {
 		Desc: catalog.Descriptor{
 			Schema: 1,
 			Source: collectionRepo,
-			OCI:    catalog.OCI{Pull: []string{endpoint}, Audience: string(registry.Public)},
+			OCI:    catalog.OCI{Registry: endpoint, Audience: string(registry.Public)},
 		},
 	}}
 }
@@ -208,7 +208,7 @@ func TestUpstreamIsBestEffort(t *testing.T) {
 		"a collection that published nothing this artifact came from": {{
 			Name: "other",
 			Desc: catalog.Descriptor{Schema: 1, Source: "https://github.com/somebody/else",
-				OCI: catalog.OCI{Pull: []string{"127.0.0.1:1"}}},
+				OCI: catalog.OCI{Registry: "127.0.0.1:1"}},
 		}},
 	}
 	for why, cat := range cases {

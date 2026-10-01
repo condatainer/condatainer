@@ -15,7 +15,7 @@ import (
 	"github.com/condatainer/condatainer/internal/registry"
 )
 
-func prebuiltObject(t *testing.T, recipe []byte, endpoints ...string) *BuildObject {
+func prebuiltObject(t *testing.T, recipe []byte, endpoint string) *BuildObject {
 	t.Helper()
 	b := &BuildObject{
 		spec: Spec{
@@ -26,15 +26,15 @@ func prebuiltObject(t *testing.T, recipe []byte, endpoints ...string) *BuildObje
 		},
 		tgt: targetFor(filepath.Join(t.TempDir(), "demo--1.sqf")),
 		catalogSource: &catalog.Source{Desc: catalog.Descriptor{OCI: catalog.OCI{
-			Pull: endpoints, Audience: "restricted",
+			Registry: endpoint, Audience: "restricted",
 		}}},
 	}
 	b.embedSource(SourceFile{Name: meta.RecipeFileName, Data: recipe})
 	return b
 }
 
-func TestTryPrebuiltUsesOrderedEndpointAndEquivalence(t *testing.T) {
-	b := prebuiltObject(t, []byte("echo demo\n"), "mirror.invalid/lab", "origin.invalid/lab")
+func TestTryPrebuiltPullsAMatchingArtifact(t *testing.T) {
+	b := prebuiltObject(t, []byte("echo demo\n"), "origin.invalid/lab")
 	want, err := b.prebuiltEquivalence(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -42,18 +42,8 @@ func TestTryPrebuiltUsesOrderedEndpointAndEquivalence(t *testing.T) {
 
 	oldResolve, oldPull := resolvePrebuilt, pullPrebuilt
 	t.Cleanup(func() { resolvePrebuilt, pullPrebuilt = oldResolve, oldPull })
-	var resolved []string
 	resolvePrebuilt = func(_ context.Context, base, repo, tag string) (ocispec.Descriptor, map[string]string, error) {
-		resolved = append(resolved, base+"/"+repo+":"+tag)
-		if len(resolved) == 1 {
-			return ocispec.Descriptor{}, nil, registry.ErrNotFound
-		}
-		return ocispec.Descriptor{}, map[string]string{
-			registry.AnnTitle:       "demo/1",
-			registry.AnnSchema:      strconv.Itoa(meta.SchemaVersion),
-			registry.AnnEquivScheme: want.Scheme,
-			registry.AnnEquivSHA:    want.SHA256,
-		}, nil
+		return ocispec.Descriptor{}, annotationsFor(want), nil
 	}
 	pulled := false
 	pullPrebuilt = func(_ context.Context, base, repo string, _ ocispec.Descriptor, _ map[string]string, dest string) error {
@@ -65,8 +55,8 @@ func TestTryPrebuiltUsesOrderedEndpointAndEquivalence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != prebuiltResult(true) || !pulled || len(resolved) != 2 {
-		t.Fatalf("result=%v pulled=%v resolved=%v", got, pulled, resolved)
+	if got != prebuiltResult(true) || !pulled {
+		t.Fatalf("result=%v pulled=%v", got, pulled)
 	}
 }
 
@@ -92,8 +82,8 @@ func TestTryPrebuiltSkipsEquivalenceMismatch(t *testing.T) {
 	}
 }
 
-func TestTryPrebuiltFallsBackWhenEndpointsUnavailable(t *testing.T) {
-	b := prebuiltObject(t, []byte("echo demo\n"), "mirror.invalid/lab", "origin.invalid/lab")
+func TestTryPrebuiltFallsBackWhenTheRegistryIsUnavailable(t *testing.T) {
+	b := prebuiltObject(t, []byte("echo demo\n"), "origin.invalid/lab")
 	oldResolve := resolvePrebuilt
 	t.Cleanup(func() { resolvePrebuilt = oldResolve })
 	resolvePrebuilt = func(context.Context, string, string, string) (ocispec.Descriptor, map[string]string, error) {

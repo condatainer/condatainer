@@ -138,6 +138,7 @@ var ErrDeclined = errors.New("push declined")
 //   - The caller supplies only where it goes, through Placement.
 //   - The returned digest is this architecture's index child, the address a lock records.
 func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error) {
+	ctx = withPush(ctx)
 	log := logging.FromContext(ctx)
 	if req.Audience == "" {
 		req.Audience = Public

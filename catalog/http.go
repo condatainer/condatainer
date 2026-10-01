@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -44,21 +43,55 @@ func (h *httpBackend) read(ctx context.Context, path string) ([]byte, error) {
 	return nil, err
 }
 
+// fetch reads one file of the source, sending its token when it has one.
+//   - A 401 with the token is retried once without it. If that answers, the token is set aside for later reads and TokenRefused is set.
+//   - If that is refused too, the error is ErrTokenRefused naming where the token is stored.
 func (h *httpBackend) fetch(ctx context.Context, path string) ([]byte, error) {
-	url := strings.TrimSuffix(h.src.Base, "/") + "/" + path
+	token := h.src.Token
+	if h.src.TokenRefused {
+		token = nil
+	}
+	data, status, err := h.get(ctx, path, token)
+	if status != http.StatusUnauthorized || token == nil {
+		return data, err
+	}
+	data, status, err = h.get(ctx, path, nil)
+	switch {
+	case err == nil:
+		h.src.TokenRefused = true
+		return data, nil
+	case status == http.StatusUnauthorized || status == http.StatusNotFound:
+		return nil, fmt.Errorf("%w: %s", ErrTokenRefused, token)
+	}
+	return nil, err
+}
+
+// get sends one GET the way the source's host serves a file, with the token
+// when set, and reports the status alongside any error.
+func (h *httpBackend) get(ctx context.Context, path string, token *Token) ([]byte, int, error) {
+	api := hostFor(h.src.Base)
+	url := api.fileURL(h.src.Base, path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	if token != nil {
+		api.authorize(req, token.secret)
 	}
 	resp, err := h.httpClient().Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("catalog: %s: %s", url, resp.Status)
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return nil, resp.StatusCode, fmt.Errorf("%w: %s: %s", ErrUnreadable, url, resp.Status)
+	default:
+		return nil, resp.StatusCode, fmt.Errorf("catalog: %s: %s", url, resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxIndexSize))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxIndexSize))
+	return data, resp.StatusCode, err
 }
 
 func (h *httpBackend) httpClient() *http.Client {

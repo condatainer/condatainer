@@ -1,4 +1,4 @@
-package registry
+package credential
 
 import (
 	"fmt"
@@ -27,19 +27,8 @@ type Access struct {
 	Readers Reach
 	Writers Reach
 	Group   string // the file's group, named in a message about the group
-}
-
-// reader names who can read the file, for a message.
-func (a Access) reader() string { return a.describe(a.Readers) }
-
-func (a Access) describe(aud Reach) string {
-	switch aud {
-	case ReachGroup:
-		return "group " + a.Group
-	case ReachEveryone:
-		return "everyone"
-	}
-	return "you"
+	File    os.FileMode
+	Dir     os.FileMode
 }
 
 // accessOf reads who can reach path.
@@ -57,7 +46,7 @@ func accessOf(path string) (Access, error) {
 	fm, dm := info.Mode().Perm(), dir.Mode().Perm()
 	sticky := dir.Mode()&os.ModeSticky != 0
 
-	access := Access{}
+	access := Access{File: fm, Dir: dm}
 	switch {
 	case dm&0o001 != 0 && fm&0o004 != 0:
 		access.Readers = ReachEveryone
@@ -96,30 +85,30 @@ func Findings(layer, path string) []Finding {
 	var out []Finding
 	if layer == "user" && access.Readers != ReachOwner {
 		out = append(out, Finding{Warn: true, Text: fmt.Sprintf(
-			"%s is readable by %s. Run: chmod 600 %s", path, access.reader(), path)})
+			"%s is %04o, so others can read it. Run: chmod 600 %s", path, access.File, path)})
 	}
 	switch access.Writers {
 	case ReachEveryone:
 		out = append(out, Finding{Warn: true, Text: fmt.Sprintf(
-			"anyone can replace the credential in %s. Run: chmod go-w %s, and check that %s is not writable by others",
-			path, path, filepath.Dir(path))})
+			"%s is %04o in a %04o directory, so anyone can replace it. Run: chmod go-w %s %s",
+			path, access.File, access.Dir, path, filepath.Dir(path))})
 	case ReachGroup:
 		out = append(out, Finding{Warn: layer == "user", Text: fmt.Sprintf(
-			"members of %s can replace the credential in %s", access.describe(ReachGroup), path)})
+			"%s is %04o in a %04o directory, so group %s can replace it", path, access.File, access.Dir, access.Group)})
 	}
 	return out
 }
 
-// ReadableBy names who can read the file saved for a layer: "you",
-// "group <name>" or "everyone". It is empty when the file cannot be inspected.
-func ReadableBy(path string) string {
+// Mode is path's permission bits and the name of its group. ok is false when
+// the file cannot be inspected.
+func Mode(path string) (perm os.FileMode, group string, ok bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, "", false
+	}
 	access, err := accessOf(path)
 	if err != nil {
-		return ""
+		return 0, "", false
 	}
-	return access.reader()
+	return info.Mode().Perm(), access.Group, true
 }
-
-// LayerFile is the credential file of a config layer, wherever it may or may not
-// exist yet.
-func LayerFile(layer string) (string, error) { return credentialFilePath(layer) }

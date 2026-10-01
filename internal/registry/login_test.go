@@ -75,12 +75,28 @@ func TestLayerFileRefusesAMissingSharedDirectory(t *testing.T) {
 	}
 }
 
-func TestWriteAuthFileIsPrivate(t *testing.T) {
-	path := filepath.Join(t.TempDir(), credentialFileName)
-	if err := writeAuthFile(path, authFile{Auths: map[string]authEntry{"ghcr.io": entry("u")}}); err != nil {
-		t.Fatal(err)
-	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %v, %v", info.Mode(), err)
+// A credential file follows its directory: private in a personal one, group
+// read-write in a group-writable one.
+func TestWriteAuthFileFollowsItsDirectory(t *testing.T) {
+	for _, tt := range []struct {
+		dir, want os.FileMode
+	}{
+		{0o700, 0o600},
+		{0o770, 0o660},
+	} {
+		dir := filepath.Join(t.TempDir(), "layer")
+		if err := os.Mkdir(dir, tt.dir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(dir, tt.dir); err != nil { // Mkdir is subject to the umask
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, credentialFileName)
+		if err := writeAuthFile(path, authFile{Auths: map[string]authEntry{"ghcr.io": entry("u")}}); err != nil {
+			t.Fatal(err)
+		}
+		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != tt.want {
+			t.Errorf("directory %o: mode = %v, %v; want %o", tt.dir, info.Mode().Perm(), err, tt.want)
+		}
 	}
 }

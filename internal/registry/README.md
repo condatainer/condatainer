@@ -68,5 +68,6 @@ Identity is defined in `internal/artifact`.
 
 - Credentials are layered like the rest of config: user, extra-root, app-root, system.
 - A lab installs one shared credential in a shared layer. A person overrides it in the user layer.
+- A credential file follows its directory: private in a personal layer, group read-write in a group-writable one. Otherwise a shared credential is readable only by whoever saved it.
 - A more specific key beats a nearer layer, so a personal entry for one repository beats a group's entry for the host.
 - `GITHUB_TOKEN` comes first for `ghcr.io` only. It is unscoped, and CI provides it.

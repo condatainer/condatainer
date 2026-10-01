@@ -73,7 +73,8 @@ Three places, three jobs.
 
 - Behavior first. Give a reason only where the behavior would look wrong without it, in a clause.
 - A function comment over 6 lines is a mistake, unless the function branches and each branch decides something.
-- Self-contained. Never point at a README, a plan, a doc page or another file.
+- Self-contained. Never point at a README, a plan, a doc page or another file of this project.
+- A link to an external service's own API documentation is fine, next to the code that follows it.
 - No measurements, hosts or incidents. State the rule the incident taught.
 - No comparisons to other tools.
 - Never argue with an objection nobody made.

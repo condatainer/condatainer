@@ -13,6 +13,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote/auth"
 
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // credentialFileName is the credential file in each config layer's directory.
@@ -71,8 +72,9 @@ func readAuthFile(path string) (authFile, error) {
 	return file, nil
 }
 
-// writeAuthFile replaces path atomically with mode 0600. The directory is not
-// created: a shared layer's directory belongs to whoever set it up.
+// writeAuthFile replaces path atomically with mode 0600, adding group read-write
+// when the directory is group-writable, so a shared layer's members can read it.
+// The directory is not created: a shared layer's directory belongs to whoever set it up.
 func writeAuthFile(path string, file authFile) error {
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
@@ -90,7 +92,11 @@ func writeAuthFile(path string, file authFile) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	utils.ShareWithParentGroup(path)
+	return nil
 }
 
 // splitTarget separates a login target into its host and "host/owner/repo" key.

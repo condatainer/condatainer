@@ -21,14 +21,14 @@ const ConfigFilename = "config"
 // ConfigType is the type of config file (yaml, json, toml)
 const ConfigType = "yaml"
 
-// configLayers holds per-file viper instances in priority order (user → extra-root → root → system).
+// configLayers holds per-file viper instances in priority order (user → extra-root → app-root).
 // Populated by InitViper(). Used by layerSources() to merge the `sources` key.
 var configLayers []*viper.Viper
 
 // ConfigLayerInfo exposes one loaded config layer for per-layer display.
 type ConfigLayerInfo struct {
 	Path string
-	Type string // "user", "extra-root", "root", "system"
+	Type string // "user", "extra-root", "app-root"
 	v    *viper.Viper
 }
 
@@ -61,7 +61,7 @@ func InitViper() error {
 	viper.AutomaticEnv()
 	setDefaults()
 
-	// Collect config paths in priority order: user > extra-root > root > system
+	// Collect config paths in priority order: user > extra-root > app-root
 	type configSource struct{ path, label string }
 	var sources []configSource
 	if userPath, err := GetUserConfigPath(); err == nil {
@@ -73,7 +73,6 @@ func InitViper() error {
 	if rootPath := GetRootConfigPath(); rootPath != "" {
 		sources = append(sources, configSource{rootPath, "app-root"})
 	}
-	sources = append(sources, configSource{GetSystemConfigPath(), "system"})
 
 	// Load each existing config file.
 	// The first found becomes the global viper primary (for scalar keys + env var compat).
@@ -181,15 +180,10 @@ func GetExtraRootConfigPath() string {
 	return ""
 }
 
-// GetSystemConfigPath returns the system-wide config path
-func GetSystemConfigPath() string {
-	return filepath.Join("/etc", "condatainer", ConfigFilename+"."+ConfigType)
-}
-
 // ConfigSearchPath represents a config file location with metadata
 type ConfigSearchPath struct {
 	Path   string // Full path to config file
-	Type   string // Type: "root", "extra-root", "user", "system"
+	Type   string // Type: "user", "extra-root", "app-root"
 	Exists bool   // Whether the file exists
 	InUse  bool   // Whether this is the active config file
 }
@@ -243,7 +237,7 @@ func GetConfigSearchPaths() []ConfigSearchPath {
 		})
 	}
 
-	// Priority order matches InitViper: user > extra-root > root > system
+	// Priority order matches InitViper: user > extra-root > app-root
 	if userConfigDir, err := os.UserConfigDir(); err == nil {
 		add(filepath.Join(userConfigDir, "condatainer", ConfigFilename+"."+ConfigType), "user")
 	}
@@ -253,13 +247,12 @@ func GetConfigSearchPaths() []ConfigSearchPath {
 	if rootPath := GetRootConfigPath(); rootPath != "" {
 		add(rootPath, "app-root")
 	}
-	add(GetSystemConfigPath(), "system")
 
 	return paths
 }
 
 // NormalizeConfigLayer expands a config layer shorthand to its full name.
-//   - Returns the full name ("user", "app-root", "extra-root", "system") or the input unchanged.
+//   - Returns the full name ("user", "app-root", "extra-root") or the input unchanged.
 //   - "root" and "r" are accepted as aliases for "app-root".
 func NormalizeConfigLayer(layer string) string {
 	switch layer {
@@ -269,15 +262,13 @@ func NormalizeConfigLayer(layer string) string {
 		return "app-root"
 	case "e":
 		return "extra-root"
-	case "s":
-		return "system"
 	default:
 		return layer
 	}
 }
 
 // GetConfigPathByLayer returns the config path for the specified config layer.
-// Supported layers: "user"/"u", "app-root"/"root"/"r", "extra-root"/"e", "system"/"s"
+// Supported layers: "user"/"u", "app-root"/"root"/"r", "extra-root"/"e"
 func GetConfigPathByLayer(layer string) (string, error) {
 	switch layer {
 	case "user", "u":
@@ -292,14 +283,12 @@ func GetConfigPathByLayer(layer string) (string, error) {
 			return path, nil
 		}
 		return "", fmt.Errorf("CNT_EXTRA_ROOT is not set")
-	case "system", "s":
-		return GetSystemConfigPath(), nil
 	default:
-		return "", fmt.Errorf("invalid layer '%s': use 'user' (u), 'app-root' (r), 'extra-root' (e), or 'system' (s)", layer)
+		return "", fmt.Errorf("invalid layer '%s': use 'user' (u), 'extra-root' (e), or 'app-root' (r)", layer)
 	}
 }
 
-// inferConfigLayer returns "app-root", "extra-root", "system", or "user" by comparing path
+// inferConfigLayer returns "app-root", "extra-root", or "user" by comparing path
 // against known config file paths. Returns "user" for any unrecognised path.
 func inferConfigLayer(path string) string {
 	if p := GetExtraRootConfigPath(); p != "" && path == p {
@@ -307,9 +296,6 @@ func inferConfigLayer(path string) string {
 	}
 	if p := GetRootConfigPath(); p != "" && path == p {
 		return "app-root"
-	}
-	if path == GetSystemConfigPath() {
-		return "system"
 	}
 	return "user"
 }
@@ -818,7 +804,7 @@ func GetSchedulerTypeFromBin(binPath string) string {
 }
 
 // layerString returns the value of a scalar string key from the first source that explicitly sets it.
-//   - Priority: env var > user > extra-root > root > system.
+//   - Priority: env var > user > extra-root > app-root.
 //   - Returns "" if no source explicitly sets the key.
 func layerString(key string) string {
 	envKey := "CNT_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
@@ -834,7 +820,7 @@ func layerString(key string) string {
 }
 
 // layerBool returns the value of a scalar bool key and whether it was explicitly set.
-// Priority: env var > user > extra-root > root > system.
+// Priority: env var > user > extra-root > app-root.
 func layerBool(key string) (bool, bool) {
 	envKey := "CNT_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
 	if ev := os.Getenv(envKey); ev != "" {
@@ -851,7 +837,7 @@ func layerBool(key string) (bool, bool) {
 }
 
 // layerStringSet returns the value of a scalar string key and whether it was explicitly set.
-//   - Priority: env var > user > extra-root > root > system.
+//   - Priority: env var > user > extra-root > app-root.
 //   - Needed where empty is itself a legal value — notification, where it means silent — since layerString returns "" for unset and for explicitly empty alike.
 func layerStringSet(key string) (string, bool) {
 	envKey := "CNT_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
@@ -867,7 +853,7 @@ func layerStringSet(key string) (string, bool) {
 }
 
 // layerInt returns the value of a scalar int key and whether it was explicitly set.
-// Priority: env var > user > extra-root > root > system.
+// Priority: env var > user > extra-root > app-root.
 func layerInt(key string) (int, bool) {
 	envKey := "CNT_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
 	if ev := os.Getenv(envKey); ev != "" {

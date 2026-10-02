@@ -223,7 +223,7 @@ func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error
 		}
 	}
 	log.Info("Publishing", "artifact", m.Name, "reference", FullRef(req.Base, repo, tags[0]))
-	return Push(ctx, req.Path, req.Base, repo, tags, annotations, m.Platform.Arch == meta.ArchNone)
+	return Push(ctx, req.Path, req.Base, repo, tags, annotations, m.Platform.Arch)
 }
 
 // checkTagIsFree refuses to displace published content without Force.
@@ -249,9 +249,9 @@ func checkTagIsFree(ctx context.Context, req PublishRequest, m meta.Manifest, re
 
 	occupant := "it"
 	if desc.MediaType == ocispec.MediaTypeImageIndex && m.Platform.Arch != meta.ArchNone {
-		plat, ok := platform()
+		plat, ok := platformFor(m.Platform.Arch)
 		if !ok {
-			return fmt.Errorf("%w: this build cannot publish from its own architecture", ErrUnsupportedPlatform)
+			return unpublishableArch(m.Name, m.Platform.Arch)
 		}
 		if _, taken := readIndexEntries(ctx, repository, tag)[platformKey(&plat)]; !taken {
 			return nil
@@ -262,12 +262,20 @@ func checkTagIsFree(ctx context.Context, req PublishRequest, m meta.Manifest, re
 		FullRef(req.Base, repo, tag), occupant)
 }
 
-// Push uploads artifactPath to "<base>/<repo>" under every tag, the first canonical.
+// unpublishableArch refuses an artifact built for an architecture no index
+// child is published for.
+func unpublishableArch(what, arch string) error {
+	return fmt.Errorf("%w: %s is built for %q; only amd64, arm64 and noarch are published",
+		ErrUnsupportedPlatform, what, arch)
+}
+
+// Push uploads artifactPath, built for arch, to "<base>/<repo>" under every tag,
+// the first canonical.
 //
 //   - annotations are carried, never read: policy lives in [Publish].
-//   - archIndependent false: the manifest joins the tag's OCI image index, merged with what is published.
-//   - archIndependent true (noarch): tagged directly, since an index over one child would imply otherwise.
-func Push(ctx context.Context, artifactPath, base, repo string, tags []string, annotations map[string]string, archIndependent bool) (ocispec.Descriptor, error) {
+//   - amd64 or arm64: the manifest joins the tag's OCI image index as that platform, merged with what is published.
+//   - noarch: tagged directly, since an index over one child would imply otherwise.
+func Push(ctx context.Context, artifactPath, base, repo string, tags []string, annotations map[string]string, arch string) (ocispec.Descriptor, error) {
 	if len(tags) == 0 {
 		return ocispec.Descriptor{}, fmt.Errorf("no tags to push %s under", artifactPath)
 	}
@@ -286,11 +294,12 @@ func Push(ctx context.Context, artifactPath, base, repo string, tags []string, a
 	}
 	ctx = withPacer(ctx, newPacer(profile.MinMutationGap))
 	ctx = withThroughputGuard(ctx, newThroughputGuard(profile))
+	archIndependent := arch == meta.ArchNone
 	var plat ocispec.Platform
 	if !archIndependent {
 		var ok bool
-		if plat, ok = platform(); !ok {
-			return ocispec.Descriptor{}, fmt.Errorf("%w: this build cannot publish from its own architecture", ErrUnsupportedPlatform)
+		if plat, ok = platformFor(arch); !ok {
+			return ocispec.Descriptor{}, unpublishableArch(artifactPath, arch)
 		}
 	}
 

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -255,8 +256,9 @@ const defaultStopGrace = 5 * time.Second
 //   - stdin is optional. nil means no stdin.
 //   - stdout and stderr redirect the streams, and nil discards them. Both are teed to an internal buffer, so ApptainerError.Output is filled on failure either way.
 //   - procEnv is extra KEY=VALUE settings for apptainer's own environment, on top of the parent's. This is how APPTAINERENV_* reaches the container.
+//   - unsetEnv names variables removed from the inherited environment before procEnv is applied.
 //   - stopGrace is how long apptainer gets after a cancel's SIGTERM before it is killed. Zero means defaultStopGrace.
-func runApptainerWithOutput(ctx context.Context, bin Bin, op string, imagePath string, capture bool, stdin io.Reader, stdout, stderr io.Writer, procEnv []string, stopGrace time.Duration, args ...string) error {
+func runApptainerWithOutput(ctx context.Context, bin Bin, op string, imagePath string, capture bool, stdin io.Reader, stdout, stderr io.Writer, procEnv, unsetEnv []string, stopGrace time.Duration, args ...string) error {
 	var cmd *exec.Cmd
 	if dir, ok := libexec.Dir(); bin.Libexec && ok {
 		cmd = exec.CommandContext(ctx, "bash", append([]string{"-c", libexecActivationScript(dir), bin.Path}, args...)...)
@@ -278,6 +280,17 @@ func runApptainerWithOutput(ctx context.Context, bin Bin, op string, imagePath s
 			}
 		}
 		env = filteredEnv
+	}
+
+	if len(unsetEnv) > 0 {
+		kept := make([]string, 0, len(env))
+		for _, e := range env {
+			key, _, _ := strings.Cut(e, "=")
+			if !slices.Contains(unsetEnv, key) {
+				kept = append(kept, e)
+			}
+		}
+		env = kept
 	}
 
 	// Apptainer needs unsquashfs/mksquashfs in PATH (e.g. to extract a .sqf

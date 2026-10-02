@@ -23,8 +23,6 @@ var (
 	commonEnvVars = []string{
 		"LC_ALL=C.UTF-8",
 		"LANG=C.UTF-8",
-		"CURL_CA_BUNDLE=", // Unset CA bundle to avoid host ENV interference
-		"SSL_CERT_FILE=",  // Unset SSL cert file to avoid host ENV interference
 	}
 )
 
@@ -47,6 +45,7 @@ type SetupResult struct {
 	OverlayArgs    []string          // Overlay paths with :ro/:rw suffixes
 	EnvList        []string          // Complete environment variable list
 	EnvNotes       map[string]string // Environment variable notes for display
+	UnsetEnv       []string          // Host variables removed from the launch environment
 	Diagnostics    []Diagnostic      // Non-fatal messages for callers to present or log
 	BindPaths      []string          // Deduplicated bind paths
 	Fakeroot       bool              // Final fakeroot setting (may be auto-enabled)
@@ -157,6 +156,7 @@ func Setup(cfg SetupConfig) (*SetupResult, error) {
 		OverlayArgs:    overlayArgs,
 		EnvList:        envList,
 		EnvNotes:       envNotes,
+		UnsetEnv:       hostEnvUnset,
 		Diagnostics:    diagnostics,
 		BindPaths:      bindPaths,
 		Fakeroot:       cfg.Fakeroot,

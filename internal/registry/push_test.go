@@ -264,6 +264,29 @@ func TestPublishTagsANoarchArtifactDirectly(t *testing.T) {
 	}
 }
 
+// The index child takes the architecture the artifact records, not the pushing
+// machine's, so one machine can publish every architecture's build.
+func TestPublishUsesTheArtifactsArchitecture(t *testing.T) {
+	requireSquashfsTools(t)
+	other := "arm64"
+	if nativePlatform(t).Architecture == other {
+		other = "amd64"
+	}
+	source, m := packImage(t, imageSpec{
+		name: "grch38/genome/gencode49", typ: catalog.TypeData,
+		arch: other, recipe: "#!/bin/bash\n",
+	})
+	f := newFakeRegistry(t)
+
+	if _, err := Publish(context.Background(), PublishRequest{Path: source, Base: f.base()}); err != nil {
+		t.Fatal(err)
+	}
+	repo, tag, _ := PullReference(m.Type, m.Name)
+	if got := f.indexPlatformsAt(t, repo, tag); !slices.Equal(got, []string{"linux/" + other}) {
+		t.Errorf("index carries %v, want only linux/%s", got, other)
+	}
+}
+
 // Pushing this architecture must not unpublish another one that was already
 // there: the whole point of the index is that one tag serves both.
 func TestPublishPreservesAnotherArchitecture(t *testing.T) {
@@ -296,7 +319,7 @@ func TestPublishPreservesAnotherArchitecture(t *testing.T) {
 
 func TestPushRefusesAWritableOverlay(t *testing.T) {
 	f := newFakeRegistry(t)
-	_, err := Push(context.Background(), "/images/dev.img", f.base(), "dev", []string{"1.0"}, nil, false)
+	_, err := Push(context.Background(), "/images/dev.img", f.base(), "dev", []string{"1.0"}, nil, "amd64")
 	if err == nil {
 		t.Fatal("a writable overlay was pushed")
 	}
@@ -307,7 +330,7 @@ func TestPushRefusesAWritableOverlay(t *testing.T) {
 
 func TestPushRefusesNoTags(t *testing.T) {
 	f := newFakeRegistry(t)
-	if _, err := Push(context.Background(), "/images/x.sqf", f.base(), "x", nil, nil, false); err == nil {
+	if _, err := Push(context.Background(), "/images/x.sqf", f.base(), "x", nil, nil, "amd64"); err == nil {
 		t.Fatal("a push with no tags was accepted")
 	}
 }

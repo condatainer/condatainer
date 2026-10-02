@@ -122,6 +122,33 @@ func TestStageMetadataWritesBothDocuments(t *testing.T) {
 	}
 }
 
+// SOURCE_DATE_EPOCH sets build.created, so builds on several machines share a
+// date tag; a malformed value stops the build.
+func TestStageMetadataTakesSourceDateEpoch(t *testing.T) {
+	t.Setenv(EnvSourceDateEpoch, "1759276800")
+	b := newPackObject(t, catalog.TypeApp)
+	dir, err := stageMetadata(t.Context(), b)
+	if err != nil {
+		t.Fatalf("stageMetadata: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, meta.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m meta.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Unix(1759276800, 0).UTC(); !m.Build.Created.Equal(want) {
+		t.Errorf("build.created = %s, want %s", m.Build.Created, want)
+	}
+
+	t.Setenv(EnvSourceDateEpoch, "yesterday")
+	if _, err := stageMetadata(t.Context(), newPackObject(t, catalog.TypeApp)); err == nil {
+		t.Error("a malformed SOURCE_DATE_EPOCH was accepted")
+	}
+}
+
 // Metadata that would not survive a read back must stop the build while there is
 // still no image, not after one is installed and read back as broken.
 func TestStageMetadataRejectsInvalidMetadata(t *testing.T) {

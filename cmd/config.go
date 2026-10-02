@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	initLayer string // user, app-root, extra-root, system, or a custom path
+	initLayer string // user, app-root, extra-root, or a custom path
 	getLayer  string // target layer for config get (single-layer read)
 	setLayer  string // target layer for config set/append/prepend/remove
 )
@@ -28,7 +28,6 @@ var configKeyDefs = map[string]bool{
 	"logs_dir":                 false,
 	"default_distro":           false,
 	"scheduler.submit_job":     false,
-	"sources":                  true,
 	"autoload_gpu":             false,
 	"nested_run":               false,
 	"helper.notification":      false,
@@ -58,6 +57,13 @@ var configKeyDefs = map[string]bool{
 
 func isArrayKey(key string) bool { return configKeyDefs[key] }
 
+// refuseSourcesKey exits when key is `sources`, which `config source` manages.
+func refuseSourcesKey(key string) {
+	if key == "sources" {
+		ExitWithError("sources are managed with `condatainer config source add|move|remove`")
+	}
+}
+
 func isBoolKey(key string) bool {
 	switch key {
 	case "scheduler.submit_job", "scheduler.proxy_perjob", "scheduler.slurm.mem", "autoload_gpu",
@@ -69,7 +75,10 @@ func isBoolKey(key string) bool {
 
 // modifyArrayConfig reads the current slice for key from the target config file,
 // applies modify, and writes the result back. Returns the config path written.
+// modifyArrayConfig applies modify to key's list in the writable config file
+// and returns that file's layer.
 func modifyArrayConfig(key string, modify func([]string) []string) (string, error) {
+	refuseSourcesKey(key)
 	if !isArrayKey(key) {
 		var arrayKeys []string
 		for k, isArr := range configKeyDefs {
@@ -81,7 +90,7 @@ func modifyArrayConfig(key string, modify func([]string) []string) (string, erro
 		return "", fmt.Errorf("'%s' is not an array config key; array keys: %s",
 			key, strings.Join(arrayKeys, ", "))
 	}
-	configPath, _, fellBackFrom, err := config.ResolveWritableConfigPathVerbose(setLayer)
+	configPath, layer, fellBackFrom, err := config.ResolveWritableConfigPathVerbose(setLayer)
 	if err != nil {
 		return "", err
 	}
@@ -91,9 +100,9 @@ func modifyArrayConfig(key string, modify func([]string) []string) (string, erro
 	current := config.ReadConfigSliceKey(configPath, key)
 	updated := modify(current)
 	if len(updated) == 0 {
-		return configPath, config.DeleteConfigKey(configPath, key)
+		return layer, config.DeleteConfigKey(configPath, key)
 	}
-	return configPath, config.UpdateConfigKey(configPath, key, updated)
+	return layer, config.UpdateConfigKey(configPath, key, updated)
 }
 
 func arrayKeyCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -108,8 +117,6 @@ func arrayKeyCompletion(cmd *cobra.Command, args []string, toComplete string) ([
 	}
 	if len(args) == 1 {
 		switch args[0] {
-		case "sources":
-			return nil, cobra.ShellCompDirectiveDefault
 		}
 	}
 	return nil, cobra.ShellCompDirectiveNoFileComp
@@ -188,10 +195,6 @@ func configKeysCompletion(cmd *cobra.Command, args []string, toComplete string) 
 	}
 	if len(args) == 1 {
 		// Second arg: complete values based on the key
-		// sources entries are name=base pairs; allow free-form input
-		if args[0] == "sources" {
-			return nil, cobra.ShellCompDirectiveDefault
-		}
 		return configValueCompletion(args[0]), cobra.ShellCompDirectiveNoFileComp
 	}
 	return nil, cobra.ShellCompDirectiveNoFileComp
@@ -252,8 +255,7 @@ func configValueCompletion(key string) []string {
 const configLayersHelp = `Config file layers (-l, --layer):
   u, user        ~/.config/condatainer/config.yaml (standard/home install)
   r, app-root    <install-dir>/config.yaml         (dedicated install, or CNT_ROOT)
-  e, extra-root  $CNT_EXTRA_ROOT/config.yaml       (group, needs CNT_EXTRA_ROOT)
-  s, system      /etc/condatainer/config.yaml`
+  e, extra-root  $CNT_EXTRA_ROOT/config.yaml       (group, needs CNT_EXTRA_ROOT)`
 
 var configCmd = &cobra.Command{
 	Use:   "config",
@@ -266,8 +268,7 @@ Setting priority (highest to lowest):
   3. User config file (~/.config/condatainer/config.yaml)
   4. Extra-root config ($CNT_EXTRA_ROOT/config.yaml, group layer)
   5. App-root config (<install-dir>/config.yaml, in dedicated folder or CNT_ROOT set)
-  6. System config file (/etc/condatainer/config.yaml)
-  7. Defaults
+  6. Defaults
 
 Data directory priority — reads go nearest-first, writes furthest-first:
 
@@ -569,6 +570,10 @@ var configGetCmd = &cobra.Command{
 	ValidArgsFunction: configKeysCompletion,
 	Run: func(cmd *cobra.Command, args []string) {
 		key := args[0]
+		if key == "sources" {
+			printSourcesKey()
+			return
+		}
 
 		// Layer-specific read
 		if getLayer != "" {
@@ -650,6 +655,7 @@ Time format (for build.time):
 			ExitWithError("value cannot be empty")
 		}
 
+		refuseSourcesKey(key)
 		// configKeyDefs is the single source of truth for known keys
 		knownKeys := configKeyDefs
 
@@ -668,7 +674,7 @@ Time format (for build.time):
 		}
 
 		if _, known := knownKeys[key]; !known {
-			utils.PrintWarning("Warning: '%s' is not a standard config key", key)
+			utils.PrintWarning("'%s' is not a standard config key", key)
 		}
 
 		// Validate value based on key type
@@ -784,8 +790,7 @@ Time format (for build.time):
 			ExitWithError("Failed to save config: %v", err)
 		}
 
-		utils.PrintSuccess("Set %s = %s", key, value)
-		utils.PrintNote("Config saved to: %s (%s)", configPath, layerType)
+		utils.PrintMessage("Set %s = %s (%s layer)", key, value, utils.StyleName(layerType))
 	},
 }
 
@@ -854,23 +859,14 @@ Without -l, the layer follows the install location:
 		// Check if config already exists
 		if _, err := os.Stat(configPath); err == nil {
 			utils.PrintWarning("Config file already exists: %s", configPath)
-			shouldOverwrite := false
-			if utils.ShouldAnswerYes() {
-				shouldOverwrite = true
-			} else {
-				fmt.Print("Overwrite? [y/N]: ")
-				response, readErr := utils.ReadLineContext(cmd.Context())
-				shouldOverwrite = readErr == nil && (response == "y" || response == "yes")
-			}
-			if !shouldOverwrite {
-				utils.PrintNote("Cancelled")
+			if !utils.ShouldAnswerYes() && !utils.Confirm(cmd.Context(), os.Stdout, "Overwrite? [y/N]: ") {
 				return
 			}
 		}
 
 		// lowerLayersFor returns loaded config layers that are lower priority than loc.
 		// Keys already set in these layers will be skipped when saving.
-		layerOrder := []string{"user", "extra-root", "app-root", "system"}
+		layerOrder := []string{"user", "extra-root", "app-root"}
 		lowerLayersFor := func(loc string) []config.ConfigLayerInfo {
 			cutIdx := slices.Index(layerOrder, loc) + 1
 			var result []config.ConfigLayerInfo
@@ -900,8 +896,7 @@ Without -l, the layer follows the install location:
 			ExitWithError("Failed to save config: %v", err)
 		}
 
-		utils.PrintSuccess("Config file created")
-		fmt.Printf("  Location: %s (%s)\n", configPath, layerType)
+		utils.PrintMessage("Created %s (%s layer)", configPath, utils.StyleName(layerType))
 
 		// Record the default distro now, from whichever source recommends one.
 		// It is written once and never revised, so the container root stays put.
@@ -1049,7 +1044,7 @@ var configAppendCmd = &cobra.Command{
 	Long: `Append a value to an array config key (lowest search priority).
 
 ` + configLayersHelp,
-	Example:           `  condatainer config append sources lab=/shared/lab/recipes`,
+	Example:           `  condatainer config append bind /scratch`,
 	Args:              cobra.ExactArgs(2),
 	ValidArgsFunction: arrayKeyCompletion,
 	SilenceUsage:      true,
@@ -1059,7 +1054,7 @@ var configAppendCmd = &cobra.Command{
 			ExitWithError("value cannot be empty")
 		}
 		moved := false
-		configPath, err := modifyArrayConfig(key, func(cur []string) []string {
+		layer, err := modifyArrayConfig(key, func(cur []string) []string {
 			out := make([]string, 0, len(cur))
 			for _, v := range cur {
 				if v == value {
@@ -1074,11 +1069,10 @@ var configAppendCmd = &cobra.Command{
 			ExitWithError("%v", err)
 		}
 		if moved {
-			utils.PrintSuccess("Moved %s to end of %s", value, key)
+			utils.PrintMessage("Moved %s to the end of %s (%s layer)", value, key, utils.StyleName(layer))
 		} else {
-			utils.PrintSuccess("Appended %s to %s", value, key)
+			utils.PrintMessage("Appended %s to %s (%s layer)", value, key, utils.StyleName(layer))
 		}
-		utils.PrintNote("Config saved to: %s", configPath)
 	},
 }
 
@@ -1088,7 +1082,7 @@ var configPrependCmd = &cobra.Command{
 	Long: `Prepend a value to an array config key (highest search priority).
 
 ` + configLayersHelp,
-	Example:           `  condatainer config prepend sources lab=/shared/lab/recipes`,
+	Example:           `  condatainer config prepend channels bioconda`,
 	Args:              cobra.ExactArgs(2),
 	ValidArgsFunction: arrayKeyCompletion,
 	SilenceUsage:      true,
@@ -1098,7 +1092,7 @@ var configPrependCmd = &cobra.Command{
 			ExitWithError("value cannot be empty")
 		}
 		moved := false
-		configPath, err := modifyArrayConfig(key, func(cur []string) []string {
+		layer, err := modifyArrayConfig(key, func(cur []string) []string {
 			out := make([]string, 0, len(cur))
 			for _, v := range cur {
 				if v == value {
@@ -1113,11 +1107,10 @@ var configPrependCmd = &cobra.Command{
 			ExitWithError("%v", err)
 		}
 		if moved {
-			utils.PrintSuccess("Moved %s to front of %s", value, key)
+			utils.PrintMessage("Moved %s to the front of %s (%s layer)", value, key, utils.StyleName(layer))
 		} else {
-			utils.PrintSuccess("Prepended %s to %s", value, key)
+			utils.PrintMessage("Prepended %s to %s (%s layer)", value, key, utils.StyleName(layer))
 		}
-		utils.PrintNote("Config saved to: %s", configPath)
 	},
 }
 
@@ -1129,36 +1122,36 @@ var configRemoveCmd = &cobra.Command{
 
 ` + configLayersHelp,
 	Example: `  condatainer config remove build.system_apptainer
-  condatainer config remove sources lab=/shared/lab/recipes`,
+  condatainer config remove bind /scratch`,
 	Args:              cobra.RangeArgs(1, 2),
 	ValidArgsFunction: arrayRemoveValueCompletion,
 	SilenceUsage:      true,
 	Run: func(cmd *cobra.Command, args []string) {
 		key := args[0]
+		refuseSourcesKey(key)
 		if len(args) == 1 {
 			// Scalar removal: unset the key entirely
 			if isArrayKey(key) {
 				ExitWithError("'%s' is an array key; specify a value to remove: config remove %s <value>", key, key)
 			}
-			configPath, _, err := config.ResolveWritableConfigPath(setLayer)
+			configPath, layer, err := config.ResolveWritableConfigPath(setLayer)
 			if err != nil {
 				ExitWithError("%v", err)
 			}
 			if config.ReadConfigKey(configPath, key) == "" {
-				utils.PrintWarning("%s is not set in %s", key, configPath)
+				utils.PrintWarning("%s is not set in the %s layer", key, utils.StyleName(layer))
 				return
 			}
 			if err := config.DeleteConfigKey(configPath, key); err != nil {
 				ExitWithError("%v", err)
 			}
-			utils.PrintSuccess("Removed %s from config", key)
-			utils.PrintNote("Config saved to: %s", configPath)
+			utils.PrintMessage("Removed %s (%s layer)", key, utils.StyleName(layer))
 			return
 		}
 		// Array removal
 		value := args[1]
 		removed := false
-		configPath, err := modifyArrayConfig(key, func(cur []string) []string {
+		layer, err := modifyArrayConfig(key, func(cur []string) []string {
 			var out []string
 			for _, v := range cur {
 				if v == value {
@@ -1173,22 +1166,21 @@ var configRemoveCmd = &cobra.Command{
 			ExitWithError("%v", err)
 		}
 		if removed {
-			utils.PrintSuccess("Removed %s from %s", value, key)
-			utils.PrintNote("Config saved to: %s", configPath)
+			utils.PrintMessage("Removed %s from %s (%s layer)", value, key, utils.StyleName(layer))
 		} else {
-			utils.PrintWarning("%s not found in %s", value, key)
+			utils.PrintWarning("%s not found in %s (%s layer)", value, key, utils.StyleName(layer))
 		}
 	},
 }
 
 func init() {
 	// Add flags
-	configInitCmd.Flags().StringVarP(&initLayer, "layer", "l", "", "Config layer to create in: u/user, r/app-root, e/extra-root, s/system")
-	configGetCmd.Flags().StringVarP(&getLayer, "layer", "l", "", "Read only this config layer: u/user, r/app-root, e/extra-root, s/system")
-	configSetCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, r/app-root, e/extra-root, s/system")
-	configAppendCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, r/app-root, e/extra-root, s/system")
-	configPrependCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, r/app-root, e/extra-root, s/system")
-	configRemoveCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, r/app-root, e/extra-root, s/system")
+	configInitCmd.Flags().StringVarP(&initLayer, "layer", "l", "", "Config layer to create in: u/user, e/extra-root, r/app-root")
+	configGetCmd.Flags().StringVarP(&getLayer, "layer", "l", "", "Read only this config layer: u/user, e/extra-root, r/app-root")
+	configSetCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/app-root")
+	configAppendCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/app-root")
+	configPrependCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/app-root")
+	configRemoveCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/app-root")
 
 	// Add subcommands
 	configListCmd.Flags().BoolVar(&showOrigin, "origin", false, "Tag each value with the layer or environment variable that sets it")

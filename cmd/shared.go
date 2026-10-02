@@ -482,13 +482,19 @@ func completeOverlayArg(cmd *cobra.Command, args []string, toComplete string) ([
 	return overlaySuggestions(true, true, toComplete)
 }
 
-// overlaySuggestions returns overlay suggestions including installed overlays and local files
+// overlaySuggestions completes installed overlays, with the default distro's
+// short forms of OS overlays, and local overlay files when includeImg.
+func overlaySuggestions(includeData bool, includeImg bool, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return overlayChoices(includeData, includeImg, true, toComplete)
+}
+
+// overlayChoices is overlaySuggestions, with the short forms only when aliases.
 //
 // Scans unaliased, unlike container.InstalledOverlays: that map's bare-name
 // keys are tied to the ambient config default_distro, which is wrong to
 // suggest while standing in a project that selected a different one.
 // addDistroAliasChoices adds the project-aware aliases instead.
-func overlaySuggestions(includeData bool, includeImg bool, toComplete string) ([]string, cobra.ShellCompDirective) {
+func overlayChoices(includeData, includeImg, aliases bool, toComplete string) ([]string, cobra.ShellCompDirective) {
 	scan, err := image.ScanOverlays(image.ScanOptions{})
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
@@ -504,7 +510,9 @@ func overlaySuggestions(includeData bool, includeImg bool, toComplete string) ([
 		}
 	}
 
-	addDistroAliasChoices(installed, choices, toComplete)
+	if aliases {
+		addDistroAliasChoices(installed, choices, toComplete)
+	}
 
 	for _, candidate := range localOverlaySuggestions(toComplete, includeImg) {
 		choices[candidate] = struct{}{}

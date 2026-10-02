@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -19,9 +21,36 @@ const (
 // than a failure: the caller has a fallback this package must not know about.
 var ErrNotProvided = errors.New("catalog: no source provides this")
 
-// Spec is one configured source: a local handle and a base. This is how config
-// gets in without being imported.
-type Spec struct{ Name, Base string }
+// ErrUnreadable reports a source that refused a read, or has nothing at the
+// path: a wrong URL or directory, or a private repository read without a token.
+var ErrUnreadable = errors.New("catalog: source refused the read or has nothing there")
+
+// ErrTokenRefused reports that a source refused its stored token, and refused
+// the read without it too.
+var ErrTokenRefused = errors.New("catalog: the stored token was refused")
+
+// Spec is one configured source: a local handle, a base, and the token stored
+// for it, if any. This is how config gets in without being imported.
+type Spec struct {
+	Name, Base string
+	Token      *Token
+}
+
+// Token is a recipe-source token and where it is stored. The secret is
+// unexported so printing a Token or a Spec never shows it.
+type Token struct {
+	Key    string // the credential key it is stored under
+	Layer  string // the config layer that holds it
+	secret string
+}
+
+// NewToken wraps a secret with the key and layer it was found under.
+func NewToken(secret, key, layer string) *Token {
+	return &Token{Key: key, Layer: layer, secret: secret}
+}
+
+// String names the token by where it is stored, never by its value.
+func (t *Token) String() string { return fmt.Sprintf("%s (%s layer)", t.Key, t.Layer) }
 
 // Descriptor is a source's source.json.
 type Descriptor struct {
@@ -38,13 +67,10 @@ type Descriptor struct {
 	OCI           OCI    `json:"oci,omitzero"`
 }
 
-// OCI is how artifacts belonging to one source are published and fetched.
-// Push is singular because replication is an explicit publishing operation;
-// Pull is ordered so a site-local mirror can precede an external registry.
+// OCI is the registry a source's artifacts are published to and pulled from.
 type OCI struct {
-	Push     string   `json:"push,omitempty"`
-	Pull     []string `json:"pull,omitempty"`
-	Audience string   `json:"audience,omitempty"`
+	Registry string `json:"registry,omitempty"`
+	Audience string `json:"audience,omitempty"`
 }
 
 // Source is one collection of recipes and helpers.
@@ -63,6 +89,12 @@ type Source struct {
 	// Err is set when the source could not be reached and had nothing cached.
 	// It does not remove the source from the catalog, so list can say so.
 	Err error
+
+	// Token is what reads send, or nil for a source read without one.
+	Token *Token
+	// TokenRefused is set when the source refused Token and answered without it.
+	// Later reads skip the token; reporting it is the caller's.
+	TokenRefused bool
 
 	b backend
 
@@ -110,6 +142,7 @@ func Open(ctx context.Context, specs []Spec, cache Cache) (Catalog, error) {
 		}
 		s := &Source{Name: spec.Name, Base: spec.Base}
 		if isURL(spec.Base) {
+			s.Token = spec.Token
 			s.b = &httpBackend{src: s, cache: cache}
 		} else {
 			s.b = &dirBackend{src: s}
@@ -118,6 +151,29 @@ func Open(ctx context.Context, specs []Spec, cache Cache) (Catalog, error) {
 		cat = append(cat, s)
 	}
 	return cat, nil
+}
+
+// Probe checks that spec can be read as given, without a cache: a directory
+// needs its recipes/ directory, an HTTP source its index. The Source returned
+// carries its descriptor and TokenRefused.
+func Probe(ctx context.Context, spec Spec) (*Source, error) {
+	s := &Source{Name: spec.Name, Base: spec.Base}
+	if !isURL(spec.Base) {
+		if info, err := os.Stat(filepath.Join(spec.Base, recipesDir)); err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("%w: %s has no %s directory", ErrUnreadable, spec.Base, recipesDir)
+		}
+		s.b = &dirBackend{src: s}
+		s.loadDescriptor(ctx)
+		return s, nil
+	}
+	s.Token = spec.Token
+	h := &httpBackend{src: s}
+	s.b = h
+	if _, err := h.entries(ctx); err != nil {
+		return nil, err
+	}
+	s.loadDescriptor(ctx)
+	return s, nil
 }
 
 // loadDescriptor reads source.json. A source without one still works — a plain
@@ -138,7 +194,7 @@ func (s *Source) loadDescriptor(ctx context.Context) {
 
 // ParseDescriptor decodes and validates source.json.
 //   - A descriptor with no schema field (zero) is accepted; a non-zero unsupported schema is rejected.
-//   - OCI endpoints are normalized to registry/repository roots.
+//   - The OCI registry is normalized to a registry/repository root.
 func ParseDescriptor(data []byte) (Descriptor, error) {
 	var desc Descriptor
 	if err := json.Unmarshal(data, &desc); err != nil {
@@ -182,27 +238,13 @@ func (o *OCI) normalize() error {
 	if o.Audience != "public" && o.Audience != "restricted" {
 		return fmt.Errorf("catalog: OCI audience must be public or restricted, got %q", o.Audience)
 	}
-
-	declared := strings.TrimSpace(o.Push) != "" || len(o.Pull) != 0
-	if !declared {
+	if strings.TrimSpace(o.Registry) == "" {
+		o.Registry = ""
 		return nil
 	}
-	if strings.TrimSpace(o.Push) == "" {
-		return errors.New("catalog: OCI endpoints require push")
-	}
-	if len(o.Pull) == 0 {
-		return errors.New("catalog: OCI endpoints require at least one pull endpoint")
-	}
-
 	var err error
-	if o.Push, err = normalizeOCIEndpoint(o.Push); err != nil {
-		return fmt.Errorf("catalog: OCI push endpoint: %w", err)
-	}
-	for i := range o.Pull {
-		o.Pull[i], err = normalizeOCIEndpoint(o.Pull[i])
-		if err != nil {
-			return fmt.Errorf("catalog: OCI pull endpoint %d: %w", i+1, err)
-		}
+	if o.Registry, err = normalizeOCIEndpoint(o.Registry); err != nil {
+		return fmt.Errorf("catalog: OCI registry: %w", err)
 	}
 	return nil
 }

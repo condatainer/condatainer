@@ -9,16 +9,24 @@
   - `sources`: merged across layers, deduplicated, user entries first.
   - `bind`: merged the same way, so a site or lab adds binds and a user adds more.
   - `channels`: not merged. The highest-priority file that sets it wins.
-- Priority, highest first: flags, `CNT_*`, user, extra-root, app-root, system, defaults.
+- Priority, highest first: flags, `CNT_*`, user, extra-root, app-root, defaults.
+- There is no `/etc` layer. On a cluster `/etc` is per node, so a value there would differ between the login node and a job.
 
 ## Recipe sources
 
 - `sources` is an ordered list. Each entry is a single-key mapping, `- lab: /shared/lab/recipes`.
   - Order and handle are both load-bearing, and a plain map gives neither.
-  - `CNT_SOURCES` overrides the whole list.
+- `config source` is the only way the list is edited. The generic array commands refuse `sources`.
+  - Adding a source reads it first, so a wrong URL or a missing token is caught before anything is saved.
+  - A token goes to the layer's `credentials.json`, never `config.yaml`, which a shared layer's users must all read.
+  - There is no environment override. One would bypass layers, the default and the token store.
+- Placement is within a layer only. Layer order is the precedence everyone in a group shares, and a person must not reorder a group's list from their own.
+  - A new source goes last, so adding one never changes what already resolves.
 - The public `cnt` collection is a default value, not a fallback the resolver reaches for.
   - It is appended, so every configured entry outranks it.
   - A site that defines `cnt` replaces it. That is how the handle points elsewhere without rewriting the `#DEP:` lines that name it.
+  - Moving the default writes it into a layer, after which it is an ordinary entry. Removing that entry returns the default.
+- Tokens are attached only when the catalog opens. `Global.Sources` is printed by `config list` and must never carry one.
 - An unreachable source is reported, not fatal.
   - The rest still answer, and a compute node with no route out is ordinary.
   - It cannot be silent either. Sources are first-wins, so an unreachable one promotes the next source's recipe or falls through to conda, and the build looks normal.

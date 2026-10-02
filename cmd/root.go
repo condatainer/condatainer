@@ -94,9 +94,11 @@ var rootCmd = &cobra.Command{
 			utils.PrintHint("Run `condatainer config init`.")
 		}
 
-		// Everything past config management expands bare names against the
-		// default distro; without one there is nothing to run.
-		if !isCompleteRequest && !isConfigCommand && cmdName != "help" && !strings.HasPrefix(cmdName, "_") &&
+		// Everything past config management and the registry expands bare names
+		// against the default distro; without one there is nothing to run. The
+		// registry takes full names only.
+		isRegistryCommand := strings.HasPrefix(cmd.CommandPath(), "condatainer registry")
+		if !isCompleteRequest && !isConfigCommand && !isRegistryCommand && cmdName != "help" && !strings.HasPrefix(cmdName, "_") &&
 			config.ResolvedDefaultDistro() == "" {
 			ExitWithError("default_distro is not set. Run `condatainer config init`, or `condatainer config set default_distro <name>`")
 		}

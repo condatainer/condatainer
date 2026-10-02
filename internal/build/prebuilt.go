@@ -34,11 +34,9 @@ const (
 )
 
 // prebuiltCandidate is a published artifact that matches the local recipe.
-// next is the index of the pull endpoint after the one it came from.
 type prebuiltCandidate struct {
 	endpoint    string
 	repo        string
-	next        int
 	equiv       meta.KeyRef
 	desc        ocispec.Descriptor
 	annotations map[string]string
@@ -73,7 +71,7 @@ type prebuiltMiss int
 const (
 	missNone        prebuiltMiss = iota // nothing published, or none for this platform
 	missMismatch                        // published from a different recipe
-	missUnavailable                     // an endpoint could not be reached
+	missUnavailable                     // the registry could not be reached
 )
 
 // prebuiltEligible reports whether a prebuilt can apply at all. A Conda build
@@ -81,13 +79,13 @@ const (
 func (b *BuildObject) prebuiltEligible() bool {
 	return !config.Global.Build.SkipPrebuilt && b.buildType != BuildTypeConda &&
 		b.catalogSource != nil && b.catalogSource.DescriptorErr == nil &&
-		len(b.catalogSource.Desc.OCI.Pull) > 0
+		b.catalogSource.Desc.OCI.Registry != ""
 }
 
-// findPrebuilt reads the pull endpoints from start, in order and by metadata
-// alone, and returns the first artifact made from the local recipe. Every other
+// findPrebuilt reads the source's registry by metadata alone, and returns the
+// artifact published there if it was made from the local recipe. Every other
 // outcome is a miss; a mismatch is warned about here.
-func (b *BuildObject) findPrebuilt(ctx context.Context, start int) (prebuiltCandidate, bool, prebuiltMiss, error) {
+func (b *BuildObject) findPrebuilt(ctx context.Context) (prebuiltCandidate, bool, prebuiltMiss, error) {
 	want, err := b.prebuiltEquivalence(ctx)
 	if err != nil {
 		return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot derive expected equivalence for %s: %w", b.spec.Image.Name, err)
@@ -98,37 +96,30 @@ func (b *BuildObject) findPrebuilt(ctx context.Context, start int) (prebuiltCand
 	}
 
 	log := logging.FromContext(ctx)
-	miss := missNone
-	endpoints := b.catalogSource.Desc.OCI.Pull
-	for i := start; i < len(endpoints); i++ {
-		endpoint := endpoints[i]
-		desc, annotations, err := resolvePrebuilt(ctx, endpoint, repo, tag)
-		if err != nil {
-			switch {
-			case errors.Is(err, registry.ErrNotFound), errors.Is(err, registry.ErrUnsupportedPlatform),
-				closedDoor(ctx, err, endpoint):
-				continue
-			case errors.Is(err, registry.ErrUnavailable):
-				log.Debug("prebuilt unavailable", "name", b.spec.Image.Name, "err", err)
-				miss = missUnavailable
-				continue
-			default:
-				return prebuiltCandidate{}, false, miss, fmt.Errorf("cannot use prebuilt %s from %s: %w", b.spec.Image.Name, endpoint, err)
-			}
+	ctx = registry.WithSource(ctx, b.catalogSource.Base)
+	endpoint := b.catalogSource.Desc.OCI.Registry
+	desc, annotations, err := resolvePrebuilt(ctx, endpoint, repo, tag)
+	if err != nil {
+		switch {
+		case errors.Is(err, registry.ErrNotFound), errors.Is(err, registry.ErrUnsupportedPlatform),
+			closedDoor(ctx, err, endpoint):
+			return prebuiltCandidate{}, false, missNone, nil
+		case errors.Is(err, registry.ErrUnavailable):
+			log.Debug("prebuilt unavailable", "name", b.spec.Image.Name, "err", err)
+			return prebuiltCandidate{}, false, missUnavailable, nil
 		}
-		if err := registry.Check(annotations, registry.Want{Name: b.spec.Image.Name}); err != nil {
-			return prebuiltCandidate{}, false, miss, fmt.Errorf("cannot use prebuilt %s from %s: %w", b.spec.Image.Name, endpoint, err)
-		}
-		if got := registry.Equiv(annotations); got != want {
-			log.Warn(fmt.Sprintf("Prebuilt %s at %s was made from a different recipe (prebuilt %s, this recipe %s)",
-				b.spec.Image.Name, endpoint, describePrebuiltKey(got), describePrebuiltKey(want)))
-			miss = max(miss, missMismatch)
-			continue
-		}
-		return prebuiltCandidate{endpoint: endpoint, repo: repo, next: i + 1, equiv: want,
-			desc: desc, annotations: annotations}, true, miss, nil
+		return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot use prebuilt %s from %s: %w", b.spec.Image.Name, endpoint, err)
 	}
-	return prebuiltCandidate{}, false, miss, nil
+	if err := registry.Check(annotations, registry.Want{Name: b.spec.Image.Name}); err != nil {
+		return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot use prebuilt %s from %s: %w", b.spec.Image.Name, endpoint, err)
+	}
+	if got := registry.Equiv(annotations); got != want {
+		log.Warn(fmt.Sprintf("Prebuilt %s at %s was made from a different recipe (prebuilt %s, this recipe %s)",
+			b.spec.Image.Name, endpoint, describePrebuiltKey(got), describePrebuiltKey(want)))
+		return prebuiltCandidate{}, false, missMismatch, nil
+	}
+	return prebuiltCandidate{endpoint: endpoint, repo: repo, equiv: want,
+		desc: desc, annotations: annotations}, true, missNone, nil
 }
 
 // planPrebuilt settles, before anything runs, whether this node pulls a
@@ -145,7 +136,7 @@ func (b *BuildObject) planPrebuilt(ctx context.Context, known bool) error {
 	case !b.prebuiltEligible():
 		b.prebuilt = prebuiltPlan{choice: prebuiltNone}
 	case known:
-		cand, found, miss, err := b.findPrebuilt(ctx, 0)
+		cand, found, miss, err := b.findPrebuilt(ctx)
 		if err != nil {
 			return err
 		}
@@ -161,7 +152,7 @@ func (b *BuildObject) planPrebuilt(ctx context.Context, known bool) error {
 	return nil
 }
 
-// tryPrebuilt installs the planned prebuilt, or looks for one when planning left the node undecided, trying the selected recipe source's ordered pull endpoints.
+// tryPrebuilt installs the planned prebuilt, or looks for one in the selected recipe source's registry when planning left the node undecided.
 //   - The caller already holds the target's producer lock, so pull uses the locked transport entry point and installs atomically into the final pathname.
 //   - A prebuilt made from a different recipe is skipped with a warning.
 func (b *BuildObject) tryPrebuilt(ctx context.Context) (prebuiltResult, error) {
@@ -169,46 +160,42 @@ func (b *BuildObject) tryPrebuilt(ctx context.Context) (prebuiltResult, error) {
 		return false, nil
 	}
 
+	ctx = registry.WithSource(ctx, b.catalogSource.Base)
 	log := logging.FromContext(ctx)
 	cand, found := b.prebuilt.candidate, b.prebuilt.choice == prebuiltPull
-	miss, unavailable := missNone, false
-	for {
-		if !found {
-			var err error
-			if cand, found, miss, err = b.findPrebuilt(ctx, cand.next); err != nil {
-				return false, err
-			}
-			if !found {
-				break
-			}
+	miss := missNone
+	if !found {
+		var err error
+		if cand, found, miss, err = b.findPrebuilt(ctx); err != nil {
+			return false, err
 		}
+	}
+	if found {
 		// Said before the download rather than after it: everything above is
 		// metadata, and the gigabytes start here. Without this the operator
 		// watches a long transfer with nothing saying what is being fetched or
 		// that it has already been checked against the local recipe.
 		log.Info("Prebuilt found and verified", "artifact", b.spec.Image.Name,
 			"endpoint", cand.endpoint, "equivalence", describePrebuiltKey(cand.equiv))
-		if err := pullPrebuilt(ctx, cand.endpoint, cand.repo, cand.desc, cand.annotations, b.tgt.Path); err != nil {
-			switch {
-			case errors.Is(err, registry.ErrNotFound), errors.Is(err, registry.ErrUnsupportedPlatform),
-				closedDoor(ctx, err, cand.endpoint):
-			case errors.Is(err, registry.ErrUnavailable):
-				log.Debug("prebuilt unavailable", "name", b.spec.Image.Name, "err", err)
-				unavailable = true
-			default:
-				return false, fmt.Errorf("cannot pull prebuilt %s from %s: %w", b.spec.Image.Name, cand.endpoint, err)
-			}
-			found = false
-			continue
+		err := pullPrebuilt(ctx, cand.endpoint, cand.repo, cand.desc, cand.annotations, b.tgt.Path)
+		switch {
+		case err == nil:
+			invalidateInstalledOverlays()
+			log.Info("Prebuilt image ready", "kind", "success", "path", b.tgt.Path, "endpoint", cand.endpoint)
+			return true, nil
+		case errors.Is(err, registry.ErrNotFound), errors.Is(err, registry.ErrUnsupportedPlatform),
+			closedDoor(ctx, err, cand.endpoint):
+		case errors.Is(err, registry.ErrUnavailable):
+			log.Debug("prebuilt unavailable", "name", b.spec.Image.Name, "err", err)
+			miss = missUnavailable
+		default:
+			return false, fmt.Errorf("cannot pull prebuilt %s from %s: %w", b.spec.Image.Name, cand.endpoint, err)
 		}
-		invalidateInstalledOverlays()
-		log.Info("Prebuilt image ready", "kind", "success", "path", b.tgt.Path, "endpoint", cand.endpoint)
-		return true, nil
 	}
-	switch {
-	case unavailable || miss == missUnavailable:
+	switch miss {
+	case missUnavailable:
 		log.Warn(fmt.Sprintf("Cannot fetch prebuilt %s, building from the recipe", b.spec.Image.Name))
-	case miss == missMismatch:
+	case missMismatch:
 		log.Info(fmt.Sprintf("Building %s from the recipe", b.spec.Image.Name))
 	default:
 		log.Info(fmt.Sprintf("No prebuilt %s available, building from the recipe", b.spec.Image.Name))

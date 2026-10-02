@@ -63,10 +63,21 @@ Identity is defined in `internal/artifact`.
 - A digest is the OCI content address. It names exact bytes and survives mirroring.
 - An identity says what the artifact is. It comes from the artifact itself, never from the caller.
 - A mirror cannot claim an artifact by asserting metadata about it.
+- An index child's platform is the architecture the artifact records, not the pushing machine's. One machine can publish every architecture's build.
 
 ## Credentials
 
-- Credentials are layered like the rest of config: user, extra-root, app-root, system.
-- A lab installs one shared credential in a shared layer. A person overrides it in the user layer.
-- A more specific key beats a nearer layer, so a personal entry for one repository beats a group's entry for the host.
-- `GITHUB_TOKEN` comes first for `ghcr.io` only. It is unscoped, and CI provides it.
+Storage and lookup are in `internal/credential`. What is particular to registries:
+
+- Two kinds reach a registry: a login, from `registry login`, and a source's registry token, stored with the source by `config source add`.
+- A source token belongs to its source, so removing the source removes it, and nothing a source does touches a login.
+- The order depends on what the request is for:
+  - A build pulling from a source's registry tries that source's token first. It was made for exactly that registry.
+  - Any other read tries the login first, then source tokens in search order.
+  - A push tries the login first. A source token is normally read-only, and a personal write token is what a publisher logs in with.
+- `GITHUB_TOKEN` applies to `ghcr.io` only, after the stored credentials, except a push's source tokens.
+- Late, because a person often sets it for other tools, and early would silently replace the group's credential. CI has no stored credential, so CI still uses it.
+- A refused read moves to the next credential, then to none. A stale or wrong-account credential must not fail a read another one, or none, can do.
+- One warning names each refused credential once a later one answers. When all are refused, the error names them all.
+- Only a 401 moves on. A rate limit can arrive as a 403 and must be waited out, not retried.
+- A push never moves on. It names the credential refused and the key to log in to.

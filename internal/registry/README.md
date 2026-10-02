@@ -63,6 +63,7 @@ Identity is defined in `internal/artifact`.
 - A digest is the OCI content address. It names exact bytes and survives mirroring.
 - An identity says what the artifact is. It comes from the artifact itself, never from the caller.
 - A mirror cannot claim an artifact by asserting metadata about it.
+- An index child's platform is the architecture the artifact records, not the pushing machine's. One machine can publish every architecture's build.
 
 ## Credentials
 

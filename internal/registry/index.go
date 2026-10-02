@@ -18,12 +18,15 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 )
 
-// platform returns the OCI platform of the running machine, used as an index
-// child's platform descriptor.
-func platform() (ocispec.Platform, bool) {
-	switch runtime.GOARCH {
+// platform returns the OCI platform of the running machine.
+func platform() (ocispec.Platform, bool) { return platformFor(runtime.GOARCH) }
+
+// platformFor returns the OCI platform of an index child built for arch, which
+// is published only as amd64 or arm64.
+func platformFor(arch string) (ocispec.Platform, bool) {
+	switch arch {
 	case "amd64", "arm64":
-		return ocispec.Platform{OS: "linux", Architecture: runtime.GOARCH}, true
+		return ocispec.Platform{OS: "linux", Architecture: arch}, true
 	default:
 		return ocispec.Platform{}, false
 	}

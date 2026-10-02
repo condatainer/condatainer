@@ -355,6 +355,26 @@ func (h *HTCondorScheduler) parseResourceSpec(directives []string) (*ResourceSpe
 	return rs, remaining
 }
 
+// htcondorFullEnv returns flags with getenv set to True, so the job gets the
+// whole submit environment. A script's own getenv that asked for less is
+// replaced, and the user is told. A site that refuses getenv = True fails the
+// submission with HTCondor's own message.
+func htcondorFullEnv(flags []string) []string {
+	const full = "getenv = True"
+	rest := make([]string, 0, len(flags)+1)
+	for _, flag := range flags {
+		key, value, ok := strings.Cut(flag, "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "getenv") {
+			rest = append(rest, flag)
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(value), "true") {
+			noteEnvOverride("Your script sets "+strings.TrimSpace(flag), full)
+		}
+	}
+	return append(rest, full)
+}
+
 // CreateScriptWithSpec generates an HTCondor submit description file and wrapper script
 func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) (string, error) {
 	specs := jobSpec.Specs
@@ -458,7 +478,7 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 	fmt.Fprintln(subWriter, "")
 
 	// Write unrecognized flags (RemainingFlags only contains flags not parsed into typed fields)
-	for _, flag := range specs.RemainingFlags {
+	for _, flag := range htcondorFullEnv(specs.RemainingFlags) {
 		fmt.Fprintf(subWriter, "%s\n", flag)
 	}
 

@@ -162,6 +162,7 @@ func Prepare(ctx context.Context, options Options) (*Plan, error) {
 		Bind:       setupResult.BindPaths,
 		Overlay:    setupResult.OverlayArgs,
 		Env:        envList,
+		UnsetEnv:   setupResult.UnsetEnv,
 		Fakeroot:   fakeroot,
 		Additional: setupResult.ApptainerFlags,
 		StopGrace:  options.StopGrace,

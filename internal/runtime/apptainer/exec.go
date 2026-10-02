@@ -16,6 +16,7 @@ type ExecOptions struct {
 	Overlay    []string  // Overlay images to use
 	Fakeroot   bool      // Run with fakeroot
 	Env        []string  // Environment variables to set (format: "KEY=VALUE")
+	UnsetEnv   []string  // Host variable names removed from apptainer's environment, so the container never sees them
 	Additional []string  // Additional flags to pass to apptainer exec
 	Stdin      io.Reader // Custom stdin reader (optional, defaults to os.Stdin)
 	Stdout     io.Writer // Redirect stdout (optional; nil = discard)
@@ -55,7 +56,7 @@ func Exec(ctx context.Context, imagePath string, command []string, opts *ExecOpt
 
 	logging.FromContext(ctx).Debug("executing in container", "image", imagePath, "command", strings.Join(command, " "))
 
-	return runApptainerWithOutput(ctx, opts.Bin, "exec", imagePath, false, opts.Stdin, opts.Stdout, opts.Stderr, envPrefixed(opts.Bin, opts.Env), opts.StopGrace, args...)
+	return runApptainerWithOutput(ctx, opts.Bin, "exec", imagePath, false, opts.Stdin, opts.Stdout, opts.Stderr, envPrefixed(opts.Bin, opts.Env), opts.UnsetEnv, opts.StopGrace, args...)
 }
 
 // envPrefixed rewrites KEY=VALUE settings as APPTAINERENV_KEY=VALUE for the apptainer process's own environment.

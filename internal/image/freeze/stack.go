@@ -258,7 +258,7 @@ func stackedScript(r stackedRun, pack string) string {
 		shellQuote(r.Squashfuse), shellQuote(r.Snapshot), shellQuote(r.Lower), shellQuote(r.Lower))
 	fmt.Fprintf(&b, "%s -f -o %s %s &\nP2=$!\nwaitmnt %s\n",
 		shellQuote(r.Overlayfs),
-		shellQuote("lowerdir="+r.ImageUpper+":"+r.Lower+",upperdir="+r.Upper+",workdir="+r.Work),
+		shellQuote("squash_to_root,lowerdir="+r.ImageUpper+":"+r.Lower+",upperdir="+r.Upper+",workdir="+r.Work),
 		shellQuote(r.Merged), shellQuote(r.Merged))
 	fmt.Fprintf(&b, "cd %s\nsrcs=()\n", shellQuote(r.Merged))
 	for _, s := range r.Sources {

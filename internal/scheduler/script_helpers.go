@@ -267,7 +267,7 @@ func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime
 	}
 	// Per-job proxy: start tunnel back to the submitting login node.
 	if specs != nil && specs.ProxyVia != "" {
-		fmt.Fprintf(w, "condatainer proxy start --via %s 2>/dev/null || true\n", specs.ProxyVia)
+		fmt.Fprintf(w, "%s proxy start --via %s 2>/dev/null || true\n", utils.SelfCommand(), specs.ProxyVia)
 	}
 }
 

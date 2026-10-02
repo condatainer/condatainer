@@ -554,10 +554,13 @@ func (s *SlurmScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string
 	// Write shebang
 	fmt.Fprintln(writer, "#!/bin/bash")
 
-	// Write passthrough flags (directives not consumed by Spec or Control)
-	for _, flag := range specs.RemainingFlags {
+	// Write passthrough flags (directives not consumed by Spec or Control), with
+	// the environment directive replaced by one that copies everything.
+	passthrough, export := slurmFullEnv(specs.RemainingFlags)
+	for _, flag := range passthrough {
 		fmt.Fprintf(writer, "#SBATCH %s\n", flag)
 	}
+	fmt.Fprintf(writer, "#SBATCH %s\n", export)
 
 	// Write RuntimeConfig directives
 	ctrl := specs.Control
@@ -719,8 +722,49 @@ func buildSlurmDepFlag(deps []Dependency) string {
 }
 
 // buildSlurmSubmitArgs returns the sbatch argument list for the given deps and script path.
+// slurmExportFlag is the directive that sets a job's environment.
+const slurmExportFlag = "--export"
+
+// slurmFullEnv returns flags without their --export directive, and the --export
+// directive the job is submitted with: ALL, plus the assignments the script's
+// own carried. A script that limited the environment is told so, and so is a
+// shell that sets SBATCH_EXPORT, which the submit command overrides.
+func slurmFullEnv(flags []string) (rest []string, export string) {
+	rest, value, found := takeFlag(flags, slurmExportFlag)
+	full, limited := fullEnvValue(value, "ALL", ",")
+	export = slurmExportFlag + "=" + full
+	if found && limited {
+		noteEnvOverride("Your script sets "+slurmExportFlag+"="+value, export)
+	}
+	if env := os.Getenv("SBATCH_EXPORT"); env != "" {
+		if _, limited := fullEnvValue(env, "ALL", ","); limited {
+			noteEnvOverride("This shell sets SBATCH_EXPORT="+env, export)
+		}
+	}
+	return rest, export
+}
+
+// slurmExportArg reads the --export directive of a generated script, to repeat
+// it on the sbatch command line: there it wins over SBATCH_EXPORT, which a
+// directive in the script does not. "" when the script has none.
+func slurmExportArg(scriptPath string) string {
+	lines, err := readFileLines(scriptPath)
+	if err != nil {
+		return ""
+	}
+	for _, line := range lines {
+		if rest, ok := strings.CutPrefix(line, "#SBATCH "+slurmExportFlag+"="); ok {
+			return slurmExportFlag + "=" + rest
+		}
+	}
+	return ""
+}
+
 func buildSlurmSubmitArgs(deps []Dependency, scriptPath string) []string {
 	args := []string{scriptPath}
+	if export := slurmExportArg(scriptPath); export != "" {
+		args = append([]string{export}, args...)
+	}
 	if flag := buildSlurmDepFlag(deps); flag != "" {
 		args = append([]string{flag, "--kill-on-invalid-dep=yes"}, args...)
 	}

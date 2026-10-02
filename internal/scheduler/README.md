@@ -47,6 +47,15 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
   - The limit is 10% over the request.
   - Whether `-M` is per process or per job depends on the site's mode, so the base differs.
 
+## The job's environment
+
+- Every job gets the whole submit environment, on every scheduler.
+  - The install, the Apptainer path and an MPI library all arrive through variables a module sets. A job without them fails far from the cause.
+  - Nothing is re-exported in the script.
+- A script's own limit on the environment is replaced, and the user is told. Variables it added are kept.
+- A site's submit plugin that strips the environment is out of reach.
+- A job's command names the binary by its full path, so the job runs the version that wrote its script.
+
 ## Dependencies
 
 - `Submit` refuses a dependency the scheduler cannot express instead of dropping or downgrading it.

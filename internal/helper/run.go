@@ -272,10 +272,7 @@ func resolveOverlayTemplate(template string, params map[string]string) []string 
 //   - `create` also reports a name nothing could satisfy before any build starts.
 //   - distro is what a bare name expands under. No prompt is shown.
 func checkAndInstallNamedOverlays(ctx context.Context, names []string, distro string) ([]string, error) {
-	condaBin, err := os.Executable()
-	if err != nil {
-		condaBin = "condatainer"
-	}
+	condaBin := utils.SelfPath()
 	logger := logging.FromContext(ctx)
 
 	resolveAll := func(pending []string, installed map[string][]string) (map[string][]string, []string, error) {

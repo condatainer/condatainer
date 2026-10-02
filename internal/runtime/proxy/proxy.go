@@ -134,7 +134,7 @@ func StartOnNode(host, via string, port int) error {
 		host,
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=10",
-		"condatainer", "proxy", "start",
+		utils.SelfCommand(), "proxy", "start",
 	}
 	if via != "" {
 		args = append(args, "--via", via)

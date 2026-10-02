@@ -74,7 +74,9 @@ var runCmd = &cobra.Command{
 The script can contain these comment tags:
   - #DEP: name/version   Declares a dependency, loaded automatically
   - #DEP: /path/env.img  Declares an overlay file (.sqf or .img)
-  - #CNT <args>          Extra condatainer flags (see Container Flags)`,
+  - #CNT <args>          Extra condatainer flags (see Container Flags)
+
+A submitted job gets the shell's environment.`,
 	Example: `  condatainer run script.sh                          # Check dependencies, then run
   condatainer run script.sh arg1 arg2                # Pass arguments to the script
   condatainer run -o log/s1.out run_tool.sh sample1  # Override stdout
@@ -1136,7 +1138,7 @@ func detectMpi() (string, bool) {
 //   - Returns an error when ntasks > 1 but mpiexec cannot be found.
 //   - The user is responsible for installing the same MPI version inside the container.
 func buildMpiRunCommand(contentScript string, scriptArgs []string, specs *scheduler.ScriptSpecs, prependArrayArgs bool) (string, error) {
-	runCmd := fmt.Sprintf("condatainer run %s", contentScript)
+	runCmd := fmt.Sprintf("%s run %s", utils.SelfCommand(), contentScript)
 	if prependArrayArgs {
 		runCmd += " $ARRAY_ARGS"
 	}

@@ -89,7 +89,7 @@ type BuildObject struct {
 	// Handed to the catalog, which expands the recipe before it is written out.
 	vars map[string]string
 	// catalogSource is the exact collection whose recipe was selected. Its
-	// descriptor supplies automatic prebuilt endpoints; local and Conda builds
+	// descriptor supplies the registry prebuilts come from; local and Conda builds
 	// leave it nil.
 	catalogSource *catalog.Source
 	// prebuilt is what planning decided about a published artifact for this node.

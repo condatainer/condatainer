@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -30,7 +32,7 @@ func fakeSource(t *testing.T) string {
 		}
 	}
 
-	write("source.json", `{"schema":1,"source":"https://example.invalid/r","default_distro":"ubuntu24","oci":{"push":"oci://ghcr.io/lab/cnt/","pull":["ghcr.io/lab/cnt","registry.lab/cnt"],"audience":"restricted"}}`)
+	write("source.json", `{"schema":1,"source":"https://example.invalid/r","default_distro":"ubuntu24","oci":{"registry":"oci://ghcr.io/lab/cnt/","audience":"restricted"}}`)
 	write("recipes/cellranger/9.0.1", "#DESC:cellranger\n#URL:https://example.invalid\n")
 	write("recipes/ubuntu24/base.def", "#DESC:base\n\nBootstrap: docker\n")
 	write("recipes/grch38/star-gencode", starRecipe)
@@ -63,11 +65,8 @@ func TestOpenDirSource(t *testing.T) {
 	if cat[0].Desc.Source != "https://example.invalid/r" {
 		t.Errorf("descriptor not loaded: %+v", cat[0].Desc)
 	}
-	if got := cat[0].Desc.OCI.Push; got != "ghcr.io/lab/cnt" {
-		t.Errorf("OCI push = %q", got)
-	}
-	if got := cat[0].Desc.OCI.Pull; !slices.Equal(got, []string{"ghcr.io/lab/cnt", "registry.lab/cnt"}) {
-		t.Errorf("OCI pull = %v", got)
+	if got := cat[0].Desc.OCI.Registry; got != "ghcr.io/lab/cnt" {
+		t.Errorf("OCI registry = %q", got)
 	}
 	if got := cat[0].Desc.OCI.Audience; got != "restricted" {
 		t.Errorf("OCI audience = %q", got)
@@ -99,17 +98,13 @@ func TestParseDescriptorOCI(t *testing.T) {
 			want: Descriptor{Schema: 1, OCI: OCI{Audience: "public"}},
 		},
 		{
-			name: "ordered mirrors and scheme normalization",
-			json: `{"schema":1,"oci":{"push":"oci://ghcr.io/lab/cnt/","pull":["oci://local.lab/cnt/","ghcr.io/lab/cnt"],"audience":"RESTRICTED"}}`,
-			want: Descriptor{Schema: 1, OCI: OCI{
-				Push: "ghcr.io/lab/cnt", Pull: []string{"local.lab/cnt", "ghcr.io/lab/cnt"}, Audience: "restricted",
-			}},
+			name: "scheme normalization",
+			json: `{"schema":1,"oci":{"registry":"oci://ghcr.io/lab/cnt/","audience":"RESTRICTED"}}`,
+			want: Descriptor{Schema: 1, OCI: OCI{Registry: "ghcr.io/lab/cnt", Audience: "restricted"}},
 		},
-		{name: "push required", json: `{"schema":1,"oci":{"pull":["ghcr.io/lab/cnt"]}}`, wantErr: "require push"},
-		{name: "pull required", json: `{"schema":1,"oci":{"push":"ghcr.io/lab/cnt"}}`, wantErr: "at least one pull"},
-		{name: "bad audience", json: `{"schema":1,"oci":{"push":"ghcr.io/lab/cnt","pull":["ghcr.io/lab/cnt"],"audience":"private"}}`, wantErr: "audience"},
-		{name: "host alone is not a root", json: `{"schema":1,"oci":{"push":"ghcr.io","pull":["ghcr.io/lab/cnt"]}}`, wantErr: "registry/repository root"},
-		{name: "unsupported scheme", json: `{"schema":1,"oci":{"push":"https://ghcr.io/lab/cnt","pull":["ghcr.io/lab/cnt"]}}`, wantErr: "registry/repository root"},
+		{name: "bad audience", json: `{"schema":1,"oci":{"registry":"ghcr.io/lab/cnt","audience":"private"}}`, wantErr: "audience"},
+		{name: "host alone is not a root", json: `{"schema":1,"oci":{"registry":"ghcr.io"}}`, wantErr: "registry/repository root"},
+		{name: "unsupported scheme", json: `{"schema":1,"oci":{"registry":"https://ghcr.io/lab/cnt"}}`, wantErr: "registry/repository root"},
 		{name: "unsupported schema", json: `{"schema":2}`, wantErr: "unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,7 +127,7 @@ func TestParseDescriptorOCI(t *testing.T) {
 
 func TestInvalidDescriptorDoesNotDisableRecipes(t *testing.T) {
 	root := fakeSource(t)
-	if err := os.WriteFile(filepath.Join(root, "source.json"), []byte(`{"schema":1,"oci":{"pull":["ghcr.io/lab/cnt"]}}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "source.json"), []byte(`{"schema":1,"oci":{"registry":"ghcr.io"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cat, err := Open(t.Context(), []Spec{{Name: "local", Base: root}}, Cache{})
@@ -142,7 +137,7 @@ func TestInvalidDescriptorDoesNotDisableRecipes(t *testing.T) {
 	if cat[0].DescriptorErr == nil {
 		t.Fatal("invalid descriptor was not reported")
 	}
-	if cat[0].Desc.OCI.Push != "" {
+	if cat[0].Desc.OCI.Registry != "" {
 		t.Errorf("invalid descriptor was retained: %+v", cat[0].Desc)
 	}
 	if _, found, err := cat.Lookup(t.Context(), "cellranger/9.0.1"); err != nil || !found {
@@ -250,5 +245,76 @@ func TestParseDescriptorChecksTheSourceURL(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// privateServer serves root like a git host's raw files: a good token reads, a
+// bad one is refused with 401, and no token gets 404 unless the source is public.
+func privateServer(t *testing.T, root string, public bool) string {
+	t.Helper()
+	files := http.FileServer(http.Dir(root))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("Authorization") {
+		case "Bearer good":
+		case "":
+			if !public {
+				http.NotFound(w, r)
+				return
+			}
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		files.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestHTTPSourceToken(t *testing.T) {
+	root := fakeSource(t)
+	tests := []struct {
+		name    string
+		public  bool
+		token   string
+		wantErr error
+		ok      bool
+		refused bool
+	}{
+		{"a private source reads with its token", false, "good", nil, true, false},
+		{"a private source without a token is unreachable", false, "", nil, false, false},
+		{"a stale token on a public source is set aside", true, "bad", nil, true, true},
+		{"a stale token on a private source names the token", false, "bad", ErrTokenRefused, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := Spec{Name: "lab", Base: privateServer(t, root, tt.public)}
+			if tt.token != "" {
+				spec.Token = NewToken(tt.token, "127.0.0.1/lab", "extra-root")
+			}
+			cat, err := Open(t.Context(), []Spec{spec}, Cache{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			entries, err := cat[0].Entries(t.Context())
+			if (err == nil) != tt.ok || len(entries) > 0 != tt.ok {
+				t.Fatalf("entries = %d, err = %v", len(entries), err)
+			}
+			if tt.wantErr != nil && (!errors.Is(err, tt.wantErr) || !strings.Contains(err.Error(), "127.0.0.1/lab (extra-root layer)")) {
+				t.Errorf("err = %v, want %v naming the token", err, tt.wantErr)
+			}
+			if cat[0].TokenRefused != tt.refused {
+				t.Errorf("TokenRefused = %v, want %v", cat[0].TokenRefused, tt.refused)
+			}
+		})
+	}
+}
+
+func TestTokenNeverPrintsItsSecret(t *testing.T) {
+	token := NewToken("ghp_secret", "raw.githubusercontent.com/lab", "user")
+	for _, s := range []string{token.String(), fmt.Sprintf("%v %+v", token, Spec{Name: "lab", Token: token})} {
+		if strings.Contains(s, "ghp_secret") {
+			t.Errorf("printed the secret: %s", s)
+		}
 	}
 }

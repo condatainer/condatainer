@@ -58,7 +58,7 @@ logs/
 
 # Ignore the configuration files
 /config.yaml
-/registry-auth.json
+/credentials.json
 
 # CondaTainer Recipe and Test
 cnt

@@ -1,11 +1,16 @@
 package registry
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"oras.land/oras-go/v2/registry/remote/auth"
+	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/credential"
+	"github.com/condatainer/condatainer/internal/logging"
 )
 
 func TestEnvCredential(t *testing.T) {
@@ -29,66 +34,88 @@ func TestEnvCredential(t *testing.T) {
 			if ok != tt.want {
 				t.Fatalf("ok = %v, want %v", ok, tt.want)
 			}
-			if ok && (cred.Username != defaultTokenUser || cred.Password != tt.token) {
+			if ok && (cred.Username != credential.TokenUser || cred.Secret != tt.token) {
 				t.Errorf("credential = %+v", cred)
 			}
 		})
 	}
 }
 
-// useLayers points each layer's credential file at a temp directory holding the
-// given entries, and leaves the other layers unavailable.
-func useLayers(t *testing.T, layers map[string]authFile) map[string]string {
+// useLayers gives each named layer a credential file in a temp directory holding
+// the given users (secret "secret") by key, and leaves the other layers
+// unavailable.
+func useLayers(t *testing.T, layers map[string]map[string]string) map[string]credential.File {
 	t.Helper()
-	paths := map[string]string{}
-	for layer, file := range layers {
-		dir := t.TempDir()
-		paths[layer] = filepath.Join(dir, credentialFileName)
-		if err := writeAuthFile(paths[layer], file); err != nil {
-			t.Fatal(err)
+	files := map[string]credential.File{}
+	var ordered []credential.File
+	for _, layer := range []string{"user", "extra-root", "app-root"} {
+		users, ok := layers[layer]
+		if !ok {
+			continue
 		}
-	}
-	prev := credentialFilePath
-	credentialFilePath = func(layer string) (string, error) {
-		if path, ok := paths[layer]; ok {
-			return path, nil
+		f := credential.File{Layer: layer, Path: filepath.Join(t.TempDir(), credential.FileName)}
+		for key, user := range users {
+			if err := credential.Save(f, credential.Registry, key, credential.Credential{Username: user, Secret: "secret"}); err != nil {
+				t.Fatal(err)
+			}
 		}
-		return "", errors.New("layer not available")
+		files[layer] = f
+		ordered = append(ordered, f)
 	}
-	t.Cleanup(func() { credentialFilePath = prev })
-	return paths
+	prevFiles, prevFile, prevSources := credentialFiles, credentialFile, configuredSources
+	credentialFiles = func() []credential.File { return ordered }
+	configuredSources = func() []catalog.Spec { return nil }
+	credentialFile = func(layer string) (credential.File, error) {
+		if f, ok := files[layer]; ok {
+			return f, nil
+		}
+		return credential.File{}, errors.New("layer not available")
+	}
+	t.Cleanup(func() { credentialFiles, credentialFile, configuredSources = prevFiles, prevFile, prevSources })
+	return files
 }
 
-func entry(user string) authEntry {
-	return entryFor(auth.Credential{Username: user, Password: "secret"})
+// useSourceToken configures a source named name at base, with a registry token
+// for registry stored in f under user.
+func useSourceToken(t *testing.T, f credential.File, name, base, registry, user string) {
+	t.Helper()
+	cred := credential.Credential{Username: user, Secret: "secret"}
+	if err := credential.SaveSourceRegistry(f, credential.TrimScheme(base), registry, cred); err != nil {
+		t.Fatal(err)
+	}
+	prev := configuredSources()
+	configuredSources = func() []catalog.Spec { return append(prev, catalog.Spec{Name: name, Base: base}) }
+}
+
+func users(c []credential.Found) []string {
+	var out []string
+	for _, f := range c {
+		out = append(out, f.Username)
+	}
+	return out
 }
 
 // A missing store means anonymous access, which is the normal case for a public
 // artifact — never an error.
-func TestCredentialFuncFallsBackToAnonymous(t *testing.T) {
+func TestChainIsEmptyWithNothingStored(t *testing.T) {
 	t.Setenv(EnvGitHubToken, "")
 	useLayers(t, nil)
-
-	cred, err := credentialFunc("registry.example.test/lab/repo")(t.Context(), "registry.example.test")
-	if err != nil {
-		t.Fatalf("credentialFunc: %v", err)
-	}
-	if cred != auth.EmptyCredential {
-		t.Errorf("credential = %+v, want empty", cred)
+	if c := chain(t.Context(), "registry.example.test/lab/repo", "registry.example.test"); len(c) != 0 {
+		t.Errorf("chain = %+v, want none", c)
 	}
 }
 
-// The most specific key wins over a nearer layer, and among layers holding the
-// same key the nearest wins.
-func TestCredentialFuncPrefersTheMostSpecificKeyThenTheNearestLayer(t *testing.T) {
+// The most specific login key wins over a nearer layer, and among layers holding
+// the same key the nearest wins.
+func TestChainPrefersTheMostSpecificLoginThenTheNearestLayer(t *testing.T) {
 	t.Setenv(EnvGitHubToken, "")
-	useLayers(t, map[string]authFile{
-		"user": {Auths: map[string]authEntry{"ghcr.io": entry("personal-host")}},
-		"extra-root": {Auths: map[string]authEntry{
-			"ghcr.io":               entry("group-host"),
-			"ghcr.io/my-lab/rnaseq": entry("group-repo"),
-			"ghcr.io/my-lab":        entry("group-owner"),
-		}},
+	useLayers(t, map[string]map[string]string{
+		"user": {"ghcr.io": "personal-host"},
+		"extra-root": {
+			"ghcr.io":               "group-host",
+			"ghcr.io/my-lab/rnaseq": "group-repo",
+			"ghcr.io/my-lab":        "group-owner",
+		},
 	})
 	tests := []struct{ scope, want string }{
 		{"ghcr.io/my-lab/rnaseq/cnt", "group-repo"},
@@ -97,30 +124,66 @@ func TestCredentialFuncPrefersTheMostSpecificKeyThenTheNearestLayer(t *testing.T
 		{"ghcr.io", "personal-host"},
 	}
 	for _, tt := range tests {
-		cred, err := credentialFunc(tt.scope)(t.Context(), "ghcr.io")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cred.Username != tt.want {
-			t.Errorf("scope %s: user = %q, want %q", tt.scope, cred.Username, tt.want)
+		if got := users(chain(t.Context(), tt.scope, "ghcr.io")); len(got) == 0 || got[0] != tt.want {
+			t.Errorf("scope %s: chain %v, want %s first", tt.scope, got, tt.want)
 		}
 	}
 }
 
-// A repository's credential is never sent to another host, and GITHUB_TOKEN
-// still comes first.
-func TestCredentialFuncKeepsHostsApartAndEnvironmentFirst(t *testing.T) {
-	useLayers(t, map[string]authFile{
-		"user": {Auths: map[string]authEntry{"ghcr.io/my-lab/rnaseq": entry("repo")}},
-	})
+// A login is never sent to another host.
+func TestChainKeepsHostsApart(t *testing.T) {
 	t.Setenv(EnvGitHubToken, "")
-	cred, _ := credentialFunc("ghcr.io/my-lab/rnaseq/cnt")(t.Context(), "registry.example.test")
-	if cred != auth.EmptyCredential {
-		t.Errorf("another host received %+v", cred)
+	useLayers(t, map[string]map[string]string{"user": {"ghcr.io/my-lab/rnaseq": "repo"}})
+	if c := chain(t.Context(), "ghcr.io/my-lab/rnaseq/cnt", "registry.example.test"); len(c) != 0 {
+		t.Errorf("another host received %+v", c)
 	}
-	t.Setenv(EnvGitHubToken, "env-token")
-	cred, _ = credentialFunc("ghcr.io/my-lab/rnaseq/cnt")(t.Context(), "ghcr.io")
-	if cred.Password != "env-token" {
-		t.Errorf("GITHUB_TOKEN did not win: %+v", cred)
+}
+
+// Which credential comes first depends on what the read or write is for.
+func TestChainOrder(t *testing.T) {
+	t.Setenv(EnvGitHubToken, "env")
+	files := useLayers(t, map[string]map[string]string{"user": {"ghcr.io/lab": "login"}})
+	useSourceToken(t, files["user"], "lab", "https://recipes.example.test/lab", "ghcr.io/lab", "source")
+	scope := "ghcr.io/lab/cnt"
+	for _, tt := range []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{"a read", t.Context(), "login,source,x-access-token"},
+		{"a read for the source", WithSource(t.Context(), "https://recipes.example.test/lab"), "source,login,x-access-token"},
+		{"a push", withPush(t.Context()), "login,x-access-token,source"},
+	} {
+		if got := strings.Join(users(chain(tt.ctx, scope, "ghcr.io")), ","); got != tt.want {
+			t.Errorf("%s: chain %s, want %s", tt.name, got, tt.want)
+		}
+	}
+}
+
+// A refused credential is set aside for the next one, then for none, with a
+// warning naming it; when everything is refused, the error names them all.
+func TestReadMovesPastARefusedCredential(t *testing.T) {
+	t.Setenv(EnvGitHubToken, "")
+	f := newFakeRegistry(t)
+	f.bearer = true
+	f.tags["lab/cnt"] = []string{"1.0"}
+	files := useLayers(t, map[string]map[string]string{"extra-root": {f.base(): "stale"}})
+	useSourceToken(t, files["extra-root"], "lab", "https://recipes.example.test/lab", f.base(), "good")
+
+	f.acceptUser = "good"
+	var lines []string
+	ctx := logging.WithLogger(context.Background(), slog.New(recordingHandler{lines: &lines}))
+	if tags, err := ListTags(ctx, f.base(), "lab/cnt"); err != nil || len(tags) != 1 {
+		t.Fatalf("ListTags = %v, %v", tags, err)
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "the login for "+f.base()+" (extra-root layer) was refused") {
+		t.Errorf("warnings = %q", lines)
+	}
+
+	f.acceptUser, f.refuseAnonymous = "nobody", true
+	_, err := ListTags(context.Background(), f.base(), "lab/cnt")
+	if !errors.Is(err, ErrUnauthorized) || !strings.Contains(err.Error(), "registry login "+f.base()+" -l extra-root") ||
+		!strings.Contains(err.Error(), "source lab") {
+		t.Fatalf("err = %v, want ErrUnauthorized naming both credentials", err)
 	}
 }

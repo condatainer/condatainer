@@ -152,7 +152,7 @@ func probePushAccess(ctx context.Context, repository *remote.Repository) error {
 	err = classify(errutilParse(resp))
 	switch {
 	case errors.Is(err, ErrUnauthorized):
-		return fmt.Errorf("%w: %s does not accept a push from this credential", err, FullRef(ref.Registry, ref.Repository, ""))
+		return fmt.Errorf("%w: %s does not accept a push from %s", err, FullRef(ref.Registry, ref.Repository, ""), pushCredential(repository))
 	case errors.Is(err, ErrNotFound):
 		return fmt.Errorf("%w: %s/%s does not exist; some registries require the repository to be created before a push",
 			err, ref.Registry, ref.Repository)
@@ -162,6 +162,27 @@ func probePushAccess(ctx context.Context, repository *remote.Repository) error {
 	logging.FromContext(ctx).Debug("push preflight was inconclusive",
 		"status", resp.StatusCode, "repository", ref.Repository)
 	return nil
+}
+
+// pushCredential names the credential a refused push carried, and how to log in
+// with one that can push: a login comes first for a push.
+func pushCredential(repository *remote.Repository) string {
+	c, ok := repository.Client.(*client)
+	if !ok {
+		return "this credential"
+	}
+	found, sent := c.firstCredential()
+	login := fmt.Sprintf("log in with one that can push: `condatainer registry login %s`", repository.Reference.Registry)
+	switch {
+	case !sent:
+		return "no credential; " + login
+	case found.Layer == EnvLayer:
+		return EnvGitHubToken + "; " + login
+	case found.Source != "":
+		return fmt.Sprintf("the registry token of source %s (%s layer); %s", found.Source, found.Layer, login)
+	}
+	return fmt.Sprintf("the login for %s (%s layer); log in with one that can push: `condatainer registry login %s`",
+		found.Key, found.Layer, found.Key)
 }
 
 // cancelProbeSession abandons the session the probe opened. Best effort:

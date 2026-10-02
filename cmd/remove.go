@@ -258,10 +258,7 @@ func performDelete(cmd *cobra.Command, names []string, showListing ...bool) erro
 	// Confirm
 	fmt.Print("\n")
 	if !utils.ShouldAnswerYes() {
-		fmt.Printf("Remove %d overlay(s)? Cannot be undone. [y/N]: ", len(valid))
-		choice, err := utils.ReadLineContext(cmd.Context())
-		if err != nil || (choice != "y" && choice != "yes") {
-			utils.PrintNote("Cancelled")
+		if !utils.Confirm(cmd.Context(), os.Stdout, fmt.Sprintf("Remove %d overlay(s)? Cannot be undone. [y/N]: ", len(valid))) {
 			return nil
 		}
 	}
@@ -324,10 +321,7 @@ func removeExternalOverlays(cmd *cobra.Command, paths []string) error {
 	// Confirm
 	fmt.Print("\n")
 	if !utils.ShouldAnswerYes() {
-		fmt.Printf("Remove %d overlay file(s)? Cannot be undone. [y/N]: ", len(resolved))
-		choice, err := utils.ReadLineContext(cmd.Context())
-		if err != nil || (choice != "y" && choice != "yes") {
-			utils.PrintNote("Cancelled")
+		if !utils.Confirm(cmd.Context(), os.Stdout, fmt.Sprintf("Remove %d overlay file(s)? Cannot be undone. [y/N]: ", len(resolved))) {
 			return nil
 		}
 	}

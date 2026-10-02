@@ -3,6 +3,9 @@ package build
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/condatainer/condatainer/internal/artifact/meta"
@@ -16,7 +19,11 @@ func stageMetadata(ctx context.Context, b *BuildObject) (string, error) {
 	manifest := b.Manifest()
 	// Stamped here, not in Manifest(), which must stay a projection of Spec.
 	// Staging is when the payload is final, so this is the build's finish time.
-	manifest.Build.Created = time.Now().UTC()
+	created, err := buildTime()
+	if err != nil {
+		return "", fmt.Errorf("refusing to pack %s: %w", b.spec.Image.Name, err)
+	}
+	manifest.Build.Created = created
 	if err := meta.ValidateManifest(manifest); err != nil {
 		return "", fmt.Errorf("refusing to pack %s: %w", b.spec.Image.Name, err)
 	}
@@ -49,4 +56,21 @@ func stageMetadata(ctx context.Context, b *BuildObject) (string, error) {
 	logging.FromContext(ctx).Debug("staged metadata",
 		"name", b.spec.Image.Name, "dir", dir, "type", manifest.Type, "build_type", manifest.BuildType)
 	return dir, nil
+}
+
+// EnvSourceDateEpoch sets the build time a manifest records, in Unix seconds.
+const EnvSourceDateEpoch = "SOURCE_DATE_EPOCH"
+
+// buildTime is SOURCE_DATE_EPOCH when set, so builds of one artifact on several
+// machines share a date tag; otherwise now. Both are UTC.
+func buildTime() (time.Time, error) {
+	raw := strings.TrimSpace(os.Getenv(EnvSourceDateEpoch))
+	if raw == "" {
+		return time.Now().UTC(), nil
+	}
+	secs, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || secs < 0 {
+		return time.Time{}, fmt.Errorf("%s=%q is not a Unix time in seconds", EnvSourceDateEpoch, raw)
+	}
+	return time.Unix(secs, 0).UTC(), nil
 }

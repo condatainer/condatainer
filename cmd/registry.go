@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/credential"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/registry"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -44,9 +46,13 @@ func newRegistryCommand() *cobra.Command {
 		Long: `Publish and fetch read-only .sqf artifacts through an OCI registry such as ghcr.io.
 
 Credentials are used in this order:
+- Your login, saved by ` + "`condatainer registry login`" + `.
+- Registry tokens added with recipe sources (` + "`condatainer config source add`" + `).
 - GITHUB_TOKEN, for ghcr.io.
-- Credentials saved by 'condatainer registry login'.
-- Anonymous access.`,
+- Anonymous access.
+
+A build pulling from a source's registry tries that source's token first.
+For reads, a refused credential is skipped for the next one, with a warning naming it.`,
 	}
 
 	push := &cobra.Command{
@@ -77,7 +83,6 @@ Credentials are used in this order:
 				Confirm: func(plan registry.PublishPlan) bool { return confirmPush(cmd, plan) },
 			})
 			if errors.Is(err, registry.ErrDeclined) {
-				utils.PrintNote("Cancelled")
 				return nil
 			}
 			if err != nil {
@@ -183,7 +188,6 @@ Credentials are used in this order:
 					return fmt.Errorf("saving to the %s layer needs confirmation; pass -y to confirm when the password comes from stdin", layer)
 				}
 				if !confirmSharedLogin(cmd, layer) {
-					utils.PrintNote("Cancelled")
 					return nil
 				}
 			}
@@ -203,7 +207,7 @@ Credentials are used in this order:
 	login.Flags().StringVarP(&opts.username, "username", "u", "", "Registry username")
 	login.Flags().StringVarP(&opts.password, "password", "p", "", "Registry password or token")
 	login.Flags().BoolVar(&opts.passwordStdin, "password-stdin", false, "Read the password/token from stdin")
-	login.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Config layer to save in: u/user, r/app-root, e/extra-root, s/system")
+	login.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Config layer to save in: u/user, e/extra-root, r/app-root")
 
 	logout := &cobra.Command{
 		Use:   "logout [flags] <host>[/<owner>/<repo>]",
@@ -215,27 +219,34 @@ Credentials are used in this order:
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := registry.Logout(cmd.Context(), args[0], config.NormalizeConfigLayer(opts.layer)); err != nil {
+			layer := config.NormalizeConfigLayer(opts.layer)
+			if err := registry.Logout(cmd.Context(), args[0], layer); err != nil {
+				if name := sourceHolding(registry.TrimBaseScheme(args[0]), layer); errors.Is(err, credential.ErrNotStored) && name != "" {
+					return fmt.Errorf("%s in the %s layer is the registry token of source %s; remove it with `condatainer config source remove %s`",
+						registry.TrimBaseScheme(args[0]), utils.StyleName(layer), name, name)
+				}
 				return err
 			}
 			reportDone(cmd, "logged out of", registry.TrimBaseScheme(args[0]))
 			return nil
 		},
 	}
-	logout.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Config layer to remove from: u/user, r/app-root, e/extra-root, s/system")
+	logout.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Config layer to remove from: u/user, e/extra-root, r/app-root")
 
 	list := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List stored registry credentials",
-		Long: `List the saved credentials with their layer and username.
+		Long: `List the saved registry credentials with their layer and username.
 
+- FROM is login for one saved by ` + "`condatainer registry login`" + `, or the source a registry token was added with.
+- For a registry, logins are tried before source tokens. A build from a source tries that source's token first.
 - Passwords and tokens are never shown.
-- GITHUB_TOKEN, when set, is used for ghcr.io ahead of these.`,
+- GITHUB_TOKEN, when set, is used for ghcr.io when none of these matches.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			stored, err := registry.StoredCredentials(cmd.Context())
+			stored, err := registryCredentials()
 			if err != nil {
 				return err
 			}
@@ -244,21 +255,25 @@ Credentials are used in this order:
 				fmt.Fprintln(out, "No stored registry credentials.")
 			} else {
 				tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(tw, "REGISTRY\tUSER\tLAYER\tREADABLE BY")
+				fmt.Fprintln(tw, "REGISTRY\tFROM\tUSER\tLAYER\tPERMISSION")
 				for _, c := range stored {
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", c.Key, c.Username, c.Layer, c.ReadableBy)
+					from := "login"
+					if c.Source != "" {
+						from = "source " + c.Source
+					}
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", c.Key, from, c.Username, c.Layer, c.Perm)
 				}
 				tw.Flush()
 				reported := map[string]bool{}
 				for _, c := range stored {
 					if !reported[c.Path] {
 						reported[c.Path] = true
-						printFindings(registry.Findings(c.Layer, c.Path))
+						printFindings(credential.Findings(c.Layer, c.Path))
 					}
 				}
 			}
 			if os.Getenv(registry.EnvGitHubToken) != "" {
-				fmt.Fprintf(out, "%s is set and applies to ghcr.io.\n", registry.EnvGitHubToken)
+				fmt.Fprintf(out, "%s is set and applies to ghcr.io when no saved credential matches.\n", registry.EnvGitHubToken)
 			}
 			return nil
 		},
@@ -280,13 +295,13 @@ func registryPushCompletion(cmd *cobra.Command, args []string, toComplete string
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	return overlaySuggestions(true, false, toComplete)
+	return overlayChoices(true, false, false, toComplete)
 }
 
 // registryPushDestination resolves the publishing endpoint and its policy.
 //
 //   - Explicit flags win.
-//   - Otherwise the artifact's recorded build.source must match exactly one configured source. Pull mirrors are never considered.
+//   - Otherwise the artifact's recorded build.source must match exactly one configured source, whose registry it is.
 //   - Only an installed name/version infers. A file is where the destination is least likely to be the recipe collection's, so inferring would publish somewhere nobody named.
 func registryPushDestination(cmd *cobra.Command, opts *registryOptions, artifact registryArtifact) (string, registry.Audience, error) {
 	if strings.TrimSpace(opts.base) != "" {
@@ -327,7 +342,7 @@ func registryPushDestination(cmd *cobra.Command, opts *registryOptions, artifact
 	if err != nil {
 		return "", "", err
 	}
-	return source.Desc.OCI.Push, parsed, nil
+	return source.Desc.OCI.Registry, parsed, nil
 }
 
 func inferPushSource(repository string, cat catalog.Catalog) (*catalog.Source, error) {
@@ -348,8 +363,8 @@ func inferPushSource(repository string, cat catalog.Catalog) (*catalog.Source, e
 	if source.Err != nil || source.Stale {
 		return nil, fmt.Errorf("cannot infer registry from source %q: source metadata is unavailable or stale; use --registry", source.Name)
 	}
-	if source.Desc.OCI.Push == "" {
-		return nil, fmt.Errorf("cannot infer registry: source %q declares no OCI push endpoint; use --registry", source.Name)
+	if source.Desc.OCI.Registry == "" {
+		return nil, fmt.Errorf("cannot infer registry: source %q declares no OCI registry; use --registry", source.Name)
 	}
 	return source, nil
 }
@@ -392,7 +407,7 @@ func findRegistryArtifact(arg string) (registryArtifact, error) {
 			}
 		}
 	}
-	return registryArtifact{}, fmt.Errorf("no local .sqf artifact found for %q", arg)
+	return registryArtifact{}, fmt.Errorf("no local .sqf artifact found for %q; give its full name/version, such as ubuntu24/base, or a path", arg)
 }
 
 type resolvedRegistryArtifact struct {
@@ -561,24 +576,22 @@ func registryPassword(cmd *cobra.Command, opts *registryOptions) (string, error)
 // can be read by anyone who can read that file, and asks to go on. -y answers yes.
 func confirmSharedLogin(cmd *cobra.Command, layer string) bool {
 	utils.PrintWarning("The credential is saved in the %s layer: anyone who can read that file can use it. Use a read-only token.", layer)
-	utils.PrintNote("The file is written private to you (mode 0600). Access follows the file's and directory's permissions, so check them.")
+	utils.PrintNote("The file is written 0600, or 0660 when its directory is group-writable.")
 	if utils.ShouldAnswerYes() {
 		return true
 	}
-	fmt.Fprint(cmd.ErrOrStderr(), "Continue? [y/N]: ")
-	choice, err := utils.ReadLineContext(cmd.Context())
-	return err == nil && (choice == "y" || choice == "yes")
+	return utils.Confirm(cmd.Context(), cmd.ErrOrStderr(), "Continue? [y/N]: ")
 }
 
 // reportPermissions tells the person who just saved a credential if the file
 // can be reached by more people than it should.
 func reportPermissions(layer string) {
-	if path, err := registry.LayerFile(layer); err == nil {
-		printFindings(registry.Findings(layer, path))
+	if file, err := config.CredentialFile(layer); err == nil {
+		printFindings(credential.Findings(layer, file.Path))
 	}
 }
 
-func printFindings(findings []registry.Finding) {
+func printFindings(findings []credential.Finding) {
 	for _, finding := range findings {
 		if finding.Warn {
 			utils.PrintWarning("%s", finding.Text)
@@ -602,7 +615,46 @@ func confirmPush(cmd *cobra.Command, plan registry.PublishPlan) bool {
 	if utils.ShouldAnswerYes() {
 		return true
 	}
-	fmt.Fprint(cmd.ErrOrStderr(), "Push? [y/N]: ")
-	choice, err := utils.ReadLineContext(cmd.Context())
-	return err == nil && (choice == "y" || choice == "yes")
+	return utils.Confirm(cmd.Context(), cmd.ErrOrStderr(), "Push? [y/N]: ")
+}
+
+// registryCredentials lists the logins and the registry tokens stored with
+// sources, by registry, logins first. A source token's Source is its name.
+func registryCredentials() ([]credential.Stored, error) {
+	files := config.CredentialFiles()
+	logins, err := credential.List(files, credential.Registry)
+	if err != nil {
+		return nil, err
+	}
+	tokens, err := credential.ListSourceRegistries(files)
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]string{}
+	for _, s := range config.ResolvedSources() {
+		names[credential.TrimScheme(s.Base)] = s.Name
+	}
+	for i := range tokens {
+		if name := names[tokens[i].Source]; name != "" {
+			tokens[i].Source = name
+		}
+	}
+	out := append(logins, tokens...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
+}
+
+// sourceHolding names the source whose registry token is stored under key in
+// layer, or "".
+func sourceHolding(key, layer string) string {
+	stored, err := registryCredentials()
+	if err != nil {
+		return ""
+	}
+	for _, c := range stored {
+		if c.Source != "" && c.Key == key && c.Layer == layer {
+			return c.Source
+		}
+	}
+	return ""
 }

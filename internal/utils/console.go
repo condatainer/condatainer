@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -185,4 +186,16 @@ func ReadLineContext(ctx context.Context) (string, error) {
 	case s := <-ch:
 		return s, nil
 	}
+}
+
+// Confirm writes prompt to w and reports whether the answer is y or yes. When
+// reading stops, as on Ctrl-C, it ends the prompt's line and answers no.
+func Confirm(ctx context.Context, w io.Writer, prompt string) bool {
+	fmt.Fprint(w, prompt)
+	choice, err := ReadLineContext(ctx)
+	if err != nil {
+		fmt.Fprintln(w)
+		return false
+	}
+	return choice == "y" || choice == "yes"
 }

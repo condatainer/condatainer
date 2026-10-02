@@ -264,10 +264,7 @@ func runSelfUpdate(cmd *cobra.Command, args []string) error {
 
 	// Ask for confirmation unless global --yes flag or --force flag is provided
 	if !utils.ShouldAnswerYes() && !selfUpdateForce {
-		fmt.Print("Are you sure to update to the latest version? [y/N]: ")
-		confirm, err := utils.ReadLineContext(cmd.Context())
-		if err != nil || (confirm != "y" && confirm != "yes") {
-			utils.PrintNote("Update cancelled by user.")
+		if !utils.Confirm(cmd.Context(), os.Stdout, "Update to the latest version? [y/N]: ") {
 			return nil
 		}
 	}

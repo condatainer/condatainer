@@ -17,7 +17,7 @@ import (
 func TestInferPushSource(t *testing.T) {
 	good := &catalog.Source{Name: "lab", Desc: catalog.Descriptor{
 		Source: "https://example.invalid/recipes/",
-		OCI:    catalog.OCI{Push: "registry.invalid/lab", Audience: "restricted"},
+		OCI:    catalog.OCI{Registry: "registry.invalid/lab", Audience: "restricted"},
 	}}
 	for _, tc := range []struct {
 		name    string
@@ -30,7 +30,7 @@ func TestInferPushSource(t *testing.T) {
 		{"ambiguous", catalog.Catalog{good, &catalog.Source{Name: "other", Desc: good.Desc}}, nil, "matches 2"},
 		{"invalid descriptor", catalog.Catalog{&catalog.Source{Name: "bad", Desc: good.Desc, DescriptorErr: errors.New("bad json")}}, nil, "invalid source descriptor"},
 		{"stale", catalog.Catalog{&catalog.Source{Name: "old", Desc: good.Desc, Stale: true}}, nil, "unavailable or stale"},
-		{"no push", catalog.Catalog{&catalog.Source{Name: "nopush", Desc: catalog.Descriptor{Source: good.Desc.Source}}}, nil, "no OCI push endpoint"},
+		{"no registry", catalog.Catalog{&catalog.Source{Name: "noregistry", Desc: catalog.Descriptor{Source: good.Desc.Source}}}, nil, "no OCI registry"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := inferPushSource("https://example.invalid/recipes", tc.cat)

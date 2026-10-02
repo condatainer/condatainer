@@ -9,38 +9,58 @@ import (
 	"sync"
 
 	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/credential"
 	"github.com/condatainer/condatainer/internal/logging"
 )
 
 // defaultSource is the collection every resolution ends at. It is a default
 // value rather than a fallback the resolver reaches for, so a site replaces it
-// by writing its own `cnt` entry.
+// by writing its own `cnt` entry, positioned like any other.
 var defaultSource = catalog.Spec{
 	Name: "cnt",
 	Base: "https://raw.githubusercontent.com/condatainer/cnt/main",
 }
 
-// layerSources reads the `sources` key from every config layer and concatenates
-// them strongest first, so a user entry shadows a site entry of the same name.
-// CNT_SOURCES overrides the lot: "cnt=https://…|lab=/shared/lab".
-func layerSources() []catalog.Spec {
-	if ev := os.Getenv("CNT_SOURCES"); ev != "" {
-		return withDefaultSource(parseSourceSpecs(strings.Split(ev, "|")))
-	}
-	var out []catalog.Spec
+// LayeredSource is a source and the config layer that names it, DefaultLayer
+// for the default `cnt`.
+type LayeredSource struct {
+	catalog.Spec
+	Layer string
+}
+
+// DefaultLayer is the Layer of the default `cnt` when no layer names it.
+const DefaultLayer = "default"
+
+// ResolvedSources is the search order: every layer's `sources`, strongest first,
+// a name already taken skipped, then the default `cnt` unless a layer names it.
+func ResolvedSources() []LayeredSource {
+	var out []LayeredSource
 	seen := map[string]bool{}
-	for _, v := range configLayers {
-		if !v.InConfig("sources") {
+	for _, l := range loadedLayers {
+		if !l.InConfig("sources") {
 			continue
 		}
-		for _, spec := range decodeSourceList(v.Get("sources")) {
+		for _, spec := range decodeSourceList(l.v.Get("sources")) {
 			if !seen[spec.Name] {
 				seen[spec.Name] = true
-				out = append(out, spec)
+				out = append(out, LayeredSource{Spec: spec, Layer: l.Type})
 			}
 		}
 	}
-	return withDefaultSource(out)
+	if !seen[defaultSource.Name] {
+		out = append(out, LayeredSource{Spec: defaultSource, Layer: DefaultLayer})
+	}
+	return out
+}
+
+// layerSources is ResolvedSources without the layers.
+func layerSources() []catalog.Spec {
+	resolved := ResolvedSources()
+	out := make([]catalog.Spec, len(resolved))
+	for i, s := range resolved {
+		out[i] = s.Spec
+	}
+	return out
 }
 
 // layerBinds merges the `bind` key across every layer, highest priority first,
@@ -65,20 +85,12 @@ func layerBinds() []string {
 	return out
 }
 
-// withDefaultSource appends the default collection when nothing already answers
-// to its handle, so a fresh install resolves recipes unconfigured. Appended,
-// never prepended: every configured entry outranks it.
-func withDefaultSource(specs []catalog.Spec) []catalog.Spec {
-	for _, s := range specs {
-		if s.Name == defaultSource.Name {
-			return specs
-		}
-	}
-	return append(specs, defaultSource)
-}
+// DefaultSource is the collection every resolution ends at unless a layer
+// names `cnt` itself.
+func DefaultSource() catalog.Spec { return defaultSource }
 
-// decodeSourceList turns viper's view of the YAML sequence into specs. Entries
-// may also be written "name=base", which is what the env form uses.
+// decodeSourceList turns viper's view of the YAML sequence into specs. Each
+// entry is a single-key mapping, `- lab: /shared/lab/recipes`.
 func decodeSourceList(raw any) []catalog.Spec {
 	items, ok := raw.([]any)
 	if !ok {
@@ -87,8 +99,6 @@ func decodeSourceList(raw any) []catalog.Spec {
 	var out []catalog.Spec
 	for _, item := range items {
 		switch v := item.(type) {
-		case string:
-			out = append(out, parseSourceSpecs([]string{v})...)
 		case map[string]any:
 			for name, base := range v {
 				if s, ok := base.(string); ok {
@@ -104,19 +114,6 @@ func decodeSourceList(raw any) []catalog.Spec {
 				}
 			}
 		}
-	}
-	return out
-}
-
-// parseSourceSpecs parses "name=base" pairs.
-func parseSourceSpecs(pairs []string) []catalog.Spec {
-	var out []catalog.Spec
-	for _, pair := range pairs {
-		name, base, ok := strings.Cut(strings.TrimSpace(pair), "=")
-		if !ok || name == "" || base == "" {
-			continue
-		}
-		out = append(out, catalog.Spec{Name: name, Base: strings.TrimRight(base, "/")})
 	}
 	return out
 }
@@ -175,9 +172,27 @@ func OpenCatalog(ctx context.Context) (catalog.Catalog, error) {
 			return
 		}
 		cache := catalog.Cache{Dir: CatalogCacheDir(), TTL: Global.MetadataCacheTTL}
-		catalogVal, catalogErr = catalog.Open(ctx, Global.Sources, cache)
+		catalogVal, catalogErr = catalog.Open(ctx, withSourceTokens(Global.Sources), cache)
 	})
 	return catalogVal, catalogErr
+}
+
+// withSourceTokens copies specs, giving each HTTP source the token stored for
+// its URL, if any. Only when the catalog opens, so a listed source never
+// carries one.
+func withSourceTokens(specs []catalog.Spec) []catalog.Spec {
+	files := CredentialFiles()
+	out := make([]catalog.Spec, len(specs))
+	for i, spec := range specs {
+		out[i] = spec
+		if !strings.HasPrefix(spec.Base, "https://") && !strings.HasPrefix(spec.Base, "http://") {
+			continue
+		}
+		if found, ok := credential.Lookup(files, credential.Source, spec.Base); ok {
+			out[i].Token = catalog.NewToken(found.Secret, found.Key, found.Layer)
+		}
+	}
+	return out
 }
 
 var warnSourcesOnce sync.Once
@@ -194,6 +209,9 @@ func WarnUnreachableSources(ctx context.Context, cat catalog.Catalog) {
 				log.Warn("Source unreachable, skipping it", "source", s.Name, "err", s.Err)
 			case s.Stale:
 				log.Warn("Source not refreshed, using the cached index", "source", s.Name)
+			}
+			if s.TokenRefused {
+				log.Warn("Source refused its stored token, reading it without one", "source", s.Name, "token", s.Token.String())
 			}
 		}
 	})

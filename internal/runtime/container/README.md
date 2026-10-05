@@ -31,6 +31,7 @@ Checks run before anything is locked or mounted. Each describes a container that
 ## Writable overlay
 
 - The writable overlay is the `.img`, the diff layer on top of the read-only `.sqf` overlays.
+  - A directory holding `upper/` and `work/` counts as one too: `overlay create` installs into such a staging directory before packing it.
 - Only it gets `:rw`, and only when requested. Every other overlay is `:ro`.
 - Writable adds no `--writable` to Apptainer.
 

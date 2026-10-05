@@ -13,8 +13,8 @@ func FormatOverlayMount(path string, writable bool) string {
 		return path
 	}
 
-	if utils.IsImg(path) {
-		// For .img files, add :ro or :rw suffix based on writable flag
+	if utils.IsWritableLayer(path) {
+		// For the writable layer, add :ro or :rw suffix based on writable flag
 		if writable {
 			return path + ":rw"
 		}

@@ -39,6 +39,9 @@ File operations on overlay images: create, resize, chown, check, lock, read a pa
 - A blank overlay is made in place. There is nothing to stage.
 - An overlay with packages is installed into a directory on local tmp, then packed into the destination.
   - Conda's many small writes are slow through an ext3 mount and cheap on a directory.
+  - The stage is `<tmp>/overlay-create-*`, holding `upper/` and `work/`. `Setup` treats it as the writable layer.
+  - The stage is not beside the destination, so a paired snapshot is looked up against the destination and mounted with it.
+    - Otherwise the install would repeat what the snapshot already has instead of writing only the difference.
   - The pack is one mostly sequential pass, so it writes straight to the destination with no local copy of the image.
 - The pack writes `<name>.partial`, locked, and renames it on success.
   - A failed or concurrent create never shows at the destination.

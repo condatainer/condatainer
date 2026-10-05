@@ -51,14 +51,14 @@ func CreateCondaOverlay(ctx context.Context, opts *ext3.CreateOptions, pkgs []st
 		return fmt.Errorf("failed to create tmp dir %s: %w", tmpDir, err)
 	}
 	defer utils.RemoveDirIfEmpty(tmpDir)
-	stage, err := os.MkdirTemp(tmpDir, "create-")
+	stage, err := os.MkdirTemp(tmpDir, "overlay-create-")
 	if err != nil {
 		return fmt.Errorf("create staging dir: %w", err)
 	}
 	defer os.RemoveAll(stage)
 
-	// The stage is named like the image so Setup treats it as the writable one.
-	overlayDir := filepath.Join(stage, filepath.Base(opts.Path))
+	// Setup treats a directory holding upper/ and work/ as the writable layer.
+	overlayDir := stage
 	for _, sub := range []string{"upper", "work"} {
 		if err := os.MkdirAll(filepath.Join(overlayDir, sub), 0o755); err != nil {
 			return fmt.Errorf("create staging dir: %w", err)

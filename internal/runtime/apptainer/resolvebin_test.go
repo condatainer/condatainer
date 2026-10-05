@@ -214,7 +214,7 @@ func TestRunApptainerPrependsLibexecBinToPath(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := runApptainerWithOutput(context.Background(), bin, "exec", "", false, nil, &out, &out, nil, 0); err != nil {
+	if err := runApptainerWithOutput(context.Background(), bin, "exec", "", false, nil, &out, &out, nil, nil, 0); err != nil {
 		t.Fatalf("runApptainerWithOutput: %v", err)
 	}
 
@@ -247,5 +247,32 @@ func TestVersionUsesThePerUserCache(t *testing.T) {
 	data, _ := os.ReadFile(counter)
 	if runs := strings.Count(string(data), "x"); runs != 1 {
 		t.Errorf("the binary ran %d times, want 1", runs)
+	}
+}
+
+func TestRunApptainerDropsUnsetEnv(t *testing.T) {
+	dir := withLibexecTier(t)
+	resetApptainerState(t)
+	binPath := writeFakeBin(t, dir, "apptainer", "unused")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nenv\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SSL_CERT_FILE", "/nonexistent")
+	t.Setenv("KEEP_ME", "1")
+
+	bin, err := Normal()
+	if err != nil {
+		t.Fatalf("Normal: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runApptainerWithOutput(context.Background(), bin, "exec", "", false, nil, &out, &out, nil, []string{"SSL_CERT_FILE"}, 0); err != nil {
+		t.Fatalf("runApptainerWithOutput: %v", err)
+	}
+	if strings.Contains(out.String(), "SSL_CERT_FILE=") {
+		t.Errorf("SSL_CERT_FILE reached the launch environment:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "KEEP_ME=1") {
+		t.Errorf("unrelated variable was dropped:\n%s", out.String())
 	}
 }

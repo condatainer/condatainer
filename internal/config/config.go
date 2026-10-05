@@ -37,6 +37,7 @@ type BuildConfig struct {
 	SkipPrebuilt     bool                   // Build from the recipe rather than pull a prebuilt artifact; set per run by create --no-prebuilt, never read from a file
 	Channels         []string               // conda channels in priority order (default: [conda-forge, bioconda])
 	SystemApptainer  string                 // Path to the system/module apptainer or singularity binary (auto-detected if empty)
+	LogsDir          string                 // Where build and restore job logs land (DefaultLogsDir)
 }
 
 // SchedulerConfig holds scheduler binary/submission settings shared by every
@@ -44,12 +45,12 @@ type BuildConfig struct {
 // directives (e.g. helper) — Account/Partition/Defaults are that caller's
 // fallback, not a build-specific one.
 type SchedulerConfig struct {
-	Bin       string                 // Path to sbatch/scheduler binary (auto-detected if empty)
-	Timeout   time.Duration          // Scheduler command timeout (default: 0 = no timeout)
-	Account   string                 // Default billing/allocation account (empty = scheduler's own default)
-	Partition string                 // Default partition/queue (empty = scheduler's own default)
-	Defaults  scheduler.ResourceSpec // Default resource spec for jobs with no script directives
-	SlurmMem  bool                   // Emit --mem/--mem-per-cpu in generated SLURM scripts (default true)
+	Bin          string                 // Path to sbatch/scheduler binary (auto-detected if empty)
+	Timeout      time.Duration          // Scheduler command timeout (default: 0 = no timeout)
+	Account      string                 // Default billing/allocation account (empty = scheduler's own default)
+	Partition    string                 // Default partition/queue (empty = scheduler's own default)
+	Defaults     scheduler.ResourceSpec // Default resource spec for jobs with no script directives
+	SlurmEmitMem bool                   // Emit --mem/--mem-per-cpu in generated SLURM scripts (default true)
 }
 
 // Config holds global application settings
@@ -60,8 +61,8 @@ type Config struct {
 	Version   string
 
 	// Directory paths
-	ProgramDir string
-	LogsDir    string
+	ProgramDir   string
+	HomeOverride string // home_override as configured; ApplyHomeOverride resolves it
 
 	// Recipe collections, in order. Earlier entries shadow later ones.
 	Sources []catalog.Spec
@@ -185,8 +186,13 @@ var DefaultSchedulerDuration = 2 * time.Hour
 // DefaultChannels are the conda channels micromamba gets, highest priority first.
 func DefaultChannels() []string { return []string{"conda-forge", "bioconda"} }
 
-// DefaultLogsDir is where job logs land when nothing configures it.
-func DefaultLogsDir() string { return filepath.Join(os.Getenv("HOME"), "logs") }
+// DefaultLogsDir is where build and restore job logs land when build.logs_dir is not set: $SCRATCH/logs when SCRATCH is set, else $HOME/logs.
+func DefaultLogsDir() string {
+	if scratch := os.Getenv("SCRATCH"); scratch != "" {
+		return filepath.Join(scratch, "logs")
+	}
+	return filepath.Join(os.Getenv("HOME"), "logs")
+}
 
 // BlockSizeCompletions lists common mksquashfs block sizes for shell completion
 var BlockSizeCompletions = []string{"64k", "128k", "256k", "512k", "1m"}
@@ -233,13 +239,13 @@ func LoadDefaults(executablePath string) {
 		Version:       Version,
 
 		ProgramDir: programDir,
-		LogsDir:    DefaultLogsDir(),
 
 		Notification:     DefaultNotification,
 		MetadataCacheTTL: DefaultCacheTTLDay * 24 * time.Hour,
 		StoreGCGrace:     DefaultGCGraceDay * 24 * time.Hour,
 
 		Build: BuildConfig{
+			LogsDir: DefaultLogsDir(),
 			Defaults: scheduler.ResourceSpec{
 				CpusPerTask:  DefaultNcpus,
 				MemPerNodeMB: DefaultMemMB,
@@ -257,9 +263,9 @@ func LoadDefaults(executablePath string) {
 		},
 
 		Scheduler: SchedulerConfig{
-			Bin:      "", // Auto-detect scheduler binary (empty = search PATH)
-			Timeout:  0,  // no timeout by default
-			SlurmMem: true,
+			Bin:          "", // Auto-detect scheduler binary (empty = search PATH)
+			Timeout:      0,  // no timeout by default
+			SlurmEmitMem: true,
 			Defaults: scheduler.ResourceSpec{
 				CpusPerTask:  DefaultSchedulerNcpus,
 				MemPerNodeMB: DefaultSchedulerMemMB,

@@ -23,8 +23,6 @@ var (
 	commonEnvVars = []string{
 		"LC_ALL=C.UTF-8",
 		"LANG=C.UTF-8",
-		"CURL_CA_BUNDLE=", // Unset CA bundle to avoid host ENV interference
-		"SSL_CERT_FILE=",  // Unset SSL cert file to avoid host ENV interference
 	}
 )
 
@@ -47,6 +45,7 @@ type SetupResult struct {
 	OverlayArgs    []string          // Overlay paths with :ro/:rw suffixes
 	EnvList        []string          // Complete environment variable list
 	EnvNotes       map[string]string // Environment variable notes for display
+	UnsetEnv       []string          // Host variables removed from the launch environment
 	Diagnostics    []Diagnostic      // Non-fatal messages for callers to present or log
 	BindPaths      []string          // Deduplicated bind paths
 	Fakeroot       bool              // Final fakeroot setting (may be auto-enabled)
@@ -103,8 +102,7 @@ func Setup(cfg SetupConfig) (*SetupResult, error) {
 	var lastImg string
 	var envMounted bool
 	for _, ol := range mountOverlays {
-		isImg := utils.IsImg(ol)
-		if isImg {
+		if utils.IsWritableLayer(ol) {
 			lastImg = ol
 			envMounted = true
 
@@ -149,6 +147,7 @@ func Setup(cfg SetupConfig) (*SetupResult, error) {
 
 	// Detect GPU flags
 	apptainerFlags := append([]string{}, DetectGPUFlags(cfg.GpuRequested)...)
+	apptainerFlags = append(apptainerFlags, replacedHomeFlags(cfg.ApptainerFlags)...)
 	apptainerFlags = append(apptainerFlags, cfg.ApptainerFlags...)
 
 	return &SetupResult{
@@ -157,6 +156,7 @@ func Setup(cfg SetupConfig) (*SetupResult, error) {
 		OverlayArgs:    overlayArgs,
 		EnvList:        envList,
 		EnvNotes:       envNotes,
+		UnsetEnv:       hostEnvUnset,
 		Diagnostics:    diagnostics,
 		BindPaths:      bindPaths,
 		Fakeroot:       cfg.Fakeroot,
@@ -321,7 +321,7 @@ func AutoEnableFakeroot(lastImg string, writable bool, currentFakeroot bool) (bo
 func ensureSingleImage(overlays []string) error {
 	imgCount := 0
 	for _, overlay := range overlays {
-		if utils.IsImg(overlay) {
+		if utils.IsWritableLayer(overlay) {
 			imgCount++
 		}
 	}
@@ -361,7 +361,7 @@ func selectRootWith(overlays []string, eligible func(string) bool) (root string,
 //   - A plain Apptainer .sif can too, with or without condatainer metadata: it is Apptainer's own self-sufficient root format.
 //   - An image with no readable metadata otherwise degrades to app, so it stays an ordinary overlay.
 func isRootEligible(path string) bool {
-	if utils.IsImg(path) {
+	if utils.IsWritableLayer(path) {
 		return false
 	}
 	if utils.IsSif(path) {
@@ -427,7 +427,7 @@ func distinctPrefixes(overlays []string, prefixOf func(string) string) error {
 	claimed := map[string]string{}
 	for _, overlay := range overlays {
 		path := cleanOverlayPath(overlay)
-		if utils.IsImg(path) {
+		if utils.IsWritableLayer(path) {
 			continue
 		}
 		prefix := prefixOf(path)
@@ -506,7 +506,7 @@ func orderOverlays(overlays []string) []string {
 	for _, overlay := range overlays {
 		path := cleanOverlayPath(overlay)
 		switch {
-		case utils.IsImg(path):
+		case utils.IsWritableLayer(path):
 			img = overlay
 		case envSqf == "" && isEnvSnapshotSqf(path):
 			envSqf = overlay

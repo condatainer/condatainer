@@ -50,7 +50,7 @@ func (c Contribution) ContributesBin() bool {
 // it, and the manifest is never opened here, so provenance can grow without costing
 // every mount. A writable .img is the exception and reads its .env sidecar.
 func resolveImage(cleanPath string) (Contribution, *Diagnostic) {
-	if utils.IsImg(cleanPath) {
+	if utils.IsWritableLayer(cleanPath) {
 		return imgContribution(cleanPath)
 	}
 

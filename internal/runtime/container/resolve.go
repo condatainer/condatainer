@@ -70,8 +70,8 @@ func ResolveOverlayPaths(inputs []string) ([]string, error) {
 		}
 
 		// An absolute path to an existing file is used directly (regardless of extension), as is
-		// a staging directory named like an .img (see exec.CreateCondaOverlay).
-		if filepath.IsAbs(pathToResolve) && (utils.FileExists(pathToResolve) || (utils.IsImg(pathToResolve) && utils.DirExists(pathToResolve))) {
+		// a staging directory (see exec.CreateCondaOverlay).
+		if filepath.IsAbs(pathToResolve) && (utils.FileExists(pathToResolve) || (utils.DirExists(pathToResolve) && utils.IsWritableLayer(pathToResolve))) {
 			resolved = append(resolved, pathToResolve+suffix)
 			continue
 		}

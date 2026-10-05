@@ -348,7 +348,7 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 			"Project":  root,
 		},
 	}
-	scriptPath, err := j.sched.CreateScriptWithSpec(jobSpec, config.Global.LogsDir)
+	scriptPath, err := j.sched.CreateScriptWithSpec(jobSpec, config.Global.Build.LogsDir)
 	if err != nil {
 		return "", fmt.Errorf("cannot create the batch script: %w", err)
 	}
@@ -373,7 +373,7 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 // the job correct under a scheduler that resolves the directory differently.
 func restoreCommand(root string, step Step, opts Options) string {
 	var cmd strings.Builder
-	cmd.WriteString("condatainer project restore --project ")
+	cmd.WriteString(utils.SelfCommand() + " project restore --project ")
 	cmd.WriteString(shellQuote(root))
 	cmd.WriteString(" --only ")
 	cmd.WriteString(shellQuote(step.Artifact))

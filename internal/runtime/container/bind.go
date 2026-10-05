@@ -7,6 +7,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // BoundExecDir and BoundExecPath are where the running executable is bound
@@ -187,5 +188,56 @@ func BindPaths(paths ...string) []string {
 		bindPaths = append(bindPaths, execPath+":"+BoundExecPath+":ro")
 	}
 
+	bindPaths = append(bindPaths, realHomeBinds()...)
+
 	return bindPaths
+}
+
+// realHomeBinds binds the real home read-only at its own path when home_override replaced HOME, so symlinks into it resolve and a nested condatainer finds the user's config through CNT_REAL_HOME.
+//   - The config directory is bound alone when it lies outside the real home.
+//   - A directory that contains or sits inside the replacement HOME is skipped.
+func realHomeBinds() []string {
+	if os.Getenv(utils.EnvRealHome) == "" {
+		return nil
+	}
+	replaced := os.Getenv("HOME")
+	var dirs []string
+	home, err := utils.RealHome()
+	if err == nil && utils.DirExists(home) && !pathsOverlap(home, replaced) {
+		dirs = append(dirs, home)
+	}
+	cfg := config.GetUserConfigDir()
+	if utils.DirExists(cfg) && !pathsOverlap(cfg, replaced) && !(len(dirs) > 0 && pathsOverlap(home, cfg)) {
+		dirs = append(dirs, cfg)
+	}
+	binds := make([]string, len(dirs))
+	for i, d := range dirs {
+		binds[i] = d + ":" + d + ":ro"
+	}
+	return binds
+}
+
+// pathsOverlap reports whether a and b are the same path or one is inside the other.
+func pathsOverlap(a, b string) bool {
+	inside := func(parent, child string) bool {
+		rel, err := filepath.Rel(parent, child)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+	}
+	return inside(a, b) || inside(b, a)
+}
+
+// replacedHomeFlags makes the replaced HOME the container's home.
+//   - Apptainer's default home is the passwd home, not $HOME, so the replacement needs --home.
+//   - Nothing is added when HOME was not replaced, or when userFlags already set a home.
+func replacedHomeFlags(userFlags []string) []string {
+	home := os.Getenv("HOME")
+	if real, err := utils.RealHome(); os.Getenv(utils.EnvRealHome) == "" || err != nil || home == "" || home == real {
+		return nil
+	}
+	for _, f := range userFlags {
+		if f == "-H" || f == "--home" || strings.HasPrefix(f, "-H=") || strings.HasPrefix(f, "--home=") {
+			return nil
+		}
+	}
+	return []string{"--home", home}
 }

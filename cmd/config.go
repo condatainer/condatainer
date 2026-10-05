@@ -25,7 +25,6 @@ var (
 // configKeyDefs maps every known config key to whether it holds a string slice (array).
 // true = array key (use append/prepend/remove); false = scalar key (use set).
 var configKeyDefs = map[string]bool{
-	"logs_dir":                 false,
 	"default_distro":           false,
 	"scheduler.submit_job":     false,
 	"autoload_gpu":             false,
@@ -37,6 +36,7 @@ var configKeyDefs = map[string]bool{
 	"scheduler.slurm.mem":      false,
 	"helper.connect":           false,
 	"build.system_apptainer":   false,
+	"build.logs_dir":           false,
 	"build.ncpus":              false,
 	"build.mem":                false,
 	"build.time":               false,
@@ -383,12 +383,6 @@ var configListCmd = &cobra.Command{
 		}
 		fmt.Println()
 
-		// Show all settings
-		fmt.Println(utils.StyleTitle("Paths:"))
-		fmt.Printf("  logs_dir: %s%s\n", config.Global.LogsDir, srcTag("logs_dir"))
-		printOverridden("            ", "logs_dir")
-		fmt.Println()
-
 		// Remote sources
 		fmt.Println(utils.StyleTitle("Recipe Sources:"))
 		if len(config.Global.Sources) > 0 {
@@ -458,6 +452,8 @@ var configListCmd = &cobra.Command{
 		fmt.Printf("%s %s\n", utils.StyleTitle("Build Configuration:"), "build.*")
 		fmt.Printf("  %-21s %s%s\n", "system_apptainer:", config.Global.Build.SystemApptainer, srcTag("build.system_apptainer"))
 		printOverridden("                        ", "build.system_apptainer")
+		fmt.Printf("  %-21s %s%s\n", "logs_dir:", config.Global.Build.LogsDir, srcTag("build.logs_dir"))
+		printOverridden("                        ", "build.logs_dir")
 		fmt.Printf("  %-21s %v%s\n", "always_submit_data:", config.Global.Build.AlwaysSubmitData, srcTag("build.always_submit_data"))
 		printOverridden("                        ", "build.always_submit_data")
 		fmt.Printf("  %-21s %d%s\n", "ncpus:", config.Global.Build.Defaults.CpusPerTask, srcTag("build.ncpus"))

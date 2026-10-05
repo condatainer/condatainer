@@ -10,6 +10,7 @@ import (
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/helper"
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // helperListEntry wraps HelperRun with server-computed fields for the API response.
@@ -67,7 +68,7 @@ func isActiveRunStatus(status string) bool {
 // handleStatus serves GET /api/status — server health and running count.
 // Uses the watcher's in-memory counter to avoid re-reading history.jsonl on every tick.
 func (s *srv) handleStatus(w http.ResponseWriter, r *http.Request) {
-	home, _ := os.UserHomeDir()
+	home, _ := utils.RealHome()
 	scratch := os.Getenv("SCRATCH")
 	hostname, _ := os.Hostname()
 	var schedType string

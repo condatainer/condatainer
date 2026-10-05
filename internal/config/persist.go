@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -149,17 +150,11 @@ func setDefaults() {
 
 // GetUserConfigPath returns the path to the user config file
 func GetUserConfigPath() (string, error) {
-	userConfigDir, err := os.UserConfigDir()
-	if err != nil {
-		// Fallback to home directory
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, ".condatainer", ConfigFilename+"."+ConfigType), nil
+	dir := GetUserConfigDir()
+	if dir == "" {
+		return "", errors.New("no home directory for the user config")
 	}
-
-	return filepath.Join(userConfigDir, "condatainer", ConfigFilename+"."+ConfigType), nil
+	return filepath.Join(dir, ConfigFilename+"."+ConfigType), nil
 }
 
 // GetRootConfigPath returns the root config path (CNT_ROOT or standalone layout).
@@ -238,8 +233,8 @@ func GetConfigSearchPaths() []ConfigSearchPath {
 	}
 
 	// Priority order matches InitViper: user > extra-root > app-root
-	if userConfigDir, err := os.UserConfigDir(); err == nil {
-		add(filepath.Join(userConfigDir, "condatainer", ConfigFilename+"."+ConfigType), "user")
+	if userPath, err := GetUserConfigPath(); err == nil {
+		add(userPath, "user")
 	}
 	if extraRoot := GetExtraRootDir(); extraRoot != "" {
 		add(filepath.Join(extraRoot, ConfigFilename+"."+ConfigType), "extra-root")
@@ -920,6 +915,8 @@ func LoadFromViper() {
 			Global.Scheduler.Defaults.Time = dur
 		}
 	}
+
+	Global.HomeOverride = layerString("home_override")
 
 	// Load build.logs_dir from config (overrides DefaultLogsDir)
 	if logsDir := layerString("build.logs_dir"); logsDir != "" {

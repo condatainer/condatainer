@@ -147,6 +147,7 @@ func Setup(cfg SetupConfig) (*SetupResult, error) {
 
 	// Detect GPU flags
 	apptainerFlags := append([]string{}, DetectGPUFlags(cfg.GpuRequested)...)
+	apptainerFlags = append(apptainerFlags, replacedHomeFlags(cfg.ApptainerFlags)...)
 	apptainerFlags = append(apptainerFlags, cfg.ApptainerFlags...)
 
 	return &SetupResult{

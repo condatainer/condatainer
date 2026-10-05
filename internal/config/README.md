@@ -60,3 +60,27 @@
 - The cache is always written to a personal directory. A shared dir is never written to, to avoid cross-user pollution.
 - `GetWritableTmpDir` is the stable root for long-lived work. `CNT_TMPDIR` does not redirect it.
 - A data layer is a choice made at the command, not a path. Its meaning is local to the machine, so it is never recorded.
+
+## Home override
+
+- `home_override` replaces `HOME` for clusters whose home is read-only on a compute node.
+- It is a setting, not a probe. A probe would write state to scratch on a compute node and read it from `$HOME` on the login node.
+- `HOME` is replaced once, right after the config layers load.
+  - Everything that follows `$HOME` follows it: the data, cache and state directories and every child process.
+  - Apptainer's container home does not. It is the passwd home, so a container gets `--home <replacement>`.
+  - A child that sets its own `HOME`, such as the toolchain provisioning, keeps it.
+- The config file, credentials and the install-root exclusion stay on the real home.
+  - The key is read from them before the replacement, and they are written on a login node.
+- The real home is saved in `CNT_REAL_HOME` and read back with `utils.RealHome`.
+  - A job or a nested call inherits the replaced `HOME`, so `$HOME` no longer says where the config is.
+  - Replacing again keeps the saved home.
+- A container binds the real home read-only at its own path.
+  - A user's symlink from the replacement home into the real home resolves inside it.
+  - `CNT_REAL_HOME` passes into it, so a nested call finds the user's config and credentials there.
+  - Condatainer creates no symlinks. The replacement home starts empty.
+- A job script replaces `HOME` itself in its header.
+  - It does not depend on the scheduler copying the submit environment.
+- Scheduler commands run with the real home.
+- Paths chosen at submit time are written into the script, so the submitting process must already resolve them under the replacement.
+- SSH never reads `$HOME`. Both the client and the `ssh` binary take the home from the passwd entry.
+- An unusable value warns and leaves `HOME` alone, so `config set` can still repair it.

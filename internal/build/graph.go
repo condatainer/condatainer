@@ -478,7 +478,7 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 	}
 
 	// Create batch script
-	scriptPath, err := bg.scheduler.CreateScriptWithSpec(jobSpec, config.Global.LogsDir)
+	scriptPath, err := bg.scheduler.CreateScriptWithSpec(jobSpec, config.Global.Build.LogsDir)
 	if err != nil {
 		os.Remove(lockPath)
 		return "", fmt.Errorf("failed to create batch script: %w", err)

@@ -348,7 +348,7 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 			"Project":  root,
 		},
 	}
-	scriptPath, err := j.sched.CreateScriptWithSpec(jobSpec, config.Global.LogsDir)
+	scriptPath, err := j.sched.CreateScriptWithSpec(jobSpec, config.Global.Build.LogsDir)
 	if err != nil {
 		return "", fmt.Errorf("cannot create the batch script: %w", err)
 	}

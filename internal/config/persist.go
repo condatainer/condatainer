@@ -114,10 +114,10 @@ func InitViper() error {
 // setDefaults sets default values for all config keys
 func setDefaults() {
 	viper.SetDefault("scheduler.submit_job", true)
-	viper.SetDefault("logs_dir", DefaultLogsDir())
 
 	// Build config defaults
 	viper.SetDefault("build.system_apptainer", "apptainer")
+	viper.SetDefault("build.logs_dir", DefaultLogsDir())
 	viper.SetDefault("build.ncpus", DefaultNcpus)
 	viper.SetDefault("build.mem", DefaultMemMB)
 	viper.SetDefault("build.time", DefaultBuildTime)
@@ -921,13 +921,13 @@ func LoadFromViper() {
 		}
 	}
 
-	// Load logs_dir from config (overrides default $HOME/logs)
-	if logsDir := layerString("logs_dir"); logsDir != "" {
+	// Load build.logs_dir from config (overrides DefaultLogsDir)
+	if logsDir := layerString("build.logs_dir"); logsDir != "" {
 		logsDir = os.ExpandEnv(logsDir)
 		if absLogsDir, err := filepath.Abs(logsDir); err == nil {
 			logsDir = absLogsDir
 		}
-		Global.LogsDir = logsDir
+		Global.Build.LogsDir = logsDir
 	}
 
 	// Recipe collections, in order; earlier entries shadow later ones.

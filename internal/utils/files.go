@@ -33,6 +33,11 @@ func IsImg(path string) bool {
 	return ext == ".img" || ext == ".ext3"
 }
 
+// IsWritableLayer reports whether path is a writable overlay layer: an .img file, or a staging directory holding upper/ and work/.
+func IsWritableLayer(path string) bool {
+	return IsImg(path) || (DirExists(filepath.Join(path, "upper")) && DirExists(filepath.Join(path, "work")))
+}
+
 // IsSqf checks if the path has a SquashFS extension (.sqf, .sqsh, .squashfs).
 // These are read-only compressed images.
 func IsSqf(path string) bool {
@@ -139,7 +144,7 @@ func IsTextFile(path string) (bool, error) {
 // DirExists checks if a path exists and is a directory.
 func DirExists(path string) bool {
 	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
+	if err != nil {
 		return false
 	}
 	return info.IsDir()

@@ -327,3 +327,19 @@ func TestIsTextFileTellsAScriptFromAnImage(t *testing.T) {
 		t.Errorf("image: text=%v err=%v, want not text", ok, err)
 	}
 }
+
+func TestIsWritableLayer(t *testing.T) {
+	dir := t.TempDir()
+	stage := filepath.Join(dir, "stage")
+	for _, sub := range []string{"upper", "work"} {
+		if err := os.MkdirAll(filepath.Join(stage, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !IsWritableLayer(stage) || !IsWritableLayer("env.img") {
+		t.Error("a staging directory and an .img should be writable layers")
+	}
+	if IsWritableLayer(dir) || IsWritableLayer(filepath.Join(dir, "tool.sqf")) {
+		t.Error("a plain directory and an .sqf should not be")
+	}
+}

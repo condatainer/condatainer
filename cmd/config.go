@@ -26,6 +26,7 @@ var (
 // true = array key (use append/prepend/remove); false = scalar key (use set).
 var configKeyDefs = map[string]bool{
 	"default_distro":           false,
+	"home_override":            false,
 	"scheduler.submit_job":     false,
 	"autoload_gpu":             false,
 	"nested_run":               false,
@@ -399,6 +400,10 @@ var configListCmd = &cobra.Command{
 		fmt.Println(utils.StyleTitle("Options:"))
 		fmt.Printf("  %-19s %s%s\n", "default_distro:", config.ResolvedDefaultDistro(), srcTag("default_distro"))
 		printOverridden("                      ", "default_distro")
+		if config.Global.HomeOverride != "" {
+			fmt.Printf("  %-19s %s%s\n", "home_override:", config.Global.HomeOverride, srcTag("home_override"))
+			printOverridden("                      ", "home_override")
+		}
 		if cat, err := config.OpenCatalog(cmd.Context()); err == nil {
 			if def := config.SourceDefaultDistro(cat); def != "" && def != config.ResolvedDefaultDistro() {
 				fmt.Printf("                      %s\n",

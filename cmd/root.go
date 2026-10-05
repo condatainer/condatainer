@@ -74,6 +74,9 @@ var rootCmd = &cobra.Command{
 		// Step 3: Load config values into Global (with runtime detection fallback)
 		config.LoadFromViper()
 
+		// Step 4: Replace HOME when home_override is set
+		config.ApplyHomeOverride()
+
 		// Warn if apptainer is still not accessible after auto-detection, unless
 		// the toolchain has its own or this is already inside a container, where
 		// none is reachable. Skip for all `config` commands so users can

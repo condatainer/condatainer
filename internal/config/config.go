@@ -61,7 +61,8 @@ type Config struct {
 	Version   string
 
 	// Directory paths
-	ProgramDir string
+	ProgramDir   string
+	HomeOverride string // home_override as configured; ApplyHomeOverride resolves it
 
 	// Recipe collections, in order. Earlier entries shadow later ones.
 	Sources []catalog.Spec

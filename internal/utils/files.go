@@ -186,7 +186,7 @@ func CreateFileWritable(path string) (*os.File, error) {
 	if err == nil {
 		ShareWithParentGroup(path)
 	}
-	return f, err
+	return f, withHomeHint(err, path)
 }
 
 // ShareWithParentGroup grants the group g+rw (plus g+x on dirs and executables) when
@@ -271,7 +271,7 @@ func MkdirAllShared(dir string) error {
 		p = parent
 	}
 	if err := os.MkdirAll(dir, PermDir); err != nil {
-		return err
+		return withHomeHint(err, dir)
 	}
 	// Shallowest-first, so each level's parent is already shared when we reach it.
 	for i := len(created) - 1; i >= 0; i-- {

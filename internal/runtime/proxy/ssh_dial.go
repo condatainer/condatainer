@@ -16,6 +16,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // rsaSHA2Signer wraps an ssh.AlgorithmSigner to advertise and sign with
@@ -234,5 +236,6 @@ func sshHomeDir() string {
 	if u, err := user.Current(); err == nil {
 		return u.HomeDir
 	}
-	return os.Getenv("HOME")
+	home, _ := utils.RealHome()
+	return home
 }

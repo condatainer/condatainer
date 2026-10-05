@@ -197,10 +197,17 @@ func ResourceEnvVars(rs *ResourceSpec) []string {
 }
 
 // writeJobHeader writes the job info echo block.
+//   - With JobHome set it first replaces HOME, saving the current one in CNT_REAL_HOME.
 //   - jobIDVar is the shell expression for the job ID.
 //   - Resource lines print only when specs.Spec is set, and specs.ScriptPath when present.
 //   - formatTime renders rs.Time. nil skips that line.
 func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime func(time.Duration) string, metadata map[string]string) {
+	if JobHome != "" {
+		fmt.Fprintln(w, "# Replace HOME (home_override)")
+		fmt.Fprintf(w, "export %s=\"${%s:-${HOME:-}}\"\n", utils.EnvRealHome, utils.EnvRealHome)
+		fmt.Fprintf(w, "export HOME=%s\n", utils.ShellQuote(JobHome))
+		fmt.Fprintln(w, "mkdir -p \"$HOME\"")
+	}
 	fmt.Fprintln(w, "# Print job information")
 	fmt.Fprintln(w, "_START_TIME=$SECONDS")
 	fmt.Fprintln(w, "_format_time() { local s=$1; printf '%02d:%02d:%02d' $((s/3600)) $((s%3600/60)) $((s%60)); }")

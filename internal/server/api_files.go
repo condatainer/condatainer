@@ -8,6 +8,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // fsErrorResponse writes err for path as a human-readable message with a
@@ -47,7 +49,7 @@ func (s *srv) handleFS(w http.ResponseWriter, r *http.Request) {
 
 	path := r.URL.Query().Get("path")
 	if path == "" {
-		if home, err := os.UserHomeDir(); err == nil {
+		if home, err := utils.RealHome(); err == nil {
 			path = home
 		} else {
 			path = "/"

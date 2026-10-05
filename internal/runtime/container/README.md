@@ -81,6 +81,9 @@ Root selection has already run, so ordering never decides which overlay becomes 
 - With a conda environment mounted, the self-provisioned toolchain directory is bound at the same path as on the host.
   - In-container `mm` and `env` then find `micromamba`, without the base image carrying one.
 - It is also bound when `nested_run` supplies apptainer, since apptainer needs its binary and libraries at the host path.
+- With `HOME` replaced, the container gets `--home <replacement>`, because Apptainer's default home is the passwd home and ignores `$HOME`. A `--home` the caller passes wins.
+- With `HOME` replaced, the real home is bound read-only at its own path. A nested call reads the config there through `CNT_REAL_HOME`.
+  - Skipped when the replacement is inside the real home or the reverse. The config directory is then bound alone.
 - The executable is bound at `/.cnt_bin`, not under `/usr/bin`. A bind there puts a mount boundary inside the directory `dpkg` unpacks into, and `dpkg` then refuses every package.
 
 ## Nested running

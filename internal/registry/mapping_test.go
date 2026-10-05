@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 var buildTime = time.Date(2026, 7, 21, 13, 45, 0, 0, time.UTC)

@@ -15,8 +15,8 @@ import (
 
 	"log/slog"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image/producer"
 	"github.com/condatainer/condatainer/internal/logging"
@@ -687,7 +687,7 @@ func (b *BuildObject) parseDependencies() error {
 	if b.spec.Dependencies != nil {
 		return nil
 	}
-	deps, err := utils.GetDependenciesFromScript(b.buildSource)
+	deps, err := catalog.GetDependenciesFromScript(b.buildSource)
 	if err != nil {
 		return fmt.Errorf("failed to parse dependencies: %w", err)
 	}
@@ -998,20 +998,20 @@ func FromExternalSource(ctx context.Context, targetPrefix, source string, isAppt
 	var target string
 	var deps []string
 	if isShell {
-		parsedType, err := utils.GetTypeFromScript(source)
+		parsedType, err := catalog.GetTypeFromScript(source)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse external build type: %w", err)
 		}
 		externalType = parsedType
 
-		if deps, err = utils.GetDependenciesFromScript(source); err != nil {
+		if deps, err = catalog.GetDependenciesFromScript(source); err != nil {
 			return nil, fmt.Errorf("failed to parse external build dependencies: %w", err)
 		}
 	}
 	// A definition declares its name the same way; a remote URI has no file to read.
 	if isShell || strings.HasSuffix(source, ".def") {
 		var err error
-		if target, err = utils.GetTargetFromScript(source); err != nil {
+		if target, err = catalog.GetTargetFromScript(source); err != nil {
 			return nil, fmt.Errorf("failed to parse external build target: %w", err)
 		}
 	}

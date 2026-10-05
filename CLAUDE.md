@@ -17,9 +17,9 @@ go test -v ./internal/build -run TestParseScriptMetadata
 ## Architecture
 
 - CLI: cobra + viper. `main.go` calls `cmd.Execute()`. One file per subcommand in `cmd/`, delegating to `internal/`.
-- `catalog/`: resolves a name to a recipe and a set of names to a build order. Owns the `#KEY:` header tokenizer.
 - `internal/artifact/`: what an image embeds. Identity, manifests, equivalence comparison.
 - `build/`: name/version to a Conda, Script or Def build. Dependency graphs, remote scripts.
+- `catalog/`: resolves a name to a recipe and a set of names to a build order. Owns the `#KEY:` header tokenizer and the script header readers.
 - `conda/`: the Conda environment mounted at `/cnt_env`.
 - `config/`: layered config (flags > env > user > extra-root > app-root > defaults) and data directory search.
 - `credential/`: per-layer `credentials.json` for registry logins and recipe-source tokens. Lookup and file permissions.
@@ -32,7 +32,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - `runtime/`: `apptainer/` wrapper, `container/` setup, `exec/`, `proxy/` for compute nodes.
 - `scheduler/`: SLURM, PBS, LSF, HTCondor. Detection, directives, translation.
 - `server/`: dashboard HTTP server. `store/`: immutable overflow store, addressed by name plus key.
-- `toolpath/`: finds a runnable path for a host tool. `utils/`: console output, files, downloads, script parsing.
+- `toolpath/`: finds a runnable path for a host tool. `utils/`: console output, files, downloads, duration, memory and version parsing. Imports no other condatainer package.
 
 ## Domain rules
 

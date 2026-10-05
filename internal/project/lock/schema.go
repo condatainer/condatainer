@@ -18,7 +18,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // SchemaVersion is the lock format this build reads and writes.

@@ -1,4 +1,4 @@
-package catalog
+package utils
 
 import (
 	"os"
@@ -101,7 +101,7 @@ func TestPreReleaseLadder(t *testing.T) {
 // make ph[0] — the default version offered to users — depend on how the
 // collection was read. Skips when no collection is checked out beside the repo.
 func TestSharedVersionCases(t *testing.T) {
-	const cases = "../recipe/scripts/version_cases.txt"
+	const cases = "../../../recipe/scripts/version_cases.txt"
 	data, err := os.ReadFile(cases)
 	if err != nil {
 		t.Skip("no recipe collection checked out")

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 func envRuntime(prefix string) Runtime {

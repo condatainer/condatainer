@@ -9,7 +9,7 @@ import (
 
 	"log/slog"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/libexec"
 	"github.com/condatainer/condatainer/internal/logging"

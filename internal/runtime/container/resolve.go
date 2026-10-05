@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -104,7 +104,7 @@ func ResolveOverlayPaths(inputs []string) ([]string, error) {
 				if strings.HasPrefix(key, prefix) {
 					ver := strings.TrimPrefix(key, prefix)
 					if dep.Satisfies(ver) {
-						if bestVer == "" || catalog.CompareVersions(ver, bestVer) > 0 {
+						if bestVer == "" || utils.CompareVersions(ver, bestVer) > 0 {
 							bestVer = ver
 							bestPath = path
 						}

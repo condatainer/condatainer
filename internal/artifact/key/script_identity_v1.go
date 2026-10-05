@@ -3,8 +3,8 @@ package key
 import (
 	"fmt"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // deriveScriptIdentityV1 answers: "Which exact script build is this?"

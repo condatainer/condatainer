@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/build"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -147,7 +147,7 @@ func collectDeps(scriptPaths []string, preSeededDeps []string) ([]string, error)
 		if multiScript {
 			utils.PrintMessage("Checking script: %s", scriptPath)
 		}
-		scriptDeps, err := utils.GetDependenciesFromScript(scriptPath)
+		scriptDeps, err := catalog.GetDependenciesFromScript(scriptPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse dependencies from %s: %w", scriptPath, err)
 		}
@@ -228,7 +228,7 @@ func checkDeps(deps, solved []string) []string {
 				if sibling != "" {
 					ext := filepath.Ext(sibling)
 					if strings.HasSuffix(sibling, ".sh") {
-						if shDeps, _ := utils.GetDependenciesFromScript(sibling); len(shDeps) > 0 {
+						if shDeps, _ := catalog.GetDependenciesFromScript(sibling); len(shDeps) > 0 {
 							hint = "  (" + ext + " found, but has #DEP - create manually)"
 						} else {
 							hint = "  (" + ext + " found)"
@@ -260,7 +260,7 @@ func autoCreateExternalOverlay(ctx context.Context, dep string) bool {
 	baseName := filepath.Base(absPrefix)
 
 	if strings.HasSuffix(sibling, ".sh") {
-		shDeps, _ := utils.GetDependenciesFromScript(sibling)
+		shDeps, _ := catalog.GetDependenciesFromScript(sibling)
 		if len(shDeps) > 0 {
 			utils.PrintError("External overlay %s has a .sh with #DEP; create it with `condatainer create -f %s`",
 				filepath.Base(dep), sibling)

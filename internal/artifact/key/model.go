@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // Kind identifies a model's semantic role for validation. It is not serialized;

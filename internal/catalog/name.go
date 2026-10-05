@@ -3,6 +3,8 @@ package catalog
 import (
 	"errors"
 	"strings"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // ErrEmptyDep is returned by ParseDep for a blank dependency.
@@ -74,7 +76,7 @@ func (d Dep) Satisfies(version string) bool {
 	if d.Op == "" {
 		return d.Version == "" || versionHasPrefix(version, d.Version)
 	}
-	switch cmp := CompareVersions(version, d.Min); d.Op {
+	switch cmp := utils.CompareVersions(version, d.Min); d.Op {
 	case ">=":
 		if cmp < 0 {
 			return false
@@ -86,7 +88,7 @@ func (d Dep) Satisfies(version string) bool {
 	default:
 		return false
 	}
-	return d.Version == "" || CompareVersions(version, d.Version) <= 0
+	return d.Version == "" || utils.CompareVersions(version, d.Version) <= 0
 }
 
 // versionHasPrefix reports whether every dot-separated component of prefix

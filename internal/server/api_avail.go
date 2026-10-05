@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/project"
 	"github.com/condatainer/condatainer/internal/runtime/container"

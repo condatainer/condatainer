@@ -629,7 +629,7 @@ func (s *SlurmScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string
 			}
 		}
 
-		if slurmMem {
+		if slurmEmitMem {
 			if rs.MemPerCpuMB > 0 {
 				fmt.Fprintf(writer, "#SBATCH --mem-per-cpu=%dmb\n", rs.MemPerCpuMB)
 			} else if rs.MemPerNodeMB > 0 {

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // The job re-runs create on a node, so every choice the user made on the command
@@ -16,7 +18,7 @@ func TestSchedulerCreateCommandCarriesTheBuildFlags(t *testing.T) {
 			t.Errorf("command %q lacks %q", got, want)
 		}
 	}
-	if plain := buildSchedulerCreateCommand([]string{"star/2.7.11b"}, nil, false, false, false, nil); plain != "condatainer create star/2.7.11b" {
+	if plain := buildSchedulerCreateCommand([]string{"star/2.7.11b"}, nil, false, false, false, nil); plain != utils.SelfCommand()+" create star/2.7.11b" {
 		t.Errorf("a plain build renders %q", plain)
 	}
 }
@@ -24,7 +26,7 @@ func TestSchedulerCreateCommandCarriesTheBuildFlags(t *testing.T) {
 // A flag value is quoted, so a channel or source name cannot break the job script.
 func TestSchedulerCreateCommandQuotesFlagValues(t *testing.T) {
 	got := buildSchedulerCreateCommand([]string{"star/2.7.11b"}, []string{"--channel", "my chan; rm -rf /"}, false, false, false, nil)
-	want := "condatainer create --channel 'my chan; rm -rf /' star/2.7.11b"
+	want := utils.SelfCommand() + " create --channel 'my chan; rm -rf /' star/2.7.11b"
 	if got != want {
 		t.Errorf("command = %q, want %q", got, want)
 	}

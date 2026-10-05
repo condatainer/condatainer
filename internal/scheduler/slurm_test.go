@@ -1196,7 +1196,7 @@ echo "hello"
 	}
 }
 
-func TestSlurmMemPerCpuRoundTrip(t *testing.T) {
+func TestSlurmEmitMemPerCpuRoundTrip(t *testing.T) {
 	sched := newTestSlurmScheduler()
 
 	// Parse a script with --mem-per-cpu
@@ -1266,10 +1266,10 @@ func TestSlurmMemPerCpuRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCreateScriptSkipsMemWhenSlurmMemDisabled(t *testing.T) {
+func TestCreateScriptSkipsMemWhenSlurmEmitMemDisabled(t *testing.T) {
 	sched := newTestSlurmScheduler()
-	SetSlurmMem(false)
-	t.Cleanup(func() { SetSlurmMem(true) })
+	SetSlurmEmitMem(false)
+	t.Cleanup(func() { SetSlurmEmitMem(true) })
 
 	tmpDir := t.TempDir()
 	jobSpec := &JobSpec{
@@ -1294,7 +1294,7 @@ func TestCreateScriptSkipsMemWhenSlurmMemDisabled(t *testing.T) {
 	}
 	script := string(content)
 	if strings.Contains(script, "#SBATCH --mem=") {
-		t.Errorf("script should not contain --mem= when SetSlurmMem(false), got:\n%s", script)
+		t.Errorf("script should not contain --mem= when SetSlurmEmitMem(false), got:\n%s", script)
 	}
 	if !strings.Contains(script, "#SBATCH --cpus-per-task=4") {
 		t.Errorf("script should still contain --cpus-per-task=4")

@@ -461,6 +461,22 @@ func parseLsfGpuDirective(gpuStr string) *GpuSpec {
 	return spec
 }
 
+// lsfFullEnv returns flags with a -env directive that limits the job's
+// environment replaced by one that copies everything, keeping its assignments.
+// With no -env directive LSF copies the environment itself, so none is added.
+func lsfFullEnv(flags []string) []string {
+	rest, value, found := takeFlag(flags, "-env")
+	if !found {
+		return flags
+	}
+	full, limited := fullEnvValue(value, "all", ", ")
+	env := `-env "` + full + `"`
+	if limited {
+		noteEnvOverride("Your script sets -env "+value, env)
+	}
+	return append(rest, env)
+}
+
 // CreateScriptWithSpec generates an LSF batch script
 func (l *LsfScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) (string, error) {
 	specs := jobSpec.Specs
@@ -514,7 +530,7 @@ func (l *LsfScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	// Skip any -M flags when enforcement is active: a computed -M will be emitted in the
 	// resource section below, so preserving the original would produce a duplicate.
 	skipExistingM := specs.Spec != nil && lsfMemoryEnforcement() != lsfMemEnforcementNone
-	for _, flag := range specs.RemainingFlags {
+	for _, flag := range lsfFullEnv(specs.RemainingFlags) {
 		if skipExistingM && flagMatches(flag, "-M") {
 			continue
 		}

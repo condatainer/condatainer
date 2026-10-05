@@ -7,6 +7,7 @@ import (
 
 	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // always_submit_data sends a data build to the scheduler without directives; an
@@ -53,7 +54,7 @@ func TestExternalScriptIsSubmittableOnlyWithItsJobArgs(t *testing.T) {
 	if !b.RequiresScheduler() {
 		t.Error("an external script with directives is not submitted")
 	}
-	want := "condatainer create --prefix " + filepath.Join(dir, "demo") + " --file " + src
+	want := utils.SelfCommand() + " create --prefix " + filepath.Join(dir, "demo") + " --file " + src
 	if got := buildSchedulerCreateCommand(b.jobTarget(), nil, false, false, false, nil); got != want {
 		t.Errorf("command = %q, want %q", got, want)
 	}

@@ -25,8 +25,8 @@ var (
 // configKeyDefs maps every known config key to whether it holds a string slice (array).
 // true = array key (use append/prepend/remove); false = scalar key (use set).
 var configKeyDefs = map[string]bool{
-	"logs_dir":                 false,
 	"default_distro":           false,
+	"home_override":            false,
 	"scheduler.submit_job":     false,
 	"autoload_gpu":             false,
 	"nested_run":               false,
@@ -34,9 +34,10 @@ var configKeyDefs = map[string]bool{
 	"metadata_cache_ttl":       false,
 	"store_gc_grace":           false,
 	"scheduler.proxy_perjob":   false,
-	"scheduler.slurm.mem":      false,
+	"scheduler.slurm.emit_mem": false,
 	"helper.connect":           false,
 	"build.system_apptainer":   false,
+	"build.logs_dir":           false,
 	"build.ncpus":              false,
 	"build.mem":                false,
 	"build.time":               false,
@@ -66,7 +67,7 @@ func refuseSourcesKey(key string) {
 
 func isBoolKey(key string) bool {
 	switch key {
-	case "scheduler.submit_job", "scheduler.proxy_perjob", "scheduler.slurm.mem", "autoload_gpu",
+	case "scheduler.submit_job", "scheduler.proxy_perjob", "scheduler.slurm.emit_mem", "autoload_gpu",
 		"build.always_submit_data":
 		return true
 	}
@@ -213,7 +214,7 @@ func recipeExists(ctx context.Context, name string) bool {
 // configValueCompletion returns suggested values for a config key
 func configValueCompletion(key string) []string {
 	switch key {
-	case "scheduler.submit_job", "scheduler.proxy_perjob", "scheduler.slurm.mem":
+	case "scheduler.submit_job", "scheduler.proxy_perjob", "scheduler.slurm.emit_mem":
 		return []string{"true", "false"}
 	case "helper.connect":
 		return config.ConnectValues
@@ -383,12 +384,6 @@ var configListCmd = &cobra.Command{
 		}
 		fmt.Println()
 
-		// Show all settings
-		fmt.Println(utils.StyleTitle("Paths:"))
-		fmt.Printf("  logs_dir: %s%s\n", config.Global.LogsDir, srcTag("logs_dir"))
-		printOverridden("            ", "logs_dir")
-		fmt.Println()
-
 		// Remote sources
 		fmt.Println(utils.StyleTitle("Recipe Sources:"))
 		if len(config.Global.Sources) > 0 {
@@ -405,6 +400,10 @@ var configListCmd = &cobra.Command{
 		fmt.Println(utils.StyleTitle("Options:"))
 		fmt.Printf("  %-19s %s%s\n", "default_distro:", config.ResolvedDefaultDistro(), srcTag("default_distro"))
 		printOverridden("                      ", "default_distro")
+		if config.Global.HomeOverride != "" {
+			fmt.Printf("  %-19s %s%s\n", "home_override:", config.Global.HomeOverride, srcTag("home_override"))
+			printOverridden("                      ", "home_override")
+		}
 		if cat, err := config.OpenCatalog(cmd.Context()); err == nil {
 			if def := config.SourceDefaultDistro(cat); def != "" && def != config.ResolvedDefaultDistro() {
 				fmt.Printf("                      %s\n",
@@ -458,6 +457,8 @@ var configListCmd = &cobra.Command{
 		fmt.Printf("%s %s\n", utils.StyleTitle("Build Configuration:"), "build.*")
 		fmt.Printf("  %-21s %s%s\n", "system_apptainer:", config.Global.Build.SystemApptainer, srcTag("build.system_apptainer"))
 		printOverridden("                        ", "build.system_apptainer")
+		fmt.Printf("  %-21s %s%s\n", "logs_dir:", config.Global.Build.LogsDir, srcTag("build.logs_dir"))
+		printOverridden("                        ", "build.logs_dir")
 		fmt.Printf("  %-21s %v%s\n", "always_submit_data:", config.Global.Build.AlwaysSubmitData, srcTag("build.always_submit_data"))
 		printOverridden("                        ", "build.always_submit_data")
 		fmt.Printf("  %-21s %d%s\n", "ncpus:", config.Global.Build.Defaults.CpusPerTask, srcTag("build.ncpus"))
@@ -487,47 +488,47 @@ var configListCmd = &cobra.Command{
 		submitJobConfig := viper.GetBool("scheduler.submit_job")
 		submitJobActual := config.Global.SubmitJob
 		if submitJobConfig && !submitJobActual {
-			fmt.Printf("  %-14s %v (disabled: scheduler not accessible)%s\n", "submit_job:", submitJobConfig, srcTag("scheduler.submit_job"))
+			fmt.Printf("  %-16s %v (disabled: scheduler not accessible)%s\n", "submit_job:", submitJobConfig, srcTag("scheduler.submit_job"))
 		} else {
-			fmt.Printf("  %-14s %v%s\n", "submit_job:", submitJobActual, srcTag("scheduler.submit_job"))
+			fmt.Printf("  %-16s %v%s\n", "submit_job:", submitJobActual, srcTag("scheduler.submit_job"))
 		}
-		printOverridden("                 ", "scheduler.submit_job")
+		printOverridden("                   ", "scheduler.submit_job")
 		schedulerBin := config.Global.Scheduler.Bin
 		schedulerType := config.GetSchedulerTypeFromBin(schedulerBin)
 		if schedulerBin != "" {
-			fmt.Printf("  %-14s %s (%s)%s\n", "bin:", schedulerBin, schedulerType, srcTag("scheduler.bin"))
+			fmt.Printf("  %-16s %s (%s)%s\n", "bin:", schedulerBin, schedulerType, srcTag("scheduler.bin"))
 		} else {
-			fmt.Printf("  %-14s %s%s\n", "bin:", schedulerBin, srcTag("scheduler.bin"))
+			fmt.Printf("  %-16s %s%s\n", "bin:", schedulerBin, srcTag("scheduler.bin"))
 		}
-		printOverridden("                 ", "scheduler.bin")
+		printOverridden("                   ", "scheduler.bin")
 		if config.Global.Scheduler.Timeout == 0 {
-			fmt.Printf("  %-14s 0 (disabled)%s\n", "timeout:", srcTag("scheduler.timeout"))
+			fmt.Printf("  %-16s 0 (disabled)%s\n", "timeout:", srcTag("scheduler.timeout"))
 		} else {
-			fmt.Printf("  %-14s %s%s\n", "timeout:", utils.FormatDuration(config.Global.Scheduler.Timeout), srcTag("scheduler.timeout"))
+			fmt.Printf("  %-16s %s%s\n", "timeout:", utils.FormatDuration(config.Global.Scheduler.Timeout), srcTag("scheduler.timeout"))
 		}
-		printOverridden("                 ", "scheduler.timeout")
+		printOverridden("                   ", "scheduler.timeout")
 		account := config.Global.Scheduler.Account
 		if account == "" {
 			account = "(scheduler default)"
 		}
-		fmt.Printf("  %-14s %s%s\n", "account:", account, srcTag("scheduler.account"))
-		printOverridden("                 ", "scheduler.account")
+		fmt.Printf("  %-16s %s%s\n", "account:", account, srcTag("scheduler.account"))
+		printOverridden("                   ", "scheduler.account")
 		partition := config.Global.Scheduler.Partition
 		if partition == "" {
 			partition = "(scheduler default)"
 		}
-		fmt.Printf("  %-14s %s%s\n", "partition:", partition, srcTag("scheduler.partition"))
-		printOverridden("                 ", "scheduler.partition")
-		fmt.Printf("  %-14s %d%s\n", "ncpus:", config.Global.Scheduler.Defaults.CpusPerTask, srcTag("scheduler.ncpus"))
-		printOverridden("                 ", "scheduler.ncpus")
-		fmt.Printf("  %-14s %s%s\n", "mem:", utils.FormatMemoryMB(config.Global.Scheduler.Defaults.MemPerNodeMB), srcTag("scheduler.mem"))
-		printOverridden("                 ", "scheduler.mem")
-		fmt.Printf("  %-14s %s%s\n", "time:", utils.FormatDuration(config.Global.Scheduler.Defaults.Time), srcTag("scheduler.time"))
-		printOverridden("                 ", "scheduler.time")
-		fmt.Printf("  %-14s %v%s\n", "slurm.mem:", config.Global.Scheduler.SlurmMem, srcTag("scheduler.slurm.mem"))
-		printOverridden("                 ", "scheduler.slurm.mem")
-		fmt.Printf("  %-14s %v%s\n", "proxy_perjob:", config.Global.ProxyPerJob, srcTag("scheduler.proxy_perjob"))
-		printOverridden("                 ", "scheduler.proxy_perjob")
+		fmt.Printf("  %-16s %s%s\n", "partition:", partition, srcTag("scheduler.partition"))
+		printOverridden("                   ", "scheduler.partition")
+		fmt.Printf("  %-16s %d%s\n", "ncpus:", config.Global.Scheduler.Defaults.CpusPerTask, srcTag("scheduler.ncpus"))
+		printOverridden("                   ", "scheduler.ncpus")
+		fmt.Printf("  %-16s %s%s\n", "mem:", utils.FormatMemoryMB(config.Global.Scheduler.Defaults.MemPerNodeMB), srcTag("scheduler.mem"))
+		printOverridden("                   ", "scheduler.mem")
+		fmt.Printf("  %-16s %s%s\n", "time:", utils.FormatDuration(config.Global.Scheduler.Defaults.Time), srcTag("scheduler.time"))
+		printOverridden("                   ", "scheduler.time")
+		fmt.Printf("  %-16s %v%s\n", "slurm.emit_mem:", config.Global.Scheduler.SlurmEmitMem, srcTag("scheduler.slurm.emit_mem"))
+		printOverridden("                   ", "scheduler.slurm.emit_mem")
+		fmt.Printf("  %-16s %v%s\n", "proxy_perjob:", config.Global.ProxyPerJob, srcTag("scheduler.proxy_perjob"))
+		printOverridden("                   ", "scheduler.proxy_perjob")
 		fmt.Println()
 
 		// Show environment variable overrides

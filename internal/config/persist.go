@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -114,10 +115,10 @@ func InitViper() error {
 // setDefaults sets default values for all config keys
 func setDefaults() {
 	viper.SetDefault("scheduler.submit_job", true)
-	viper.SetDefault("logs_dir", DefaultLogsDir())
 
 	// Build config defaults
 	viper.SetDefault("build.system_apptainer", "apptainer")
+	viper.SetDefault("build.logs_dir", DefaultLogsDir())
 	viper.SetDefault("build.ncpus", DefaultNcpus)
 	viper.SetDefault("build.mem", DefaultMemMB)
 	viper.SetDefault("build.time", DefaultBuildTime)
@@ -143,23 +144,17 @@ func setDefaults() {
 	viper.SetDefault("metadata_cache_ttl", DefaultCacheTTLDay) // days
 	viper.SetDefault("store_gc_grace", DefaultGCGraceDay)      // days
 	viper.SetDefault("scheduler.proxy_perjob", false)
-	viper.SetDefault("scheduler.slurm.mem", true)
+	viper.SetDefault("scheduler.slurm.emit_mem", true)
 	viper.SetDefault("helper.connect", DefaultHelperConnect)
 }
 
 // GetUserConfigPath returns the path to the user config file
 func GetUserConfigPath() (string, error) {
-	userConfigDir, err := os.UserConfigDir()
-	if err != nil {
-		// Fallback to home directory
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, ".condatainer", ConfigFilename+"."+ConfigType), nil
+	dir := GetUserConfigDir()
+	if dir == "" {
+		return "", errors.New("no home directory for the user config")
 	}
-
-	return filepath.Join(userConfigDir, "condatainer", ConfigFilename+"."+ConfigType), nil
+	return filepath.Join(dir, ConfigFilename+"."+ConfigType), nil
 }
 
 // GetRootConfigPath returns the root config path (CNT_ROOT or standalone layout).
@@ -238,8 +233,8 @@ func GetConfigSearchPaths() []ConfigSearchPath {
 	}
 
 	// Priority order matches InitViper: user > extra-root > app-root
-	if userConfigDir, err := os.UserConfigDir(); err == nil {
-		add(filepath.Join(userConfigDir, "condatainer", ConfigFilename+"."+ConfigType), "user")
+	if userPath, err := GetUserConfigPath(); err == nil {
+		add(userPath, "user")
 	}
 	if extraRoot := GetExtraRootDir(); extraRoot != "" {
 		add(filepath.Join(extraRoot, ConfigFilename+"."+ConfigType), "extra-root")
@@ -921,13 +916,15 @@ func LoadFromViper() {
 		}
 	}
 
-	// Load logs_dir from config (overrides default $HOME/logs)
-	if logsDir := layerString("logs_dir"); logsDir != "" {
+	Global.HomeOverride = layerString("home_override")
+
+	// Load build.logs_dir from config (overrides DefaultLogsDir)
+	if logsDir := layerString("build.logs_dir"); logsDir != "" {
 		logsDir = os.ExpandEnv(logsDir)
 		if absLogsDir, err := filepath.Abs(logsDir); err == nil {
 			logsDir = absLogsDir
 		}
-		Global.LogsDir = logsDir
+		Global.Build.LogsDir = logsDir
 	}
 
 	// Recipe collections, in order; earlier entries shadow later ones.
@@ -1016,8 +1013,8 @@ func LoadFromViper() {
 		Global.StoreGCGrace = time.Duration(grace) * 24 * time.Hour
 	}
 
-	if slurmMem, ok := layerBool("scheduler.slurm.mem"); ok {
-		Global.Scheduler.SlurmMem = slurmMem
+	if slurmEmitMem, ok := layerBool("scheduler.slurm.emit_mem"); ok {
+		Global.Scheduler.SlurmEmitMem = slurmEmitMem
 	}
 
 	if proxyPerJob, ok := layerBool("scheduler.proxy_perjob"); ok {

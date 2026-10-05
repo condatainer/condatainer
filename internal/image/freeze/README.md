@@ -45,6 +45,9 @@
   - It is the same whether the artifact replaces the snapshot or goes to an explicit destination.
 - Both are mounted read-only as lower layers of a `fuse-overlayfs` union, with a scratch upper. Neither is written.
   - The union applies edits, deletions, opaque directories, type changes and symlinks exactly as a mount does, so none is reimplemented.
+- The union reports every file as owned by root, with `squash_to_root`.
+  - The namespace maps only uid 0, so a file owned by the real user would show as nobody. Its `0600` mode would then make it unreadable, and the archive would hold an empty file.
+  - The archive is packed `-all-root`, so the recorded owner is the same.
 - The union swallows every char `0:0` node, in any layer. Whiteouts are injected as pseudo-files instead.
   - The `.img`'s own, as the staged copy route does.
   - The snapshot's, read from its archive listing. Its whiteouts hide base files, and dropping them would bring those back.

@@ -74,7 +74,9 @@ var runCmd = &cobra.Command{
 The script can contain these comment tags:
   - #DEP: name/version   Declares a dependency, loaded automatically
   - #DEP: /path/env.img  Declares an overlay file (.sqf or .img)
-  - #CNT <args>          Extra condatainer flags (see Container Flags)`,
+  - #CNT <args>          Extra condatainer flags (see Container Flags)
+
+A submitted job gets the shell's environment.`,
 	Example: `  condatainer run script.sh                          # Check dependencies, then run
   condatainer run script.sh arg1 arg2                # Pass arguments to the script
   condatainer run -o log/s1.out run_tool.sh sample1  # Override stdout
@@ -865,11 +867,7 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 		if specs.Control.Partition != "" {
 			fmt.Printf("  Partition:  %s\n", specs.Control.Partition)
 		}
-		logsDir := config.Global.LogsDir
-		if logsDir == "" {
-			logsDir = filepath.Join(os.Getenv("HOME"), "logs")
-		}
-		defaultOut := filepath.Join(logsDir, scriptBase+"_<timestamp>.out")
+		defaultOut := filepath.Join(submitDir(), scriptBase+"_<timestamp>.out")
 		if specs.Control.Stdout != "" {
 			fmt.Printf("  Stdout:     %s\n", specs.Control.AbsStdout())
 		} else {
@@ -1136,7 +1134,7 @@ func detectMpi() (string, bool) {
 //   - Returns an error when ntasks > 1 but mpiexec cannot be found.
 //   - The user is responsible for installing the same MPI version inside the container.
 func buildMpiRunCommand(contentScript string, scriptArgs []string, specs *scheduler.ScriptSpecs, prependArrayArgs bool) (string, error) {
-	runCmd := fmt.Sprintf("condatainer run %s", contentScript)
+	runCmd := fmt.Sprintf("%s run %s", utils.SelfCommand(), contentScript)
 	if prependArrayArgs {
 		runCmd += " $ARRAY_ARGS"
 	}
@@ -1225,16 +1223,12 @@ func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPa
 	// Capture separate-output intent before CreateScriptWithSpec overrides Stdout/Stderr to /dev/null
 	arraySeparateOutput := arraySpec != nil && specs.Control.Stderr != "" && specs.Control.Stderr != specs.Control.Stdout
 
-	// Determine log directory - use spec's Stdout path if set, otherwise global log path
+	// Determine log directory - use spec's Stdout path if set, otherwise the submit directory
 	var logsDir string
 	if specs.Control.Stdout != "" {
 		logsDir = filepath.Dir(specs.Control.AbsStdout())
 	} else {
-		// Use global log path
-		logsDir = config.Global.LogsDir
-		if logsDir == "" {
-			logsDir = filepath.Join(os.Getenv("HOME"), "logs")
-		}
+		logsDir = submitDir()
 	}
 
 	// Ensure logs directory exists. MkdirAllShared so a group-shared logs dir (2775,
@@ -1330,4 +1324,12 @@ func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPa
 	}
 
 	return nil
+}
+
+// submitDir is where a run job's logs go when -o is not given.
+func submitDir() string {
+	if wd, err := os.Getwd(); err == nil {
+		return wd
+	}
+	return "."
 }

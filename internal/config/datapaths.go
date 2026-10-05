@@ -107,12 +107,12 @@ func GetUserDataDir() string {
 }
 
 // GetUserConfigDir returns the user's config directory following XDG spec.
-// Returns $XDG_CONFIG_HOME/condatainer or ~/.config/condatainer
+// Returns $XDG_CONFIG_HOME/condatainer or <real home>/.config/condatainer
 func GetUserConfigDir() string {
 	if configHome := os.Getenv("XDG_CONFIG_HOME"); configHome != "" {
 		return filepath.Join(configHome, "condatainer")
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	if home, err := utils.RealHome(); err == nil {
 		return filepath.Join(home, ".config", "condatainer")
 	}
 	return ""
@@ -207,7 +207,7 @@ func detectRootDir() string {
 // isNonRootParent returns true for standard user/system directories that should
 // not be treated as an installation root.
 func isNonRootParent(dir string) bool {
-	home, _ := os.UserHomeDir()
+	home, _ := utils.RealHome()
 	excludedParents := []string{
 		home,
 		filepath.Join(home, ".local"),

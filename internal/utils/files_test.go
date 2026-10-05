@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -325,5 +327,53 @@ func TestIsTextFileTellsAScriptFromAnImage(t *testing.T) {
 	}
 	if ok, err := IsTextFile(image); err != nil || ok {
 		t.Errorf("image: text=%v err=%v, want not text", ok, err)
+	}
+}
+
+func TestIsWritableLayer(t *testing.T) {
+	dir := t.TempDir()
+	stage := filepath.Join(dir, "stage")
+	for _, sub := range []string{"upper", "work"} {
+		if err := os.MkdirAll(filepath.Join(stage, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !IsWritableLayer(stage) || !IsWritableLayer("env.img") {
+		t.Error("a staging directory and an .img should be writable layers")
+	}
+	if IsWritableLayer(dir) || IsWritableLayer(filepath.Join(dir, "tool.sqf")) {
+		t.Error("a plain directory and an .sqf should not be")
+	}
+}
+
+func TestRealHome(t *testing.T) {
+	t.Setenv("HOME", "/home/u")
+	t.Setenv(EnvRealHome, "")
+	if got, _ := RealHome(); got != "/home/u" {
+		t.Errorf("RealHome = %q, want /home/u", got)
+	}
+	ReplaceHome("/scratch/u/home")
+	ReplaceHome("/scratch/u/home")
+	if got := os.Getenv("HOME"); got != "/scratch/u/home" {
+		t.Errorf("HOME = %q, want the replacement", got)
+	}
+	if got, _ := RealHome(); got != "/home/u" {
+		t.Errorf("RealHome after replacing = %q, want /home/u", got)
+	}
+}
+
+func TestWithHomeHint(t *testing.T) {
+	t.Setenv("HOME", "/home/u")
+	t.Setenv(EnvRealHome, "")
+	err := &os.PathError{Op: "mkdir", Path: "/home/u/.cache", Err: syscall.EROFS}
+	if got := withHomeHint(err, "/home/u/.cache/x"); !errors.Is(got, syscall.EROFS) || !strings.Contains(got.Error(), "home_override") {
+		t.Errorf("hint missing or error not wrapped: %v", got)
+	}
+	if got := withHomeHint(err, "/data/x"); got != err {
+		t.Errorf("a path outside HOME got a hint: %v", got)
+	}
+	t.Setenv(EnvRealHome, "/home/real")
+	if got := withHomeHint(err, "/home/u/.cache/x"); got != err {
+		t.Errorf("a replaced HOME got a hint: %v", got)
 	}
 }

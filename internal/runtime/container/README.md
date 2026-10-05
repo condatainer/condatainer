@@ -31,6 +31,7 @@ Checks run before anything is locked or mounted. Each describes a container that
 ## Writable overlay
 
 - The writable overlay is the `.img`, the diff layer on top of the read-only `.sqf` overlays.
+  - A directory holding `upper/` and `work/` counts as one too: `overlay create` installs into such a staging directory before packing it.
 - Only it gets `:rw`, and only when requested. Every other overlay is `:ro`.
 - Writable adds no `--writable` to Apptainer.
 
@@ -48,6 +49,11 @@ Root selection has already run, so ordering never decides which overlay becomes 
 - Each image's environment comes from its embedded `runtime.json` only.
   - The manifest is never opened here, so provenance can grow without slowing every mount.
   - There is no fallback to the manifest for an older image.
+- Host variables naming host paths or installs are removed before launch (`hostenv.go`).
+  - They are TLS certificate files, language homes and library paths, compile paths, conda and `LD_PRELOAD`.
+  - They would point at files absent from the container.
+  - Only the inherited environment is cleaned. Variables set by shell startup files inside the container stay.
+  - `HOME`, `TMPDIR` and proxy variables are kept.
 - A bad image never blocks a mount. One with no readable document mounts and contributes nothing.
 - An image built for another architecture is mounted, contributes nothing and warns.
   - `runtime.json` is already in hand, so the check is a string comparison.
@@ -75,6 +81,9 @@ Root selection has already run, so ordering never decides which overlay becomes 
 - With a conda environment mounted, the self-provisioned toolchain directory is bound at the same path as on the host.
   - In-container `mm` and `env` then find `micromamba`, without the base image carrying one.
 - It is also bound when `nested_run` supplies apptainer, since apptainer needs its binary and libraries at the host path.
+- With `HOME` replaced, the container gets `--home <replacement>`, because Apptainer's default home is the passwd home and ignores `$HOME`. A `--home` the caller passes wins.
+- With `HOME` replaced, the real home is bound read-only at its own path. A nested call reads the config there through `CNT_REAL_HOME`.
+  - Skipped when the replacement is inside the real home or the reverse. The config directory is then bound alone.
 - The executable is bound at `/.cnt_bin`, not under `/usr/bin`. A bind there puts a mount boundary inside the directory `dpkg` unpacks into, and `dpkg` then refuses every package.
 
 ## Nested running

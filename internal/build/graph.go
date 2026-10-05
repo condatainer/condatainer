@@ -12,6 +12,7 @@ import (
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // BuildGraph turns a solved dependency plan into build work: a BuildObject per
@@ -477,7 +478,7 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 	}
 
 	// Create batch script
-	scriptPath, err := bg.scheduler.CreateScriptWithSpec(jobSpec, config.Global.LogsDir)
+	scriptPath, err := bg.scheduler.CreateScriptWithSpec(jobSpec, config.Global.Build.LogsDir)
 	if err != nil {
 		os.Remove(lockPath)
 		return "", fmt.Errorf("failed to create batch script: %w", err)
@@ -522,7 +523,7 @@ func jobToken(arg string) string {
 // embedding any input answers as a heredoc so the node needs no TTY.
 func buildSchedulerCreateCommand(target, flags []string, update, store, noPrebuilt bool, inputAnswers []string) string {
 	var cmd strings.Builder
-	cmd.WriteString("condatainer create")
+	cmd.WriteString(utils.SelfCommand() + " create")
 	for _, flag := range flags {
 		cmd.WriteString(" ")
 		cmd.WriteString(jobToken(flag))

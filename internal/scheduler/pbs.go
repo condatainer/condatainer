@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -501,6 +502,10 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	// Write passthrough flags (directives not consumed by Spec or Control)
 	for _, flag := range specs.RemainingFlags {
 		fmt.Fprintf(writer, "#PBS %s\n", flag)
+	}
+	// The job gets the whole submit environment. A script's own -v only adds.
+	if !slices.Contains(specs.RemainingFlags, "-V") {
+		fmt.Fprintln(writer, "#PBS -V")
 	}
 
 	// Write RuntimeConfig directives

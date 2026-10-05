@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // Template is a #TARGET: pattern: the module path a recipe builds, with {name}
@@ -286,7 +288,7 @@ func ParseValues(raw string) []string {
 	}
 
 	if sorted {
-		slices.SortStableFunc(values, func(a, b string) int { return CompareVersions(b, a) })
+		slices.SortStableFunc(values, func(a, b string) int { return utils.CompareVersions(b, a) })
 	}
 	if open {
 		values = append(values, "*")

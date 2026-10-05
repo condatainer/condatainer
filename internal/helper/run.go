@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/image/ext3"
@@ -426,7 +426,7 @@ func splitPkgConstraint(spec string) (name, op, ver string) {
 
 // checkPkgConstraint reports whether installedVer satisfies op+requiredVer.
 func checkPkgConstraint(installedVer, op, requiredVer string) bool {
-	cmp := catalog.CompareVersions(installedVer, requiredVer)
+	cmp := utils.CompareVersions(installedVer, requiredVer)
 	switch op {
 	case ">=":
 		return cmp >= 0

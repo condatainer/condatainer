@@ -3,7 +3,7 @@
 Resolves a module name to a recipe, and a set of names to a build order.
 
 - It is a getter and a dependency solver. It never builds, never chooses and never talks to conda.
-- It is shared between two tools, so anything opinionated about what to do with a result stays out.
+- Anything opinionated about what to do with a result stays out. The caller decides.
 - A collection is a directory or a URL holding `recipes/`, `index/`, `helpers/` and a `source.json` descriptor.
 - Configured sources are ordered, and the first match wins, like `PATH`.
 
@@ -14,7 +14,7 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - The node comes back with a nil entry and its constraint intact, for the caller's fallback.
 - Nothing pre-solves conda. Micromamba solves against the whole environment, and a second opinion computed beforehand could only agree or be wrong.
 - The scheduler is absent too. Recipes read normalized `$NCPUS` and `$MEM`, which the scheduler package produces.
-- The edge runs from each tool to both packages, never between them.
+- `build` and the commands import both `catalog` and `scheduler`. `catalog` and `scheduler` never import each other.
 
 ## Resolving a raw name
 
@@ -141,3 +141,8 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - A second implementation elsewhere would make one string resolve two ways. The same holds for `CompareVersions` and constraint satisfaction.
 - The two backends must return identical entries for the same collection. A test builds one on disk, serves it over HTTP and diffs the results. That test is the contract.
 - The caller owns the cache directory and TTL. The package owns everything inside it.
+
+## Imports
+
+- `catalog` imports `utils` for the generic parsers, including the version comparator.
+- It never imports `config`, which imports it to open the recipe sources.

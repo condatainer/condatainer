@@ -12,8 +12,8 @@ import (
 	"sync"
 
 	"github.com/chzyer/readline"
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/build"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
@@ -656,7 +656,7 @@ func scriptTarget(file string) string {
 	if !isExternalBuildFile(file) {
 		return ""
 	}
-	target, _ := utils.GetTargetFromScript(file)
+	target, _ := catalog.GetTargetFromScript(file)
 	return target
 }
 

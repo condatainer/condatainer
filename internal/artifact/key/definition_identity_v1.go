@@ -3,7 +3,7 @@ package key
 import (
 	"fmt"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // deriveDefinitionIdentityV1 answers: "Which exact definition build is this?"

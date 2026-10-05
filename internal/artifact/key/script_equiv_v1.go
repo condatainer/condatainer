@@ -3,8 +3,8 @@ package key
 import (
 	"fmt"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // deriveScriptEquivV1 answers: "Can this script-built artifact substitute for the requested artifact?"

@@ -8,16 +8,16 @@ var (
 
 	debugMode bool
 
-	slurmMem = true
+	slurmEmitMem = true
 )
 
 // SetDebugMode enables or disables debug output for scheduler operations.
 // Call from cmd/root.go after loading config.
 func SetDebugMode(enabled bool) { debugMode = enabled }
 
-// SetSlurmMem controls whether generated SLURM scripts carry --mem/--mem-per-cpu
+// SetSlurmEmitMem controls whether generated SLURM scripts carry --mem/--mem-per-cpu
 // (default true). Call from cmd/root.go after loading config.
-func SetSlurmMem(enabled bool) { slurmMem = enabled }
+func SetSlurmEmitMem(enabled bool) { slurmEmitMem = enabled }
 
 // SetActiveScheduler configures the scheduler instance that the application should use.
 // Passing nil clears any previously configured scheduler.

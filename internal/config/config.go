@@ -45,12 +45,12 @@ type BuildConfig struct {
 // directives (e.g. helper) — Account/Partition/Defaults are that caller's
 // fallback, not a build-specific one.
 type SchedulerConfig struct {
-	Bin       string                 // Path to sbatch/scheduler binary (auto-detected if empty)
-	Timeout   time.Duration          // Scheduler command timeout (default: 0 = no timeout)
-	Account   string                 // Default billing/allocation account (empty = scheduler's own default)
-	Partition string                 // Default partition/queue (empty = scheduler's own default)
-	Defaults  scheduler.ResourceSpec // Default resource spec for jobs with no script directives
-	SlurmMem  bool                   // Emit --mem/--mem-per-cpu in generated SLURM scripts (default true)
+	Bin          string                 // Path to sbatch/scheduler binary (auto-detected if empty)
+	Timeout      time.Duration          // Scheduler command timeout (default: 0 = no timeout)
+	Account      string                 // Default billing/allocation account (empty = scheduler's own default)
+	Partition    string                 // Default partition/queue (empty = scheduler's own default)
+	Defaults     scheduler.ResourceSpec // Default resource spec for jobs with no script directives
+	SlurmEmitMem bool                   // Emit --mem/--mem-per-cpu in generated SLURM scripts (default true)
 }
 
 // Config holds global application settings
@@ -263,9 +263,9 @@ func LoadDefaults(executablePath string) {
 		},
 
 		Scheduler: SchedulerConfig{
-			Bin:      "", // Auto-detect scheduler binary (empty = search PATH)
-			Timeout:  0,  // no timeout by default
-			SlurmMem: true,
+			Bin:          "", // Auto-detect scheduler binary (empty = search PATH)
+			Timeout:      0,  // no timeout by default
+			SlurmEmitMem: true,
 			Defaults: scheduler.ResourceSpec{
 				CpusPerTask:  DefaultSchedulerNcpus,
 				MemPerNodeMB: DefaultSchedulerMemMB,

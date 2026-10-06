@@ -105,9 +105,9 @@ func TestTryPrebuiltSkippedByNoPrebuilt(t *testing.T) {
 		t.Error("a registry was consulted under --no-prebuilt")
 		return ocispec.Descriptor{}, nil, registry.ErrNotFound
 	}
-	prev := config.Global.Build.SkipPrebuilt
-	config.Global.Build.SkipPrebuilt = true
-	t.Cleanup(func() { config.Global.Build.SkipPrebuilt = prev })
+	prev := config.Global.SkipPrebuilt
+	config.Global.SkipPrebuilt = true
+	t.Cleanup(func() { config.Global.SkipPrebuilt = prev })
 
 	got, err := b.tryPrebuilt(t.Context())
 	if err != nil || got != prebuiltResult(false) {

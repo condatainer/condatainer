@@ -1,6 +1,7 @@
 package exec
 
 import (
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,10 +18,10 @@ func withImageDir(t *testing.T) string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	prevPaths, prevBase := config.GlobalDataPaths, config.Global.DefaultDistro
+	prevPaths := config.GlobalDataPaths
 	config.GlobalDataPaths.ImagesDirs = []string{dir}
-	config.Global.DefaultDistro = "ubuntu24"
-	t.Cleanup(func() { config.GlobalDataPaths, config.Global.DefaultDistro = prevPaths, prevBase })
+	settingstest.Override(t, "default_distro", "ubuntu24")
+	t.Cleanup(func() { config.GlobalDataPaths = prevPaths })
 	return dir
 }
 

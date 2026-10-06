@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/settings"
 	"slices"
 
 	"github.com/condatainer/condatainer/internal/build"
@@ -11,6 +12,18 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/utils"
 )
+
+// nested_run values.
+const (
+	nestedRunAuto  = "auto"
+	nestedRunTrue  = "true"
+	nestedRunFalse = "false"
+)
+
+var keyNestedRun = settings.Enum("nested_run",
+	settings.Values(nestedRunAuto, nestedRunTrue, nestedRunFalse),
+	settings.Default(nestedRunAuto), settings.Order(4),
+	settings.Help("Where a container gets apptainer for nested runs: auto uses what is installed, true builds an apptainer overlay when none is, false gives none."))
 
 // nestedPlan is how one container gets apptainer for nested running.
 type nestedPlan struct {
@@ -23,7 +36,7 @@ type nestedPlan struct {
 // newest installed apptainer overlay is mounted; else "true" builds one and
 // "auto" does nothing.
 func planNested(mode string, libexecHasApptainer bool, installed []string) nestedPlan {
-	if mode == config.NestedRunFalse {
+	if mode == nestedRunFalse {
 		return nestedPlan{}
 	}
 	if libexecHasApptainer {
@@ -32,12 +45,12 @@ func planNested(mode string, libexecHasApptainer bool, installed []string) neste
 	if len(installed) > 0 {
 		return nestedPlan{Overlay: utils.SortVersionsDescending(installed)[0]}
 	}
-	return nestedPlan{Build: mode == config.NestedRunTrue}
+	return nestedPlan{Build: mode == nestedRunTrue}
 }
 
 // currentNestedPlan gathers the plan's inputs from the running system.
 func currentNestedPlan() nestedPlan {
-	return planNested(config.Global.NestedRun,
+	return planNested(keyNestedRun.Get(),
 		libexec.Installed("apptainer"), build.InstalledVersions(nil)("apptainer"))
 }
 
@@ -88,7 +101,7 @@ func nestedRun(ctx context.Context, overlays []string) ([]string, bool, error) {
 	if plan.Overlay != "" {
 		found, err := container.ResolveOverlayPaths([]string{"apptainer/" + plan.Overlay})
 		if err != nil {
-			if config.Global.NestedRun == config.NestedRunTrue {
+			if keyNestedRun.Get() == nestedRunTrue {
 				return nil, false, err
 			}
 			return overlays, false, nil

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,12 +18,13 @@ func TestResolveOverlayValuesOutsideAProject(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	prevSources, prevDistro, prevPaths := config.Global.Sources, config.Global.DefaultDistro, config.GlobalDataPaths
-	config.Global.Sources, config.Global.DefaultDistro = []catalog.Spec(nil), "ubuntu24"
+	prevSources, prevPaths := config.Global.Sources, config.GlobalDataPaths
+	config.Global.Sources = []catalog.Spec(nil)
+	settingstest.Override(t, "default_distro", "ubuntu24")
 	config.GlobalDataPaths.ImagesDirs = []string{dir}
 	config.ResetCatalog()
 	t.Cleanup(func() {
-		config.Global.Sources, config.Global.DefaultDistro, config.GlobalDataPaths = prevSources, prevDistro, prevPaths
+		config.Global.Sources, config.GlobalDataPaths = prevSources, prevPaths
 		config.ResetCatalog()
 	})
 	t.Chdir(t.TempDir())

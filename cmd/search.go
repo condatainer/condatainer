@@ -3,12 +3,12 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/conda"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -53,7 +53,7 @@ func platformSupported(platform string, platforms []string) bool {
 
 func runSearch(cmd *cobra.Command, args []string) error {
 	query := args[0]
-	channels := config.Global.Build.Channels
+	channels := conda.Channels()
 	if len(searchChannels) > 0 {
 		channels = searchChannels
 	}

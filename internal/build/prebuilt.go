@@ -77,7 +77,7 @@ const (
 // prebuiltEligible reports whether a prebuilt can apply at all. A Conda build
 // has none to pull.
 func (b *BuildObject) prebuiltEligible() bool {
-	return !config.Global.Build.SkipPrebuilt && b.buildType != BuildTypeConda &&
+	return !config.Global.SkipPrebuilt && b.buildType != BuildTypeConda &&
 		b.catalogSource != nil && b.catalogSource.DescriptorErr == nil &&
 		b.catalogSource.Desc.OCI.Registry != ""
 }

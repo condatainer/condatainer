@@ -1,26 +1,22 @@
 package container
 
 import (
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"testing"
-
-	"github.com/condatainer/condatainer/internal/config"
 )
 
 // autoload_gpu: false is the escape hatch for a node whose driver is installed
 // but unusable — detection fires on the device node and the container then
 // fails to start, with nothing else able to stop it.
 func TestDetectGPUFlagsRespectsAutoload(t *testing.T) {
-	prev := config.Global.AutoloadGPU
-	t.Cleanup(func() { config.Global.AutoloadGPU = prev })
-
-	config.Global.AutoloadGPU = false
+	settingstest.Override(t, "autoload_gpu", "false")
 	if flags := DetectGPUFlags(false); len(flags) != 0 {
 		t.Errorf("DetectGPUFlags(false) = %v with autoload off, want none", flags)
 	}
 
 	// With it on, the result is whatever this host has — the only invariant is
 	// that it stops suppressing.
-	config.Global.AutoloadGPU = true
+	settingstest.Override(t, "autoload_gpu", "true")
 	onFlags := DetectGPUFlags(false)
 	if hasNvidiaGPU() && !contains(onFlags, "--nv") {
 		t.Errorf("DetectGPUFlags(false) = %v, want --nv on a host with /dev/nvidiactl", onFlags)
@@ -34,9 +30,7 @@ func TestDetectGPUFlagsRespectsAutoload(t *testing.T) {
 // autoload_gpu:false, as long as the host actually has the device node —
 // requested only overrides the config toggle, not host detection.
 func TestDetectGPUFlagsRequestedOverridesAutoload(t *testing.T) {
-	prev := config.Global.AutoloadGPU
-	t.Cleanup(func() { config.Global.AutoloadGPU = prev })
-	config.Global.AutoloadGPU = false
+	settingstest.Override(t, "autoload_gpu", "false")
 
 	flags := DetectGPUFlags(true)
 	if hasNvidiaGPU() && !contains(flags, "--nv") {
@@ -62,8 +56,7 @@ func contains(list []string, want string) bool {
 // The default has to stay on: turning it off by accident silently drops GPU
 // access from every container.
 func TestAutoloadGPUDefaultsOn(t *testing.T) {
-	config.LoadDefaults("/usr/local/bin/condatainer")
-	if !config.Global.AutoloadGPU {
+	if !AutoloadGPU() {
 		t.Error("autoload_gpu defaulted to false")
 	}
 }

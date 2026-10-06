@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,11 +21,10 @@ func TestEnsureDefaultDistroRecordsOnce(t *testing.T) {
 
 	cfgDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgDir)
-	oldBase := Global.DefaultDistro
-	Global.DefaultDistro = ""
+	settingstest.Override(t, "default_distro", "")
 	Global.Sources = []catalog.Spec{{Name: "cnt", Base: root}}
 	ResetCatalog()
-	t.Cleanup(func() { Global.DefaultDistro = oldBase; Global.Sources = nil; ResetCatalog() })
+	t.Cleanup(func() { recommendedDistro = ""; Global.Sources = nil; ResetCatalog() })
 
 	cat, err := OpenCatalog(t.Context())
 	if err != nil {
@@ -34,15 +34,15 @@ func TestEnsureDefaultDistroRecordsOnce(t *testing.T) {
 	if got := EnsureDefaultDistro(cat); got != "ubuntu24" {
 		t.Fatalf("EnsureDefaultDistro = %q, want ubuntu24", got)
 	}
-	if Global.DefaultDistro != "ubuntu24" {
-		t.Errorf("Global.DefaultDistro = %q", Global.DefaultDistro)
+	if DefaultDistro() != "ubuntu24" {
+		t.Errorf("DefaultDistro = %q", DefaultDistro())
 	}
 	if BaseRecipeName() != "ubuntu24/base" {
 		t.Errorf("BaseRecipeName = %q", BaseRecipeName())
 	}
 
 	// Sticky: a later upstream default does not revise what was recorded.
-	Global.DefaultDistro = "ubuntu22"
+	settingstest.Override(t, "default_distro", "ubuntu22")
 	if got := EnsureDefaultDistro(cat); got != "ubuntu22" {
 		t.Errorf("EnsureDefaultDistro overwrote a recorded distro: %q", got)
 	}

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -1268,8 +1269,7 @@ func TestSlurmEmitMemPerCpuRoundTrip(t *testing.T) {
 
 func TestCreateScriptSkipsMemWhenSlurmEmitMemDisabled(t *testing.T) {
 	sched := newTestSlurmScheduler()
-	SetSlurmEmitMem(false)
-	t.Cleanup(func() { SetSlurmEmitMem(true) })
+	settingstest.Override(t, "scheduler.slurm.emit_mem", "false")
 
 	tmpDir := t.TempDir()
 	jobSpec := &JobSpec{
@@ -1294,7 +1294,7 @@ func TestCreateScriptSkipsMemWhenSlurmEmitMemDisabled(t *testing.T) {
 	}
 	script := string(content)
 	if strings.Contains(script, "#SBATCH --mem=") {
-		t.Errorf("script should not contain --mem= when SetSlurmEmitMem(false), got:\n%s", script)
+		t.Errorf("script should not contain --mem= when emit_mem is false, got:\n%s", script)
 	}
 	if !strings.Contains(script, "#SBATCH --cpus-per-task=4") {
 		t.Errorf("script should still contain --cpus-per-task=4")

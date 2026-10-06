@@ -1,11 +1,11 @@
 package restore
 
 import (
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"strings"
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/catalog"
-	"github.com/condatainer/condatainer/internal/config"
 )
 
 // buildStep is one plan entry, named so a partition case reads as a graph.
@@ -194,9 +194,7 @@ func TestShellQuoteSurvivesAQuoteInAPath(t *testing.T) {
 // build.always_submit_data calls for a job for a data rebuild and for nothing
 // else; a recipe's own directives still do, whatever its type.
 func TestCallsForJobFollowsAlwaysSubmitData(t *testing.T) {
-	prev := config.Global.Build.AlwaysSubmitData
-	config.Global.Build.AlwaysSubmitData = true
-	t.Cleanup(func() { config.Global.Build.AlwaysSubmitData = prev })
+	settingstest.Override(t, "build.always_submit_data", "true")
 
 	if !callsForJob(catalog.TypeData, nil) {
 		t.Error("a data rebuild does not call for a job under always_submit_data")
@@ -204,7 +202,7 @@ func TestCallsForJobFollowsAlwaysSubmitData(t *testing.T) {
 	if callsForJob(catalog.TypeApp, nil) {
 		t.Error("an app rebuild calls for a job under always_submit_data")
 	}
-	config.Global.Build.AlwaysSubmitData = false
+	settingstest.Override(t, "build.always_submit_data", "false")
 	if callsForJob(catalog.TypeData, nil) {
 		t.Error("a data rebuild calls for a job with the flag off")
 	}

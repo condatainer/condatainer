@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"context"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/project/lock"
 )
 
@@ -216,9 +216,7 @@ func TestProjectSelectedDistroReadsTheBasePinsName(t *testing.T) {
 // Outside a project, or with no base pin, projectDefaultDistro falls back to
 // the configured default_distro rather than the project-scoped answer.
 func TestProjectDefaultDistroFallsBackToConfig(t *testing.T) {
-	prev := config.Global.DefaultDistro
-	config.Global.DefaultDistro = "ubuntu24"
-	t.Cleanup(func() { config.Global.DefaultDistro = prev })
+	settingstest.Override(t, "default_distro", "ubuntu24")
 
 	t.Chdir(t.TempDir())
 	if got := projectDefaultDistro(); got != "ubuntu24" {

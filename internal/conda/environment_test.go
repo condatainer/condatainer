@@ -79,7 +79,7 @@ func TestResolveInstallEnvironmentCreatesRoot(t *testing.T) {
 	t.Setenv("IN_CONDATAINER", "1")
 	t.Setenv("CNT_CONDA_ROOT", root)
 	t.Setenv("CNT_CONDA_WRITABLE", "1")
-	t.Setenv("CNT_CHANNELS", "unrelated")
+	t.Setenv("CNT_CONFIG_CHANNELS", "unrelated")
 	t.Setenv("CNT_CONDA_CHANNELS", "internal|conda-forge|internal")
 
 	env, err := ResolveInstallEnvironment()

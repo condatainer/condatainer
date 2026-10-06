@@ -94,7 +94,7 @@ func GC(opts GCOptions) (*GCReport, error) {
 	}
 	grace := opts.Grace
 	if grace <= 0 {
-		grace = config.Global.StoreGCGrace
+		grace = GCGrace()
 	}
 	now := opts.now
 	if now.IsZero() {

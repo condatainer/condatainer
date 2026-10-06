@@ -3,6 +3,8 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/build"
+	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,10 +20,8 @@ import (
 
 var (
 	freezeDescription string
-	freezeBlockSize   string
 	freezeUseTmp      bool
 	freezeKeep        bool
-	freezeCompFlags   map[string]*bool
 )
 
 const overlayFreezeHelp = `Pack a writable overlay into an immutable .sqf snapshot.
@@ -83,19 +83,7 @@ var overlayFreezeCmd = &cobra.Command{
 		// Compression and block size come from the build settings, so a freeze
 		// packs the way a build does; the flags override them for this pack only,
 		// exactly as create's do.
-		compressArgs := config.Global.Build.CompressArgs
-		if args, err := compressArgsFromFlags(freezeCompFlags); err != nil {
-			ExitWithError("%v", err)
-		} else if args != "" {
-			compressArgs = args
-		}
-		blockSize := config.Global.Build.BlockSize
-		if freezeBlockSize != "" {
-			if !config.IsValidBlockSize(freezeBlockSize) {
-				ExitWithError("Invalid --block-size %q: must be a power of two between 4096 and 1M (e.g. 64k, 128k, 512k, 1m)", freezeBlockSize)
-			}
-			blockSize = freezeBlockSize
-		}
+		compressArgs, blockSize := build.CompressArgs(), build.BlockSize()
 
 		target, err := resolveFreezeTarget(source, dest)
 		if err != nil {
@@ -138,7 +126,7 @@ var overlayFreezeCmd = &cobra.Command{
 			CompressArgs: compressArgs,
 			BlockSize:    blockSize,
 			UseTmp:       freezeUseTmp,
-			Processors:   config.Global.Build.Defaults.CpusPerTask,
+			Processors:   build.DefaultSpec().CpusPerTask,
 		})
 		if freezeErr != nil {
 			if errors.Is(freezeErr, freeze.ErrEmptyOverlay) {
@@ -247,15 +235,11 @@ func init() {
 	overlayCmd.AddCommand(overlayFreezeCmd)
 	f := overlayFreezeCmd.Flags()
 	f.StringVarP(&freezeDescription, "description", "d", "", "Description recorded in the artifact")
-	f.StringVar(&freezeBlockSize, "block-size", "", "SquashFS block size (default: build.block_size)")
+	settings.AddFlag(f, "build.block_size", "block-size", settings.Usage("SquashFS block size (default: build.block_size)"))
 	f.BoolVar(&freezeUseTmp, "use-tmp", false, "Pack from a temporary copy (faster; needs space for the whole overlay; not for an .img with a snapshot beside it)")
 	f.BoolVar(&freezeKeep, "keep", false, "Keep the source .img after a bare freeze (default: remove it)")
-	freezeCompFlags = make(map[string]*bool, len(config.CompressOptions))
-	for _, opt := range config.CompressOptions {
-		freezeCompFlags[opt.Name] = f.Bool(opt.Name, false, opt.Description)
+	for _, opt := range build.CompressOptions {
+		settings.AddSwitch(f, "build.compress_args", opt.Name, opt.Name, settings.Usage(opt.Description))
 	}
-	overlayFreezeCmd.RegisterFlagCompletionFunc("block-size", //nolint:errcheck
-		func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-			return config.BlockSizeCompletions, cobra.ShellCompDirectiveNoFileComp
-		})
+	registerSettingFlagCompletions(overlayFreezeCmd)
 }

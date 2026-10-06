@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ var scriptCheckCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(scriptCheckCmd)
 	scriptCheckCmd.Flags().BoolVarP(&checkAutoInstall, "auto-install", "a", false, "Automatically install missing dependencies")
-	scriptCheckCmd.Flags().BoolVar(&noSubmitMode, "no-submit", false, "Disable job submission (build locally)")
+	settings.AddSwitch(scriptCheckCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))
 	RegisterProjectFlags(scriptCheckCmd, &checkProjectDir)
 }
 
@@ -290,7 +291,7 @@ func autoCreateExternalOverlay(ctx context.Context, dep string) bool {
 		utils.PrintError("Failed to create build object for %s: %v", dep, err)
 		return false
 	}
-	graph, err := build.NewBuildGraph(ctx, []*build.BuildObject{bo}, outputDir, config.Global.SubmitJob, false)
+	graph, err := build.NewBuildGraph(ctx, []*build.BuildObject{bo}, outputDir, scheduler.Enabled(), false)
 	if err != nil {
 		utils.PrintError("Failed to create build graph for %s: %v", dep, err)
 		return false
@@ -319,7 +320,7 @@ func autoInstallPackages(ctx context.Context, packages []string) error {
 		buildObjects = append(buildObjects, bo)
 	}
 
-	graph, err := build.NewBuildGraph(ctx, buildObjects, imagesDir, config.Global.SubmitJob, false)
+	graph, err := build.NewBuildGraph(ctx, buildObjects, imagesDir, scheduler.Enabled(), false)
 	if err != nil {
 		return fmt.Errorf("failed to create build graph: %w", err)
 	}

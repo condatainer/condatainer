@@ -67,3 +67,11 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - `JobExecCommand` gives the prefix that runs a process on a running job's node, for the dashboard's scheduler connect mode.
 - Only SLURM has one, `srun --jobid J --overlap`.
 - PBS, LSF and HTCondor return `ErrExecUnsupported`. None has a command verified to work from outside the job. `blaunch` works only inside an LSF job.
+
+## Settings
+
+- The `scheduler.*` keys are declared in `settings.go`, and a key for one scheduler type in that scheduler's file (`scheduler.slurm.emit_mem` in `slurm.go`).
+  - Removing a scheduler removes its keys with it.
+- Whether jobs are submitted is `Enabled()`, not a key. It needs `scheduler.submit_job` on and a binary that can be run.
+  - It is computed on every call, so `--no-submit` and a test override both reach it.
+  - The binary is the configured one, else the first of `sbatch`, `qsub` and `bsub` on `PATH`. That search runs once.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -109,7 +110,7 @@ func init() {
 	runCmd.Flags().StringVarP(&runAccount, "account", "A", "", "Override billing/allocation account")
 	runCmd.Flags().StringVarP(&runPartition, "partition", "p", "", "Override partition/queue")
 	runCmd.Flags().BoolVar(&runDryRun, "dry-run", false, "Show what would happen, without doing it")
-	runCmd.Flags().BoolVar(&noSubmitMode, "no-submit", false, "Disable job submission (run locally)")
+	settings.AddSwitch(runCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run locally)"))
 	runCmd.Flags().StringVarP(&runName, "name", "n", "", "Override job name")
 	runCmd.Flags().StringVar(&runArray, "array", "", "Input file for array job (one entry per line)")
 	runCmd.Flags().IntVar(&runArrayLimit, "array-limit", 0, "Max concurrent array subjobs (0 = unlimited)")
@@ -202,16 +203,16 @@ func runScript(cmd *cobra.Command, args []string) error {
 		if runStderr != "" {
 			scriptSpecs.Control.Stderr = runStderr
 		}
-		// CLI -A/-p > script directive > config.Global.Scheduler default.
+		// CLI -A/-p > script directive > scheduler default.
 		if runAccount != "" {
 			scriptSpecs.Control.Account = runAccount
 		} else if scriptSpecs.Control.Account == "" {
-			scriptSpecs.Control.Account = config.Global.Scheduler.Account
+			scriptSpecs.Control.Account = scheduler.Account()
 		}
 		if runPartition != "" {
 			scriptSpecs.Control.Partition = runPartition
 		} else if scriptSpecs.Control.Partition == "" {
-			scriptSpecs.Control.Partition = config.Global.Scheduler.Partition
+			scriptSpecs.Control.Partition = scheduler.Partition()
 		}
 		setDefaultWorkDir(scriptSpecs)
 	}
@@ -342,7 +343,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 	}
 
 	// 4. Submit if scheduler specs present and scheduler available
-	if config.Global.SubmitJob && scheduler.HasSchedulerSpecs(scriptSpecs) {
+	if scheduler.Enabled() && scheduler.HasSchedulerSpecs(scriptSpecs) {
 		sched := scheduler.ActiveScheduler()
 		if sched == nil {
 			utils.PrintNote("Script has scheduler specs but no scheduler is available. Running locally.")
@@ -383,7 +384,7 @@ func runDependencies() []scheduler.Dependency {
 // willSubmitRun reports whether this run goes to a scheduler rather than running
 // locally, which is when a dependency has anything to apply to.
 func willSubmitRun(specs *scheduler.ScriptSpecs) bool {
-	return config.Global.SubmitJob && scheduler.HasSchedulerSpecs(specs) &&
+	return scheduler.Enabled() && scheduler.HasSchedulerSpecs(specs) &&
 		!scheduler.IsInsideJob() && !config.IsInsideContainer() && scheduler.ActiveScheduler() != nil
 }
 
@@ -970,7 +971,7 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 	} else if scheduler.IsPassthrough(specs) {
 		fmt.Printf("Action: %s\n",
 			"Would fail — directives not fully parsed (passthrough mode); please submit it manually")
-	} else if config.Global.SubmitJob && scheduler.HasSchedulerSpecs(specs) {
+	} else if scheduler.Enabled() && scheduler.HasSchedulerSpecs(specs) {
 		sched := scheduler.ActiveScheduler()
 		if sched == nil {
 			fmt.Printf("Action: Would run locally (scheduler not available)\n")
@@ -1246,7 +1247,7 @@ func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPa
 		return err
 	}
 
-	if config.Global.ProxyPerJob {
+	if scheduler.ProxyPerJob() {
 		if h, err2 := os.Hostname(); err2 == nil && h != "" {
 			specs.ProxyVia = h
 		}

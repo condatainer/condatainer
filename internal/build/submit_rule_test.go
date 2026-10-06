@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/catalog"
-	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -14,9 +14,7 @@ import (
 // app build is not sent, and a build made from packages or a file never is,
 // because a job re-runs `create <name>` and could not reproduce it.
 func TestAlwaysSubmitDataAppliesToNamedDataBuildsOnly(t *testing.T) {
-	prevData, prevSubmit := config.Global.Build.AlwaysSubmitData, config.Global.SubmitJob
-	config.Global.Build.AlwaysSubmitData, config.Global.SubmitJob = true, true
-	t.Cleanup(func() { config.Global.Build.AlwaysSubmitData, config.Global.SubmitJob = prevData, prevSubmit })
+	settingstest.Override(t, "build.always_submit_data", "true")
 
 	named := func(typ catalog.Type) *BuildObject {
 		return &BuildObject{submitJob: true, spec: Spec{Image: ImageSpec{Name: "demo/1", Type: typ}}}
@@ -33,9 +31,12 @@ func TestAlwaysSubmitDataAppliesToNamedDataBuildsOnly(t *testing.T) {
 // An external shell script with directives is submitted once the arguments that
 // rebuild it are known, and never a definition: a job could not reproduce one.
 func TestExternalScriptIsSubmittableOnlyWithItsJobArgs(t *testing.T) {
-	prev := config.Global.SubmitJob
-	config.Global.SubmitJob = true
-	t.Cleanup(func() { config.Global.SubmitJob = prev })
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settingstest.Override(t, "scheduler.submit_job", "true")
+	settingstest.Override(t, "scheduler.bin", exe)
 
 	dir := t.TempDir()
 	src := filepath.Join(dir, "demo.sh")

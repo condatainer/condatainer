@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,11 +37,11 @@ const DefaultLayer = "default"
 func ResolvedSources() []LayeredSource {
 	var out []LayeredSource
 	seen := map[string]bool{}
-	for _, l := range loadedLayers {
+	for _, l := range configLayers {
 		if !l.InConfig("sources") {
 			continue
 		}
-		for _, spec := range decodeSourceList(l.v.Get("sources")) {
+		for _, spec := range decodeSourceList(l.raw("sources")) {
 			if !seen[spec.Name] {
 				seen[spec.Name] = true
 				out = append(out, LayeredSource{Spec: spec, Layer: l.Type})
@@ -64,10 +65,10 @@ func layerSources() []catalog.Spec {
 }
 
 // layerBinds merges the `bind` key across every layer, highest priority first,
-// once each. CNT_BIND replaces the list and is "|"-separated.
+// once each. CNT_CONFIG_BIND replaces the list and is "|"-separated.
 func layerBinds() []string {
 	var raw []string
-	if ev := os.Getenv("CNT_BIND"); ev != "" {
+	if ev := os.Getenv(settings.EnvName("bind")); ev != "" {
 		raw = strings.Split(ev, "|")
 	} else {
 		for _, v := range configLayers {
@@ -89,7 +90,7 @@ func layerBinds() []string {
 // names `cnt` itself.
 func DefaultSource() catalog.Spec { return defaultSource }
 
-// decodeSourceList turns viper's view of the YAML sequence into specs. Each
+// decodeSourceList turns the decoded YAML sequence into specs. Each
 // entry is a single-key mapping, `- lab: /shared/lab/recipes`.
 func decodeSourceList(raw any) []catalog.Spec {
 	items, ok := raw.([]any)
@@ -171,7 +172,7 @@ func OpenCatalog(ctx context.Context) (catalog.Catalog, error) {
 		if len(Global.Sources) == 0 {
 			return
 		}
-		cache := catalog.Cache{Dir: CatalogCacheDir(), TTL: Global.MetadataCacheTTL}
+		cache := catalog.Cache{Dir: CatalogCacheDir(), TTL: MetadataCacheTTL()}
 		catalogVal, catalogErr = catalog.Open(ctx, withSourceTokens(Global.Sources), cache)
 	})
 	return catalogVal, catalogErr
@@ -243,14 +244,14 @@ func BaseRecipeNameFrom(cat catalog.Catalog) string {
 // never revises it. Returns the resolved distro, "" when nothing supplies
 // one; a failed write is not an error.
 func EnsureDefaultDistro(cat catalog.Catalog) string {
-	if Global.DefaultDistro != "" {
-		return Global.DefaultDistro
+	if d := DefaultDistro(); d != "" {
+		return d
 	}
 	def := cat.DefaultDistro()
 	if def == "" {
 		return ""
 	}
-	Global.DefaultDistro = def
+	recommendedDistro = def
 	if path, _, err := ResolveWritableConfigPath(""); err == nil {
 		_ = SetConfigKey(path, "default_distro", def)
 	}
@@ -264,7 +265,7 @@ func SourceDefaultDistro(cat catalog.Catalog) string { return cat.DefaultDistro(
 // ResolvedDefaultDistro returns the configured default distro, e.g. "ubuntu24"
 // — the bare-name prefix for installed overlays. Config only: it never opens
 // the catalog, so offline paths like list and info stay offline.
-func ResolvedDefaultDistro() string { return Global.DefaultDistro }
+func ResolvedDefaultDistro() string { return DefaultDistro() }
 
 // CatalogCacheDir is where fetched index and recipe bytes are kept.
 func CatalogCacheDir() string {

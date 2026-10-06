@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/conda"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,8 +16,8 @@ import (
 
 	"log/slog"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image/producer"
 	"github.com/condatainer/condatainer/internal/logging"
@@ -213,7 +214,7 @@ func (b *BuildObject) SetJobArgs(args []string) {
 	if b.buildType != BuildTypeScript || len(args) == 0 {
 		return
 	}
-	b.jobArgs, b.submitJob = args, config.Global.SubmitJob
+	b.jobArgs, b.submitJob = args, scheduler.Enabled()
 }
 
 // jobTarget is what a submitted create command names the build by.
@@ -308,7 +309,7 @@ func (b *BuildObject) setCondaSpec() {
 	b.spec.Image.Prefix = meta.Prefix(b.spec.Image.Name, catalog.TypeApp)
 	b.spec.Image.Env = nil
 
-	src := &CondaSource{Channels: slices.Clone(config.Global.Build.Channels)}
+	src := &CondaSource{Channels: slices.Clone(conda.Channels())}
 	switch {
 	case b.buildSource != "" && utils.IsCondaFile(b.buildSource):
 		data, err := os.ReadFile(b.buildSource)
@@ -338,7 +339,7 @@ func (b *BuildObject) RequiresScheduler() bool {
 		return false
 	}
 	return scheduler.HasSchedulerSpecs(b.scriptSpecs) ||
-		(config.Global.Build.AlwaysSubmitData && b.spec.Image.Type == catalog.TypeData)
+		(AlwaysSubmitData() && b.spec.Image.Type == catalog.TypeData)
 }
 
 // BuildLockInfo holds metadata stored inside a build lock file.
@@ -687,7 +688,7 @@ func (b *BuildObject) parseDependencies() error {
 	if b.spec.Dependencies != nil {
 		return nil
 	}
-	deps, err := utils.GetDependenciesFromScript(b.buildSource)
+	deps, err := catalog.GetDependenciesFromScript(b.buildSource)
 	if err != nil {
 		return fmt.Errorf("failed to parse dependencies: %w", err)
 	}
@@ -761,7 +762,7 @@ func (b *BuildObject) collectInputAnswers(ctx context.Context) error {
 }
 
 // resolveResourceSpec parses scheduler directives from the build script and sets b.scriptSpecs.
-// Applies the priority chain: buildDefaults → script directives → current job resources.
+// Applies the priority chain: DefaultSpec() → script directives → current job resources.
 func (b *BuildObject) resolveResourceSpec() error {
 	specs, err := scheduler.ReadScriptSpecsFromPath(b.buildSource)
 	if err != nil {
@@ -775,7 +776,7 @@ func (b *BuildObject) resolveResourceSpec() error {
 		return fmt.Errorf("build script %s has unsupported scheduler directives; remove or fix them", b.buildSource)
 	}
 
-	// Resolve using the priority chain: buildDefaults → script → job resources.
+	// Resolve using the priority chain: DefaultSpec() → script → job resources.
 	specs.Spec = EffectiveResourceSpec(specs)
 	return nil
 }
@@ -844,7 +845,7 @@ func newBuildObject(ctx context.Context, nameVersion string, external bool, imag
 		spec:            Spec{Image: ImageSpec{Name: normalized, Type: typ}},
 		ws:              ws,
 		tgt:             targetFor(targetOverlay),
-		submitJob:       config.Global.SubmitJob,
+		submitJob:       scheduler.Enabled(),
 		update:          update,
 		storeOverflow:   store,
 		condaChannelPkg: condaChannelPkg,
@@ -998,20 +999,20 @@ func FromExternalSource(ctx context.Context, targetPrefix, source string, isAppt
 	var target string
 	var deps []string
 	if isShell {
-		parsedType, err := utils.GetTypeFromScript(source)
+		parsedType, err := catalog.GetTypeFromScript(source)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse external build type: %w", err)
 		}
 		externalType = parsedType
 
-		if deps, err = utils.GetDependenciesFromScript(source); err != nil {
+		if deps, err = catalog.GetDependenciesFromScript(source); err != nil {
 			return nil, fmt.Errorf("failed to parse external build dependencies: %w", err)
 		}
 	}
 	// A definition declares its name the same way; a remote URI has no file to read.
 	if isShell || strings.HasSuffix(source, ".def") {
 		var err error
-		if target, err = utils.GetTargetFromScript(source); err != nil {
+		if target, err = catalog.GetTargetFromScript(source); err != nil {
 			return nil, fmt.Errorf("failed to parse external build target: %w", err)
 		}
 	}

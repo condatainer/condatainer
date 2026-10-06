@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/logging"
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/toolpath"
@@ -32,10 +31,10 @@ func createSquashfs(ctx context.Context, b *BuildObject, isData bool, sourceDir,
 	b.captureMksquashfsVersion(ctx, mksquashfsBin)
 
 	ncpus := b.effectiveNcpus()
-	compressArgs := config.Global.Build.CompressArgs
-	blockSize := config.Global.Build.BlockSize
+	compressArgs := CompressArgs()
+	blockSize := BlockSize()
 	if isData {
-		blockSize = config.Global.Build.DataBlockSize
+		blockSize = DataBlockSize()
 	}
 
 	log := logging.FromContext(ctx)

@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/viper"
-
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -17,10 +15,10 @@ import (
 //   - Job scripts replace HOME the same way (scheduler.JobHome).
 //   - The data search paths and build.logs_dir follow the new HOME; build.logs_dir unless it is configured.
 func ApplyHomeOverride() {
-	if Global.HomeOverride == "" {
+	if HomeOverride() == "" {
 		return
 	}
-	dir, err := resolveHomeOverride(Global.HomeOverride)
+	dir, err := resolveHomeOverride(HomeOverride())
 	if err == nil {
 		err = utils.MkdirAllShared(dir)
 	}
@@ -31,10 +29,6 @@ func ApplyHomeOverride() {
 	utils.ReplaceHome(dir)
 	scheduler.JobHome = dir
 	GlobalDataPaths = DataPaths{} // search paths are rebuilt against the new HOME
-	if _, set := layerStringSet("build.logs_dir"); !set {
-		Global.Build.LogsDir = DefaultLogsDir()
-	}
-	viper.SetDefault("build.logs_dir", DefaultLogsDir())
 }
 
 // resolveHomeOverride expands the environment in raw and makes it absolute.

@@ -1,15 +1,31 @@
 # internal/config
 
+## Keys
+
+- This package declares only the keys nothing else owns: `default_distro`, `home_override` and `metadata_cache_ttl`.
+- It finds and reads the layer files and hands them to `internal/settings`, which resolves every key.
+- `config.Global` holds runtime facts that are not keys: the version, the program directory, the debug flag, the resolved sources.
+
+- `config check` is a command and not a startup warning.
+  - A typo in a file is otherwise ignored, but a warning on every command costs every user and gets learned and ignored.
+  - A bad value still warns once per run.
+- `config set` refuses an unknown key. Reading a file ignores one, because a shared install can be read by two versions at once.
+
 ## Layering
 
 - Environment variables and config files are two separate mechanisms.
-- A `CNT_*` variable is admin-level control, for example in a module file. It replaces the config value for that key entirely.
+- A `CNT_CONFIG_*` variable is admin-level control, for example in a module file. It replaces the config value for that key entirely.
 - Config files are layered, and every existing file is loaded.
   - Scalar keys: the highest-priority file that sets it wins.
   - `sources`: merged across layers, deduplicated, user entries first.
   - `bind`: merged the same way, so a site or lab adds binds and a user adds more.
   - `channels`: not merged. The highest-priority file that sets it wins.
-- Priority, highest first: flags, `CNT_*`, user, extra-root, app-root, defaults.
+- Priority, highest first: flags, `CNT_CONFIG_*`, user, extra-root, app-root, defaults.
+- A layer file is read and written through `yaml.v3` nodes, in `layer.go`.
+  - A write edits the node in place, so comments and key order survive a `config set`.
+  - It happens in the open file under an exclusive lock, never through a temporary file and a rename. A shared config is owned by one user and group-writable, and a rename would give it to whoever wrote last.
+  - A key is read nested or flat, case-insensitively, and a null value counts as unset.
+  - A scalar is converted by the reader: a string `1` reads as a true boolean, and a list key written as a plain string splits on whitespace.
 - There is no `/etc` layer. On a cluster `/etc` is per node, so a value there would differ between the login node and a job.
 
 ## Recipe sources
@@ -84,3 +100,10 @@
 - Paths chosen at submit time are written into the script, so the submitting process must already resolve them under the replacement.
 - SSH never reads `$HOME`. Both the client and the `ssh` binary take the home from the passwd entry.
 - An unusable value warns and leaves `HOME` alone, so `config set` can still repair it.
+
+## Reload
+
+- A long-lived process (the dashboard server) re-reads the config files when one is created, edited or removed. The CLI reads them once.
+  - The check compares each file's modification time and size, so it needs no file watcher and works on shared filesystems.
+  - A file that does not parse leaves the previous config in place.
+- Recipe sources are reopened on a reload. `home_override` and the scheduler are applied once at startup and are not re-applied.

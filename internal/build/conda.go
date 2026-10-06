@@ -13,7 +13,6 @@ import (
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/conda"
 
-	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/libexec"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/runtime/exec"
@@ -127,7 +126,7 @@ func (b *BuildObject) buildConda(ctx context.Context) error {
 // buildChannelFlags builds the micromamba -c flags from the configured channels.
 func buildChannelFlags() string {
 	var parts []string
-	for _, ch := range config.Global.Build.Channels {
+	for _, ch := range conda.Channels() {
 		parts = append(parts, "-c "+ch)
 	}
 	return strings.Join(parts, " ")

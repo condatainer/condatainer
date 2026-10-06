@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -379,4 +380,25 @@ func WriteGzipJSONFileAtomic(path string, value any) error {
 	}
 	ShareWithParentGroup(path)
 	return nil
+}
+
+// ValidateBinary reports whether bin is an executable file, or a name found on PATH.
+func ValidateBinary(binPath string) bool {
+	if binPath == "" {
+		return false
+	}
+
+	// If it's a full path, check directly
+	if filepath.IsAbs(binPath) {
+		info, err := os.Stat(binPath)
+		if err != nil {
+			return false
+		}
+		// Check if it's executable (unix-style check)
+		return info.Mode()&0111 != 0
+	}
+
+	// Otherwise, try to find it in PATH
+	_, err := exec.LookPath(binPath)
+	return err == nil
 }

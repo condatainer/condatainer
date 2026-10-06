@@ -12,7 +12,6 @@ import (
 	"log/slog"
 
 	"github.com/condatainer/condatainer/internal/artifact/compare"
-	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/image/producer"
 	"github.com/condatainer/condatainer/internal/logging"
@@ -236,30 +235,16 @@ func hostname() string {
 	return producer.Hostname()
 }
 
-// buildDefaults holds resource defaults for build operations. Set from config at
-// CLI startup via SetBuildDefaults; these values are what a caller that skips the
-// CLI sees, so they track the config defaults rather than restating them.
-var buildDefaults = scheduler.ResourceSpec{
-	Nodes:        1,
-	TasksPerNode: 1,
-	CpusPerTask:  config.DefaultNcpus,
-	MemPerNodeMB: config.DefaultMemMB,
-	Time:         config.DefaultBuildDuration,
-}
-
-// SetBuildDefaults sets the resource defaults used for build job submissions.
-func SetBuildDefaults(d scheduler.ResourceSpec) { buildDefaults = d }
-
 // EffectiveResourceSpec resolves the resources a build runs with, in priority
 // order:
 //
-//	buildDefaults → scriptSpecs.Spec (when HasDirectives=true) → scheduler job resources
+//	DefaultSpec() → scriptSpecs.Spec (when HasDirectives=true) → scheduler job resources
 func EffectiveResourceSpec(specs *scheduler.ScriptSpecs) *scheduler.ResourceSpec {
 	var jobRes *scheduler.ResourceSpec
 	if sched := scheduler.ActiveScheduler(); sched != nil {
 		jobRes = sched.GetJobResources()
 	}
-	return scheduler.ResolveResourceSpecFrom(buildDefaults, jobRes, specs)
+	return scheduler.ResolveResourceSpecFrom(DefaultSpec(), jobRes, specs)
 }
 
 // acquireBuildLockFile creates the lock file, holds it and writes JSON metadata.

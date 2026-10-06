@@ -9,10 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/build"
-	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image/producer"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/project"
@@ -131,7 +130,7 @@ func planJobs(ctx context.Context, root string, verified *lock.Verified, plan *P
 // its recipe carries directives, or it is data and build.always_submit_data is set.
 func callsForJob(typ catalog.Type, specs *scheduler.ScriptSpecs) bool {
 	return scheduler.HasSchedulerSpecs(specs) ||
-		(config.Global.Build.AlwaysSubmitData && typ == catalog.TypeData)
+		(build.AlwaysSubmitData() && typ == catalog.TypeData)
 }
 
 // partition splits a plan into the steps the scheduler runs (submit) and the build
@@ -324,7 +323,7 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 		}
 		specs.Control.JobName = "cnt-" + name
 	}
-	if config.Global.ProxyPerJob {
+	if scheduler.ProxyPerJob() {
 		if host, err := os.Hostname(); err == nil && host != "" {
 			specs.ProxyVia = host
 		}
@@ -348,7 +347,7 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 			"Project":  root,
 		},
 	}
-	scriptPath, err := j.sched.CreateScriptWithSpec(jobSpec, config.Global.Build.LogsDir)
+	scriptPath, err := j.sched.CreateScriptWithSpec(jobSpec, build.LogsDir())
 	if err != nil {
 		return "", fmt.Errorf("cannot create the batch script: %w", err)
 	}

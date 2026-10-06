@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/condatainer/condatainer/internal/helper"
+
 	"context"
 	"errors"
 	"fmt"
@@ -15,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/config"
 	internalproxy "github.com/condatainer/condatainer/internal/runtime/proxy"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -126,7 +127,7 @@ func (r *proxyRegistry) Open(id, name, node string, port int, connect, jobID str
 	r.pending[id] = struct{}{}
 	r.mu.Unlock()
 
-	direct := connect == config.ConnectDirect
+	direct := connect == helper.ConnectDirect
 	if direct || isLocalHost(node) {
 		addr := "127.0.0.1"
 		if direct && !isLocalHost(node) {
@@ -192,13 +193,13 @@ func (r *proxyRegistry) Open(id, name, node string, port int, connect, jobID str
 // SSH, then the scheduler's exec into the job. connect "ssh" and "scheduler" try one.
 func (r *proxyRegistry) establish(node, connect, jobID string) (internalproxy.DialFunc, func(), <-chan struct{}, error) {
 	var errs []string
-	if connect != config.ConnectScheduler {
+	if connect != helper.ConnectScheduler {
 		dial, stop, done, err := r.establishTunnel(node)
 		if err == nil {
 			return dial, stop, done, nil
 		}
 		errs = append(errs, "ssh: "+err.Error())
-		if connect == config.ConnectSSH {
+		if connect == helper.ConnectSSH {
 			return nil, nil, nil, errors.New(errs[0])
 		}
 	}

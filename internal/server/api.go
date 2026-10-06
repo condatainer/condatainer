@@ -84,9 +84,9 @@ func (s *srv) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"version":      config.Global.Version,
 		"home":         home,
 		"scratch":      scratch,
-		"notification": config.Global.Notification,
+		"notification": helper.Notification(),
 		"scheduler":    schedType,
-		"will_submit":  schedType != "" && config.Global.SubmitJob,
+		"will_submit":  schedType != "" && scheduler.Enabled(),
 	})
 }
 

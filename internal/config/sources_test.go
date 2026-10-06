@@ -8,12 +8,11 @@ import (
 	"path/filepath"
 	"reflect"
 
-	"github.com/condatainer/condatainer/catalog"
-	"github.com/spf13/viper"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 func TestDecodeSourceList(t *testing.T) {
-	// What viper hands back for a YAML sequence of single-key mappings.
+	// What the YAML decoder hands back for a sequence of single-key mappings.
 	raw := []any{
 		map[string]any{"cnt": "https://example.invalid/recipes/"},
 		map[string]any{"lab": "/shared/lab/recipes"},
@@ -84,27 +83,12 @@ func TestSelectSources(t *testing.T) {
 // Layers concatenate strongest first, and a name already taken is not repeated:
 // a user entry shadows a site entry of the same handle.
 func TestResolvedSourcesMergesLayers(t *testing.T) {
-	user := viper.New()
-	user.SetConfigType("yaml")
-	if err := user.ReadConfig(stringReader(`
-sources:
-  - lab: /user/lab
-`)); err != nil {
-		t.Fatal(err)
+	saved := configLayers
+	t.Cleanup(func() { configLayers = saved })
+	configLayers = []*Layer{
+		layerFromYAML(t, "user", "sources:\n  - lab: /user/lab\n"),
+		layerFromYAML(t, "app-root", "sources:\n  - lab: /site/lab\n  - cnt: https://site.invalid\n"),
 	}
-	site := viper.New()
-	site.SetConfigType("yaml")
-	if err := site.ReadConfig(stringReader(`
-sources:
-  - lab: /site/lab
-  - cnt: https://site.invalid
-`)); err != nil {
-		t.Fatal(err)
-	}
-
-	saved := loadedLayers
-	t.Cleanup(func() { loadedLayers = saved })
-	loadedLayers = []ConfigLayerInfo{{Type: "user", v: user}, {Type: "app-root", v: site}}
 
 	got := ResolvedSources()
 	if len(got) != 2 {
@@ -123,14 +107,9 @@ sources:
 func TestLayerSourcesAppendsDefault(t *testing.T) {
 	useLayers := func(t *testing.T, yaml string) {
 		t.Helper()
-		v := viper.New()
-		v.SetConfigType("yaml")
-		if err := v.ReadConfig(stringReader(yaml)); err != nil {
-			t.Fatal(err)
-		}
-		saved := loadedLayers
-		t.Cleanup(func() { loadedLayers = saved })
-		loadedLayers = []ConfigLayerInfo{{Type: "user", v: v}}
+		saved := configLayers
+		t.Cleanup(func() { configLayers = saved })
+		configLayers = []*Layer{layerFromYAML(t, "user", yaml)}
 	}
 
 	// No `sources` key at all: a fresh install resolves recipes unconfigured.
@@ -162,8 +141,6 @@ func TestLayerSourcesAppendsDefault(t *testing.T) {
 	})
 
 }
-
-func stringReader(s string) *strings.Reader { return strings.NewReader(s) }
 
 func TestPlaceSource(t *testing.T) {
 	list := []catalog.Spec{{Name: "a", Base: "/a"}, {Name: "b", Base: "/b"}, {Name: "c", Base: "/c"}}

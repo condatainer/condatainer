@@ -5,14 +5,10 @@ package config
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
-	"github.com/condatainer/condatainer/catalog"
-	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -27,199 +23,24 @@ var Version = "0.1.0"
 
 const GitHubRepo = "condatainer/condatainer"
 
-// BuildConfig holds default settings for build operations
-type BuildConfig struct {
-	Defaults         scheduler.ResourceSpec // Default resource spec for build job submissions
-	CompressArgs     string                 // mksquashfs compression arguments
-	BlockSize        string                 // mksquashfs block size for app/env/external overlays (DefaultBlockSize)
-	DataBlockSize    string                 // mksquashfs block size for data/ref overlays (DefaultDataBlockSize)
-	AlwaysSubmitData bool                   // Submit data builds as scheduler jobs even without script directives (default: false)
-	SkipPrebuilt     bool                   // Build from the recipe rather than pull a prebuilt artifact; set per run by create --no-prebuilt, never read from a file
-	Channels         []string               // conda channels in priority order (default: [conda-forge, bioconda])
-	SystemApptainer  string                 // Path to the system/module apptainer or singularity binary (auto-detected if empty)
-	LogsDir          string                 // Where build and restore job logs land (DefaultLogsDir)
-}
-
-// SchedulerConfig holds scheduler binary/submission settings shared by every
-// caller that submits a job without parsing an existing script's own
-// directives (e.g. helper) — Account/Partition/Defaults are that caller's
-// fallback, not a build-specific one.
-type SchedulerConfig struct {
-	Bin          string                 // Path to sbatch/scheduler binary (auto-detected if empty)
-	Timeout      time.Duration          // Scheduler command timeout (default: 0 = no timeout)
-	Account      string                 // Default billing/allocation account (empty = scheduler's own default)
-	Partition    string                 // Default partition/queue (empty = scheduler's own default)
-	Defaults     scheduler.ResourceSpec // Default resource spec for jobs with no script directives
-	SlurmEmitMem bool                   // Emit --mem/--mem-per-cpu in generated SLURM scripts (default true)
-}
-
-// Config holds global application settings
+// Config holds the settings that are runtime facts rather than config keys.
 type Config struct {
-	// Runtime settings
-	Debug     bool
-	SubmitJob bool
-	Version   string
+	Debug   bool
+	Version string
 
 	// Directory paths
-	ProgramDir   string
-	HomeOverride string // home_override as configured; ApplyHomeOverride resolves it
+	ProgramDir string
 
 	// Recipe collections, in order. Earlier entries shadow later ones.
 	Sources []catalog.Spec
 
-	// Binds added to every run, as host[:container[:opts]], merged across layers.
-	Binds []string
-
-	// Default distro for the container root, e.g. "ubuntu24" -> recipes/ubuntu24/base.def.
-	// Empty falls back to the first source declaring a default_distro.
-	DefaultDistro string
-
-	// Pass --nv / --rocm when the host has the matching device nodes (default: true).
-	// Turn off on a node whose driver is present but unusable: the device nodes
-	// still exist, so detection fires and the container then fails to start.
-	AutoloadGPU bool
-
-	// NestedRun says whether an apptainer is provided inside a container so
-	// containers can be launched from within one: "auto" (default) uses what
-	// exists and builds nothing, "true" also builds the apptainer overlay when it
-	// is missing and fails if it cannot be provided, "false" turns it off.
-	NestedRun string
-
-	// Notification method when a helper job starts running (default: "web").
-	// Values: "web" (browser notification via dashboard), "terminal" (bell ×2, 1.1 s apart),
-	// "both" (terminal + web), "" or "none" (silent).
-	Notification string
-
-	// Max age of the on-disk remote build script metadata cache (default: 1 day)
-	MetadataCacheTTL time.Duration
-
-	// Age below which `store gc` never reports an entry collectable (default: 30
-	// days), overridden per invocation by --grace.
-	//
-	// Configurable because a store in a group root serves everyone using that
-	// install, and its owner is who knows its turnover. It resolves per
-	// invocation rather than per store, which is what --layer is for.
-	StoreGCGrace time.Duration
-
-	// ProxyPerJob: if true, inject "condatainer proxy start --via <login-node>" at the
-	// top of every generated scheduler script so the compute node starts a per-job proxy.
-	ProxyPerJob bool
-
-	// HelperConnect: how the dashboard reaches a helper service on a compute node
-	// (helper.connect). Only ConnectDirect makes the service bind to all interfaces.
-	HelperConnect string
-
-	// Build configuration
-	Build BuildConfig
-
-	// Scheduler configuration
-	Scheduler SchedulerConfig
+	// SkipPrebuilt builds from the recipe rather than pulling a prebuilt artifact.
+	// It is set per run by create --no-prebuilt and never read from a file.
+	SkipPrebuilt bool
 }
 
-// CompressOption defines name, mksquashfs arguments, and description
-type CompressOption struct {
-	Name        string // e.g. "lz4" or "zstd-fast"
-	Args        string // full mksquashfs arguments
-	Description string // help text for CLI
-}
-
-// CompressOptions lists all supported compression shorthand names.
-var CompressOptions = []CompressOption{
-	{"gzip", "-comp gzip", "Use gzip compression"},
-	{"lz4", "-comp lz4", "Use lz4 compression"},
-	{"zstd", "-comp zstd -Xcompression-level 14", "Use zstd compression level 14"},
-	{"zstd-fast", "-comp zstd -Xcompression-level 3", "Use zstd compression level 3"},
-	{"zstd-medium", "-comp zstd -Xcompression-level 8", "Use zstd compression level 8"},
-	{"zstd-high", "-comp zstd -Xcompression-level 19", "Use zstd compression level 19"},
-}
-
-// ArgsForCompress returns the full mksquashfs arguments corresponding to a
-// recognised shortcut name. Return itself if no match found.
-func ArgsForCompress(name string) string {
-	for _, o := range CompressOptions {
-		if o.Name == name {
-			return o.Args
-		}
-	}
-	return name
-}
-
-// CompressNames returns a list of the shortcut names (used for completion)
-func CompressNames() []string {
-	names := make([]string, len(CompressOptions))
-	for i, o := range CompressOptions {
-		names[i] = o.Name
-	}
-	return names
-}
-
-// Compiled-in defaults for the scalar config keys.
-//
-// Named because each is needed both in LoadDefaults, which sets what the program
-// runs on, and in setDefaults, which is what `config get` reports for an unset
-// key. Two literals drift and the two commands then disagree.
-const (
-	// Data is large and read sequentially, so it takes the bigger block; an app
-	// is many small files where a big block wastes read bandwidth.
-	DefaultBlockSize     = "128k"
-	DefaultDataBlockSize = "512k"
-
-	DefaultNcpus        = 4     // CPUs for a build job
-	DefaultMemMB        = 12288 // memory for a build job
-	DefaultBuildTime    = "2h"  // walltime for a build job
-	DefaultCacheTTLDay  = 1     // remote recipe metadata cache, 1 day
-	DefaultGCGraceDay   = 30    // store gc: age below which an entry is never collectable
-	DefaultNotification = "web"
-	DefaultNestedRun    = NestedRunAuto
-
-	DefaultSchedulerNcpus = 1    // CPUs for a job with no script directives
-	DefaultSchedulerMemMB = 2048 // memory for a job with no script directives
-	DefaultSchedulerTime  = "2h" // walltime for a job with no script directives
-)
-
-// DefaultBuildDuration is DefaultBuildTime as a duration, so the two cannot disagree.
-var DefaultBuildDuration = 2 * time.Hour
-
-// DefaultSchedulerDuration is DefaultSchedulerTime as a duration, so the two cannot disagree.
-var DefaultSchedulerDuration = 2 * time.Hour
-
-// DefaultChannels are the conda channels micromamba gets, highest priority first.
-func DefaultChannels() []string { return []string{"conda-forge", "bioconda"} }
-
-// DefaultLogsDir is where build and restore job logs land when build.logs_dir is not set: $SCRATCH/logs when SCRATCH is set, else $HOME/logs.
-func DefaultLogsDir() string {
-	if scratch := os.Getenv("SCRATCH"); scratch != "" {
-		return filepath.Join(scratch, "logs")
-	}
-	return filepath.Join(os.Getenv("HOME"), "logs")
-}
-
-// BlockSizeCompletions lists common mksquashfs block sizes for shell completion
-var BlockSizeCompletions = []string{"64k", "128k", "256k", "512k", "1m"}
-
-// IsValidBlockSize validates a mksquashfs -b value.
-// Must be a power of two between 4096 and 1048576 (1M), with optional k/K or m/M suffix.
-func IsValidBlockSize(size string) bool {
-	if size == "" {
-		return false
-	}
-	s := strings.ToLower(size)
-	var multiplier int64 = 1
-	if strings.HasSuffix(s, "k") {
-		multiplier = 1024
-		s = s[:len(s)-1]
-	} else if strings.HasSuffix(s, "m") {
-		multiplier = 1024 * 1024
-		s = s[:len(s)-1]
-	}
-	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || n <= 0 {
-		return false
-	}
-	bytes := n * multiplier
-	// mksquashfs requires power of two, between 4096 and 1048576 (1M)
-	return bytes >= 4096 && bytes <= 1048576 && (bytes&(bytes-1)) == 0
-}
+// DefaultNcpus is the build.ncpus default, which callers that cannot import build fall back to.
+const DefaultNcpus = 4
 
 // Global holds the singleton configuration instance
 var Global Config
@@ -231,47 +52,8 @@ func LoadDefaults(executablePath string) {
 	}
 
 	Global = Config{
-		Debug:         false,
-		SubmitJob:     true,
-		AutoloadGPU:   true,
-		NestedRun:     DefaultNestedRun,
-		HelperConnect: DefaultHelperConnect,
-		Version:       Version,
-
+		Version:    Version,
 		ProgramDir: programDir,
-
-		Notification:     DefaultNotification,
-		MetadataCacheTTL: DefaultCacheTTLDay * 24 * time.Hour,
-		StoreGCGrace:     DefaultGCGraceDay * 24 * time.Hour,
-
-		Build: BuildConfig{
-			LogsDir: DefaultLogsDir(),
-			Defaults: scheduler.ResourceSpec{
-				CpusPerTask:  DefaultNcpus,
-				MemPerNodeMB: DefaultMemMB,
-				Time:         DefaultBuildDuration,
-			},
-			// Every reader is >= 1.4: libexec's apptainer (verified at provision
-			// time) or a version-checked system apptainer (apptainer.Normal).
-			// A registry consumer outside condatainer's own exec/run is
-			// responsible for having a compatible apptainer themselves.
-			CompressArgs:    ArgsForCompress("zstd-medium"),
-			BlockSize:       DefaultBlockSize,
-			DataBlockSize:   DefaultDataBlockSize,
-			Channels:        DefaultChannels(),
-			SystemApptainer: apptainerOnPath(),
-		},
-
-		Scheduler: SchedulerConfig{
-			Bin:          "", // Auto-detect scheduler binary (empty = search PATH)
-			Timeout:      0,  // no timeout by default
-			SlurmEmitMem: true,
-			Defaults: scheduler.ResourceSpec{
-				CpusPerTask:  DefaultSchedulerNcpus,
-				MemPerNodeMB: DefaultSchedulerMemMB,
-				Time:         DefaultSchedulerDuration,
-			},
-		},
 	}
 }
 
@@ -296,16 +78,6 @@ func IsInsideContainer() bool {
 	}
 
 	return false
-}
-
-// apptainerOnPath returns the apptainer (or singularity) found on PATH, "" when neither is.
-func apptainerOnPath() string {
-	for _, name := range []string{"apptainer", "singularity"} {
-		if binPath, err := exec.LookPath(name); err == nil {
-			return binPath
-		}
-	}
-	return ""
 }
 
 // BaseImageFileName returns the expected filename for the configured base, e.g.
@@ -361,50 +133,4 @@ func GetWritableTmpDir() string {
 	// No writable data dir at all: fall back to the fast root rather than a
 	// relative path, which would put the workspace wherever the caller stood.
 	return utils.GetTmpDir()
-}
-
-// HelperConnect values.
-const (
-	ConnectAuto      = "auto"      // SSH, then the scheduler's own way into the job
-	ConnectSSH       = "ssh"       // SSH tunnel only
-	ConnectScheduler = "scheduler" // the scheduler's own way into the job only
-	ConnectDirect    = "direct"    // service binds all interfaces; connect to node:port
-)
-
-// DefaultHelperConnect is the helper.connect value when the key is unset.
-const DefaultHelperConnect = ConnectAuto
-
-// ConnectValues lists the accepted values of the helper.connect key.
-var ConnectValues = []string{ConnectAuto, ConnectSSH, ConnectScheduler, ConnectDirect}
-
-// ParseConnect normalizes a helper.connect value and reports whether it is valid.
-func ParseConnect(v string) (string, bool) {
-	v = strings.ToLower(strings.TrimSpace(v))
-	for _, ok := range ConnectValues {
-		if v == ok {
-			return v, true
-		}
-	}
-	return "", false
-}
-
-// NestedRun values.
-const (
-	NestedRunAuto  = "auto"
-	NestedRunTrue  = "true"
-	NestedRunFalse = "false"
-)
-
-// NestedRunValues lists the accepted values of the nested_run key.
-var NestedRunValues = []string{NestedRunAuto, NestedRunTrue, NestedRunFalse}
-
-// ParseNestedRun normalizes a nested_run value and reports whether it is valid.
-func ParseNestedRun(v string) (string, bool) {
-	v = strings.ToLower(strings.TrimSpace(v))
-	for _, ok := range NestedRunValues {
-		if v == ok {
-			return v, true
-		}
-	}
-	return "", false
 }

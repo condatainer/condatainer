@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image/sif"
 	"github.com/condatainer/condatainer/internal/image/squashfs"
 	"github.com/condatainer/condatainer/internal/image/tool"

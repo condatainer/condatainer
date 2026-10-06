@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // stageEntry lays down one entry directory the way both a capsule and a lock

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	"sort"
 	"strings"
@@ -1211,7 +1213,7 @@ func newProjectRestoreCmd() *cobra.Command {
 			}
 			opts := restore.Options{
 				SkipPrebuilt: noPrebuilt, KeepBuildDeps: keepBuildDeps,
-				Replace: replace, Only: only, SubmitJobs: config.Global.SubmitJob,
+				Replace: replace, Only: only, SubmitJobs: scheduler.Enabled(),
 			}
 
 			if dryRun {
@@ -1235,7 +1237,7 @@ func newProjectRestoreCmd() *cobra.Command {
 		"Build missing artifacts locally where possible instead of downloading a prebuilt")
 	cmd.Flags().BoolVar(&keepBuildDeps, "keep-build-deps", false,
 		"Keep build dependencies instead of discarding them at the end")
-	cmd.Flags().BoolVar(&noSubmitMode, "no-submit", false, "Disable job submission (rebuild locally)")
+	settings.AddSwitch(cmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (rebuild locally)"))
 	cmd.Flags().BoolVar(&replace, "replace", false,
 		"Overwrite a project path holding something the lock does not name")
 	// Set by the job a submitted rebuild runs, so it produces exactly what it

@@ -18,7 +18,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/libexec"
 	"github.com/condatainer/condatainer/internal/logging"
 )
@@ -118,7 +117,7 @@ var bundled sync.Map
 // (mksquashfs, unsquashfs, squashfuse_ll, fuse2fs, ...), or nothing when no
 // host apptainer is configured or it will not say where they are.
 func bundledDirs() []string {
-	bin := config.Global.Build.SystemApptainer
+	bin := SystemApptainer()
 	if bin == "" {
 		bin = "apptainer"
 	}

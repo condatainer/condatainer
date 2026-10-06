@@ -6,6 +6,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // Match is a resolved name: the entry, the source it came from, and — when the
@@ -92,7 +94,7 @@ func (c Catalog) Versions(ctx context.Context, name string) ([]string, error) {
 		}
 	}
 
-	slices.SortStableFunc(out, func(a, b string) int { return CompareVersions(b, a) })
+	slices.SortStableFunc(out, func(a, b string) int { return utils.CompareVersions(b, a) })
 	return out, nil
 }
 

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 )
 
@@ -17,13 +18,11 @@ import (
 func setTestSource(t *testing.T, root string) {
 	t.Helper()
 	oldSources := config.Global.Sources
-	oldBase := config.Global.DefaultDistro
 	config.Global.Sources = []catalog.Spec{{Name: "test", Base: root}}
-	config.Global.DefaultDistro = "ubuntu24"
+	settingstest.Override(t, "default_distro", "ubuntu24")
 	config.ResetCatalog()
 	t.Cleanup(func() {
 		config.Global.Sources = oldSources
-		config.Global.DefaultDistro = oldBase
 		config.ResetCatalog()
 	})
 }

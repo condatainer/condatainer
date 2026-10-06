@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -54,10 +55,10 @@ func TestResolveRequiredInAProjectUsesInstalled(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(imagesDir, installed), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	prevPaths, prevDistro := config.GlobalDataPaths, config.Global.DefaultDistro
+	prevPaths := config.GlobalDataPaths
 	config.GlobalDataPaths.ImagesDirs = []string{imagesDir}
-	config.Global.DefaultDistro = "ubuntu24"
-	t.Cleanup(func() { config.GlobalDataPaths, config.Global.DefaultDistro = prevPaths, prevDistro })
+	settingstest.Override(t, "default_distro", "ubuntu24")
+	t.Cleanup(func() { config.GlobalDataPaths = prevPaths })
 
 	root := t.TempDir()
 	if err := lock.Publish(root, lock.New()); err != nil {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"slices"
 	"strings"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // Resolved is what SolveName found for a raw name: the concrete name it
@@ -180,7 +182,7 @@ func (c Catalog) solveOS(ctx context.Context, have Have, name string) (Resolved,
 // pickNewest returns candidate in place of best when it satisfies dep and
 // outranks whatever best already holds.
 func pickNewest(dep Dep, best, candidate string) string {
-	if dep.Satisfies(candidate) && (best == "" || CompareVersions(candidate, best) > 0) {
+	if dep.Satisfies(candidate) && (best == "" || utils.CompareVersions(candidate, best) > 0) {
 		return candidate
 	}
 	return best

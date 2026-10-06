@@ -3,13 +3,14 @@ package build
 import (
 	"context"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/conda"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"log/slog"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/libexec"
 	"github.com/condatainer/condatainer/internal/logging"
@@ -374,5 +375,5 @@ func (b *BuildObject) describeCondaPackage() {
 	if b.packageName == "" || b.buildSource != "" || b.spec.Image.Description != "" {
 		return
 	}
-	b.spec.Image.Description = utils.FetchCondaSummary(b.packageName, config.Global.Build.Channels)
+	b.spec.Image.Description = utils.FetchCondaSummary(b.packageName, conda.Channels())
 }

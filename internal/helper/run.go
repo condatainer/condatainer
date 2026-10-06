@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/image/ext3"
@@ -43,13 +43,13 @@ type RunOptions struct {
 	// on-disk check and auto-install unconditionally.
 	NoProject bool
 	// NoSubmit forces the run headless on this node even when a scheduler is
-	// available. The CLI also honors config.Global.SubmitJob (set globally by
+	// available. The CLI also honors scheduler.Enabled() (set globally by
 	// --no-submit); this field is what lets the server apply the override to
 	// one request without touching the process-wide config.
 	NoSubmit bool
-	// Partition to submit under (empty falls back to config.Global.Scheduler.Partition; ignored when headless)
+	// Partition to submit under (empty falls back to scheduler.Partition(); ignored when headless)
 	Partition string
-	// Account to submit under (empty falls back to config.Global.Scheduler.Account; ignored when headless)
+	// Account to submit under (empty falls back to scheduler.Account(); ignored when headless)
 	Account string
 	// Behaviour
 	ForceNew bool
@@ -63,7 +63,7 @@ type RunOptions struct {
 }
 
 func detectScheduler(noSubmit bool) (scheduler.Scheduler, error) {
-	if noSubmit || !config.Global.SubmitJob {
+	if noSubmit || !scheduler.Enabled() {
 		return nil, scheduler.ErrSchedulerNotFound
 	}
 	if sched := scheduler.ActiveScheduler(); sched != nil {
@@ -72,7 +72,7 @@ func detectScheduler(noSubmit bool) (scheduler.Scheduler, error) {
 		}
 		return sched, nil
 	}
-	sched, err := scheduler.DetectSchedulerWithBinary(config.Global.Scheduler.Bin)
+	sched, err := scheduler.DetectSchedulerWithBinary(scheduler.Bin())
 	if err != nil {
 		return nil, scheduler.ErrSchedulerNotFound
 	}
@@ -132,7 +132,7 @@ func ResolveHelperSpec(scriptPath string) *scheduler.ResourceSpec {
 // resolveSpec merges resources with priority: scheduler defaults < script headers < overrides.
 // Recognised script headers: #NCPUS:, #MEM:, #TIME:, #GPU:.
 func resolveSpec(scriptPath string, overrides *scheduler.ResourceSpec) *scheduler.ResourceSpec {
-	base := config.Global.Scheduler.Defaults
+	base := scheduler.DefaultSpec()
 
 	// Script headers (#NCPUS:/#MEM:/#TIME:/#GPU:) override config defaults.
 	meta, err := ParseHelperScriptMeta(scriptPath)
@@ -426,7 +426,7 @@ func splitPkgConstraint(spec string) (name, op, ver string) {
 
 // checkPkgConstraint reports whether installedVer satisfies op+requiredVer.
 func checkPkgConstraint(installedVer, op, requiredVer string) bool {
-	cmp := catalog.CompareVersions(installedVer, requiredVer)
+	cmp := utils.CompareVersions(installedVer, requiredVer)
 	switch op {
 	case ">=":
 		return cmp >= 0
@@ -635,15 +635,15 @@ func newHelperID(name string) string {
 // buildHelperScriptSpecs constructs a ScriptSpecs for use with CreateScriptWithSpec.
 // Stdout and Stderr are /dev/null because the command body uses `exec >>` to
 // redirect output to the per-ID state dir; the scheduler-level log is unused.
-// account/partition fall back to config.Global.Scheduler.Account/.Partition when empty —
+// account/partition fall back to scheduler.Account()/.Partition when empty —
 // there is no script-header tier for either (unlike ncpus/mem/time/gpu), since a script
 // author has no way to know a user's cluster account.
 func buildHelperScriptSpecs(name, cwd, account, partition string, spec *scheduler.ResourceSpec) *scheduler.ScriptSpecs {
 	if account == "" {
-		account = config.Global.Scheduler.Account
+		account = scheduler.Account()
 	}
 	if partition == "" {
-		partition = config.Global.Scheduler.Partition
+		partition = scheduler.Partition()
 	}
 	ss := &scheduler.ScriptSpecs{
 		Spec: spec,
@@ -657,7 +657,7 @@ func buildHelperScriptSpecs(name, cwd, account, partition string, spec *schedule
 		},
 		HasDirectives: spec != nil,
 	}
-	if config.Global.ProxyPerJob {
+	if scheduler.ProxyPerJob() {
 		if h, err := os.Hostname(); err == nil && h != "" {
 			ss.ProxyVia = h
 		}
@@ -673,7 +673,7 @@ func generateWrapper(id, name, cwd, scriptDir, stateDir, account, partition stri
 	params map[string]string, spec *scheduler.ResourceSpec, sched scheduler.Scheduler,
 	containerCmd string) (string, error) {
 
-	body := buildHelperCommandBody(id, name, cwd, scriptDir, stateDir, walltime, params, sched, containerCmd, config.Global.HelperConnect == config.ConnectDirect)
+	body := buildHelperCommandBody(id, name, cwd, scriptDir, stateDir, walltime, params, sched, containerCmd, Connect() == ConnectDirect)
 
 	if err := utils.MkdirAllShared(stateDir); err != nil {
 		return "", fmt.Errorf("creating state dir: %w", err)
@@ -783,7 +783,7 @@ func newHelperRun(id, name, jobID, cwd string, walltime time.Duration,
 		Params:     params,
 		StartedAt:  time.Now(),
 		Status:     status,
-		Connect:    config.Global.HelperConnect,
+		Connect:    Connect(),
 	}
 	if spec != nil {
 		run.CPUs = spec.CpusPerTask

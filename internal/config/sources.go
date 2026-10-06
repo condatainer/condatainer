@@ -3,12 +3,13 @@ package config
 import (
 	"context"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/credential"
 	"github.com/condatainer/condatainer/internal/logging"
 )
@@ -36,11 +37,11 @@ const DefaultLayer = "default"
 func ResolvedSources() []LayeredSource {
 	var out []LayeredSource
 	seen := map[string]bool{}
-	for _, l := range loadedLayers {
+	for _, l := range loadedLayers() {
 		if !l.InConfig("sources") {
 			continue
 		}
-		for _, spec := range decodeSourceList(l.v.Get("sources")) {
+		for _, spec := range decodeSourceList(l.raw("sources")) {
 			if !seen[spec.Name] {
 				seen[spec.Name] = true
 				out = append(out, LayeredSource{Spec: spec, Layer: l.Type})
@@ -64,13 +65,13 @@ func layerSources() []catalog.Spec {
 }
 
 // layerBinds merges the `bind` key across every layer, highest priority first,
-// once each. CNT_BIND replaces the list and is "|"-separated.
+// once each. CNT_CONFIG_BIND replaces the list and is "|"-separated.
 func layerBinds() []string {
 	var raw []string
-	if ev := os.Getenv("CNT_BIND"); ev != "" {
+	if ev := os.Getenv(settings.EnvName("bind")); ev != "" {
 		raw = strings.Split(ev, "|")
 	} else {
-		for _, v := range configLayers {
+		for _, v := range loadedLayers() {
 			raw = append(raw, v.GetStringSlice("bind")...)
 		}
 	}
@@ -89,7 +90,7 @@ func layerBinds() []string {
 // names `cnt` itself.
 func DefaultSource() catalog.Spec { return defaultSource }
 
-// decodeSourceList turns viper's view of the YAML sequence into specs. Each
+// decodeSourceList turns the decoded YAML sequence into specs. Each
 // entry is a single-key mapping, `- lab: /shared/lab/recipes`.
 func decodeSourceList(raw any) []catalog.Spec {
 	items, ok := raw.([]any)
@@ -155,9 +156,10 @@ func SelectSources(names []string) error {
 }
 
 var (
-	catalogOnce sync.Once
-	catalogVal  catalog.Catalog
-	catalogErr  error
+	catalogMu     sync.Mutex
+	catalogOpened bool
+	catalogVal    catalog.Catalog
+	catalogErr    error
 )
 
 // OpenCatalog opens the configured sources, once per process.
@@ -165,15 +167,17 @@ var (
 // Config owns which sources exist and where the cache lives; the catalog owns
 // everything under that directory.
 func OpenCatalog(ctx context.Context) (catalog.Catalog, error) {
-	catalogOnce.Do(func() {
+	catalogMu.Lock()
+	defer catalogMu.Unlock()
+	if !catalogOpened {
+		catalogOpened = true
 		// Defensive: layerSources always leaves defaultSource in. An empty
 		// catalog provides nothing, which callers already handle.
-		if len(Global.Sources) == 0 {
-			return
+		if len(Global.Sources) > 0 {
+			cache := catalog.Cache{Dir: CatalogCacheDir(), TTL: MetadataCacheTTL()}
+			catalogVal, catalogErr = catalog.Open(ctx, withSourceTokens(Global.Sources), cache)
 		}
-		cache := catalog.Cache{Dir: CatalogCacheDir(), TTL: Global.MetadataCacheTTL}
-		catalogVal, catalogErr = catalog.Open(ctx, withSourceTokens(Global.Sources), cache)
-	})
+	}
 	return catalogVal, catalogErr
 }
 
@@ -243,14 +247,14 @@ func BaseRecipeNameFrom(cat catalog.Catalog) string {
 // never revises it. Returns the resolved distro, "" when nothing supplies
 // one; a failed write is not an error.
 func EnsureDefaultDistro(cat catalog.Catalog) string {
-	if Global.DefaultDistro != "" {
-		return Global.DefaultDistro
+	if d := DefaultDistro(); d != "" {
+		return d
 	}
 	def := cat.DefaultDistro()
 	if def == "" {
 		return ""
 	}
-	Global.DefaultDistro = def
+	recommendedDistro = def
 	if path, _, err := ResolveWritableConfigPath(""); err == nil {
 		_ = SetConfigKey(path, "default_distro", def)
 	}
@@ -264,7 +268,7 @@ func SourceDefaultDistro(cat catalog.Catalog) string { return cat.DefaultDistro(
 // ResolvedDefaultDistro returns the configured default distro, e.g. "ubuntu24"
 // — the bare-name prefix for installed overlays. Config only: it never opens
 // the catalog, so offline paths like list and info stay offline.
-func ResolvedDefaultDistro() string { return Global.DefaultDistro }
+func ResolvedDefaultDistro() string { return DefaultDistro() }
 
 // CatalogCacheDir is where fetched index and recipe bytes are kept.
 func CatalogCacheDir() string {
@@ -293,7 +297,9 @@ func RefreshCatalogCache() error {
 // ResetCatalog drops the memoized catalog. Tests reconfigure sources between
 // cases; nothing in a command run needs it.
 func ResetCatalog() {
-	catalogOnce = sync.Once{}
+	catalogMu.Lock()
+	defer catalogMu.Unlock()
+	catalogOpened = false
 	warnSourcesOnce = sync.Once{}
 	catalogVal, catalogErr = nil, nil
 }

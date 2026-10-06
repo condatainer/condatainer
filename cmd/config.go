@@ -314,7 +314,7 @@ var configGetCmd = &cobra.Command{
 - With -l, it reads only that layer's config file.
 
 ` + configLayersHelp,
-	Example: `  condatainer config get build.system_apptainer
+	Example: `  condatainer config get host_apptainer
   condatainer config get build.ncpus
   condatainer config get sources
   condatainer config get sources -l app-root`,
@@ -371,7 +371,7 @@ Time format (for build.time):
   - HPC style: 02:00:00, 2:30:00, 1:30 (HH:MM:SS or HH:MM)
 
 ` + configLayersHelp,
-	Example: `  condatainer config set build.system_apptainer /usr/bin/apptainer
+	Example: `  condatainer config set host_apptainer /usr/bin/apptainer
   condatainer config set build.ncpus 8
   condatainer config set build.time 02:00:00
   condatainer config set scheduler.submit_job false`,
@@ -515,7 +515,7 @@ Without -l, the layer follows the install location:
 				detected[k.Name] = v
 			}
 		}
-		detectedApptainerBin, detectedSchedulerBin := detected["build.system_apptainer"], detected["scheduler.bin"]
+		detectedApptainerBin, detectedSchedulerBin := detected["host_apptainer"], detected["scheduler.bin"]
 		if detectedApptainerBin == "" {
 			utils.PrintWarning("Neither 'apptainer' nor 'singularity' binary found (checked PATH and 'module avail'), so os overlays cannot be built.")
 		}
@@ -749,7 +749,7 @@ var configRemoveCmd = &cobra.Command{
 	Long: `Remove a config key entirely, or one value from an array config key.
 
 ` + configLayersHelp,
-	Example: `  condatainer config remove build.system_apptainer
+	Example: `  condatainer config remove host_apptainer
   condatainer config remove bind /scratch`,
 	Args:              cobra.RangeArgs(1, 2),
 	ValidArgsFunction: arrayRemoveValueCompletion,

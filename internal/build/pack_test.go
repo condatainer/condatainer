@@ -11,7 +11,6 @@ import (
 
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
-	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -49,21 +48,6 @@ func newPackObject(t *testing.T, typ catalog.Type) *BuildObject {
 		},
 	}
 	return b
-}
-
-// withPackSettings gives one test the block sizes the packer reads and restores
-// them afterwards. The zero value is not a legal mksquashfs argument, and a test
-// that runs the real command needs them.
-func withPackSettings(t *testing.T) {
-	t.Helper()
-	prev := config.Global.Build
-	if config.Global.Build.BlockSize == "" {
-		config.Global.Build.BlockSize = config.DefaultBlockSize
-	}
-	if config.Global.Build.DataBlockSize == "" {
-		config.Global.Build.DataBlockSize = config.DefaultDataBlockSize
-	}
-	t.Cleanup(func() { config.Global.Build = prev })
 }
 
 // Both documents are staged, since an image carrying only one of them is either
@@ -185,7 +169,6 @@ func TestSquashfsSourcesCarryMetaDirName(t *testing.T) {
 // An empty metaDir packs the payload alone, which is what keeps the packer
 // usable for anything that has no metadata to add.
 func TestSquashfsWithoutMetaDirPacksPayloadOnly(t *testing.T) {
-	withPackSettings(t)
 	b := newPackObject(t, catalog.TypeApp)
 
 	sources, keepAsDirectory := packSources(b, b.ws.CntDir, "")
@@ -205,7 +188,6 @@ func TestPackedImageMetadataIsReadable(t *testing.T) {
 	if _, err := exec.LookPath("mksquashfs"); err != nil {
 		t.Skip("mksquashfs not available")
 	}
-	withPackSettings(t)
 
 	b := newPackObject(t, catalog.TypeApp)
 	payload := filepath.Join(b.ws.CntDir, b.spec.Image.Name, "bin")
@@ -267,7 +249,6 @@ func TestPackedImageExcludesBuildScratch(t *testing.T) {
 	if _, err := exec.LookPath("mksquashfs"); err != nil {
 		t.Skip("mksquashfs not available")
 	}
-	withPackSettings(t)
 
 	b := newPackObject(t, catalog.TypeApp)
 	b.buildType = BuildTypeScript
@@ -324,7 +305,6 @@ func TestSquashfsProgressFollowsQuietMode(t *testing.T) {
 // The conda install phase must not know where the image lands: that is what lets
 // a cancelled install leave nothing next to the installed images.
 func TestCondaInstallDoesNotPackOrTouchTarget(t *testing.T) {
-	withPackSettings(t)
 	withProvisionedLibexec(t)
 	b := newPackObject(t, catalog.TypeApp)
 	b.buildType = BuildTypeConda

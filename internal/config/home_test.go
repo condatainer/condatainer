@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,7 +28,7 @@ func isolateHome(t *testing.T) (realHome string) {
 func TestApplyHomeOverride(t *testing.T) {
 	realHome := isolateHome(t)
 	override := filepath.Join(t.TempDir(), "home")
-	Global.HomeOverride = override
+	settingstest.Override(t, "home_override", override)
 	GlobalDataPaths = DataPaths{ImagesDirs: []string{"/stale"}}
 	t.Cleanup(func() { GlobalDataPaths = DataPaths{} })
 
@@ -57,7 +58,7 @@ func TestApplyHomeOverride(t *testing.T) {
 func TestApplyHomeOverrideUnsetVariable(t *testing.T) {
 	realHome := isolateHome(t)
 	t.Setenv("CNT_TEST_UNSET_SCRATCH", "")
-	Global.HomeOverride = "$CNT_TEST_UNSET_SCRATCH/home"
+	settingstest.Override(t, "home_override", "$CNT_TEST_UNSET_SCRATCH/home")
 
 	ApplyHomeOverride()
 

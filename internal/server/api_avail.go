@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/condatainer/condatainer/internal/conda"
 	"net/http"
 	"sort"
 	"strings"
@@ -142,7 +143,7 @@ func (s *srv) handleAvailInspect(w http.ResponseWriter, r *http.Request) {
 	if sched := scheduler.ActiveScheduler(); sched != nil {
 		resp.Scheduler = string(sched.GetType())
 	}
-	resp.WillSubmit = resp.SchedulerDirectives && resp.Scheduler != "" && config.Global.SubmitJob
+	resp.WillSubmit = resp.SchedulerDirectives && resp.Scheduler != "" && scheduler.Enabled()
 
 	writeJSON(w, resp)
 }
@@ -158,7 +159,7 @@ func (s *srv) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, _, err := utils.SearchCondaPackages(q, config.Global.Build.Channels, false, 0)
+	results, _, err := utils.SearchCondaPackages(q, conda.Channels(), false, 0)
 	if err != nil {
 		http.Error(w, "conda search failed: "+err.Error(), http.StatusBadGateway)
 		return

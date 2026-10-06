@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,9 +24,7 @@ func withImageDir(t *testing.T) string {
 // withBase records a configured base for the duration of the test.
 func withBase(t *testing.T, base string) {
 	t.Helper()
-	prev := Global.DefaultDistro
-	Global.DefaultDistro = base
-	t.Cleanup(func() { Global.DefaultDistro = prev })
+	settingstest.Override(t, "default_distro", base)
 }
 
 // GetBaseImage answers "which base is installed", not "where might one go".

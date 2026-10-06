@@ -16,12 +16,13 @@ go test -v ./internal/build -run TestParseScriptMetadata
 
 ## Architecture
 
-- CLI: cobra + viper. `main.go` calls `cmd.Execute()`. One file per subcommand in `cmd/`, delegating to `internal/`.
+- CLI: cobra. `main.go` calls `cmd.Execute()`. One file per subcommand in `cmd/`, delegating to `internal/`.
 - `internal/artifact/`: what an image embeds. Identity, manifests, equivalence comparison.
 - `build/`: name/version to a Conda, Script or Def build. Dependency graphs, remote scripts.
 - `catalog/`: resolves a name to a recipe and a set of names to a build order. Owns the `#KEY:` header tokenizer and the script header readers.
 - `conda/`: the Conda environment mounted at `/cnt_env`.
 - `config/`: layered config (flags > env > user > extra-root > app-root > defaults) and data directory search.
+- `settings/`: the registry of config keys. A package declares the keys it reads and reads them through typed handles. Imports only `utils`.
 - `credential/`: per-layer `credentials.json` for registry logins and recipe-source tokens. Lookup and file permissions.
 - `helper/`, `helperhistory/`: helper service jobs and their shared run history.
 - `image/`: overlay CRUD (ext3, SquashFS, sif), freeze, resize, locking.

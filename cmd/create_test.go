@@ -2,14 +2,19 @@ package cmd
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/settings"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func TestSolveCreateNameExactThenBaseThenConda(t *testing.T) {
@@ -28,18 +33,16 @@ func TestSolveCreateNameExactThenBaseThenConda(t *testing.T) {
 	write("ubuntu24/simple-os.def")        // zero-slash shortcut
 	write("ubuntu24/versioned-os/1.0.def") // one-slash shortcut
 
-	oldSources, oldBase := config.Global.Sources, config.Global.DefaultDistro
-	oldChannels := config.Global.Build.Channels
+	oldSources := config.Global.Sources
 	config.Global.Sources = []catalog.Spec{{Name: "test", Base: root}}
-	config.Global.DefaultDistro = "ubuntu24"
+	settingstest.Override(t, "default_distro", "ubuntu24")
 	// No channels: the Conda-search gate must not make network calls in a
 	// case it can already answer, or when nothing satisfiable to report is
 	// possible either way.
-	config.Global.Build.Channels = nil
+	settingstest.OverrideList(t, "channels")
 	config.ResetCatalog()
 	t.Cleanup(func() {
-		config.Global.Sources, config.Global.DefaultDistro = oldSources, oldBase
-		config.Global.Build.Channels = oldChannels
+		config.Global.Sources = oldSources
 		config.ResetCatalog()
 	})
 
@@ -77,7 +80,7 @@ func TestSolveCreateNameExactThenBaseThenConda(t *testing.T) {
 // flag on the create command.  This guards against drift when new options are
 // added.
 func TestCreateFlagsForCompressOptions(t *testing.T) {
-	for _, opt := range config.CompressOptions {
+	for _, opt := range build.CompressOptions {
 		if createCmd.Flags().Lookup(opt.Name) == nil {
 			t.Errorf("create command missing flag for compression option %q", opt.Name)
 		}
@@ -115,49 +118,22 @@ func TestSourceHandleCompletion(t *testing.T) {
 	}
 }
 
-func TestCompressArgsFromFlags(t *testing.T) {
-	// helper to build a map with all flags set to the given boolean value
-	makeMap := func(setName string) map[string]*bool {
-		m := make(map[string]*bool)
-		for _, opt := range config.CompressOptions {
-			v := false
-			if opt.Name == setName {
-				v = true
-			}
-			m[opt.Name] = &v
-		}
-		return m
+// Two compression flags in one command are refused, and one sets the stored arguments.
+func TestCompressionFlagsAreExclusive(t *testing.T) {
+	fs := pflag.NewFlagSet("t", pflag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	for _, opt := range build.CompressOptions {
+		settings.AddSwitch(fs, "build.compress_args", opt.Name, opt.Name)
 	}
-
-	// no flag => empty string, no error
-	if got, err := compressArgsFromFlags(makeMap("")); err != nil {
-		t.Fatalf("unexpected error for no flag: %v", err)
-	} else if got != "" {
-		t.Errorf("expected empty result for no flag, got %q", got)
+	first, second := build.CompressOptions[0], build.CompressOptions[1]
+	if err := fs.Parse([]string{"--" + first.Name}); err != nil {
+		t.Fatal(err)
 	}
-
-	// each individual option returns the appropriate args
-	for _, opt := range config.CompressOptions {
-		m := makeMap(opt.Name)
-		if got, err := compressArgsFromFlags(m); err != nil {
-			t.Errorf("unexpected error for option %q: %v", opt.Name, err)
-		} else if got != opt.Args {
-			t.Errorf("compressArgsFromFlags(%q) = %q, want %q", opt.Name, got, opt.Args)
-		}
+	if got := build.CompressArgs(); got != first.Args {
+		t.Errorf("CompressArgs = %q, want %q", got, first.Args)
 	}
-
-	// multiple options should error
-	m := makeMap("")
-	if len(config.CompressOptions) >= 2 {
-		// set first two
-		names := []string{config.CompressOptions[0].Name, config.CompressOptions[1].Name}
-		for _, n := range names {
-			v := true
-			m[n] = &v
-		}
-		if _, err := compressArgsFromFlags(m); err == nil {
-			t.Errorf("expected error when multiple compression flags set")
-		}
+	if err := fs.Parse([]string{"--" + second.Name}); err == nil {
+		t.Error("two compression flags were accepted")
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
@@ -102,7 +101,7 @@ func runScheduler(cmd *cobra.Command, args []string) {
 	sched := scheduler.ActiveScheduler()
 	if sched == nil {
 		var err error
-		sched, err = scheduler.DetectSchedulerWithBinary(config.Global.Scheduler.Bin)
+		sched, err = scheduler.DetectSchedulerWithBinary(scheduler.Bin())
 		if err != nil {
 			utils.PrintMessage("Scheduler Status: %s", utils.StyleError("Not Found"))
 			utils.PrintMessage("")

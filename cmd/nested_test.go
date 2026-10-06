@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"github.com/condatainer/condatainer/internal/settings"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,9 +15,9 @@ import (
 
 func TestPlanNested(t *testing.T) {
 	const (
-		auto = config.NestedRunAuto
-		on   = config.NestedRunTrue
-		off  = config.NestedRunFalse
+		auto = nestedRunAuto
+		on   = nestedRunTrue
+		off  = nestedRunFalse
 	)
 	cases := []struct {
 		name      string
@@ -40,14 +42,15 @@ func TestPlanNested(t *testing.T) {
 	}
 }
 
-func TestParseNestedRun(t *testing.T) {
+func TestNestedRunKeyNormalizesAndRefuses(t *testing.T) {
+	k, _ := settings.Lookup("nested_run")
 	for in, want := range map[string]string{"auto": "auto", " TRUE ": "true", "False": "false"} {
-		if got, ok := config.ParseNestedRun(in); !ok || got != want {
-			t.Errorf("ParseNestedRun(%q) = %q, %v; want %q", in, got, ok, want)
+		if got, err := k.Parse(in); err != nil || got != want {
+			t.Errorf("Parse(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	if _, ok := config.ParseNestedRun("maybe"); ok {
-		t.Error("ParseNestedRun accepted an unknown value")
+	if _, err := k.Parse("maybe"); err == nil {
+		t.Error("nested_run accepted an unknown value")
 	}
 }
 
@@ -59,19 +62,19 @@ func TestNestedRunMountsTheInstalledOverlay(t *testing.T) {
 	if err := os.WriteFile(stub, []byte("stub"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	prevPaths, prevMode := config.GlobalDataPaths, config.Global.NestedRun
+	prevPaths := config.GlobalDataPaths
 	config.GlobalDataPaths.ImagesDirs = []string{dir}
 	t.Setenv("CNT_LIBEXEC", filepath.Join(dir, "libexec"))
 	build.InvalidateInstalledOverlays()
 	container.InvalidateInstalledOverlaysCache()
 	t.Cleanup(func() {
-		config.GlobalDataPaths, config.Global.NestedRun = prevPaths, prevMode
+		config.GlobalDataPaths = prevPaths
 		build.InvalidateInstalledOverlays()
 		container.InvalidateInstalledOverlaysCache()
 	})
 
 	given := []string{"/x/samtools--1.0.sqf"}
-	config.Global.NestedRun = config.NestedRunAuto
+	settingstest.Override(t, "nested_run", nestedRunAuto)
 	got, bind, err := nestedRun(context.Background(), given)
 	if err != nil || bind {
 		t.Fatalf("nestedRun = %v, bind=%v, err=%v", got, bind, err)
@@ -88,7 +91,7 @@ func TestNestedRunMountsTheInstalledOverlay(t *testing.T) {
 		t.Errorf("an overlay already in the list was added again: %v", again)
 	}
 
-	config.Global.NestedRun = config.NestedRunFalse
+	settingstest.Override(t, "nested_run", nestedRunFalse)
 	if got, _, _ := nestedRun(context.Background(), given); len(got) != 1 {
 		t.Errorf("false added overlays: %v", got)
 	}

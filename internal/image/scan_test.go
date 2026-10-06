@@ -1,11 +1,10 @@
 package image
 
 import (
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/condatainer/condatainer/internal/config"
 )
 
 // writeImages creates dir and touches one file per name.
@@ -24,9 +23,7 @@ func writeImages(t *testing.T, dir string, names ...string) string {
 
 func withBase(t *testing.T, base string) {
 	t.Helper()
-	prev := config.Global.DefaultDistro
-	config.Global.DefaultDistro = base
-	t.Cleanup(func() { config.Global.DefaultDistro = prev })
+	settingstest.Override(t, "default_distro", base)
 }
 
 // A filename is the name with -- for /, and only .sqf/.img count. A .sif is the

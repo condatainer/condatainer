@@ -351,8 +351,8 @@ func (s *srv) handleHelperResources(w http.ResponseWriter, r *http.Request, name
 	}
 	// No script-header tier for account/partition (unlike cpus/mem/time/gpu) —
 	// the placeholder is always the scheduler config default.
-	out.Account = config.Global.Scheduler.Account
-	out.Partition = config.Global.Scheduler.Partition
+	out.Account = scheduler.Account()
+	out.Partition = scheduler.Partition()
 	writeJSON(w, out)
 }
 

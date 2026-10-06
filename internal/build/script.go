@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/conda"
 	"os"
 	"path/filepath"
 	"strings"
@@ -374,5 +375,5 @@ func (b *BuildObject) describeCondaPackage() {
 	if b.packageName == "" || b.buildSource != "" || b.spec.Image.Description != "" {
 		return
 	}
-	b.spec.Image.Description = utils.FetchCondaSummary(b.packageName, config.Global.Build.Channels)
+	b.spec.Image.Description = utils.FetchCondaSummary(b.packageName, conda.Channels())
 }

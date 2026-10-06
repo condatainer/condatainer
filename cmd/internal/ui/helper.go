@@ -346,21 +346,21 @@ func PromptSettings(ctx context.Context,
 
 	// ── resolve account/partition display values ──────────────────────────────
 	// Priority: CLI flag (opts.Account/.Partition) > saved config >
-	// config.Global.Scheduler default. No script-header tier — account/partition
+	// scheduler default. No script-header tier — account/partition
 	// describe the user's cluster access, not something a script author can know.
 	account := opts.Account
 	if account == "" {
 		account = saved["account"]
 	}
 	if account == "" {
-		account = config.Global.Scheduler.Account
+		account = scheduler.Account()
 	}
 	partition := opts.Partition
 	if partition == "" {
 		partition = saved["partition"]
 	}
 	if partition == "" {
-		partition = config.Global.Scheduler.Partition
+		partition = scheduler.Partition()
 	}
 	opts.Account = account
 	opts.Partition = partition
@@ -855,7 +855,7 @@ func MonitorHelper(ctx context.Context, id string, detached bool) error {
 						utils.PrintSuccess("Access at: %s", u)
 					}
 				}
-				if n := config.Global.Notification; n == "terminal" || n == "both" {
+				if n := helper.Notification(); n == "terminal" || n == "both" {
 					fmt.Print("\a")
 					time.Sleep(1100 * time.Millisecond)
 					fmt.Print("\a")

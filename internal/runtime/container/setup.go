@@ -4,6 +4,7 @@ package container
 
 import (
 	"fmt"
+	"github.com/condatainer/condatainer/internal/conda"
 	"os"
 	"path/filepath"
 	"sort"
@@ -248,8 +249,8 @@ func buildEnvironment(overlays []string, lastImg string, envMounted bool, cfg Se
 		if lastImg != "" && cfg.WritableImg {
 			writable = "1"
 		}
-		if len(config.Global.Build.Channels) > 0 {
-			envList = append(envList, "CNT_CONDA_CHANNELS="+strings.Join(config.Global.Build.Channels, "|"))
+		if len(conda.Channels()) > 0 {
+			envList = append(envList, "CNT_CONDA_CHANNELS="+strings.Join(conda.Channels(), "|"))
 		}
 		envList = append(envList,
 			"CNT_CONDA_ROOT=/cnt_env",

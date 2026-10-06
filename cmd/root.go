@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"github.com/condatainer/condatainer/internal/toolpath"
+
 	"context"
 	"errors"
 	"fmt"
@@ -11,7 +13,6 @@ import (
 	"syscall"
 
 	"github.com/condatainer/condatainer/cmd/internal/clilog"
-	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/libexec"
 	"github.com/condatainer/condatainer/internal/logging"
@@ -23,10 +24,9 @@ import (
 )
 
 var (
-	debugMode    bool
-	noSubmitMode bool
-	quietMode    bool
-	yesMode      bool
+	debugMode bool
+	quietMode bool
+	yesMode   bool
 )
 
 var rootCmd = &cobra.Command{
@@ -67,12 +67,12 @@ var rootCmd = &cobra.Command{
 		config.LoadDefaults(exe)
 
 		// Step 2: Initialize Viper (read config file, env vars)
-		if err := config.InitViper(); err != nil {
+		if err := config.LoadLayers(); err != nil {
 			utils.PrintDebug("Error reading config file: %v", err)
 		}
 
 		// Step 3: Load config values into Global (with runtime detection fallback)
-		config.LoadFromViper()
+		config.LoadSources()
 
 		// Step 4: Replace HOME when home_override is set
 		config.ApplyHomeOverride()
@@ -83,16 +83,16 @@ var rootCmd = &cobra.Command{
 		// inspect/repair config without seeing contradictory warnings before
 		// re-detection runs.
 		isConfigCommand := strings.HasPrefix(cmd.CommandPath(), "condatainer config")
-		if bad := config.InvalidSystemApptainer(); bad != "" && !isCompleteRequest && !isConfigCommand &&
+		if bad := toolpath.InvalidSystemApptainer(); bad != "" && !isCompleteRequest && !isConfigCommand &&
 			!config.IsInsideContainer() {
-			if fallback := config.Global.Build.SystemApptainer; fallback != "" {
+			if fallback := toolpath.SystemApptainer(); fallback != "" {
 				utils.PrintWarning("The build.system_apptainer setting %q is not usable; using %s from PATH instead.", bad, fallback)
 			} else {
 				utils.PrintWarning("The build.system_apptainer setting %q is not usable, and no apptainer was found on PATH.", bad)
 			}
 			utils.PrintHint("Run `condatainer config init`.")
 		} else if !isCompleteRequest && !isConfigCommand && !config.IsInsideContainer() &&
-			!libexec.Installed("apptainer") && !config.ValidateBinary(config.Global.Build.SystemApptainer) {
+			!libexec.Installed("apptainer") && !utils.ValidateBinary(toolpath.SystemApptainer()) {
 			utils.PrintWarning("Apptainer not accessible.")
 			utils.PrintHint("Run `condatainer config init`.")
 		}
@@ -118,15 +118,10 @@ var rootCmd = &cobra.Command{
 			} else {
 				utils.PrintDebug("Base Image: %v", err)
 			}
-			utils.PrintDebug("Apptainer Binary: %s", config.Global.Build.SystemApptainer)
-			if config.Global.Scheduler.Bin != "" {
-				utils.PrintDebug("Scheduler Binary: %s", config.Global.Scheduler.Bin)
+			utils.PrintDebug("Apptainer Binary: %s", toolpath.SystemApptainer())
+			if scheduler.Bin() != "" {
+				utils.PrintDebug("Scheduler Binary: %s", scheduler.Bin())
 			}
-		}
-
-		if noSubmitMode {
-			config.Global.SubmitJob = false
-			utils.PrintDebug("Job submission disabled (--no-submit)")
 		}
 
 		if quietMode {
@@ -153,13 +148,11 @@ var rootCmd = &cobra.Command{
 
 		// Step 7: Apply debug mode and resource defaults from config
 		scheduler.SetDebugMode(config.Global.Debug)
-		scheduler.SetSlurmEmitMem(config.Global.Scheduler.SlurmEmitMem)
-		build.SetBuildDefaults(config.Global.Build.Defaults)
-		scheduler.DefaultCommandTimeout = config.Global.Scheduler.Timeout
+		scheduler.DefaultCommandTimeout = scheduler.CommandTimeout()
 
 		// Step 8: Initialize scheduler if job submission is enabled
-		if config.Global.SubmitJob {
-			schedType, err := scheduler.Init(config.Global.Scheduler.Bin)
+		if scheduler.Enabled() {
+			schedType, err := scheduler.Init(scheduler.Bin())
 			if err == nil && schedType != scheduler.SchedulerUnknown {
 				utils.PrintDebug("Scheduler initialized: %s", schedType)
 			} else if err != nil {

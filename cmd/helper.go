@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,7 +82,7 @@ func init() {
 	helperCmd.Flags().BoolVar(&helperPath, "path", false, "Show the helper scripts directory")
 	helperCmd.Flags().BoolVarP(&helperList, "list", "l", false, "List available helper scripts")
 	helperCmd.Flags().BoolVarP(&helperUpdate, "update", "u", false, "Update helper scripts from remote")
-	helperCmd.Flags().BoolVar(&noSubmitMode, "no-submit", false, "Disable job submission (run headless on this node)")
+	settings.AddSwitch(helperCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run headless on this node)"))
 
 	// Stop flag parsing after the first positional argument so helper-specific flags
 	// (e.g. -c/--cpus) are passed through to parsePostScriptHelperFlags rather than cobra.
@@ -906,8 +907,8 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 			configRow{"mem", resDefault(memDef)},
 			configRow{"time", resDefault(timeDef)},
 			configRow{"gpu", "(none)"},
-			configRow{"account", resDefault(config.Global.Scheduler.Account)},
-			configRow{"partition", resDefault(config.Global.Scheduler.Partition)},
+			configRow{"account", resDefault(scheduler.Account())},
+			configRow{"partition", resDefault(scheduler.Partition())},
 		)
 		for _, pp := range params {
 			rows = append(rows, configRow{strings.ToLower(pp.Key), pp.Default})

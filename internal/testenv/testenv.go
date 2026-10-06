@@ -21,12 +21,12 @@ func Isolate() (cleanup func()) {
 		}
 	}
 	for name, value := range map[string]string{
-		"HOME":               dir,
-		"CNT_ROOT":           dir,
-		"CNT_DEFAULT_DISTRO": "ubuntu24",
-		"SCRATCH":            "",
-		"XDG_DATA_HOME":      "",
-		"XDG_CONFIG_HOME":    "",
+		"HOME":                      dir,
+		"CNT_ROOT":                  dir,
+		"CNT_CONFIG_DEFAULT_DISTRO": "ubuntu24",
+		"SCRATCH":                   "",
+		"XDG_DATA_HOME":             "",
+		"XDG_CONFIG_HOME":           "",
 	} {
 		os.Setenv(name, value)
 	}

@@ -3,17 +3,17 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -22,41 +22,10 @@ var (
 	setLayer  string // target layer for config set/append/prepend/remove
 )
 
-// configKeyDefs maps every known config key to whether it holds a string slice (array).
-// true = array key (use append/prepend/remove); false = scalar key (use set).
-var configKeyDefs = map[string]bool{
-	"default_distro":           false,
-	"home_override":            false,
-	"scheduler.submit_job":     false,
-	"autoload_gpu":             false,
-	"nested_run":               false,
-	"helper.notification":      false,
-	"metadata_cache_ttl":       false,
-	"store_gc_grace":           false,
-	"scheduler.proxy_perjob":   false,
-	"scheduler.slurm.emit_mem": false,
-	"helper.connect":           false,
-	"build.system_apptainer":   false,
-	"build.logs_dir":           false,
-	"build.ncpus":              false,
-	"build.mem":                false,
-	"build.time":               false,
-	"build.compress_args":      false,
-	"build.block_size":         false,
-	"build.data_block_size":    false,
-	"build.always_submit_data": false,
-	"scheduler.bin":            false,
-	"scheduler.timeout":        false,
-	"scheduler.account":        false,
-	"scheduler.partition":      false,
-	"scheduler.ncpus":          false,
-	"scheduler.mem":            false,
-	"scheduler.time":           false,
-	"channels":                 true,
-	"bind":                     true,
+func isArrayKey(key string) bool {
+	k, ok := settings.Lookup(key)
+	return ok && k.IsList()
 }
-
-func isArrayKey(key string) bool { return configKeyDefs[key] }
 
 // refuseSourcesKey exits when key is `sources`, which `config source` manages.
 func refuseSourcesKey(key string) {
@@ -65,24 +34,13 @@ func refuseSourcesKey(key string) {
 	}
 }
 
-func isBoolKey(key string) bool {
-	switch key {
-	case "scheduler.submit_job", "scheduler.proxy_perjob", "scheduler.slurm.emit_mem", "autoload_gpu",
-		"build.always_submit_data":
-		return true
-	}
-	return false
-}
-
-// modifyArrayConfig reads the current slice for key from the target config file,
-// applies modify, and writes the result back. Returns the config path written.
 // modifyArrayConfig applies modify to key's list in the writable config file
 // and returns that file's layer.
 func modifyArrayConfig(key string, modify func([]string) []string) (string, error) {
 	refuseSourcesKey(key)
 	if !isArrayKey(key) {
 		var arrayKeys []string
-		for k, isArr := range configKeyDefs {
+		for k, isArr := range knownConfigKeys() {
 			if isArr {
 				arrayKeys = append(arrayKeys, k)
 			}
@@ -109,7 +67,7 @@ func modifyArrayConfig(key string, modify func([]string) []string) (string, erro
 func arrayKeyCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) == 0 {
 		var keys []string
-		for k, isArr := range configKeyDefs {
+		for k, isArr := range knownConfigKeys() {
 			if isArr {
 				keys = append(keys, k)
 			}
@@ -136,7 +94,7 @@ func arrayRemoveValueCompletion(cmd *cobra.Command, args []string, toComplete st
 		}
 		// Fallback: all known keys
 		var keys []string
-		for k := range configKeyDefs {
+		for k := range knownConfigKeys() {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
@@ -147,16 +105,17 @@ func arrayRemoveValueCompletion(cmd *cobra.Command, args []string, toComplete st
 		if configPath, _, err := config.ResolveWritableConfigPath(loc); err == nil {
 			return config.ReadConfigSliceKey(configPath, args[0]), cobra.ShellCompDirectiveNoFileComp
 		}
-		return viper.GetStringSlice(args[0]), cobra.ShellCompDirectiveNoFileComp
+		return effectiveList(args[0]), cobra.ShellCompDirectiveNoFileComp
 	}
 	return nil, cobra.ShellCompDirectiveNoFileComp
 }
 
-// getConfigEnvVars returns a sorted list of CNT_* environment variables for all known config keys.
+// getConfigEnvVars returns a sorted list of CNT_CONFIG_* environment variables for all known config keys.
 func getConfigEnvVars() []string {
-	vars := make([]string, 0, len(configKeyDefs))
-	for key := range configKeyDefs {
-		vars = append(vars, "CNT_"+strings.ToUpper(strings.ReplaceAll(key, ".", "_")))
+	known := knownConfigKeys()
+	vars := make([]string, 0, len(known))
+	for key := range known {
+		vars = append(vars, settings.EnvName(key))
 	}
 	sort.Strings(vars)
 	return vars
@@ -165,7 +124,7 @@ func getConfigEnvVars() []string {
 // scalarConfigKeys returns all non-array config keys.
 func scalarConfigKeys() []string {
 	var out []string
-	for k, isArr := range configKeyDefs {
+	for k, isArr := range knownConfigKeys() {
 		if !isArr {
 			out = append(out, k)
 		}
@@ -189,7 +148,7 @@ func configKeysCompletion(cmd *cobra.Command, args []string, toComplete string) 
 	if len(args) == 0 {
 		// First arg: complete all config keys
 		var keys []string
-		for k := range configKeyDefs {
+		for k := range knownConfigKeys() {
 			keys = append(keys, k)
 		}
 		return keys, cobra.ShellCompDirectiveNoFileComp
@@ -213,42 +172,10 @@ func recipeExists(ctx context.Context, name string) bool {
 
 // configValueCompletion returns suggested values for a config key
 func configValueCompletion(key string) []string {
-	switch key {
-	case "scheduler.submit_job", "scheduler.proxy_perjob", "scheduler.slurm.emit_mem":
-		return []string{"true", "false"}
-	case "helper.connect":
-		return config.ConnectValues
-	case "autoload_gpu":
-		return []string{"true", "false"}
-	case "nested_run":
-		return config.NestedRunValues
-	case "build.ncpus":
-		return []string{"4", "8", "16", "32"}
-	case "build.mem":
-		return []string{"4g", "8g", "16g", "32g"}
-	case "build.time":
-		return []string{"1h", "2h", "4h", "8h"}
-	case "build.compress_args":
-		return config.CompressNames()
-	case "build.block_size", "build.data_block_size":
-		return config.BlockSizeCompletions
-	case "build.always_submit_data":
-		return []string{"true", "false"}
-	case "scheduler.ncpus":
-		return []string{"1", "2", "4", "8"}
-	case "scheduler.mem":
-		return []string{"2g", "4g", "8g", "16g"}
-	case "scheduler.time":
-		return []string{"1h", "2h", "4h", "8h"}
-	case "helper.notification":
-		return []string{"none", "terminal", "web", "both"}
-	case "metadata_cache_ttl":
-		return []string{"1", "3", "7", "14", "0"}
-	case "store_gc_grace":
-		return []string{"7", "30", "90", "180"}
-	default:
-		return nil
+	if k, ok := settings.Lookup(key); ok {
+		return k.Suggest()
 	}
+	return nil
 }
 
 // configLayersHelp documents the -l/--layer values. Shared by every config
@@ -265,7 +192,7 @@ var configCmd = &cobra.Command{
 
 Setting priority (highest to lowest):
   1. Command-line flags
-  2. Environment variables (CNT_*)
+  2. Environment variables (CNT_CONFIG_*)
   3. User config file (~/.config/condatainer/config.yaml)
   4. Extra-root config ($CNT_EXTRA_ROOT/config.yaml, group layer)
   5. App-root config (<install-dir>/config.yaml, in dedicated folder or CNT_ROOT set)
@@ -298,74 +225,6 @@ var configListCmd = &cobra.Command{
 - With --origin, each value is tagged with the layer or environment variable that sets it, or [default].
 - Use 'condatainer config paths' for the data directories.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// --origin: inline [layer] / [env] annotations
-		layers := config.GetConfigLayerInfos()
-
-		// srcTag returns "  [layer]" (green) or "  [env: VAR]" (yellow) for a scalar key,
-		// or "  [default]" (gray) if the key is not set in any layer. Empty without --origin.
-		srcTag := func(key string) string {
-			if !showOrigin {
-				return ""
-			}
-			envVar := "CNT_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
-			if os.Getenv(envVar) != "" {
-				return "  " + utils.StyleWarning("[env: "+envVar+"]")
-			}
-			for _, layer := range layers {
-				if layer.InConfig(key) {
-					return "  " + utils.StyleSuccess("["+layer.Type+"]")
-				}
-			}
-			return "  " + utils.StyleDim("[default]")
-		}
-
-		// srcEntryTag returns "  [layer]" (green/yellow) for a value inside an array key.
-		srcEntryTag := func(key, val string) string {
-			if !showOrigin {
-				return ""
-			}
-			envVar := "CNT_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
-			if os.Getenv(envVar) != "" {
-				return "  " + utils.StyleWarning("[env]")
-			}
-			for _, layer := range layers {
-				if !layer.InConfig(key) {
-					continue
-				}
-				for _, v := range layer.GetStringSlice(key) {
-					if v == val {
-						return "  " + utils.StyleSuccess("["+layer.Type+"]")
-					}
-				}
-			}
-			return ""
-		}
-
-		// printOverridden prints dimmed lines for lower-priority layers that also set key.
-		// indent should pad to the same column as the active value on the line above.
-		printOverridden := func(indent, key string) {
-			if !showOrigin {
-				return
-			}
-			envActive := os.Getenv("CNT_"+strings.ToUpper(strings.ReplaceAll(key, ".", "_"))) != ""
-			skippedFirst := false
-			for _, layer := range layers {
-				if !layer.InConfig(key) {
-					continue
-				}
-				if !skippedFirst && !envActive {
-					skippedFirst = true
-					continue
-				}
-				suffix := "(overridden)"
-				if envActive {
-					suffix = "(overridden by env)"
-				}
-				fmt.Printf("%s%s\n", indent,
-					utils.StyleDim(layer.GetString(key)+" ["+layer.Type+"] "+suffix))
-			}
-		}
-
 		// Show config file search paths
 		fmt.Println(utils.StyleTitle("Config File Search Paths:"))
 		searchPaths := config.GetConfigSearchPaths()
@@ -396,139 +255,31 @@ var configListCmd = &cobra.Command{
 		}
 		fmt.Println()
 
-		// Options (longest key: metadata_cache_ttl = 18 chars)
 		fmt.Println(utils.StyleTitle("Options:"))
-		fmt.Printf("  %-19s %s%s\n", "default_distro:", config.ResolvedDefaultDistro(), srcTag("default_distro"))
-		printOverridden("                      ", "default_distro")
-		if config.Global.HomeOverride != "" {
-			fmt.Printf("  %-19s %s%s\n", "home_override:", config.Global.HomeOverride, srcTag("home_override"))
-			printOverridden("                      ", "home_override")
-		}
-		if cat, err := config.OpenCatalog(cmd.Context()); err == nil {
-			if def := config.SourceDefaultDistro(cat); def != "" && def != config.ResolvedDefaultDistro() {
-				fmt.Printf("                      %s\n",
-					fmt.Sprintf("sources now recommend %s — `config set default_distro %s` to switch", def, def))
+		top := settings.TopLevel()
+		width := labelWidth(top, "")
+		for _, k := range top {
+			if k.IsList() {
+				printListSetting(k.Name, width)
+			} else {
+				printSetting(k.Name, "", width)
 			}
-		}
-		fmt.Printf("  %-19s %v%s\n", "autoload_gpu:", config.Global.AutoloadGPU, srcTag("autoload_gpu"))
-		printOverridden("                      ", "autoload_gpu")
-		fmt.Printf("  %-19s %v%s\n", "nested_run:", config.Global.NestedRun, srcTag("nested_run"))
-		printOverridden("                      ", "nested_run")
-		if config.Global.MetadataCacheTTL == 0 {
-			fmt.Printf("  %-19s 0 (disabled)%s\n", "metadata_cache_ttl:", srcTag("metadata_cache_ttl"))
-		} else {
-			fmt.Printf("  %-19s %dd%s\n", "metadata_cache_ttl:", int(config.Global.MetadataCacheTTL.Hours()/24), srcTag("metadata_cache_ttl"))
-		}
-		printOverridden("                      ", "metadata_cache_ttl")
-		fmt.Printf("  %-19s %dd%s\n", "store_gc_grace:", int(config.Global.StoreGCGrace.Hours()/24), srcTag("store_gc_grace"))
-		printOverridden("                      ", "store_gc_grace")
-		channels := config.Global.Build.Channels
-		if len(channels) > 0 {
-			fmt.Printf("  %-19s\n", "channels:")
-			for _, ch := range channels {
-				fmt.Printf("    - %s%s\n", ch, srcEntryTag("channels", ch))
+			if k.Name == "home_override" {
+				printDistroNote(cmd.Context(), width)
 			}
-		} else {
-			fmt.Printf("  %-19s %s\n", "channels:", "none")
-		}
-		if len(config.Global.Binds) > 0 {
-			fmt.Printf("  %-19s\n", "bind:")
-			for _, b := range config.Global.Binds {
-				fmt.Printf("    - %s\n", b)
-			}
-		} else {
-			fmt.Printf("  %-19s %s\n", "bind:", "none")
 		}
 		fmt.Println()
 
-		// Helper settings (longest key: notification = 13 chars)
 		fmt.Printf("%s %s\n", utils.StyleTitle("Helper Configuration:"), "helper.*")
-		fmt.Printf("  %-14s %s%s\n", "connect:", config.Global.HelperConnect, srcTag("helper.connect"))
-		printOverridden("                 ", "helper.connect")
-		notif := config.Global.Notification
-		if notif == "" {
-			notif = "none"
-		}
-		fmt.Printf("  %-14s %s%s\n", "notification:", notif, srcTag("helper.notification"))
-		printOverridden("                 ", "helper.notification")
+		printSection("helper")
 		fmt.Println()
 
-		// Build settings
 		fmt.Printf("%s %s\n", utils.StyleTitle("Build Configuration:"), "build.*")
-		fmt.Printf("  %-21s %s%s\n", "system_apptainer:", config.Global.Build.SystemApptainer, srcTag("build.system_apptainer"))
-		printOverridden("                        ", "build.system_apptainer")
-		fmt.Printf("  %-21s %s%s\n", "logs_dir:", config.Global.Build.LogsDir, srcTag("build.logs_dir"))
-		printOverridden("                        ", "build.logs_dir")
-		fmt.Printf("  %-21s %v%s\n", "always_submit_data:", config.Global.Build.AlwaysSubmitData, srcTag("build.always_submit_data"))
-		printOverridden("                        ", "build.always_submit_data")
-		fmt.Printf("  %-21s %d%s\n", "ncpus:", config.Global.Build.Defaults.CpusPerTask, srcTag("build.ncpus"))
-		printOverridden("                        ", "build.ncpus")
-		fmt.Printf("  %-21s %s%s\n", "mem:", utils.FormatMemoryMB(config.Global.Build.Defaults.MemPerNodeMB), srcTag("build.mem"))
-		printOverridden("                        ", "build.mem")
-		fmt.Printf("  %-21s %s%s\n", "time:", utils.FormatDuration(config.Global.Build.Defaults.Time), srcTag("build.time"))
-		printOverridden("                        ", "build.time")
-		// Show the expanded args when a shorthand name (e.g. "zstd-medium")
-		// was configured, since the raw value alone would not be mksquashfs-ready.
-		compressArgs := viper.GetString("build.compress_args")
-		actualCompressArgs := config.Global.Build.CompressArgs
-		if compressArgs != actualCompressArgs {
-			fmt.Printf("  %-21s %s%s\n", "compress_args:", actualCompressArgs, srcTag("build.compress_args"))
-		} else {
-			fmt.Printf("  %-21s %s%s\n", "compress_args:", compressArgs, srcTag("build.compress_args"))
-		}
-		printOverridden("                        ", "build.compress_args")
-		fmt.Printf("  %-21s %s%s\n", "block_size:", config.Global.Build.BlockSize, srcTag("build.block_size"))
-		printOverridden("                        ", "build.block_size")
-		fmt.Printf("  %-21s %s%s\n", "data_block_size:", config.Global.Build.DataBlockSize, srcTag("build.data_block_size"))
-		printOverridden("                        ", "build.data_block_size")
+		printSection("build")
 		fmt.Println()
 
-		// Scheduler settings (longest key: proxy_perjob = 12 chars)
 		fmt.Printf("%s %s\n", utils.StyleTitle("Scheduler Configuration:"), "scheduler.*")
-		submitJobConfig := viper.GetBool("scheduler.submit_job")
-		submitJobActual := config.Global.SubmitJob
-		if submitJobConfig && !submitJobActual {
-			fmt.Printf("  %-16s %v (disabled: scheduler not accessible)%s\n", "submit_job:", submitJobConfig, srcTag("scheduler.submit_job"))
-		} else {
-			fmt.Printf("  %-16s %v%s\n", "submit_job:", submitJobActual, srcTag("scheduler.submit_job"))
-		}
-		printOverridden("                   ", "scheduler.submit_job")
-		schedulerBin := config.Global.Scheduler.Bin
-		schedulerType := config.GetSchedulerTypeFromBin(schedulerBin)
-		if schedulerBin != "" {
-			fmt.Printf("  %-16s %s (%s)%s\n", "bin:", schedulerBin, schedulerType, srcTag("scheduler.bin"))
-		} else {
-			fmt.Printf("  %-16s %s%s\n", "bin:", schedulerBin, srcTag("scheduler.bin"))
-		}
-		printOverridden("                   ", "scheduler.bin")
-		if config.Global.Scheduler.Timeout == 0 {
-			fmt.Printf("  %-16s 0 (disabled)%s\n", "timeout:", srcTag("scheduler.timeout"))
-		} else {
-			fmt.Printf("  %-16s %s%s\n", "timeout:", utils.FormatDuration(config.Global.Scheduler.Timeout), srcTag("scheduler.timeout"))
-		}
-		printOverridden("                   ", "scheduler.timeout")
-		account := config.Global.Scheduler.Account
-		if account == "" {
-			account = "(scheduler default)"
-		}
-		fmt.Printf("  %-16s %s%s\n", "account:", account, srcTag("scheduler.account"))
-		printOverridden("                   ", "scheduler.account")
-		partition := config.Global.Scheduler.Partition
-		if partition == "" {
-			partition = "(scheduler default)"
-		}
-		fmt.Printf("  %-16s %s%s\n", "partition:", partition, srcTag("scheduler.partition"))
-		printOverridden("                   ", "scheduler.partition")
-		fmt.Printf("  %-16s %d%s\n", "ncpus:", config.Global.Scheduler.Defaults.CpusPerTask, srcTag("scheduler.ncpus"))
-		printOverridden("                   ", "scheduler.ncpus")
-		fmt.Printf("  %-16s %s%s\n", "mem:", utils.FormatMemoryMB(config.Global.Scheduler.Defaults.MemPerNodeMB), srcTag("scheduler.mem"))
-		printOverridden("                   ", "scheduler.mem")
-		fmt.Printf("  %-16s %s%s\n", "time:", utils.FormatDuration(config.Global.Scheduler.Defaults.Time), srcTag("scheduler.time"))
-		printOverridden("                   ", "scheduler.time")
-		fmt.Printf("  %-16s %v%s\n", "slurm.emit_mem:", config.Global.Scheduler.SlurmEmitMem, srcTag("scheduler.slurm.emit_mem"))
-		printOverridden("                   ", "scheduler.slurm.emit_mem")
-		fmt.Printf("  %-16s %v%s\n", "proxy_perjob:", config.Global.ProxyPerJob, srcTag("scheduler.proxy_perjob"))
-		printOverridden("                   ", "scheduler.proxy_perjob")
+		printSection("scheduler")
 		fmt.Println()
 
 		// Show environment variable overrides
@@ -592,44 +343,21 @@ var configGetCmd = &cobra.Command{
 			return
 		}
 
-		// Merged effective value: env > layers in priority order > viper default
-		if _, known := configKeyDefs[key]; !known {
-			ExitWithError("Unknown config key: %s", key)
+		// Merged effective value: env > layers in priority order > default
+		if res, ok := settings.Resolve(key); ok {
+			printEffective(res)
+			return
 		}
-		if key == "bind" {
-			for _, v := range config.Global.Binds {
-				fmt.Println(v)
-			}
-		} else if isArrayKey(key) {
-			for _, v := range viper.GetStringSlice(key) {
-				fmt.Println(v)
-			}
-		} else {
-			envVar := "CNT_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
-			if ev := os.Getenv(envVar); ev != "" {
-				fmt.Println(ev)
-			} else {
-				found := false
-				for _, layer := range config.GetConfigLayerInfos() {
-					if layer.InConfig(key) {
-						if isBoolKey(key) {
-							fmt.Println(layer.GetBool(key))
-						} else {
-							fmt.Println(layer.GetString(key))
-						}
-						found = true
-						break
-					}
-				}
-				if !found {
-					if isBoolKey(key) {
-						fmt.Println(viper.GetBool(key))
-					} else {
-						fmt.Println(viper.GetString(key)) // default
-					}
-				}
-			}
+		if k, a, ok := settings.LookupAlias(key); ok {
+			utils.PrintNote("%s", a.RenameMessage())
+			res, _ := settings.Resolve(k.Name)
+			printEffective(res)
+			return
 		}
+		if r, ok := settings.LookupRemoved(key); ok {
+			ExitWithError("%s", r.Text())
+		}
+		ExitWithError("Unknown config key: %s", key)
 	},
 }
 
@@ -657,8 +385,15 @@ Time format (for build.time):
 		}
 
 		refuseSourcesKey(key)
-		// configKeyDefs is the single source of truth for known keys
-		knownKeys := configKeyDefs
+		if k, ok := settings.Lookup(key); ok {
+			value = parseRegistered(k, value)
+		} else if refuseOldName(key) {
+			os.Exit(ExitCodeError)
+		} else {
+			utils.PrintError("Unknown config key: %s", key)
+			utils.PrintHint("`condatainer config help` lists the keys")
+			os.Exit(ExitCodeError)
+		}
 
 		// A default distro must name a recipe that some source actually provides.
 		if key == "default_distro" {
@@ -672,112 +407,6 @@ Time format (for build.time):
 		if isArrayKey(key) {
 			utils.PrintError("'%s' is an array setting. Use append/prepend/remove subcommands.", key)
 			os.Exit(ExitCodeError)
-		}
-
-		if _, known := knownKeys[key]; !known {
-			utils.PrintWarning("'%s' is not a standard config key", key)
-		}
-
-		// Validate value based on key type
-		if key == "scheduler.timeout" {
-			var n int
-			if _, err := fmt.Sscan(value, &n); err != nil || n < 0 {
-				utils.PrintError("Invalid value for scheduler.timeout: %s (must be a non-negative integer; 0 disables the timeout)", value)
-				os.Exit(ExitCodeError)
-			}
-		}
-
-		if key == "nested_run" {
-			normalized, valid := config.ParseNestedRun(value)
-			if !valid {
-				utils.PrintError("Invalid value for nested_run: %q (valid values: auto, true, false)", value)
-				os.Exit(ExitCodeError)
-			}
-			value = normalized
-		}
-
-		if key == "helper.connect" {
-			normalized, valid := config.ParseConnect(value)
-			if !valid {
-				utils.PrintError("Invalid value for helper.connect: %q (valid values: auto, ssh, scheduler, direct)", value)
-				os.Exit(ExitCodeError)
-			}
-			value = normalized
-		}
-
-		if key == "helper.notification" {
-			v := strings.ToLower(value)
-			if v != "" && v != "none" && v != "terminal" && v != "web" && v != "both" {
-				utils.PrintError("Invalid value for helper.notification: %q (valid values: none, terminal, web, both)", value)
-				os.Exit(ExitCodeError)
-			}
-		}
-
-		if key == "metadata_cache_ttl" {
-			var n int
-			if _, err := fmt.Sscan(value, &n); err != nil || n < 0 {
-				utils.PrintError("Invalid value for metadata_cache_ttl: %s (must be a non-negative integer in days; 0 disables the cache)", value)
-				os.Exit(ExitCodeError)
-			}
-		}
-
-		// No zero: a grace of nothing would make everything collectable the
-		// moment it is installed, which is not a policy anyone means to set.
-		if key == "store_gc_grace" {
-			var n int
-			if _, err := fmt.Sscan(value, &n); err != nil || n < 1 {
-				utils.PrintError("Invalid value for store_gc_grace: %s (must be a positive integer in days)", value)
-				os.Exit(ExitCodeError)
-			}
-		}
-
-		if key == "build.time" {
-			if _, err := utils.ParseWalltime(value); err != nil {
-				utils.PrintError("Invalid duration format: %s", value)
-				utils.PrintHint("Use format like: 4d12h, 2h30m, 1:30, or 01:30:00")
-				os.Exit(ExitCodeError)
-			}
-		}
-
-		if key == "build.mem" {
-			if mb, err := utils.ParseMemoryMB(value); err != nil || mb <= 0 {
-				utils.PrintError("Invalid memory format: %s", value)
-				utils.PrintHint("Use format like: 8GB, 16384MB, 8192")
-				os.Exit(ExitCodeError)
-			} else {
-				value = fmt.Sprintf("%d", mb)
-			}
-		}
-
-		if key == "scheduler.time" {
-			if _, err := utils.ParseWalltime(value); err != nil {
-				utils.PrintError("Invalid duration format: %s", value)
-				utils.PrintHint("Use format like: 4d12h, 2h30m, 1:30, or 01:30:00")
-				os.Exit(ExitCodeError)
-			}
-		}
-
-		if key == "scheduler.mem" {
-			if mb, err := utils.ParseMemoryMB(value); err != nil || mb <= 0 {
-				utils.PrintError("Invalid memory format: %s", value)
-				utils.PrintHint("Use format like: 8GB, 16384MB, 8192")
-				os.Exit(ExitCodeError)
-			} else {
-				value = fmt.Sprintf("%d", mb)
-			}
-		}
-
-		if key == "build.compress_args" {
-			value = config.ArgsForCompress(value)
-		}
-
-		if isBoolKey(key) {
-			b, err := strconv.ParseBool(value)
-			if err != nil {
-				utils.PrintError("Invalid value for %s: %q (use true or false)", key, value)
-				os.Exit(ExitCodeError)
-			}
-			value = strconv.FormatBool(b)
 		}
 
 		configPath, layerType, fellBackFrom, err := config.ResolveWritableConfigPathVerbose(setLayer)
@@ -868,10 +497,10 @@ Without -l, the layer follows the install location:
 		// lowerLayersFor returns loaded config layers that are lower priority than loc.
 		// Keys already set in these layers will be skipped when saving.
 		layerOrder := []string{"user", "extra-root", "app-root"}
-		lowerLayersFor := func(loc string) []config.ConfigLayerInfo {
+		lowerLayersFor := func(loc string) []*config.Layer {
 			cutIdx := slices.Index(layerOrder, loc) + 1
-			var result []config.ConfigLayerInfo
-			for _, l := range config.GetConfigLayerInfos() {
+			var result []*config.Layer
+			for _, l := range config.GetConfigLayers() {
 				if slices.Index(layerOrder, l.Type) >= cutIdx {
 					result = append(result, l)
 				}
@@ -879,21 +508,19 @@ Without -l, the layer follows the install location:
 			return result
 		}
 
-		// Detect the two host-specific keys: build.system_apptainer, scheduler.bin.
-		// Compression is not written: the default (zstd-medium) stands until set.
-		detectedApptainerBin := config.FindApptainerBin()
+		// Write the keys that can be detected from this host. Everything else keeps its default until set.
+		detected := map[string]string{}
+		for _, k := range settings.Keys() {
+			if v := k.Detect(); k.CanDetect() && v != "" {
+				detected[k.Name] = v
+			}
+		}
+		detectedApptainerBin, detectedSchedulerBin := detected["build.system_apptainer"], detected["scheduler.bin"]
 		if detectedApptainerBin == "" {
 			utils.PrintWarning("Neither 'apptainer' nor 'singularity' binary found (checked PATH and 'module avail'), so os overlays cannot be built.")
-		} else {
-			viper.Set("build.system_apptainer", detectedApptainerBin)
 		}
 
-		detectedSchedulerBin := config.DetectSchedulerBin()
-		if detectedSchedulerBin != "" {
-			viper.Set("scheduler.bin", detectedSchedulerBin)
-		}
-
-		if err := config.SaveMinimalConfigTo(configPath, detectedApptainerBin, detectedSchedulerBin, lowerLayersFor(layerType)); err != nil {
+		if err := config.SaveDetectedConfigTo(configPath, detected, lowerLayersFor(layerType)); err != nil {
 			ExitWithError("Failed to save config: %v", err)
 		}
 
@@ -916,7 +543,7 @@ Without -l, the layer follows the install location:
 			fmt.Printf("  Apptainer: %s\n", utils.StyleWarning("not found"))
 		}
 		if detectedSchedulerBin != "" {
-			fmt.Printf("  Scheduler: %s (%s)\n", detectedSchedulerBin, config.GetSchedulerTypeFromBin(detectedSchedulerBin))
+			fmt.Printf("  Scheduler: %s (%s)\n", detectedSchedulerBin, scheduler.TypeFromBin(detectedSchedulerBin))
 		} else {
 			fmt.Printf("  Scheduler: %s\n", utils.StyleWarning("not found"))
 		}
@@ -1193,6 +820,8 @@ func init() {
 	configCmd.AddCommand(configRemoveCmd)
 	configCmd.AddCommand(configInitCmd)
 	configCmd.AddCommand(configPathsCmd)
+	configCmd.AddCommand(configHelpCmd)
+	configCmd.AddCommand(configCheckCmd)
 
 	// Add to root command
 	rootCmd.AddCommand(configCmd)

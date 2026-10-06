@@ -67,9 +67,6 @@ func printSetting(key, prefix string, width int) {
 		mark = " " + utils.StyleDim("(deprecated)")
 	}
 	fmt.Printf("  %-*s %s%s%s\n", width, strings.TrimPrefix(key, prefix)+":", k.Show(res.Value), mark, sourceTag(res))
-	if note := k.Note(res.Value); note != "" {
-		fmt.Printf("  %-*s %s\n", width, "", note)
-	}
 	if !showOrigin {
 		return
 	}

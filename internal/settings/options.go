@@ -19,7 +19,6 @@ type options struct {
 	allowEmpty  bool
 	normalize   func(string) string
 	show        func(string) string
-	note        func(string) string
 	suggest     []string
 	check       func(string) error
 	detect      func() string
@@ -76,9 +75,6 @@ func Normalize(fn func(string) string) Option { return func(o *options) { o.norm
 
 // Show formats a stored value for `config list`.
 func Show(fn func(stored string) string) Option { return func(o *options) { o.show = fn } }
-
-// Note adds a line under the value in `config list`.
-func Note(fn func(stored string) string) Option { return func(o *options) { o.note = fn } }
 
 // Suggest adds completion values beyond what the kind gives.
 func Suggest(values ...string) Option { return func(o *options) { o.suggest = values } }

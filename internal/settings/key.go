@@ -116,14 +116,6 @@ func (k *Key) Show(stored string) string {
 	return stored
 }
 
-// Note returns the extra line shown under the value, if any.
-func (k *Key) Note(stored string) string {
-	if k.opts.note == nil {
-		return ""
-	}
-	return k.opts.note(stored)
-}
-
 // Detect returns the value `config init` should write, or "".
 func (k *Key) Detect() string {
 	if k.opts.detect == nil {

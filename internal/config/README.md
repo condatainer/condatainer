@@ -100,3 +100,10 @@
 - Paths chosen at submit time are written into the script, so the submitting process must already resolve them under the replacement.
 - SSH never reads `$HOME`. Both the client and the `ssh` binary take the home from the passwd entry.
 - An unusable value warns and leaves `HOME` alone, so `config set` can still repair it.
+
+## Reload
+
+- A long-lived process (the dashboard server) re-reads the config files when one is created, edited or removed. The CLI reads them once.
+  - The check compares each file's modification time and size, so it needs no file watcher and works on shared filesystems.
+  - A file that does not parse leaves the previous config in place.
+- Recipe sources are reopened on a reload. `home_override` and the scheduler are applied once at startup and are not re-applied.

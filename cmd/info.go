@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/compare"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image/ext3"
 	"github.com/condatainer/condatainer/internal/image/freeze"
@@ -50,14 +50,6 @@ var infoOverlayCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(infoOverlayCmd)
 	infoOverlayCmd.Flags().Bool("validate", false, "Also check the embedded keys and the file contents (reads the whole overlay)")
-}
-
-// completeInfoArgs restricts file completion to .sqf and .img files with folder navigation.
-func completeInfoArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	if len(args) > 0 {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-	return []string{"sqf", "img", "ext3"}, cobra.ShellCompDirectiveFilterFileExt
 }
 
 func runInfoOverlay(cmd *cobra.Command, args []string) error {

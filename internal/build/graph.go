@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/scheduler"
@@ -449,7 +449,7 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 		effRS := EffectiveResourceSpec(nil)
 		specs = &scheduler.ScriptSpecs{Spec: effRS}
 	}
-	if config.Global.ProxyPerJob {
+	if scheduler.ProxyPerJob() {
 		if h, err := os.Hostname(); err == nil && h != "" {
 			specs.ProxyVia = h
 		}
@@ -467,7 +467,7 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 	// Create job specification
 	jobSpec := &scheduler.JobSpec{
 		Name:           obj.NameVersion(),
-		Command:        buildSchedulerCreateCommand(obj.jobTarget(), bg.jobFlags, bg.update, obj.StoreOverflow(), config.Global.Build.SkipPrebuilt || obj.prebuilt.choice == prebuiltNone, obj.InputAnswers()),
+		Command:        buildSchedulerCreateCommand(obj.jobTarget(), bg.jobFlags, bg.update, obj.StoreOverflow(), config.Global.SkipPrebuilt || obj.prebuilt.choice == prebuiltNone, obj.InputAnswers()),
 		Specs:          specs,
 		DepJobIDs:      depIDs,
 		OverrideOutput: true,
@@ -478,7 +478,7 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 	}
 
 	// Create batch script
-	scriptPath, err := bg.scheduler.CreateScriptWithSpec(jobSpec, config.Global.Build.LogsDir)
+	scriptPath, err := bg.scheduler.CreateScriptWithSpec(jobSpec, LogsDir())
 	if err != nil {
 		os.Remove(lockPath)
 		return "", fmt.Errorf("failed to create batch script: %w", err)

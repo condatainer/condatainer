@@ -1,6 +1,7 @@
 package build
 
 import (
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,10 +22,10 @@ func withInstalledBase(t *testing.T) string {
 		t.Fatal(err)
 	}
 
-	prevPaths, prevBase := config.GlobalDataPaths, config.Global.DefaultDistro
+	prevPaths := config.GlobalDataPaths
 	config.GlobalDataPaths.ImagesDirs = []string{dir}
-	config.Global.DefaultDistro = "ubuntu24"
-	t.Cleanup(func() { config.GlobalDataPaths, config.Global.DefaultDistro = prevPaths, prevBase })
+	settingstest.Override(t, "default_distro", "ubuntu24")
+	t.Cleanup(func() { config.GlobalDataPaths = prevPaths })
 	return base
 }
 
@@ -33,9 +34,7 @@ func withInstalledBase(t *testing.T) string {
 // is what lets the base be built when none exists yet.
 func TestGraphSkipsBaseForDefinitionOnlyPlans(t *testing.T) {
 	// No base configured and none installed, so any resolution attempt fails.
-	prevBase := config.Global.DefaultDistro
-	config.Global.DefaultDistro = ""
-	t.Cleanup(func() { config.Global.DefaultDistro = prevBase })
+	settingstest.Override(t, "default_distro", "")
 
 	def := &BuildObject{spec: Spec{Image: ImageSpec{Name: "ubuntu24/base"}}, buildType: BuildTypeDef}
 	bg := &BuildGraph{graph: map[string]*BuildObject{def.NameVersion(): def}}

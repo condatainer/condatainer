@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // Have reports the versions of a name a caller already has: an image directory
@@ -164,7 +166,7 @@ func installedVersion(have Have, dep Dep) string {
 		return ""
 	}
 	candidates := slices.Clone(have(dep.Name))
-	slices.SortStableFunc(candidates, func(a, b string) int { return CompareVersions(b, a) })
+	slices.SortStableFunc(candidates, func(a, b string) int { return utils.CompareVersions(b, a) })
 	for _, v := range candidates {
 		if dep.Satisfies(v) {
 			return v

@@ -2,6 +2,7 @@ package toolpath
 
 import (
 	"errors"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -162,9 +163,10 @@ func writeScript(t *testing.T, dir, name, body string) string {
 // noHostApptainer keeps the host's own apptainer out of a test's search.
 func noHostApptainer(t *testing.T) {
 	t.Helper()
-	prev := config.Global.Build.SystemApptainer
-	config.Global.Build.SystemApptainer = filepath.Join(t.TempDir(), "no-apptainer")
-	t.Cleanup(func() { config.Global.Build.SystemApptainer = prev })
+	settingstest.Override(t, "host_apptainer", filepath.Join(t.TempDir(), "no-apptainer"))
+	prev := apptainerOnPath
+	apptainerOnPath = func() string { return "" }
+	t.Cleanup(func() { apptainerOnPath = prev })
 }
 
 // A host mksquashfs below the version floor is skipped, and the error says why.
@@ -212,9 +214,7 @@ func TestResolveFindsAToolBundledWithApptainer(t *testing.T) {
 	// The binary's base name selects <libexecdir>/<name>/bin, so it is called apptainer.
 	fake := writeScript(t, apptainerDir, "apptainer", `echo "LIBEXECDIR=`+filepath.Join(root, "libexec")+`"`)
 
-	prev := config.Global.Build.SystemApptainer
-	config.Global.Build.SystemApptainer = fake
-	t.Cleanup(func() { config.Global.Build.SystemApptainer = prev })
+	settingstest.Override(t, "host_apptainer", fake)
 	orig := fhsFallbackDirs
 	fhsFallbackDirs = []string{t.TempDir()}
 	t.Cleanup(func() { fhsFallbackDirs = orig })
@@ -241,9 +241,7 @@ func TestResolveDoesNotRunApptainerWhenPathHasTheTool(t *testing.T) {
 	withoutLibexec(t)
 	marker := filepath.Join(t.TempDir(), "asked")
 	fake := writeScript(t, t.TempDir(), "apptainer", "touch "+marker)
-	prev := config.Global.Build.SystemApptainer
-	config.Global.Build.SystemApptainer = fake
-	t.Cleanup(func() { config.Global.Build.SystemApptainer = prev })
+	settingstest.Override(t, "host_apptainer", fake)
 
 	dir := t.TempDir()
 	want := writeFakeExecutable(t, dir, "fuse2fs")
@@ -285,9 +283,7 @@ func TestResolveReusesTheOnDiskCache(t *testing.T) {
 	writeScript(t, bundleBin, "mksquashfs", `echo x >> `+askedVersion+`; echo "mksquashfs version 4.7.5 (2026/03/01)"`)
 	fake := writeScript(t, t.TempDir(), "apptainer", `echo x >> `+askedBuildcfg+`; echo "LIBEXECDIR=`+filepath.Join(root, "libexec")+`"`)
 
-	prev := config.Global.Build.SystemApptainer
-	config.Global.Build.SystemApptainer = fake
-	t.Cleanup(func() { config.Global.Build.SystemApptainer = prev })
+	settingstest.Override(t, "host_apptainer", fake)
 	orig := fhsFallbackDirs
 	fhsFallbackDirs = []string{t.TempDir()}
 	t.Cleanup(func() { fhsFallbackDirs = orig })

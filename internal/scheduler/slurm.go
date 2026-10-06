@@ -12,8 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
 )
+
+var emitMem = settings.Bool("scheduler.slurm.emit_mem",
+	settings.Default(true), settings.Order(9),
+	settings.Help("Write --mem or --mem-per-cpu in generated SLURM scripts. Turn off where memory is not a scheduled resource."))
 
 // slurmBlacklistedFlags lists SLURM directives that describe CPU topology / task
 // distribution that cannot be reliably translated. Any match forces passthrough mode.
@@ -629,7 +634,7 @@ func (s *SlurmScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string
 			}
 		}
 
-		if slurmEmitMem {
+		if emitMem.Get() {
 			if rs.MemPerCpuMB > 0 {
 				fmt.Fprintf(writer, "#SBATCH --mem-per-cpu=%dmb\n", rs.MemPerCpuMB)
 			} else if rs.MemPerNodeMB > 0 {

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // srcFile builds a fetched-source record whose digest is the hash of text, so a

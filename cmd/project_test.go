@@ -8,12 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/project/restore"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -734,19 +735,20 @@ func TestInfoValidateRefusesAnythingButASquashFS(t *testing.T) {
 // what it builds or where it lands travels as a flag; submission and mode flags
 // do not.
 func TestCreateJobFlagsCarryWhatChangesTheBuild(t *testing.T) {
-	saved := []any{createChannels, createSources, createLayer, createBlockSize, createDataBlockSize, createAlwaysSubmitData, createUpdate}
+	savedSources, savedLayer := createSources, createLayer
+	settingstest.ClearFlags(t)
 	t.Cleanup(func() {
-		createChannels, createSources = saved[0].([]string), saved[1].([]string)
-		createLayer, createBlockSize, createDataBlockSize = saved[2].(string), saved[3].(string), saved[4].(string)
-		createAlwaysSubmitData, createUpdate = saved[5].(bool), saved[6].(bool)
+		createSources, createLayer = savedSources, savedLayer
+		createFlagSet.VisitAll(func(f *pflag.Flag) { f.Changed = false })
 	})
-	createChannels = []string{"conda-forge", "bioconda"}
-	createSources = []string{"lab"}
-	createLayer, createBlockSize, createDataBlockSize = "u", "256k", "1m"
-	createAlwaysSubmitData, createUpdate = true, true
+	createSources, createLayer = []string{"lab"}, "u"
+	args := []string{"-c", "conda-forge", "-c", "bioconda", "--block-size", "256k", "--data-block-size", "1m", "--always-submit-data", "--no-submit"}
+	if err := createFlagSet.Parse(args); err != nil {
+		t.Fatal(err)
+	}
 
 	got := strings.Join(createJobFlags(), " ")
-	want := "--channel conda-forge --channel bioconda --source lab --layer u --block-size 256k --data-block-size 1m"
+	want := "--source lab --layer u --block-size 256k --channel conda-forge --channel bioconda --data-block-size 1m"
 	if got != want {
 		t.Errorf("flags = %q, want %q", got, want)
 	}

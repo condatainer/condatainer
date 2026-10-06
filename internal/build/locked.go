@@ -5,13 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/scheduler"
 	"path/filepath"
 	"slices"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/conda"
-	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -110,7 +110,7 @@ func NewLockedObject(ctx context.Context, spec LockedSpec) (*BuildObject, error)
 		}, Base: spec.Base},
 		ws:           workspaceFor(manifest.Name, tmpRoot, false),
 		tgt:          targetFor(output),
-		submitJob:    config.Global.SubmitJob,
+		submitJob:    scheduler.Enabled(),
 		locked:       true,
 		lockedKeys:   manifest.Keys,
 		inputAnswers: slices.Clone(spec.Answers),

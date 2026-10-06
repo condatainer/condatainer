@@ -2,45 +2,10 @@ package cmd
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
-	"github.com/condatainer/condatainer/catalog"
-	"github.com/condatainer/condatainer/internal/artifact/meta"
 )
-
-func requireSquashfsToolsForFreeze(t *testing.T) {
-	t.Helper()
-	for _, bin := range []string{"mksquashfs", "unsquashfs"} {
-		if _, err := exec.LookPath(bin); err != nil {
-			t.Skipf("%s not available", bin)
-		}
-	}
-}
-
-// packEnvSnapshot builds a real .sqf at path recording Type: env, the way
-// `overlay freeze` produces one — LookupSnapshot reads this back to decide
-// whether a candidate is a real snapshot rather than an unrelated file.
-func packEnvSnapshot(t *testing.T, path string) {
-	t.Helper()
-	root := t.TempDir()
-	dir := filepath.Join(root, meta.DirName)
-	rt := meta.Runtime{
-		SchemaVersion: meta.SchemaVersion,
-		Name:          meta.EnvName,
-		Type:          catalog.TypeEnv,
-		Platform:      meta.NativePlatform(),
-		Prefix:        meta.EnvPrefix,
-	}
-	if err := meta.StageRuntime(dir, rt); err != nil {
-		t.Fatalf("StageRuntime: %v", err)
-	}
-	cmd := exec.Command("mksquashfs", root, path, "-no-progress", "-noappend", "-quiet", "-no-xattrs")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("mksquashfs: %v\n%s", err, output)
-	}
-}
 
 // A frozen environment is always called env, so position is the only question
 // left: where the artifact lands. These are the forms a user can type.

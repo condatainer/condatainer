@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"github.com/condatainer/condatainer/internal/scheduler"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,9 +11,9 @@ import (
 
 	"fmt"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/build"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/runtime/container"
@@ -238,7 +239,7 @@ func normalizeFilters(filters []string) []string {
 //   - They go after the automatic binds and before --bind, so an explicit flag wins.
 func configBinds() []string {
 	var out []string
-	for _, b := range config.Global.Binds {
+	for _, b := range container.Binds() {
 		b = os.ExpandEnv(b)
 		host, _, _ := strings.Cut(b, ":")
 		if _, err := os.Stat(host); err != nil {
@@ -331,7 +332,7 @@ const (
 // ExitIfJobsSubmitted exits the process with ExitCodeJobsSubmitted if a scheduler
 // submission was requested and the graph shows job IDs were created.
 func ExitIfJobsSubmitted(graph *build.BuildGraph) {
-	if config.Global.SubmitJob && graph != nil && len(graph.GetJobIDs()) > 0 {
+	if scheduler.Enabled() && graph != nil && len(graph.GetJobIDs()) > 0 {
 		utils.PrintNote("%d scheduler job(s) submitted. exiting with code %d",
 			len(graph.GetJobIDs()), ExitCodeJobsSubmitted)
 		os.Exit(ExitCodeJobsSubmitted)

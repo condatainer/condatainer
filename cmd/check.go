@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/build"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -41,7 +42,7 @@ var scriptCheckCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(scriptCheckCmd)
 	scriptCheckCmd.Flags().BoolVarP(&checkAutoInstall, "auto-install", "a", false, "Automatically install missing dependencies")
-	scriptCheckCmd.Flags().BoolVar(&noSubmitMode, "no-submit", false, "Disable job submission (build locally)")
+	settings.AddSwitch(scriptCheckCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))
 	RegisterProjectFlags(scriptCheckCmd, &checkProjectDir)
 }
 
@@ -147,7 +148,7 @@ func collectDeps(scriptPaths []string, preSeededDeps []string) ([]string, error)
 		if multiScript {
 			utils.PrintMessage("Checking script: %s", scriptPath)
 		}
-		scriptDeps, err := utils.GetDependenciesFromScript(scriptPath)
+		scriptDeps, err := catalog.GetDependenciesFromScript(scriptPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse dependencies from %s: %w", scriptPath, err)
 		}
@@ -228,7 +229,7 @@ func checkDeps(deps, solved []string) []string {
 				if sibling != "" {
 					ext := filepath.Ext(sibling)
 					if strings.HasSuffix(sibling, ".sh") {
-						if shDeps, _ := utils.GetDependenciesFromScript(sibling); len(shDeps) > 0 {
+						if shDeps, _ := catalog.GetDependenciesFromScript(sibling); len(shDeps) > 0 {
 							hint = "  (" + ext + " found, but has #DEP - create manually)"
 						} else {
 							hint = "  (" + ext + " found)"
@@ -260,7 +261,7 @@ func autoCreateExternalOverlay(ctx context.Context, dep string) bool {
 	baseName := filepath.Base(absPrefix)
 
 	if strings.HasSuffix(sibling, ".sh") {
-		shDeps, _ := utils.GetDependenciesFromScript(sibling)
+		shDeps, _ := catalog.GetDependenciesFromScript(sibling)
 		if len(shDeps) > 0 {
 			utils.PrintError("External overlay %s has a .sh with #DEP; create it with `condatainer create -f %s`",
 				filepath.Base(dep), sibling)
@@ -290,7 +291,7 @@ func autoCreateExternalOverlay(ctx context.Context, dep string) bool {
 		utils.PrintError("Failed to create build object for %s: %v", dep, err)
 		return false
 	}
-	graph, err := build.NewBuildGraph(ctx, []*build.BuildObject{bo}, outputDir, config.Global.SubmitJob, false)
+	graph, err := build.NewBuildGraph(ctx, []*build.BuildObject{bo}, outputDir, scheduler.Enabled(), false)
 	if err != nil {
 		utils.PrintError("Failed to create build graph for %s: %v", dep, err)
 		return false
@@ -319,7 +320,7 @@ func autoInstallPackages(ctx context.Context, packages []string) error {
 		buildObjects = append(buildObjects, bo)
 	}
 
-	graph, err := build.NewBuildGraph(ctx, buildObjects, imagesDir, config.Global.SubmitJob, false)
+	graph, err := build.NewBuildGraph(ctx, buildObjects, imagesDir, scheduler.Enabled(), false)
 	if err != nil {
 		return fmt.Errorf("failed to create build graph: %w", err)
 	}

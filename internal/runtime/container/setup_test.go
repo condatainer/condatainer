@@ -7,15 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 func TestBuildEnvironmentCondaMarkers(t *testing.T) {
-	previousChannels := config.Global.Build.Channels
-	config.Global.Build.Channels = []string{"internal", "conda-forge"}
-	t.Cleanup(func() { config.Global.Build.Channels = previousChannels })
+	settingstest.OverrideList(t, "channels", "internal", "conda-forge")
 
 	readOnly, _, _ := buildEnvironment(nil, "env.img", true, SetupConfig{})
 	if !slices.Contains(readOnly, "CNT_CONDA_ROOT=/cnt_env") {

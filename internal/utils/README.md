@@ -8,3 +8,9 @@
 - A write lock opens `O_RDWR`, because an exclusive `fcntl` lock needs a writable descriptor.
   - An image with its write bit cleared is therefore protected.
 - A shared lock opens `O_RDONLY`, so a protected image can still be read.
+
+## Imports
+
+- `utils` imports no other condatainer package, so any package may import it.
+- Parsers that carry no domain knowledge live here: durations, memory sizes, versions.
+- A reader of a recipe or script header is domain knowledge and lives in `catalog`.

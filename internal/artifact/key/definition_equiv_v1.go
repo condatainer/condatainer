@@ -3,7 +3,7 @@ package key
 import (
 	"fmt"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // deriveDefinitionEquivV1 answers: "Can this definition-built artifact substitute for the requested artifact?"

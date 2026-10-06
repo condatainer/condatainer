@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/condatainer/condatainer/internal/utils"
-	"github.com/spf13/viper"
 )
 
 // =============================================================================
@@ -31,43 +30,8 @@ type DataPaths struct {
 var GlobalDataPaths DataPaths
 
 //=============================================================================
-// Config Getters (env/viper)
+// Config Getters (env/layers)
 // =============================================================================
-
-// splitPipeOrColon splits an env var value on "|" or ":" ("|" takes precedence).
-// Use for plain paths or plain strings where ":" is unambiguous (no markers).
-func splitPipeOrColon(val string) []string {
-	sep := ":"
-	if strings.Contains(val, "|") {
-		sep = "|"
-	}
-	var result []string
-	for _, entry := range strings.Split(val, sep) {
-		if entry = strings.TrimSpace(entry); entry != "" {
-			result = append(result, entry)
-		}
-	}
-	return result
-}
-
-// getEnvSlice reads a string-slice config key, checking the corresponding env var first.
-//   - The env var name is derived from the key: "channels" → "CNT_CHANNELS".
-//   - The split function controls how the env var value is parsed.
-//   - An env var replaces the config value outright.
-func getEnvSlice(key string, split func(string) []string) []string {
-	envKey := "CNT_" + strings.ToUpper(key)
-	if envVal := os.Getenv(envKey); envVal != "" {
-		if vals := split(envVal); len(vals) > 0 {
-			return vals
-		}
-	}
-	return viper.GetStringSlice(key)
-}
-
-// GetChannels returns the conda channels from config or environment.
-//   - CNT_CHANNELS supports "|" and ":" as separators ("|" takes precedence).
-//   - Overwrite semantics: if set in config, highest-priority layer wins (no merge).
-func GetChannels() []string { return getEnvSlice("channels", splitPipeOrColon) }
 
 // GetExtraRootDir returns the extra root directory from CNT_EXTRA_ROOT env var.
 //   - Single value, env only (no config key).
@@ -224,7 +188,7 @@ func isNonRootParent(dir string) bool {
 // =============================================================================
 
 // InitDataPaths initializes GlobalDataPaths based on environment and config.
-// This should be called after LoadDefaults and LoadFromViper.
+// This should be called after LoadDefaults and LoadSources.
 func InitDataPaths() {
 	GlobalDataPaths = DataPaths{
 		ImagesDirs:        buildImageSearchPaths(),

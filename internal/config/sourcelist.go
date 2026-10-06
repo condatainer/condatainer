@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/spf13/viper"
-
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // ErrSourceNotFound reports a source name a layer's list does not hold.
@@ -24,13 +22,11 @@ type Position struct {
 // LayerSourceList reads the `sources` list of the config file at path, in order.
 // A missing file or key is an empty list.
 func LayerSourceList(path string) []catalog.Spec {
-	v := viper.New()
-	v.SetConfigType(ConfigType)
-	v.SetConfigFile(path)
-	if err := v.ReadInConfig(); err != nil {
+	l, err := readLayer(path, "")
+	if err != nil {
 		return nil
 	}
-	return decodeSourceList(v.Get("sources"))
+	return decodeSourceList(l.raw("sources"))
 }
 
 // WriteLayerSourceList replaces the `sources` list of the config file at path,

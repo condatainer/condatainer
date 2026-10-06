@@ -52,10 +52,10 @@ func remember(b Bin) Bin {
 	return b
 }
 
-// systemBin returns the system/module apptainer: build.system_apptainer, which
+// systemBin returns the host/module apptainer: host_apptainer, which
 // startup filled from PATH when unset.
 func systemBin() (Bin, error) {
-	path := config.Global.Build.SystemApptainer
+	path := toolpath.SystemApptainer()
 	if path == "" {
 		return Bin{}, &ApptainerNotFoundError{}
 	}

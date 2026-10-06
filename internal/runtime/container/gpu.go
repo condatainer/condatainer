@@ -4,14 +4,12 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-
-	"github.com/condatainer/condatainer/internal/config"
 )
 
 // DetectGPUFlags inspects the host for GPU support and returns the necessary apptainer flags.
 // requested bypasses a disabled autoload_gpu.
 func DetectGPUFlags(requested bool) []string {
-	if !config.Global.AutoloadGPU && !requested {
+	if !AutoloadGPU() && !requested {
 		slog.Default().Debug("GPU autoload disabled, passing no GPU flags")
 		return nil
 	}

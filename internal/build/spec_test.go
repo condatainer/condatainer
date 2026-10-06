@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/conda"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/runtime/container"
@@ -505,9 +506,7 @@ func TestSourceBlockRecordsOnlyThatInputIsNeeded(t *testing.T) {
 // captured into Spec at resolution rather than read from config when the
 // manifest renders, so the manifest stays a projection of Spec and nothing else.
 func TestCondaSpecCapturesChannels(t *testing.T) {
-	prev := config.Global.Build.Channels
-	config.Global.Build.Channels = []string{"conda-forge", "bioconda"}
-	t.Cleanup(func() { config.Global.Build.Channels = prev })
+	settingstest.OverrideList(t, "channels", "conda-forge", "bioconda")
 
 	setTestSource(t, t.TempDir())
 	obj, err := NewBuildObject(context.Background(), "numpy/2.1.0", false, t.TempDir(), false)
@@ -522,7 +521,7 @@ func TestCondaSpecCapturesChannels(t *testing.T) {
 	}
 
 	// Changing config afterwards must not change what this build records.
-	config.Global.Build.Channels = []string{"nvidia"}
+	settingstest.OverrideList(t, "channels", "nvidia")
 	if got := obj.Manifest().Build.Channels; !slices.Equal(got, []string{"conda-forge", "bioconda"}) {
 		t.Errorf("manifest channels followed config after resolution: %v", got)
 	}

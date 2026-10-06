@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/condatainer/condatainer/internal/conda"
+	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/settings"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,8 +15,8 @@ import (
 	"sync"
 
 	"github.com/chzyer/readline"
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/build"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
@@ -25,22 +28,20 @@ import (
 
 // Variables to hold flag values
 var (
-	createName             string
-	createPrefix           string
-	createFile             string
-	createFrom             string
-	createBlockSize        string
-	createDataBlockSize    string
-	createChannels         []string
-	createSources          []string
-	createUpdate           bool
-	createStore            bool
-	createNoPrebuilt       bool
-	createLayer            string
-	createAlwaysSubmitData bool
+	createName       string
+	createPrefix     string
+	createFile       string
+	createFrom       string
+	createSources    []string
+	createUpdate     bool
+	createStore      bool
+	createNoPrebuilt bool
+	createLayer      string
 
-	// compression flags are generated dynamically from config.CompressOptions
-	compFlags     map[string]*bool
+	// createFlagSet is createCmd.Flags(), held here so createJobFlags does not refer to createCmd.
+	createFlagSet *pflag.FlagSet
+
+	// compFlagNames is the set of compression flags, generated from build.CompressOptions.
 	compFlagNames map[string]bool
 
 	// buildFlagNames is the set of flags shown under "Build Flags:" in help.
@@ -50,52 +51,20 @@ var (
 	}
 )
 
-// compressArgsFromFlags inspects the map of boolean pointers produced by
-// flag registration and returns the corresponding mksquashfs arguments.
-// If more than one compression flag is set, it returns an error.
-func compressArgsFromFlags(flags map[string]*bool) (string, error) {
-	selected := ""
-	for name, ptr := range flags {
-		if ptr != nil && *ptr {
-			if selected != "" {
-				return "", errors.New("multiple compression options specified")
-			}
-			selected = name
-		}
-	}
-	if selected == "" {
-		return "", nil
-	}
-	return config.ArgsForCompress(selected), nil
-}
-
 // createJobFlags are the flags a submitted build has to repeat: the node re-runs
 // create from the name alone, so anything that changes what is built or where it
 // lands has to travel with it. Submission and mode flags are left out — the job
 // is the submission, and it builds by name.
 func createJobFlags() []string {
 	var flags []string
-	for _, channel := range createChannels {
-		flags = append(flags, "--channel", channel)
-	}
 	for _, source := range createSources {
 		flags = append(flags, "--source", source)
 	}
 	if createLayer != "" {
 		flags = append(flags, "--layer", createLayer)
 	}
-	if createBlockSize != "" {
-		flags = append(flags, "--block-size", createBlockSize)
-	}
-	if createDataBlockSize != "" {
-		flags = append(flags, "--data-block-size", createDataBlockSize)
-	}
-	for _, opt := range config.CompressOptions {
-		if ptr := compFlags[opt.Name]; ptr != nil && *ptr {
-			flags = append(flags, "--"+opt.Name)
-		}
-	}
-	return flags
+	return append(flags, settings.ChangedFlags(createFlagSet,
+		"channels", "build.block_size", "build.data_block_size", "build.compress_args")...)
 }
 
 var createCmd = &cobra.Command{
@@ -160,35 +129,6 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 			ExitWithError("cannot build an overlay: %v", err)
 		}
 
-		// 3. Handle Compression Config – consult helper that respects available
-		// options and rejects multiple selections.
-		if args, err := compressArgsFromFlags(compFlags); err != nil {
-			ExitWithError("%v", err)
-		} else if args != "" {
-			config.Global.Build.CompressArgs = args
-		}
-		// If no compression flag provided, the config default (zstd-medium
-		// unless the user overrode build.compress_args) stands.
-
-		// 4. Override channels if -c was provided
-		if len(createChannels) > 0 {
-			config.Global.Build.Channels = createChannels
-		}
-
-		// 5. Handle block sizes
-		if createBlockSize != "" {
-			if !config.IsValidBlockSize(createBlockSize) {
-				ExitWithError("Invalid --block-size %q: must be a power of two between 4096 and 1M (e.g. 64k, 128k, 512k, 1m)", createBlockSize)
-			}
-			config.Global.Build.BlockSize = createBlockSize
-		}
-		if createDataBlockSize != "" {
-			if !config.IsValidBlockSize(createDataBlockSize) {
-				ExitWithError("Invalid --data-block-size %q: must be a power of two between 4096 and 1M (e.g. 64k, 128k, 512k, 1m)", createDataBlockSize)
-			}
-			config.Global.Build.DataBlockSize = createDataBlockSize
-		}
-
 		// 6. Normalize package names (only for build-script mode, not for conda/prefix/source modes)
 		normalizedArgs := args
 		if createName == "" && createPrefix == "" && createFrom == "" {
@@ -207,10 +147,7 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 
 		// 7b. Handle --always-submit-data
 		if createNoPrebuilt {
-			config.Global.Build.SkipPrebuilt = true
-		}
-		if createAlwaysSubmitData {
-			config.Global.Build.AlwaysSubmitData = true
+			config.Global.SkipPrebuilt = true
 		}
 
 		// 8. Announce update mode
@@ -244,38 +181,32 @@ func init() {
 
 	// Register Flags
 	f := createCmd.Flags()
+	createFlagSet = f
 	f.StringVarP(&createName, "name", "n", "", "Custom name for the overlay (with --prefix: the name recorded in it)")
 	f.StringVarP(&createPrefix, "prefix", "p", "", "Custom prefix path for the overlay")
 	f.StringVarP(&createFile, "file", "f", "", "Path to definition file (.yaml, .txt, .sh, .def, .sif, or a sandbox dir)")
 	f.StringVar(&createFrom, "from", "", "Build from an external image URI (e.g., docker://ubuntu:22.04)")
-	f.StringVar(&createBlockSize, "block-size", "", "SquashFS block size of all overlays except data (4k to 1m, e.g. 256k)")
-	f.StringVar(&createDataBlockSize, "data-block-size", "", "SquashFS block size of data overlays (4k to 1m, e.g. 512k)")
-	f.StringArrayVarP(&createChannels, "channel", "c", nil, "Conda channel to use (overrides config; repeatable)")
+	settings.AddFlag(f, "build.block_size", "block-size", settings.Usage("SquashFS block size of all overlays except data (4k to 1m, e.g. 256k)"))
+	settings.AddFlag(f, "build.data_block_size", "data-block-size", settings.Usage("SquashFS block size of data overlays (4k to 1m, e.g. 512k)"))
+	settings.AddFlag(f, "channels", "channel", settings.Short("c"), settings.Usage("Conda channel to use (overrides config; repeatable)"))
 	f.StringArrayVarP(&createSources, "source", "s", nil,
 		"Use only this configured recipe source, in flag order (repeatable)")
 	f.BoolVarP(&createUpdate, "update", "u", false, "Rebuild overlays even if they already exist")
 	f.BoolVar(&createStore, "store", false, "Build into the store, filed under its identity")
 	f.BoolVar(&createNoPrebuilt, "no-prebuilt", false, "Build from the recipe instead of pulling a prebuilt artifact")
 	f.StringVarP(&createLayer, "layer", "l", "", "Build into this data layer: u/user, r/app-root, e/extra-root")
-	f.BoolVar(&createAlwaysSubmitData, "always-submit-data", false, "Submit data builds as scheduler jobs, even without directives")
-	f.BoolVar(&noSubmitMode, "no-submit", false, "Disable job submission (build locally)")
+	settings.AddSwitch(f, "build.always_submit_data", "always-submit-data", "true", settings.Usage("Submit data builds as scheduler jobs, even without directives"))
+	settings.AddSwitch(f, "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))
 
-	// Compression flags: create a bool flag for each known option
-	compFlags = make(map[string]*bool)
-	for _, opt := range config.CompressOptions {
-		compFlags[opt.Name] = f.Bool(opt.Name, false, opt.Description)
+	for _, opt := range build.CompressOptions {
+		settings.AddSwitch(f, "build.compress_args", opt.Name, opt.Name, settings.Usage(opt.Description))
 	}
-
-	blockSizeCompletion := func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return config.BlockSizeCompletions, cobra.ShellCompDirectiveNoFileComp
-	}
-	createCmd.RegisterFlagCompletionFunc("block-size", blockSizeCompletion)      //nolint:errcheck
-	createCmd.RegisterFlagCompletionFunc("data-block-size", blockSizeCompletion) //nolint:errcheck
-	createCmd.RegisterFlagCompletionFunc("source", sourceHandleCompletion)       //nolint:errcheck
+	registerSettingFlagCompletions(createCmd)
+	createCmd.RegisterFlagCompletionFunc("source", sourceHandleCompletion) //nolint:errcheck
 
 	// Mark compression flags in their own section
-	compFlagNames = make(map[string]bool, len(config.CompressOptions))
-	for _, opt := range config.CompressOptions {
+	compFlagNames = make(map[string]bool, len(build.CompressOptions))
+	for _, opt := range build.CompressOptions {
 		compFlagNames[opt.Name] = true
 	}
 
@@ -572,7 +503,7 @@ func solveCondaName(name string) (string, error) {
 	if err != nil {
 		return "", nil
 	}
-	results, _, err := utils.SearchCondaPackages(dep.Name, config.Global.Build.Channels, false, 0)
+	results, _, err := utils.SearchCondaPackages(dep.Name, conda.Channels(), false, 0)
 	if err != nil {
 		return "", nil
 	}
@@ -587,7 +518,7 @@ func solveCondaName(name string) (string, error) {
 		return "", nil
 	}
 	if len(results) == 0 {
-		return "", fmt.Errorf("no conda package named %q found in %s", dep.Name, strings.Join(config.Global.Build.Channels, ", "))
+		return "", fmt.Errorf("no conda package named %q found in %s", dep.Name, strings.Join(conda.Channels(), ", "))
 	}
 	return "", fmt.Errorf("no version of %q in channel %s satisfies %q", dep.Name, results[0].Channel, name)
 }
@@ -626,7 +557,7 @@ func runCreatePackages(ctx context.Context, packages []string) {
 		buildObjects = append(buildObjects, bo)
 	}
 
-	graph, err := build.NewBuildGraph(ctx, buildObjects, imagesDir, config.Global.SubmitJob, createUpdate)
+	graph, err := build.NewBuildGraph(ctx, buildObjects, imagesDir, scheduler.Enabled(), createUpdate)
 	if err != nil {
 		ExitWithError("Failed to create build graph: %v", err)
 	}
@@ -656,7 +587,7 @@ func scriptTarget(file string) string {
 	if !isExternalBuildFile(file) {
 		return ""
 	}
-	target, _ := utils.GetTargetFromScript(file)
+	target, _ := catalog.GetTargetFromScript(file)
 	return target
 }
 
@@ -755,7 +686,7 @@ func buildForeignSource(ctx context.Context, targetPrefix, source, outputDir str
 	applyStoreOverflow(bo)
 
 	graph, err := build.NewBuildGraph(ctx, []*build.BuildObject{bo}, outputDir,
-		config.Global.SubmitJob, createUpdate)
+		scheduler.Enabled(), createUpdate)
 	if err != nil {
 		ExitWithError("Failed to create build graph: %v", err)
 	}
@@ -786,7 +717,7 @@ func buildExternalSource(ctx context.Context, targetPrefix, source string, isApp
 	bo.SetJobArgs(jobArgs)
 
 	graph, err := build.NewBuildGraph(ctx, []*build.BuildObject{bo}, outputDir,
-		config.Global.SubmitJob, createUpdate)
+		scheduler.Enabled(), createUpdate)
 	if err != nil {
 		ExitWithError("Failed to create build graph: %v", err)
 	}

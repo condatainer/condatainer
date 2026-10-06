@@ -11,9 +11,8 @@ import (
 	"runtime"
 	"strconv"
 
-	"github.com/condatainer/condatainer/catalog"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image/freeze"
 	"github.com/condatainer/condatainer/internal/image/sif"
 	"github.com/condatainer/condatainer/internal/image/tool"
@@ -286,8 +285,8 @@ func packFromSIF(ctx context.Context, b *BuildObject, sifPath, metaDir, targetPa
 	defer os.RemoveAll(mnt)
 
 	ncpus := b.effectiveNcpus()
-	compressArgs := config.Global.Build.CompressArgs
-	blockSize := config.Global.Build.BlockSize
+	compressArgs := CompressArgs()
+	blockSize := BlockSize()
 	io := execpkg.IOFromContext(ctx)
 
 	logging.FromContext(ctx).Info("Packing SquashFS", "source", sifPath, "target", targetPath)

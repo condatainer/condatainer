@@ -4,12 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/condatainer/condatainer/internal/config"
 )
 
 // withLibexecTier points CNT_LIBEXEC at a fresh directory, so a test decides
@@ -54,9 +53,10 @@ func resetApptainerState(t *testing.T) {
 // systemApptainer points the configured system/module binary at path.
 func systemApptainer(t *testing.T, path string) {
 	t.Helper()
-	prev := config.Global.Build.SystemApptainer
-	config.Global.Build.SystemApptainer = path
-	t.Cleanup(func() { config.Global.Build.SystemApptainer = prev })
+	settingstest.Override(t, "host_apptainer", path)
+	if _, err := os.Stat(path); err != nil {
+		t.Setenv("PATH", t.TempDir()) // a missing configured binary falls back to PATH, so keep the host's out
+	}
 }
 
 // With no installed libexec apptainer and no usable system one, Normal refuses

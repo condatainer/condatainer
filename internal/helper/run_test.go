@@ -2,6 +2,7 @@ package helper
 
 import (
 	"context"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/condatainer/condatainer/catalog"
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 )
 
@@ -38,14 +39,14 @@ func TestCheckAndInstallNamedOverlaysReusesInstalled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prevSources, prevDistro := config.Global.Sources, config.Global.DefaultDistro
+	prevSources := config.Global.Sources
 	prevPaths := config.GlobalDataPaths
 	config.Global.Sources = []catalog.Spec{{Name: "test", Base: recipesRoot}}
-	config.Global.DefaultDistro = "ubuntu24"
+	settingstest.Override(t, "default_distro", "ubuntu24")
 	config.GlobalDataPaths.ImagesDirs = []string{imagesDir}
 	config.ResetCatalog()
 	t.Cleanup(func() {
-		config.Global.Sources, config.Global.DefaultDistro = prevSources, prevDistro
+		config.Global.Sources = prevSources
 		config.GlobalDataPaths = prevPaths
 		config.ResetCatalog()
 	})

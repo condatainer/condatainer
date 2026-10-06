@@ -36,6 +36,10 @@ The registry of config keys. A package declares the keys it reads, and reads the
 - A removed key is declared with `Removed(name, message, Since(v))`. Its value is reported once and ignored.
 - `Deprecated(message, Since(v))` marks a key that still works. Using it warns once.
 - `Since` is required. `RemoveIn(v)` is checked by a test that fails once the release reaches it, so the line gets deleted.
+- A shared config may be read by several versions at once.
+  - `config check --fix` needs `-l` and rewrites one layer's file per run.
+  - `--keep-old` writes the new name and leaves the old one, so an older version still reads it. A later `--fix` drops it.
+  - An alias is deleted only after every version in use knows the new name.
 - Names never collide: an old name, a removed name and a live key cannot share a name or a variable.
 - Before the first release no alias is declared. The rule once released is that a rename or removal adds `Replaces` or `Removed` in the same change.
 

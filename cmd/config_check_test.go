@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,7 @@ func writeLayer(t *testing.T, name, typ, content string) *config.Layer {
 func findingTexts(fs []configFinding) string {
 	var b strings.Builder
 	for _, f := range fs {
-		b.WriteString(filepath.Base(f.Where) + " " + f.Message + "\n")
+		fmt.Fprintf(&b, "%s %s\n", filepath.Base(f.Where), f.Message)
 	}
 	return b.String()
 }
@@ -145,7 +146,7 @@ func TestCheckReportsRenamedAndRemovedVariables(t *testing.T) {
 func TestFixRenamesRewritesTheKeyAndKeepsComments(t *testing.T) {
 	declareRenamed(t)
 	l := writeLayer(t, "config.yaml", "user", "# mine\ntest:\n  renamed:\n    old: true # keep\nautoload_gpu: false\n")
-	findings := fixRenames([]*config.Layer{l}, checkLayerFile(l))
+	findings := fixRenames(checkLayerFile(l), fixOptions{})
 	if len(findings) != 1 || findings[0].Deprecated || !strings.HasPrefix(findings[0].Message, "renamed ") {
 		t.Fatalf("findings = %+v", findings)
 	}
@@ -163,7 +164,7 @@ func TestFixRenamesRewritesTheKeyAndKeepsComments(t *testing.T) {
 func TestFixDropsAnOldKeyWhenTheNewOneIsSet(t *testing.T) {
 	declareRenamed(t)
 	l := writeLayer(t, "config.yaml", "user", "test:\n  renamed:\n    old: true\n    new: false\n")
-	fixRenames([]*config.Layer{l}, checkLayerFile(l))
+	fixRenames(checkLayerFile(l), fixOptions{})
 	got := config.ReadConfigKey(l.Path, "test.renamed.new")
 	if got != "false" || config.ReadConfigKey(l.Path, "test.renamed.old") != "" {
 		t.Errorf("new = %q", got)
@@ -191,5 +192,54 @@ func TestNoAliasOutlivesItsRemoveIn(t *testing.T) {
 		if r.RemoveIn != "" && utils.CompareVersions(config.Version, r.RemoveIn) >= 0 {
 			t.Errorf("%s should have been deleted in %s", r.Name, r.RemoveIn)
 		}
+	}
+}
+
+func TestFixKeepOldCopiesTheValueAndLeavesTheOldName(t *testing.T) {
+	declareRenamed(t)
+	l := writeLayer(t, "config.yaml", "user", "test:\n  renamed:\n    old: true\n")
+	got := fixRenames(checkLayerFile(l), fixOptions{keepOld: true})
+	if len(got) != 1 || !got[0].Fixed || !strings.Contains(got[0].Message, "copied test.renamed.old as test.renamed.new; the old name stays") {
+		t.Fatalf("findings = %+v", got)
+	}
+	if config.ReadConfigKey(l.Path, "test.renamed.old") != "true" || config.ReadConfigKey(l.Path, "test.renamed.new") != "true" {
+		t.Error("both names should be in the file")
+	}
+
+	// The kept old name is information, not a deprecation, so --strict passes.
+	again, _ := config.ReadLayer(l.Path, "user")
+	info := checkLayerFile(again)
+	if len(info) != 1 || info[0].Deprecated || info[0].Problem || !strings.Contains(info[0].Message, "kept beside test.renamed.new for older versions") {
+		t.Fatalf("kept key = %+v", info)
+	}
+	if again := fixRenames(info, fixOptions{keepOld: true}); again[0].Fixed {
+		t.Error("--keep-old rewrote a key that is already kept")
+	}
+
+	// A plain --fix drops it once older versions are gone.
+	fixRenames(info, fixOptions{})
+	if config.ReadConfigKey(l.Path, "test.renamed.old") != "" || config.ReadConfigKey(l.Path, "test.renamed.new") != "true" {
+		t.Error("a plain fix should drop the old name and keep the new one")
+	}
+}
+
+func TestADifferingOldValueStaysADeprecation(t *testing.T) {
+	declareRenamed(t)
+	l := writeLayer(t, "config.yaml", "user", "test:\n  renamed:\n    old: true\n    new: false\n")
+	got := checkLayerFile(l)
+	if len(got) != 1 || !got[0].Deprecated || !strings.Contains(got[0].Message, "also set to a different value") {
+		t.Errorf("findings = %+v", got)
+	}
+}
+
+func TestFixDryRunWritesNothing(t *testing.T) {
+	declareRenamed(t)
+	l := writeLayer(t, "config.yaml", "user", "test:\n  renamed:\n    old: true\n")
+	got := fixRenames(checkLayerFile(l), fixOptions{dryRun: true})
+	if !got[0].Fixed || !strings.Contains(got[0].Message, "would be renamed to test.renamed.new") {
+		t.Errorf("finding = %+v", got[0])
+	}
+	if config.ReadConfigKey(l.Path, "test.renamed.old") != "true" || config.ReadConfigKey(l.Path, "test.renamed.new") != "" {
+		t.Error("a dry run changed the file")
 	}
 }

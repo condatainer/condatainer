@@ -155,17 +155,6 @@ func AllAliases() []Alias {
 	return out
 }
 
-// AllDeprecated returns every deprecated key.
-func AllDeprecated() []*Key {
-	var out []*Key
-	for _, k := range Keys() {
-		if k.Deprecation() != nil {
-			out = append(out, k)
-		}
-	}
-	return out
-}
-
 // RemovedKeys returns every removed key.
 func RemovedKeys() []RemovedKey {
 	regMu.RLock()

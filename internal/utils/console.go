@@ -33,14 +33,12 @@ const projectPrefix = "CNT"
 // ---------------------------------------------------------
 
 var (
-	red      = color.New(color.FgRed).SprintFunc()
-	green    = color.New(color.FgGreen).SprintFunc()
-	yellow   = color.New(color.FgYellow).SprintFunc()
-	blueBold = color.New(color.FgBlue, color.Bold).SprintFunc()
-	magenta  = color.New(color.FgMagenta).SprintFunc()
-	cyan     = color.New(color.FgCyan).SprintFunc()
-	gray     = color.New(color.FgHiBlack).SprintFunc()
-	bold     = color.New(color.Bold).SprintFunc()
+	red     = color.New(color.FgRed).SprintFunc()
+	green   = color.New(color.FgGreen).SprintFunc()
+	yellow  = color.New(color.FgYellow).SprintFunc()
+	magenta = color.New(color.FgMagenta).SprintFunc()
+	cyan    = color.New(color.FgCyan).SprintFunc()
+	gray    = color.New(color.FgHiBlack).SprintFunc()
 )
 
 // ---------------------------------------------------------

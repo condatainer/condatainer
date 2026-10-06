@@ -47,9 +47,9 @@ var (
 	tMem    = MemoryMB("test.mem", Default("12g"), Help("memory"))
 	tTime   = Walltime("test.time", Default("2h"), Help("time"))
 	tEnum   = Enum("test.enum", Values("auto", "ssh", "direct"), Default("auto"), Help("an enum"))
-	tPath   = Path("test.path", Default("/tmp/x"), Help("a path"))
+	_       = Path("test.path", Default("/tmp/x"), Help("a path"))
 	tStr    = String("test.str", Default("none"), Help("a string"))
-	tEmpty  = String("test.empty", Default("web"), AllowEmpty(), Help("may be empty"))
+	_       = String("test.empty", Default("web"), AllowEmpty(), Help("may be empty"))
 	tList   = List("test.list", DefaultList("a", "b"), Help("a list"))
 	tNormal = String("test.normal", Default("x"), Normalize(strings.ToUpper), Help("normalized"))
 	_       = Bool("test.group.one", Help("one"))
@@ -268,8 +268,8 @@ func TestEnvNamesAreUnique(t *testing.T) {
 }
 
 var (
-	tDyn   = String("test.dyn", DefaultFunc(func() any { return os.Getenv("SETTINGS_TEST_DYN") }), Help("dynamic default"))
-	tValid = String("test.valid", Default("ok"), Validate(func(s string) error {
+	tDyn = String("test.dyn", DefaultFunc(func() any { return os.Getenv("SETTINGS_TEST_DYN") }), Help("dynamic default"))
+	_    = String("test.valid", Default("ok"), Validate(func(s string) error {
 		if s == "bad" {
 			return errors.New("not allowed")
 		}
@@ -333,7 +333,7 @@ func TestListFlagReplacesAndChangedFlagsRepeatsIt(t *testing.T) {
 
 var (
 	tMerge = List("test.merge", MergeLists(), Split(func(s string) []string { return strings.Split(s, "|") }), Help("merged"))
-	tNote  = Enum("test.note", Values("none", "web"), AllowEmpty(), Normalize(func(s string) string {
+	_      = Enum("test.note", Values("none", "web"), AllowEmpty(), Normalize(func(s string) string {
 		if s == "" {
 			return "none"
 		}

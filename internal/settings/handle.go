@@ -21,9 +21,6 @@ func (h *Handle[T]) Get() T { return h.conv(h.key.resolve()) }
 // initialization cycle, so such a key sets it from an init function instead.
 func (h *Handle[T]) SetShow(fn func(stored string) string) { h.key.opts.show = fn }
 
-// Key returns the registered key.
-func (h *Handle[T]) Key() *Key { return h.key }
-
 func declare(name string, kd kind, opts []Option) *Key {
 	var o options
 	for _, opt := range opts {

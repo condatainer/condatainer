@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -17,6 +18,8 @@ var (
 	checkVerbose bool
 	checkStrict  bool
 	checkFix     bool
+	checkKeepOld bool
+	checkDryRun  bool
 )
 
 // configFinding is one thing `config check` reports.
@@ -30,42 +33,49 @@ type configFinding struct {
 	// Rename is set for an old name that --fix can rewrite.
 	Rename *settings.Alias
 	Key    string // the key as written in the file
+	Layer  string // the layer the key is in
+	// Fixed is set for a rename that --fix made or, with --dry-run, would make.
+	Fixed bool
 }
 
 var configCheckCmd = &cobra.Command{
 	Use:   "check",
 	Args:  cobra.NoArgs,
 	Short: "Check the config files and environment for mistakes",
-	Long: `Check the config files and the environment for mistakes that a command would ignore without saying so.
+	Long: `Check the config files and environment for mistakes a command would skip silently.
 
 It reports:
-- a key no version of condatainer knows, with its file and line
-- a value its key does not accept
-- a value that is not true of this machine, such as an apptainer that does not exist
-- a key or variable that has been renamed or deprecated, with its replacement
-- a key that has been removed, with what to do instead
+- an unknown key, with its file and line
+- a value its key does not accept, or that is not true of this machine
+- a renamed, deprecated or removed key, with what to use instead
 - a ` + settings.EnvPrefix + `* variable that matches no key
-- with --verbose, a value that a higher layer overrides
+- with -v, a value that a higher layer overrides
 
-It exits 1 when it finds a problem, so a script can use it. --strict also fails on a renamed or deprecated name.
---fix rewrites renamed keys in the config files to their new names, keeping comments. It leaves unknown keys and bad values for you.
+It exits 1 on a problem. --strict also fails on a renamed or deprecated name.
 
+--fix rewrites renamed keys to their new names and keeps comments:
+- -l is required: one layer's file is rewritten per run.
+- --keep-old leaves the old name beside the new one, for older versions.
+- --dry-run shows the changes and writes nothing.
 ` + configLayersHelp,
 	Run: func(cmd *cobra.Command, args []string) {
+		if checkFix && checkLayer == "" {
+			ExitWithError("--fix rewrites one layer at a time: add -l user, -l extra-root or -l app-root")
+		}
 		layers, err := checkTargetLayers(checkLayer)
 		if err != nil {
 			ExitWithError("%v", err)
 		}
 		findings := checkConfig(layers, os.Environ())
 		if checkFix {
-			findings = fixRenames(layers, findings)
+			findings = fixRenames(findings, fixOptions{keepOld: checkKeepOld, dryRun: checkDryRun})
 		}
 		problems := 0
 		for _, f := range findings {
 			switch {
 			case f.Problem || (checkStrict && f.Deprecated):
 				problems++
-			case !checkVerbose && !f.Deprecated:
+			case !checkVerbose && !f.Deprecated && !f.Fixed:
 				continue
 			}
 			fmt.Printf("%s: %s\n", f.Where, f.Message)
@@ -81,7 +91,9 @@ It exits 1 when it finds a problem, so a script can use it. --strict also fails 
 func init() {
 	configCheckCmd.Flags().StringVarP(&checkLayer, "layer", "l", "", "Check only this config layer: u/user, e/extra-root, r/app-root")
 	configCheckCmd.Flags().BoolVar(&checkStrict, "strict", false, "Also fail on a renamed or deprecated name")
-	configCheckCmd.Flags().BoolVar(&checkFix, "fix", false, "Rewrite renamed keys to their new names")
+	configCheckCmd.Flags().BoolVar(&checkFix, "fix", false, "Rewrite renamed keys to their new names (needs -l)")
+	configCheckCmd.Flags().BoolVar(&checkKeepOld, "keep-old", false, "With --fix, keep the old name beside the new one")
+	configCheckCmd.Flags().BoolVar(&checkDryRun, "dry-run", false, "With --fix, show the changes and write nothing")
 	configCheckCmd.Flags().BoolVarP(&checkVerbose, "verbose", "v", false, "Also show values that a higher layer overrides")
 }
 
@@ -169,11 +181,16 @@ func checkValue(k *settings.Key, l *config.Layer) (string, error) {
 // unregisteredKey classifies a key in a file that no live key has: a renamed key, a removed one, or an unknown one.
 func unregisteredKey(l *config.Layer, key, where string) configFinding {
 	if k, a, ok := settings.LookupAlias(key); ok {
-		msg := a.RenameMessage()
+		f := configFinding{Where: where, Message: a.RenameMessage(), Deprecated: true, Rename: &a, Key: key, Layer: l.Type}
 		if l.InConfig(k.Name) {
-			msg += "; " + k.Name + " is also set, so this one is ignored"
+			if keptForOlderVersions(l, key, k, a) {
+				f.Message = fmt.Sprintf("%s is kept beside %s for older versions", key, k.Name)
+				f.Deprecated = false
+			} else {
+				f.Message += "; " + k.Name + " is also set to a different value, so this one is ignored"
+			}
 		}
-		return configFinding{Where: where, Message: msg, Deprecated: true, Rename: &a, Key: key}
+		return f
 	}
 	if r, ok := settings.LookupRemoved(key); ok {
 		return configFinding{Where: where, Message: r.Text() + "; its value is ignored", Problem: true}
@@ -181,23 +198,46 @@ func unregisteredKey(l *config.Layer, key, where string) configFinding {
 	return configFinding{Where: where, Message: fmt.Sprintf("unknown key %q", key), Problem: true}
 }
 
-// fixRenames rewrites each renamed key a finding names, and returns the findings with those marked fixed.
-func fixRenames(layers []*config.Layer, findings []configFinding) []configFinding {
-	byFile := map[string]*config.Layer{}
-	for _, l := range layers {
-		byFile[l.Path] = l
+// keptForOlderVersions reports whether a layer holds an old name beside the new one with the same value.
+func keptForOlderVersions(l *config.Layer, old string, k *settings.Key, a settings.Alias) bool {
+	if k.IsList() {
+		oldList, _ := l.List(old)
+		newList, _ := l.List(k.Name)
+		return slices.Equal(oldList, newList)
 	}
+	oldText, _ := l.Text(old)
+	migrated, err := a.Migrate(oldText)
+	newText, _ := l.Text(k.Name)
+	return err == nil && migrated == newText
+}
+
+// fixOptions says how --fix may rewrite files.
+type fixOptions struct {
+	keepOld bool
+	dryRun  bool
+}
+
+// fixRenames rewrites each renamed key a finding names, and returns the findings with those marked fixed.
+func fixRenames(findings []configFinding, opts fixOptions) []configFinding {
 	for i, f := range findings {
 		if f.Rename == nil {
 			continue
 		}
-		path, _, _ := strings.Cut(f.Where, ":")
-		if err := config.RenameConfigKey(path, f.Key, f.Rename.New, f.Rename.Migrate); err != nil {
-			findings[i].Message += fmt.Sprintf(" (not fixed: %v)", err)
+		alreadyKept := !f.Deprecated
+		if alreadyKept && opts.keepOld {
 			continue
 		}
-		findings[i].Message = fmt.Sprintf("renamed %s to %s", f.Key, f.Rename.New)
+		keep := opts.keepOld
+		if !opts.dryRun {
+			path, _, _ := strings.Cut(f.Where, ":")
+			if err := config.RenameConfigKey(path, f.Key, f.Rename.New, f.Rename.Migrate, keep); err != nil {
+				findings[i].Message += fmt.Sprintf(" (not fixed: %v)", err)
+				continue
+			}
+		}
+		findings[i].Message = fixMessage(f.Key, f.Rename.New, keep, opts.dryRun)
 		findings[i].Deprecated = false
+		findings[i].Fixed = true
 	}
 	return findings
 }
@@ -256,4 +296,17 @@ func sinceWords(v string) string {
 		return ""
 	}
 	return " since " + v
+}
+
+// fixMessage says what --fix did, or with --dry-run would do, to one renamed key.
+func fixMessage(old, new string, keep, dryRun bool) string {
+	switch {
+	case keep && dryRun:
+		return fmt.Sprintf("%s would be copied as %s; the old name would stay", old, new)
+	case keep:
+		return fmt.Sprintf("copied %s as %s; the old name stays", old, new)
+	case dryRun:
+		return fmt.Sprintf("%s would be renamed to %s", old, new)
+	}
+	return fmt.Sprintf("renamed %s to %s", old, new)
 }

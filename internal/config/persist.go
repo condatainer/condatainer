@@ -376,15 +376,36 @@ func SetConfigKey(path, key, value string) error {
 // RenameConfigKey moves the value of old to new in the config file at path, converting it with migrate when it is not nil.
 //   - A key renamed within its own section is renamed where it stands, so order and comments stay.
 //   - When new is already set the old value is dropped, since the new key wins.
-func RenameConfigKey(path, old, new string, migrate func(string) (string, error)) error {
+//   - With keep, the old key stays and new gets a copy of the value, so a version that only knows the old name still reads it.
+func RenameConfigKey(path, old, new string, migrate func(string) (string, error), keep bool) error {
 	return editLayerFile(path, func(root *yaml.Node) error {
 		node := lookup(root, splitKey(old))
 		if node == nil {
 			return nil
 		}
 		if lookup(root, splitKey(new)) != nil {
-			deleteKey(root, splitKey(old))
+			if !keep {
+				deleteKey(root, splitKey(old))
+			}
 			return nil
+		}
+		if keep {
+			copied := *node
+			if migrate != nil && copied.Kind == yaml.ScalarNode {
+				migrated, err := migrate(copied.Value)
+				if err != nil {
+					return fmt.Errorf("%s: %w", old, err)
+				}
+				if migrated != copied.Value {
+					n, err := newValueNode(migrated)
+					if err != nil {
+						return err
+					}
+					n.LineComment = copied.LineComment
+					copied = *n
+				}
+			}
+			return setKeyNode(root, new, &copied)
 		}
 		if migrate != nil && node.Kind == yaml.ScalarNode {
 			migrated, err := migrate(node.Value)

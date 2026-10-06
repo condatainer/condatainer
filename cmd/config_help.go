@@ -16,9 +16,9 @@ var configHelpCmd = &cobra.Command{
 	Short: "Explain a configuration key",
 	Long: `Explain what a configuration key does.
 
-- With no argument, lists every key with its default and a one-line description.
-- With a key, shows what it does, the values it takes, its default, the environment variable that overrides it, any flags that set it, and the value in effect.
-- With a section such as scheduler.slurm, shows every key under it.`,
+- No argument: every key with its default and one line of help.
+- A key: what it does, what it takes, its default, its variable, its flags and its value now.
+- A section such as scheduler.slurm: every key under it.`,
 	ValidArgsFunction: configHelpCompletion,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 0 {

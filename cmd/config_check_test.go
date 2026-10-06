@@ -39,7 +39,7 @@ func TestCheckReportsUnknownBadAndUnrunnable(t *testing.T) {
   ncpu: 4
   mem: 8g
 nested_run: maybe
-build.system_apptainer: /nonexistent/apptainer
+host_apptainer: /nonexistent/apptainer
 sources:
   - lab: /x
 `)
@@ -48,7 +48,7 @@ sources:
 		`config.yaml:3 unknown key "build.ncpu"`,
 		"config.yaml:2 build.ncpus: 0 is below the minimum 1",
 		"config.yaml:5 nested_run:",
-		"config.yaml:6 build.system_apptainer /nonexistent/apptainer:",
+		"config.yaml:6 host_apptainer /nonexistent/apptainer:",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)

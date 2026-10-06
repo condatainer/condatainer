@@ -53,7 +53,7 @@ func resetApptainerState(t *testing.T) {
 // systemApptainer points the configured system/module binary at path.
 func systemApptainer(t *testing.T, path string) {
 	t.Helper()
-	settingstest.Override(t, "build.system_apptainer", path)
+	settingstest.Override(t, "host_apptainer", path)
 	if _, err := os.Stat(path); err != nil {
 		t.Setenv("PATH", t.TempDir()) // a missing configured binary falls back to PATH, so keep the host's out
 	}

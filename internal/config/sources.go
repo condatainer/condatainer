@@ -37,7 +37,7 @@ const DefaultLayer = "default"
 func ResolvedSources() []LayeredSource {
 	var out []LayeredSource
 	seen := map[string]bool{}
-	for _, l := range configLayers {
+	for _, l := range loadedLayers() {
 		if !l.InConfig("sources") {
 			continue
 		}
@@ -71,7 +71,7 @@ func layerBinds() []string {
 	if ev := os.Getenv(settings.EnvName("bind")); ev != "" {
 		raw = strings.Split(ev, "|")
 	} else {
-		for _, v := range configLayers {
+		for _, v := range loadedLayers() {
 			raw = append(raw, v.GetStringSlice("bind")...)
 		}
 	}
@@ -156,9 +156,10 @@ func SelectSources(names []string) error {
 }
 
 var (
-	catalogOnce sync.Once
-	catalogVal  catalog.Catalog
-	catalogErr  error
+	catalogMu     sync.Mutex
+	catalogOpened bool
+	catalogVal    catalog.Catalog
+	catalogErr    error
 )
 
 // OpenCatalog opens the configured sources, once per process.
@@ -166,15 +167,17 @@ var (
 // Config owns which sources exist and where the cache lives; the catalog owns
 // everything under that directory.
 func OpenCatalog(ctx context.Context) (catalog.Catalog, error) {
-	catalogOnce.Do(func() {
+	catalogMu.Lock()
+	defer catalogMu.Unlock()
+	if !catalogOpened {
+		catalogOpened = true
 		// Defensive: layerSources always leaves defaultSource in. An empty
 		// catalog provides nothing, which callers already handle.
-		if len(Global.Sources) == 0 {
-			return
+		if len(Global.Sources) > 0 {
+			cache := catalog.Cache{Dir: CatalogCacheDir(), TTL: MetadataCacheTTL()}
+			catalogVal, catalogErr = catalog.Open(ctx, withSourceTokens(Global.Sources), cache)
 		}
-		cache := catalog.Cache{Dir: CatalogCacheDir(), TTL: MetadataCacheTTL()}
-		catalogVal, catalogErr = catalog.Open(ctx, withSourceTokens(Global.Sources), cache)
-	})
+	}
 	return catalogVal, catalogErr
 }
 
@@ -294,7 +297,9 @@ func RefreshCatalogCache() error {
 // ResetCatalog drops the memoized catalog. Tests reconfigure sources between
 // cases; nothing in a command run needs it.
 func ResetCatalog() {
-	catalogOnce = sync.Once{}
+	catalogMu.Lock()
+	defer catalogMu.Unlock()
+	catalogOpened = false
 	warnSourcesOnce = sync.Once{}
 	catalogVal, catalogErr = nil, nil
 }

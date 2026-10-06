@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -19,15 +20,26 @@ const ConfigFilename = "config"
 const ConfigType = "yaml"
 
 // configLayers holds the loaded config files in priority order (user, extra-root, app-root).
-var configLayers []*Layer
+var (
+	configLayers []*Layer
+	layersMu     sync.RWMutex
+)
+
+// loadedLayers returns the loaded config files. A reload replaces the slice, never edits it.
+func loadedLayers() []*Layer {
+	layersMu.RLock()
+	defer layersMu.RUnlock()
+	return configLayers
+}
 
 // GetConfigLayers returns the loaded config files in priority order.
-func GetConfigLayers() []*Layer { return configLayers }
+func GetConfigLayers() []*Layer { return loadedLayers() }
 
 // LoadLayers reads every existing config file and sets the defaults. A scalar key
 // is won by the highest-priority layer that sets it; array keys merge across all
 // layers, channels excepted.
 func LoadLayers() error {
+	recordStamps()
 	type configSource struct{ path, label string }
 	var sources []configSource
 	if userPath, err := GetUserConfigPath(); err == nil {
@@ -41,7 +53,7 @@ func LoadLayers() error {
 	}
 
 	// seenPaths prevents loading the same file twice (e.g. CNT_EXTRA_ROOT == CNT_ROOT).
-	configLayers = nil
+	var layers []*Layer
 	seenPaths := make(map[string]bool)
 	for _, src := range sources {
 		if !fileExists(src.path) || seenPaths[src.path] {
@@ -52,12 +64,15 @@ func LoadLayers() error {
 		if err != nil {
 			return err
 		}
-		configLayers = append(configLayers, layer)
+		layers = append(layers, layer)
 	}
-	feed := make([]settings.Layer, len(configLayers))
-	for i, l := range configLayers {
+	feed := make([]settings.Layer, len(layers))
+	for i, l := range layers {
 		feed[i] = l
 	}
+	layersMu.Lock()
+	configLayers = layers
+	layersMu.Unlock()
 	settings.SetLayers(feed)
 	return nil
 }
@@ -110,8 +125,8 @@ func fileExists(path string) bool {
 // LoadLayers, in priority order. These are the files that actively contribute to the
 // effective configuration (via scalar precedence + array merging).
 func GetLoadedConfigPaths() []string {
-	paths := make([]string, 0, len(configLayers))
-	for _, l := range configLayers {
+	paths := make([]string, 0, len(loadedLayers()))
+	for _, l := range loadedLayers() {
 		paths = append(paths, l.Path)
 	}
 	return paths
@@ -241,8 +256,8 @@ func resolveWritableConfigPath(layer string) (path, layerType, fellBackFrom stri
 	}
 
 	// Auto-detect: active config file when writable, else user config
-	if len(configLayers) > 0 {
-		active := configLayers[0].Path
+	if layers := loadedLayers(); len(layers) > 0 {
+		active := layers[0].Path
 		if utils.CanWriteToFile(active) {
 			return active, inferConfigLayer(active), "", nil
 		}

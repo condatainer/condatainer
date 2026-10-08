@@ -2,7 +2,9 @@ package ext3
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -59,4 +61,37 @@ func CheckIntegrity(ctx context.Context, path string, force bool) error {
 
 	log.Info(fmt.Sprintf("Filesystem check completed for %s", filepath.Base(path)), "kind", "success")
 	return nil
+}
+
+const (
+	superblockOffset = 1024
+	stateOffset      = superblockOffset + 58
+	magicOffset      = superblockOffset + 56
+	magicExt         = 0xEF53
+	stateValid       = 0x0001 // set by a clean unmount
+	stateErrors      = 0x0002
+)
+
+// ShutDownCleanly reports whether the image's superblock says its last mount ended cleanly.
+//   - It reads the superblock directly, so no tool runs and nothing is modified.
+//   - A mounted image reports false while it is in use.
+func ShutDownCleanly(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	var sb [4]byte
+	if _, err := f.ReadAt(sb[:2], magicOffset); err != nil {
+		return false, err
+	}
+	if binary.LittleEndian.Uint16(sb[:2]) != magicExt {
+		return false, fmt.Errorf("%s is not an ext2/3/4 filesystem", filepath.Base(path))
+	}
+	if _, err := f.ReadAt(sb[:2], stateOffset); err != nil {
+		return false, err
+	}
+	state := binary.LittleEndian.Uint16(sb[:2])
+	return state&stateValid != 0 && state&stateErrors == 0, nil
 }

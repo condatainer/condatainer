@@ -14,6 +14,7 @@ import (
 //   - Flow: fsck, grow the file if growing, resize2fs to the exact target, shrink the file if shrinking, fsck, allocate.
 //   - Sizes are compared against the ext3 filesystem, not the container file's byte size, since the two can diverge.
 //   - sparse leaves the image sparse. Otherwise blocks are pre-allocated to the new size, as Create does.
+//   - Without fallocate only the part added by growing is filled with zeros. The existing filesystem is never overwritten.
 //   - Growing always leaves a hole (os.Truncate), so without allocation a write can hit ENOSPC while the filesystem reports space free.
 //   - Allocation runs in both directions and on a no-op resize. fallocate is idempotent, so it costs nothing on an allocated image.
 func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) error {
@@ -55,7 +56,7 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 		log.Info(fmt.Sprintf("Size unchanged (%s) for %s",
 			fmt.Sprintf("%d MiB", newSizeMB), name))
 		if !sparse {
-			AllocateOverlay(ctx, absPath, newSizeMB)
+			return AllocateOverlay(ctx, absPath, newSizeMB, newSizeBytes)
 		}
 		return nil
 	}
@@ -112,7 +113,9 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 
 	// Reserve the blocks only once the resized filesystem checks out.
 	if !sparse {
-		AllocateOverlay(ctx, absPath, newSizeMB)
+		if err := AllocateOverlay(ctx, absPath, newSizeMB, min(currentFileBytes, newSizeBytes)); err != nil {
+			return err
+		}
 	}
 
 	log.Info(fmt.Sprintf("Overlay image resized to %s: %s",

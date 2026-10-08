@@ -49,6 +49,12 @@ File operations on overlay images: create, resize, chown, check, lock, read a pa
   - A chown pass costs several times the pack. It stays as the fallback.
 - The size limit is checked after the install, because the payload is unknown before it.
 - `Resize` takes the same `sparse` choice and allocates by default.
+- A non-sparse image is allocated before `mke2fs` runs, which is called with `-E nodiscard`.
+  - Without it `mke2fs` discards the whole file and the image is sparse again.
+  - A sparse image on shared storage can run out of space at the first write to a block, long after creation.
+- Space is reserved with `fallocate`, and a failure other than "not supported" fails the create or resize.
+  - NFS before 4.2 has no `fallocate`. Zeros are written instead, and creating takes longer.
+  - Zeros go only where no data exists: a new file, or the part a resize adds. A formatted image is never overwritten.
 
 ## External tools
 

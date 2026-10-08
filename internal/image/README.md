@@ -80,8 +80,9 @@ File operations on overlay images: create, resize, chown, check, lock, read a pa
 
 - Apptainer locks a mounted `.img` itself, so `exec` and `run` take no lock on it.
 - An action that changes an image acquires the lock first, so a running container is never changed under.
-  - `chown` and `overlay freeze` hold it for the whole operation. Freeze holds a shared lock, so a pinned overlay is still freezable.
-  - `resize`, `check`, `remove` and `build --update` probe and release, since Apptainer takes the same lock and holding ours would collide.
+  - `chown`, `resize`, `check` and `overlay freeze` hold it for the whole operation. Freeze holds a shared lock, so a pinned overlay is still freezable.
+  - A resize runs a check, a size change and another check. Releasing between them would let a container mount the image halfway through.
+  - `remove` and `build --update` probe and release, since Apptainer takes the same lock and holding ours would collide.
 - An image the caller cannot write is protected and never modified or removed. `chmod a-w` pins one, even against its owner.
   - The message tells the two apart. A pinned image says `chmod +w`. Someone else's names the owner, since its chmod is not the caller's to run.
 - A failed attempt reports `ErrProtected`, `ErrInUse`, or a missing file. Callers may branch on the first two.

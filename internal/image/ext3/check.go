@@ -3,6 +3,7 @@ package ext3
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,12 +18,27 @@ import (
 
 // CheckIntegrity runs a filesystem check (e2fsck) on the overlay image.
 // force: If true, adds '-f' to force the check even if the filesystem appears clean.
-// Returns an error immediately if the image is currently in use (mounted writable).
+// It holds an exclusive lock while the check runs, and fails if the image is in use.
 func CheckIntegrity(ctx context.Context, path string, force bool) error {
-	if err := image.CheckAvailable(path, true); err != nil {
-		return fmt.Errorf("%s is currently in use — stop any running jobs using it first", path)
+	lock, err := lockForWrite(path)
+	if err != nil {
+		return err
 	}
+	defer lock.Close()
+	return checkLocked(ctx, path, force)
+}
 
+// lockForWrite takes the exclusive lock on the image, or says why it cannot.
+func lockForWrite(path string) (*image.Lock, error) {
+	lock, err := image.AcquireLock(path, true)
+	if errors.Is(err, image.ErrInUse) {
+		return nil, fmt.Errorf("%w: stop any running jobs using it first", err)
+	}
+	return lock, err
+}
+
+// checkLocked runs e2fsck on an image the caller already holds the exclusive lock on.
+func checkLocked(ctx context.Context, path string, force bool) error {
 	e2fsckPath, err := toolpath.Resolve("e2fsck")
 	if err != nil {
 		return err

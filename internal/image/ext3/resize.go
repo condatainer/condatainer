@@ -11,6 +11,7 @@ import (
 )
 
 // Resize adjusts the size of an existing ext3 overlay image to newSizeMB.
+//   - It holds the exclusive lock from the first check to the last step, and fails if the image is in use.
 //   - Flow: fsck, grow the file if growing, resize2fs to the exact target, shrink the file if shrinking, fsck, allocate.
 //   - Sizes are compared against the ext3 filesystem, not the container file's byte size, since the two can diverge.
 //   - sparse leaves the image sparse. Otherwise blocks are pre-allocated to the new size, as Create does.
@@ -34,6 +35,12 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 	if err != nil {
 		return fmt.Errorf("failed to stat %s: %w", absPath, err)
 	}
+
+	lock, err := lockForWrite(absPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 
 	currentFileBytes := info.Size()
 	newSizeBytes := int64(newSizeMB) * 1024 * 1024
@@ -78,7 +85,7 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 		fmt.Sprintf("%d MiB", fsBytes/(1024*1024))))
 
 	// resize2fs refuses to run unless the filesystem was force-checked first.
-	if err := CheckIntegrity(ctx, absPath, true); err != nil {
+	if err := checkLocked(ctx, absPath, true); err != nil {
 		return err
 	}
 
@@ -107,7 +114,7 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 		}
 	}
 
-	if err := CheckIntegrity(ctx, absPath, true); err != nil {
+	if err := checkLocked(ctx, absPath, true); err != nil {
 		return err
 	}
 

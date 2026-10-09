@@ -14,6 +14,12 @@ Checks run before anything is locked or mounted. Each describes a container that
 - The case it catches is two builds of one name, such as a project's restored copy and a flat install.
 - An `os` image and an image with no readable metadata record no prefix, so they are exempt.
 
+## Unclean images
+
+- A writable `.img` whose superblock is not marked clean mounts with a warning that names `overlay fsck`.
+  - Setup never repairs it. A repair modifies an image the user only asked to open.
+  - The next clean unmount sets the flag again, so the first mount after an unclean stop is the only one that can warn.
+
 ## Root selection
 
 - Every image a command wants is named the same way, through the overlay list.

@@ -11,9 +11,11 @@ import (
 )
 
 // Resize adjusts the size of an existing ext3 overlay image to newSizeMB.
+//   - It holds the exclusive lock from the first check to the last step, and fails if the image is in use.
 //   - Flow: fsck, grow the file if growing, resize2fs to the exact target, shrink the file if shrinking, fsck, allocate.
 //   - Sizes are compared against the ext3 filesystem, not the container file's byte size, since the two can diverge.
 //   - sparse leaves the image sparse. Otherwise blocks are pre-allocated to the new size, as Create does.
+//   - Without fallocate only the part added by growing is filled with zeros. The existing filesystem is never overwritten.
 //   - Growing always leaves a hole (os.Truncate), so without allocation a write can hit ENOSPC while the filesystem reports space free.
 //   - Allocation runs in both directions and on a no-op resize. fallocate is idempotent, so it costs nothing on an allocated image.
 func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) error {
@@ -33,6 +35,12 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 	if err != nil {
 		return fmt.Errorf("failed to stat %s: %w", absPath, err)
 	}
+
+	lock, err := lockForWrite(absPath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 
 	currentFileBytes := info.Size()
 	newSizeBytes := int64(newSizeMB) * 1024 * 1024
@@ -55,7 +63,7 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 		log.Info(fmt.Sprintf("Size unchanged (%s) for %s",
 			fmt.Sprintf("%d MiB", newSizeMB), name))
 		if !sparse {
-			AllocateOverlay(ctx, absPath, newSizeMB)
+			return AllocateOverlay(ctx, absPath, newSizeMB, newSizeBytes)
 		}
 		return nil
 	}
@@ -77,7 +85,7 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 		fmt.Sprintf("%d MiB", fsBytes/(1024*1024))))
 
 	// resize2fs refuses to run unless the filesystem was force-checked first.
-	if err := CheckIntegrity(ctx, absPath, true); err != nil {
+	if err := checkLocked(ctx, absPath, true); err != nil {
 		return err
 	}
 
@@ -106,13 +114,15 @@ func Resize(ctx context.Context, imagePath string, newSizeMB int, sparse bool) e
 		}
 	}
 
-	if err := CheckIntegrity(ctx, absPath, true); err != nil {
+	if err := checkLocked(ctx, absPath, true); err != nil {
 		return err
 	}
 
 	// Reserve the blocks only once the resized filesystem checks out.
 	if !sparse {
-		AllocateOverlay(ctx, absPath, newSizeMB)
+		if err := AllocateOverlay(ctx, absPath, newSizeMB, min(currentFileBytes, newSizeBytes)); err != nil {
+			return err
+		}
 	}
 
 	log.Info(fmt.Sprintf("Overlay image resized to %s: %s",

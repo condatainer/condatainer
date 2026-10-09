@@ -102,6 +102,7 @@ func Setup(cfg SetupConfig) (*SetupResult, error) {
 	overlayArgs := make([]string, 0, len(mountOverlays))
 	var lastImg string
 	var envMounted bool
+	var imageDiagnostics []Diagnostic
 	for _, ol := range mountOverlays {
 		if utils.IsWritableLayer(ol) {
 			lastImg = ol
@@ -117,6 +118,14 @@ func Setup(cfg SetupConfig) (*SetupResult, error) {
 				if err := image.CheckAvailable(ol, writeLock); err != nil {
 					return nil, err
 				}
+				if writeLock {
+					if clean, err := ext3.ShutDownCleanly(ol); err == nil && !clean {
+						imageDiagnostics = append(imageDiagnostics, Diagnostic{
+							Level:   "warn",
+							Message: fmt.Sprintf("%s was not shut down cleanly. Run `condatainer overlay fsck %s` to check it.", filepath.Base(ol), ol),
+						})
+					}
+				}
 			}
 		} else if isEnvSnapshotSqf(cleanOverlayPath(ol)) {
 			envMounted = true
@@ -127,7 +136,7 @@ func Setup(cfg SetupConfig) (*SetupResult, error) {
 
 	// Build environment variables
 	envList, envNotes, diagnostics := buildEnvironment(overlays, lastImg, envMounted, cfg)
-	diagnostics = append(snapshotDiagnostics, diagnostics...)
+	diagnostics = append(append(snapshotDiagnostics, imageDiagnostics...), diagnostics...)
 
 	// Build bind paths
 	bindPaths := BindPaths()

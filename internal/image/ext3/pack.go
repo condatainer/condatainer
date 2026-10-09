@@ -76,7 +76,7 @@ func Pack(ctx context.Context, stage string, opts *CreateOptions) error {
 		return err
 	}
 	mkfs := []string{
-		"-q", "-t", opts.FilesystemType,
+		"-q", "-t", opts.FilesystemType, "-E", "nodiscard",
 		"-i", fmt.Sprintf("%d", opts.Profile.InodeRatio),
 		"-m", fmt.Sprintf("%d", opts.Profile.ReservedPerc),
 		"-d", stage, "-F", partial,

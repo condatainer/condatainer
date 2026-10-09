@@ -49,6 +49,12 @@ File operations on overlay images: create, resize, chown, check, lock, read a pa
   - A chown pass costs several times the pack. It stays as the fallback.
 - The size limit is checked after the install, because the payload is unknown before it.
 - `Resize` takes the same `sparse` choice and allocates by default.
+- A non-sparse image is allocated before `mke2fs` runs, which is called with `-E nodiscard`.
+  - Without it `mke2fs` discards the whole file and the image is sparse again.
+  - A sparse image on shared storage can run out of space at the first write to a block, long after creation.
+- Space is reserved with `fallocate`, and a failure other than "not supported" fails the create or resize.
+  - NFS before 4.2 has no `fallocate`. Zeros are written instead, and creating takes longer.
+  - Zeros go only where no data exists: a new file, or the part a resize adds. A formatted image is never overwritten.
 
 ## External tools
 
@@ -74,8 +80,9 @@ File operations on overlay images: create, resize, chown, check, lock, read a pa
 
 - Apptainer locks a mounted `.img` itself, so `exec` and `run` take no lock on it.
 - An action that changes an image acquires the lock first, so a running container is never changed under.
-  - `chown` and `overlay freeze` hold it for the whole operation. Freeze holds a shared lock, so a pinned overlay is still freezable.
-  - `resize`, `check`, `remove` and `build --update` probe and release, since Apptainer takes the same lock and holding ours would collide.
+  - `chown`, `resize`, `check` and `overlay freeze` hold it for the whole operation. Freeze holds a shared lock, so a pinned overlay is still freezable.
+  - A resize runs a check, a size change and another check. Releasing between them would let a container mount the image halfway through.
+  - `remove` and `build --update` probe and release, since Apptainer takes the same lock and holding ours would collide.
 - An image the caller cannot write is protected and never modified or removed. `chmod a-w` pins one, even against its owner.
   - The message tells the two apart. A pinned image says `chmod +w`. Someone else's names the owner, since its chmod is not the caller's to run.
 - A failed attempt reports `ErrProtected`, `ErrInUse`, or a missing file. Callers may branch on the first two.

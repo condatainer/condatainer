@@ -4,11 +4,13 @@ package ext3
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/condatainer/condatainer/internal/image/tool"
 	"github.com/condatainer/condatainer/internal/logging"
@@ -117,6 +119,7 @@ func createOverlayFile(ctx context.Context, opts *CreateOptions, filePath string
 	// 2. Format filesystem (mke2fs)
 	if err := tool.RunCommand(ctx, "format", opts.Path, "mke2fs",
 		"-t", opts.FilesystemType,
+		"-E", "nodiscard",
 		"-i", fmt.Sprintf("%d", opts.Profile.InodeRatio),
 		"-m", fmt.Sprintf("%d", opts.Profile.ReservedPerc),
 		"-F", filePath); err != nil {
@@ -178,20 +181,65 @@ func createRawFile(ctx context.Context, opts *CreateOptions, filePath string) er
 		return err
 	}
 	if !opts.Sparse {
-		AllocateOverlay(ctx, filePath, opts.SizeMB)
+		return AllocateOverlay(ctx, filePath, opts.SizeMB, 0)
 	}
 	return nil
 }
 
-// AllocateOverlay pre-allocates disk blocks for a sparse overlay file using fallocate.
-func AllocateOverlay(ctx context.Context, path string, sizeMB int) {
+// fallocate is swapped by tests to simulate a filesystem without it.
+var fallocate = syscall.Fallocate
+
+// zeroChunk is the size of one write when zeros stand in for fallocate.
+const zeroChunk = 1 << 20
+
+// AllocateOverlay reserves the blocks of the first sizeMB of the image file at path.
+//   - fallocate reserves them without writing. Any failure but "not supported" is returned.
+//   - Where the filesystem has no fallocate, zeros are written from zeroFrom to the end, then synced so a refused write is reported.
+//   - Bytes before zeroFrom hold data that must stay, so they stay unreserved there and a warning says so.
+func AllocateOverlay(ctx context.Context, path string, sizeMB int, zeroFrom int64) error {
 	log := logging.FromContext(ctx)
-	log.Info(fmt.Sprintf("Allocating %s at %s",
-		fmt.Sprintf("%d MiB", sizeMB), strings.TrimSuffix(filepath.Base(path), ".partial")))
-	cmd := exec.CommandContext(ctx, "fallocate", "-l", fmt.Sprintf("%dM", sizeMB), path)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		log.Warn(fmt.Sprintf("Could not preallocate the overlay, it may be sparse: %s", strings.TrimSpace(string(output))))
+	name := strings.TrimSuffix(filepath.Base(path), ".partial")
+	size := int64(sizeMB) << 20
+	log.Info(fmt.Sprintf("Allocating %d MiB at %s", sizeMB, name))
+
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("allocate %s: %w", name, err)
 	}
+	defer f.Close()
+
+	err = fallocate(int(f.Fd()), 0, 0, size)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, syscall.EOPNOTSUPP) && !errors.Is(err, syscall.ENOSYS) {
+		return fmt.Errorf("allocate %s: %w", name, err)
+	}
+
+	if zeroFrom > 0 {
+		log.Warn(fmt.Sprintf("This filesystem cannot reserve space; the first %d MiB of %s stay sparse", zeroFrom>>20, name))
+	}
+	if zeroFrom >= size {
+		return nil
+	}
+	log.Info(fmt.Sprintf("This filesystem cannot reserve space; writing zeros to %s", name))
+	buf := make([]byte, zeroChunk)
+	for off := zeroFrom; off < size; off += zeroChunk {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n := int64(len(buf))
+		if size-off < n {
+			n = size - off
+		}
+		if _, err := f.WriteAt(buf[:n], off); err != nil {
+			return fmt.Errorf("allocate %s: %w", name, err)
+		}
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("allocate %s: %w", name, err)
+	}
+	return nil
 }
 
 // CreateDirectly builds a blank overlay at opts.Path.

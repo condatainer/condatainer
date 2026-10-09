@@ -243,8 +243,7 @@ var resizeCmd = &cobra.Command{
 
 		sparse, _ := cmd.Flags().GetBool("sparse")
 
-		// 3. Execute — Resize detects the lock itself via CheckIntegrity, so
-		// don't hold a separate exclusive lock here (it would collide with that probe).
+		// 3. Execute — Resize takes the exclusive lock itself, so none is held here.
 		if err := ext3.Resize(cmd.Context(), path, sizeMB, sparse); err != nil {
 			ExitWithError("%v", err)
 		}

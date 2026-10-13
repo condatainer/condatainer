@@ -60,7 +60,7 @@ It exits 1 on a problem. --strict also fails on a renamed or deprecated name.
 ` + configLayersHelp,
 	Run: func(cmd *cobra.Command, args []string) {
 		if checkFix && checkLayer == "" {
-			ExitWithError("--fix rewrites one layer at a time: add -l user, -l extra-root or -l app-root")
+			ExitWithError("--fix rewrites one layer at a time: add -l user, -l extra-root or -l cnt-root")
 		}
 		layers, err := checkTargetLayers(checkLayer)
 		if err != nil {
@@ -89,7 +89,7 @@ It exits 1 on a problem. --strict also fails on a renamed or deprecated name.
 }
 
 func init() {
-	configCheckCmd.Flags().StringVarP(&checkLayer, "layer", "l", "", "Check only this config layer: u/user, e/extra-root, r/app-root")
+	configCheckCmd.Flags().StringVarP(&checkLayer, "layer", "l", "", "Check only this config layer: u/user, e/extra-root, r/cnt-root")
 	configCheckCmd.Flags().BoolVar(&checkStrict, "strict", false, "Also fail on a renamed or deprecated name")
 	configCheckCmd.Flags().BoolVar(&checkFix, "fix", false, "Rewrite renamed keys to their new names (needs -l)")
 	configCheckCmd.Flags().BoolVar(&checkKeepOld, "keep-old", false, "With --fix, keep the old name beside the new one")

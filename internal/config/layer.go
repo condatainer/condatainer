@@ -18,7 +18,7 @@ import (
 // Layer is one config file. Keys are dotted, case-insensitive, and may be written nested or flat.
 type Layer struct {
 	Path string
-	Type string // "user", "extra-root", "app-root"
+	Type string // "user", "extra-root", "cnt-root"
 	root *yaml.Node
 }
 

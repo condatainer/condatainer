@@ -20,7 +20,7 @@ Stores secrets per config layer: registry logins and recipe-source tokens.
 
 ## Files
 
-- Layered like config: user, extra-root, app-root.
+- Layered like config: user, extra-root, cnt-root.
 - A file follows its directory: `0600` in a personal one, group read-write in a group-writable one. Otherwise a shared credential is readable only by whoever saved it.
 - The user layer's directory is created private. A shared layer's directory is never created: it belongs to whoever set it up.
 - Who can read or replace a file comes from mode bits only. ACLs are not consulted.

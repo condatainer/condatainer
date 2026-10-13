@@ -20,7 +20,7 @@
   - `sources`: merged across layers, deduplicated, user entries first.
   - `bind`: merged the same way, so a site or lab adds binds and a user adds more.
   - `channels`: not merged. The highest-priority file that sets it wins.
-- Priority, highest first: flags, `CNT_CONFIG_*`, user, extra-root, app-root, defaults.
+- Priority, highest first: flags, `CNT_CONFIG_*`, user, extra-root, cnt-root, defaults.
 - A layer file is read and written through `yaml.v3` nodes, in `layer.go`.
   - A write edits the node in place, so comments and key order survive a `config set`.
   - It happens in the open file under an exclusive lock, never through a temporary file and a rename. A shared config is owned by one user and group-writable, and a rename would give it to whoever wrote last.
@@ -66,7 +66,7 @@
 - Reads go nearest-first and writes go furthest-first. Order within a tier is the same both ways.
 - A build lands as far out as permissions allow, so one copy serves the whole group.
 - A personal build shadows a shared one for the person who made it.
-- Tiers, in read order: scratch, user, extra-root, app-root.
+- Tiers, in read order: scratch, user, extra-root, cnt-root.
 - Recipes are not searched here. They come from `sources`.
 - The toolchain is not searched either. It is one directory, owned by `internal/libexec`.
 - A display command peeks at the write target and never creates it. Only a write creates a directory.

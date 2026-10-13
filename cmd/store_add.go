@@ -74,10 +74,10 @@ func newStoreAddCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&layer, "layer", "l", "", "Add to this data layer: u/user, r/app-root, e/extra-root")
+	cmd.Flags().StringVarP(&layer, "layer", "l", "", "Add to this data layer: u/user, r/cnt-root, e/extra-root")
 	cmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
-			return []string{"user", "app-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp
+			return []string{"user", "cnt-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp
 		})
 	return cmd
 }

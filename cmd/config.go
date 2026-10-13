@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	initLayer string // user, app-root, extra-root, or a custom path
+	initLayer string // user, cnt-root, extra-root, or a custom path
 	getLayer  string // target layer for config get (single-layer read)
 	setLayer  string // target layer for config set/append/prepend/remove
 )
@@ -182,7 +182,7 @@ func configValueCompletion(key string) []string {
 // subcommand that accepts --layer so the list stays consistent, not copy-pasted.
 const configLayersHelp = `Config file layers (-l, --layer):
   u, user        ~/.config/condatainer/config.yaml (standard/home install)
-  r, app-root    <install-dir>/config.yaml         (dedicated install, or CNT_ROOT)
+  r, cnt-root    <install-dir>/config.yaml         (dedicated install, or CNT_ROOT)
   e, extra-root  $CNT_EXTRA_ROOT/config.yaml       (group, needs CNT_EXTRA_ROOT)`
 
 var configCmd = &cobra.Command{
@@ -195,16 +195,16 @@ Setting priority (highest to lowest):
   2. Environment variables (CNT_CONFIG_*)
   3. User config file (~/.config/condatainer/config.yaml)
   4. Extra-root config ($CNT_EXTRA_ROOT/config.yaml, group layer)
-  5. App-root config (<install-dir>/config.yaml, in dedicated folder or CNT_ROOT set)
+  5. cnt-root config (<install-dir>/config.yaml, in dedicated folder or CNT_ROOT set)
   6. Defaults
 
 Data directory priority — reads go nearest-first, writes furthest-first:
 
   read (first match wins)          write (first writable)
   1. Scratch ($SCRATCH)            1. Extra-root ($CNT_EXTRA_ROOT, group layer)
-  2. User XDG (~/.local/share)     2. App-root (auto-detected or CNT_ROOT)
+  2. User XDG (~/.local/share)     2. cnt-root (auto-detected or CNT_ROOT)
   3. Extra-root ($CNT_EXTRA_ROOT)  3. Scratch ($SCRATCH/condatainer)
-  4. App-root (auto-detected)      4. User XDG (~/.local/share/condatainer)
+  4. cnt-root (auto-detected)      4. User XDG (~/.local/share/condatainer)
 
 - A build goes to the first writable directory in the write column.
 - Build into your own directory to have your version win for you.`,
@@ -317,7 +317,7 @@ var configGetCmd = &cobra.Command{
 	Example: `  condatainer config get host_apptainer
   condatainer config get build.ncpus
   condatainer config get sources
-  condatainer config get sources -l app-root`,
+  condatainer config get sources -l cnt-root`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: configKeysCompletion,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -436,7 +436,7 @@ Without -l, the layer follows the install location:
   - Executable in a dedicated folder (e.g. /apps/condatainer/bin/): that folder's parent.
   - Otherwise: the user config directory.`,
 	Example: `  condatainer config init                # Layer chosen from the install location
-  condatainer config init -l app-root    # A specific layer
+  condatainer config init -l cnt-root    # A specific layer
   condatainer config init -l r           # Same, using the shortcut`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Before anything is asked or resolved, so a container never gets as far as
@@ -458,10 +458,10 @@ Without -l, the layer follows the install location:
 			}
 			layerType = config.NormalizeConfigLayer(initLayer)
 			// Fail early with an actionable error if the root dir is read-only
-			if layerType == "app-root" {
+			if layerType == "cnt-root" {
 				if rootDir := filepath.Dir(configPath); !utils.CanWriteToDir(rootDir) {
 					ExitWithError(
-						"App-root config directory is read-only: %s\n"+
+						"cnt-root config directory is read-only: %s\n"+
 							"Run as a privileged user, or use '-l user' to create a personal config instead.",
 						rootDir,
 					)
@@ -472,7 +472,7 @@ Without -l, the layer follows the install location:
 			rootPath := config.GetRootConfigPath()
 			if rootPath != "" && utils.CanWriteToDir(filepath.Dir(rootPath)) {
 				configPath = rootPath
-				layerType = "app-root"
+				layerType = "cnt-root"
 			} else {
 				if rootPath != "" {
 					// Standalone layout detected but dir is read-only — fall back gracefully
@@ -496,7 +496,7 @@ Without -l, the layer follows the install location:
 
 		// lowerLayersFor returns loaded config layers that are lower priority than loc.
 		// Keys already set in these layers will be skipped when saving.
-		layerOrder := []string{"user", "extra-root", "app-root"}
+		layerOrder := []string{"user", "extra-root", "cnt-root"}
 		lowerLayersFor := func(loc string) []*config.Layer {
 			cutIdx := slices.Index(layerOrder, loc) + 1
 			var result []*config.Layer
@@ -560,10 +560,10 @@ Reads check these nearest-first, and the first match wins:
   1. Scratch ($SCRATCH/condatainer)
   2. User XDG directory (~/.local/share/condatainer)
   3. Extra-root ($CNT_EXTRA_ROOT, group layer)
-  4. App-root (auto-detected or $CNT_ROOT)
+  4. cnt-root (auto-detected or $CNT_ROOT)
 
 Writes use the first writable directory in the reverse order:
-extra-root, app-root, scratch, user.`,
+extra-root, cnt-root, scratch, user.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// pathStatus returns inline status tags for a search-path entry.
 		// writeTarget is the resolved writable directory for this section (empty = not applicable).
@@ -648,9 +648,9 @@ extra-root, app-root, scratch, user.`,
 		// Directory info
 		fmt.Println(utils.StyleTitle("Directory Locations:"))
 		if rootDir := config.GetRootDir(); rootDir != "" {
-			fmt.Printf("  App-root: %s\n", rootDir)
+			fmt.Printf("  cnt-root: %s\n", rootDir)
 		} else {
-			fmt.Printf("  App-root: %s\n", utils.StyleWarning("not detected (set CNT_ROOT to override)"))
+			fmt.Printf("  cnt-root: %s\n", utils.StyleWarning("not detected (set CNT_ROOT to override)"))
 		}
 		if scratchDir := config.GetScratchDataDir(); scratchDir != "" {
 			fmt.Printf("  Scratch:  %s\n", scratchDir)
@@ -803,12 +803,12 @@ var configRemoveCmd = &cobra.Command{
 
 func init() {
 	// Add flags
-	configInitCmd.Flags().StringVarP(&initLayer, "layer", "l", "", "Config layer to create in: u/user, e/extra-root, r/app-root")
-	configGetCmd.Flags().StringVarP(&getLayer, "layer", "l", "", "Read only this config layer: u/user, e/extra-root, r/app-root")
-	configSetCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/app-root")
-	configAppendCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/app-root")
-	configPrependCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/app-root")
-	configRemoveCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/app-root")
+	configInitCmd.Flags().StringVarP(&initLayer, "layer", "l", "", "Config layer to create in: u/user, e/extra-root, r/cnt-root")
+	configGetCmd.Flags().StringVarP(&getLayer, "layer", "l", "", "Read only this config layer: u/user, e/extra-root, r/cnt-root")
+	configSetCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/cnt-root")
+	configAppendCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/cnt-root")
+	configPrependCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/cnt-root")
+	configRemoveCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/cnt-root")
 
 	// Add subcommands
 	configListCmd.Flags().BoolVar(&showOrigin, "origin", false, "Tag each value with the layer or environment variable that sets it")

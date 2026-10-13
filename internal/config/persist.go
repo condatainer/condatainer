@@ -19,7 +19,7 @@ const ConfigFilename = "config"
 // ConfigType is the type of config file
 const ConfigType = "yaml"
 
-// configLayers holds the loaded config files in priority order (user, extra-root, app-root).
+// configLayers holds the loaded config files in priority order (user, extra-root, cnt-root).
 var (
 	configLayers []*Layer
 	layersMu     sync.RWMutex
@@ -49,7 +49,7 @@ func LoadLayers() error {
 		sources = append(sources, configSource{filepath.Join(extraRoot, ConfigFilename+"."+ConfigType), "extra-root"})
 	}
 	if rootPath := GetRootConfigPath(); rootPath != "" {
-		sources = append(sources, configSource{rootPath, "app-root"})
+		sources = append(sources, configSource{rootPath, "cnt-root"})
 	}
 
 	// seenPaths prevents loading the same file twice (e.g. CNT_EXTRA_ROOT == CNT_ROOT).
@@ -107,7 +107,7 @@ func GetExtraRootConfigPath() string {
 // ConfigSearchPath represents a config file location with metadata
 type ConfigSearchPath struct {
 	Path   string // Full path to config file
-	Type   string // Type: "user", "extra-root", "app-root"
+	Type   string // Type: "user", "extra-root", "cnt-root"
 	Exists bool   // Whether the file exists
 	InUse  bool   // Whether this is the active config file
 }
@@ -159,7 +159,7 @@ func GetConfigSearchPaths() []ConfigSearchPath {
 		})
 	}
 
-	// Priority order matches LoadLayers: user > extra-root > app-root
+	// Priority order matches LoadLayers: user > extra-root > cnt-root
 	if userPath, err := GetUserConfigPath(); err == nil {
 		add(userPath, "user")
 	}
@@ -167,21 +167,21 @@ func GetConfigSearchPaths() []ConfigSearchPath {
 		add(filepath.Join(extraRoot, ConfigFilename+"."+ConfigType), "extra-root")
 	}
 	if rootPath := GetRootConfigPath(); rootPath != "" {
-		add(rootPath, "app-root")
+		add(rootPath, "cnt-root")
 	}
 
 	return paths
 }
 
 // NormalizeConfigLayer expands a config layer shorthand to its full name.
-//   - Returns the full name ("user", "app-root", "extra-root") or the input unchanged.
-//   - "root" and "r" are accepted as aliases for "app-root".
+//   - Returns the full name ("user", "cnt-root", "extra-root") or the input unchanged.
+//   - "root" and "r" are accepted as aliases for "cnt-root".
 func NormalizeConfigLayer(layer string) string {
 	switch layer {
 	case "u":
 		return "user"
 	case "r", "root":
-		return "app-root"
+		return "cnt-root"
 	case "e":
 		return "extra-root"
 	default:
@@ -190,34 +190,34 @@ func NormalizeConfigLayer(layer string) string {
 }
 
 // GetConfigPathByLayer returns the config path for the specified config layer.
-// Supported layers: "user"/"u", "app-root"/"root"/"r", "extra-root"/"e"
+// Supported layers: "user"/"u", "cnt-root"/"root"/"r", "extra-root"/"e"
 func GetConfigPathByLayer(layer string) (string, error) {
 	switch layer {
 	case "user", "u":
 		return GetUserConfigPath()
-	case "app-root", "root", "r":
+	case "cnt-root", "root", "r":
 		if path := GetRootConfigPath(); path != "" {
 			return path, nil
 		}
-		return "", fmt.Errorf("app-root dir not available (not a standalone layout and CNT_ROOT not set)")
+		return "", fmt.Errorf("cnt-root dir not available (not a standalone layout and CNT_ROOT not set)")
 	case "extra-root", "e":
 		if path := GetExtraRootConfigPath(); path != "" {
 			return path, nil
 		}
 		return "", fmt.Errorf("CNT_EXTRA_ROOT is not set")
 	default:
-		return "", fmt.Errorf("invalid layer '%s': use 'user' (u), 'extra-root' (e), or 'app-root' (r)", layer)
+		return "", fmt.Errorf("invalid layer '%s': use 'user' (u), 'extra-root' (e), or 'cnt-root' (r)", layer)
 	}
 }
 
-// inferConfigLayer returns "app-root", "extra-root", or "user" by comparing path
+// inferConfigLayer returns "cnt-root", "extra-root", or "user" by comparing path
 // against known config file paths. Returns "user" for any unrecognised path.
 func inferConfigLayer(path string) string {
 	if p := GetExtraRootConfigPath(); p != "" && path == p {
 		return "extra-root"
 	}
 	if p := GetRootConfigPath(); p != "" && path == p {
-		return "app-root"
+		return "cnt-root"
 	}
 	return "user"
 }

@@ -36,7 +36,7 @@ func TestOldNameInAFileReadsAsTheNewKeyInItsOwnLayer(t *testing.T) {
 	got := warnings(t)
 	use(t,
 		fakeLayer{name: "user", texts: map[string]string{"test.dep.old": "true"}},
-		fakeLayer{name: "app-root", texts: map[string]string{"test.dep.new": "false"}})
+		fakeLayer{name: "cnt-root", texts: map[string]string{"test.dep.new": "false"}})
 	res, _ := Resolve("test.dep.new")
 	if res.Value != "true" || res.Layer != "user" || res.Via != "test.dep.old" {
 		t.Errorf("%+v", res)

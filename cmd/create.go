@@ -194,7 +194,7 @@ func init() {
 	f.BoolVarP(&createUpdate, "update", "u", false, "Rebuild overlays even if they already exist")
 	f.BoolVar(&createStore, "store", false, "Build into the store, filed under its identity")
 	f.BoolVar(&createNoPrebuilt, "no-prebuilt", false, "Build from the recipe instead of pulling a prebuilt artifact")
-	f.StringVarP(&createLayer, "layer", "l", "", "Build into this data layer: u/user, r/app-root, e/extra-root")
+	f.StringVarP(&createLayer, "layer", "l", "", "Build into this data layer: u/user, r/cnt-root, e/extra-root")
 	settings.AddSwitch(f, "build.always_submit_data", "always-submit-data", "true", settings.Usage("Submit data builds as scheduler jobs, even without directives"))
 	settings.AddSwitch(f, "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))
 
@@ -274,7 +274,7 @@ func writableImagesDirFor(layer string) (string, error) {
 
 // getWritableImagesDir returns the writable images directory or exits with an error.
 // The destination and its data layer are reported once: the target depends on which
-// directories happen to be writable, so "(app-root)" vs "(user)" is the difference
+// directories happen to be writable, so "(cnt-root)" vs "(user)" is the difference
 // between installing for everyone and installing only for yourself.
 func getWritableImagesDir() string {
 	dir, err := writableImagesDirFor(createLayer)

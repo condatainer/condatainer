@@ -260,7 +260,7 @@ type DataLayer string
 
 const (
 	LayerExtraRoot DataLayer = "extra-root" // $CNT_EXTRA_ROOT           (e)
-	LayerAppRoot   DataLayer = "app-root"   // $CNT_ROOT or <install-dir> (r)
+	LayerCntRoot   DataLayer = "cnt-root"   // $CNT_ROOT or <install-dir> (r)
 	LayerUser      DataLayer = "user"       // $SCRATCH, else XDG data dir (u)
 	LayerUnknown   DataLayer = "unknown"    // not under any tier root
 )
@@ -270,12 +270,12 @@ func ParseDataLayer(s string) (DataLayer, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "u", "user":
 		return LayerUser, nil
-	case "r", "app-root", "approot", "root":
-		return LayerAppRoot, nil
+	case "r", "cnt-root", "cntroot", "root":
+		return LayerCntRoot, nil
 	case "e", "extra-root", "extraroot", "extra":
 		return LayerExtraRoot, nil
 	}
-	return "", fmt.Errorf("unknown layer %q (want: u/user, r/app-root, e/extra-root)", s)
+	return "", fmt.Errorf("unknown layer %q (want: u/user, r/cnt-root, e/extra-root)", s)
 }
 
 // ClassifyDataDir reports which layer a data directory belongs to, by comparing its parent against each tier root.
@@ -290,7 +290,7 @@ func ClassifyDataDir(path string) DataLayer {
 	case match(GetExtraRootDir()):
 		return LayerExtraRoot
 	case match(GetRootDir()):
-		return LayerAppRoot
+		return LayerCntRoot
 	case match(GetScratchDataDir()), match(GetUserDataDir()):
 		return LayerUser
 	}
@@ -777,7 +777,7 @@ func GetWritableImagesDirIn(layer DataLayer) (string, error) {
 }
 
 // IsPersonalImagesDir reports whether an images directory is the caller's alone.
-//   - Personal, not the layer: a shared install whose CNT_ROOT is $SCRATCH/condatainer classifies as app-root and is still only this user's, which deduplicateWriteDirs already resolves.
+//   - Personal, not the layer: a shared install whose CNT_ROOT is $SCRATCH/condatainer classifies as cnt-root and is still only this user's, which deduplicateWriteDirs already resolves.
 //   - Callers use it to decide whether an action changes what other people see.
 func IsPersonalImagesDir(path string) bool {
 	path = filepath.Clean(path)

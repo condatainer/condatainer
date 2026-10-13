@@ -21,7 +21,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - `build/`: name/version to a Conda, Script or Def build. Dependency graphs, remote scripts.
 - `catalog/`: resolves a name to a recipe and a set of names to a build order. Owns the `#KEY:` header tokenizer and the script header readers.
 - `conda/`: the Conda environment mounted at `/cnt_env`.
-- `config/`: layered config (flags > env > user > extra-root > app-root > defaults) and data directory search.
+- `config/`: layered config (flags > env > user > extra-root > cnt-root > defaults) and data directory search.
 - `settings/`: the registry of config keys. A package declares the keys it reads and reads them through typed handles. Imports only `utils`.
 - `credential/`: per-layer `credentials.json` for registry logins and recipe-source tokens. Lookup and file permissions.
 - `helper/`, `helperhistory/`: helper service jobs and their shared run history.
@@ -50,7 +50,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - The decision reads the embedded manifest, never the filename.
 - `push` refuses. No flag overrides a refusal.
 
-**Data directories.** Reads go nearest-first and writes furthest-first: scratch, user, extra-root, app-root.
+**Data directories.** Reads go nearest-first and writes furthest-first: scratch, user, extra-root, cnt-root.
 
 **Locking.** `exec`/`run` hold a shared `fcntl` lock on `.sqf`/`.sif` files. `remove` and `build --update` probe an exclusive lock first.
 

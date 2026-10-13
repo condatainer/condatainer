@@ -38,10 +38,10 @@ var removeCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(removeCmd)
 	removeCmd.Flags().StringP("dir", "D", "", "Limit to a specific image directory (substring match)")
-	removeCmd.Flags().StringP("layer", "l", "", "Limit to a data layer: u/user, r/app-root, e/extra-root")
+	removeCmd.Flags().StringP("layer", "l", "", "Limit to a data layer: u/user, r/cnt-root, e/extra-root")
 	removeCmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
-			return []string{"user", "app-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp
+			return []string{"user", "cnt-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp
 		})
 }
 

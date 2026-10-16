@@ -42,12 +42,12 @@ The one place that decides which binary runs for an external host tool. Nothing 
 
 ## fuse2fs that corrupts a writable image
 
-- `Fuse2fsProblem` says whether a `fuse2fs` loses the size change of a file that is rewritten shorter.
-  - A `fuse2fs` before 1.47.3 ignores the truncate in `open`. libfuse 3 passes that truncate to `open` instead of sending it separately.
-  - So the check needs both facts: the version, and whether the binary is linked against libfuse 3.
+- A `fuse2fs` before 1.47.3 ignores the truncate in `open`, and a file rewritten shorter keeps its old size.
+  - libfuse 3 passes that truncate to `open`. libfuse 2 sends it separately, so a `fuse2fs` on libfuse 2 is not affected.
+  - The check therefore needs both facts: the version, and whether the binary is linked against libfuse 3.
 - The libraries are read from the ELF header, not by running `ldd`, which executes the binary's loader.
 - A binary that is not ELF, or whose version cannot be parsed, is never blocked. A wrong refusal costs more than a missed warning.
-- The answer is cached per binary, like a version floor.
+- The answer is cached per binary.
 
 ## Not routed here
 

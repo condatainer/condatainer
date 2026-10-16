@@ -138,9 +138,9 @@ func (b Bin) CheckWritableImg() error {
 		return nil
 	}
 	if insideContainer() {
-		return fmt.Errorf("a writable image cannot be mounted: %s", problem)
+		return errors.New(problem)
 	}
-	return fmt.Errorf("a writable image cannot be mounted: %s; run `condatainer update --libexec apptainer` to install a fixed one", problem)
+	return fmt.Errorf("%s. Run `condatainer update --libexec apptainer` to install a fixed version", problem)
 }
 
 // requireZstd refuses singularity and an apptainer that cannot mount

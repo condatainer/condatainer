@@ -62,7 +62,7 @@ sources:
 
 func TestCheckReportsAValueAHigherLayerOverrides(t *testing.T) {
 	user := writeLayer(t, "user.yaml", "user", "build:\n  ncpus: 8\n")
-	site := writeLayer(t, "site.yaml", "app-root", "build:\n  ncpus: 4\n")
+	site := writeLayer(t, "site.yaml", "cnt-root", "build:\n  ncpus: 4\n")
 	settings.SetLayers([]settings.Layer{user, site})
 	t.Cleanup(func() { settings.SetLayers(nil) })
 
@@ -74,7 +74,7 @@ func TestCheckReportsAValueAHigherLayerOverrides(t *testing.T) {
 			info = append(info, f.Message)
 		}
 	}
-	if len(info) != 1 || info[0] != "build.ncpus in app-root is overridden by user" {
+	if len(info) != 1 || info[0] != "build.ncpus in cnt-root is overridden by user" {
 		t.Errorf("info = %v", info)
 	}
 }

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,5 +45,14 @@ func TestKeepPreviousHoldsTheReplacedBinary(t *testing.T) {
 		if got, err := os.ReadFile(prev); err != nil || string(got) != content {
 			t.Fatalf(".prev = %q, %v; want the replaced %q", got, err, content)
 		}
+	}
+}
+
+func TestLibexecHostError(t *testing.T) {
+	if err := libexecHostError(true); !errors.Is(err, errLibexecInContainer) {
+		t.Errorf("libexecHostError(true) = %v, want errLibexecInContainer", err)
+	}
+	if err := libexecHostError(false); err != nil {
+		t.Errorf("libexecHostError(false) = %v, want nil", err)
 	}
 }

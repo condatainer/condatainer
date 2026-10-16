@@ -277,14 +277,15 @@ var infoCmd = &cobra.Command{
 }
 
 // ---------------------------------------------------------
-// 4. Fsck Command
+// 4. Fscheck Command
 // ---------------------------------------------------------
 
-var fsckCmd = &cobra.Command{
-	Use:   "fsck [flags] <overlay>",
-	Short: "Verify filesystem integrity (e2fsck)",
-	Example: `  condatainer overlay fsck env.img     # Check and repair automatically
-  condatainer overlay fsck env.img -f  # Force a check even if marked clean`,
+var fscheckCmd = &cobra.Command{
+	Use:     "fscheck [flags] <overlay>",
+	Aliases: []string{"fsck"},
+	Short:   "Verify filesystem integrity (e2fsck)",
+	Example: `  condatainer overlay fscheck env.img     # Check and repair automatically
+  condatainer overlay fscheck env.img -f  # Force a check even if marked clean`,
 	Args: cobra.ExactArgs(1),
 
 	// Enable Smart Tab Completion for .img files
@@ -397,7 +398,7 @@ func init() {
 	overlayCmd.AddCommand(overlayCreateCmd)
 	overlayCmd.AddCommand(resizeCmd)
 	overlayCmd.AddCommand(infoCmd)
-	overlayCmd.AddCommand(fsckCmd)
+	overlayCmd.AddCommand(fscheckCmd)
 	overlayCmd.AddCommand(chownCmd)
 	overlayCmd.AddCommand(exportCmd)
 
@@ -412,7 +413,7 @@ func init() {
 	_ = resizeCmd.MarkFlagRequired("size")
 
 	// --- Check ---
-	fsckCmd.Flags().BoolP("force", "f", false, "Force check even if filesystem appears clean")
+	fscheckCmd.Flags().BoolP("force", "f", false, "Force check even if filesystem appears clean")
 
 	// --- Chown ---
 	chownCmd.Flags().IntP("uid", "u", os.Getuid(), "User ID to set")

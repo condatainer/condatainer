@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
 )
 
 // A frozen environment is always called env, so position is the only question

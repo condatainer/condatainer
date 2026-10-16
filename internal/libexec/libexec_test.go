@@ -111,12 +111,45 @@ func TestPathReportsOnlyInstalledTools(t *testing.T) {
 	}
 }
 
-func TestMessagesNameThePackage(t *testing.T) {
-	if got := NotProvisionedMessage("mksquashfs"); !strings.Contains(got, "update --libexec squashfs-tools") {
-		t.Errorf("NotProvisionedMessage(mksquashfs) = %q, want it to name squashfs-tools", got)
+// Apptainer keeps squashfuse_ll and fuse-overlayfs in its own helper directory.
+func TestPathFindsApptainersHelpers(t *testing.T) {
+	dir := withLibexecDir(t)
+	provisionedStub(t, dir)
+	helpers := filepath.Join(dir, "lib", "apptainer", "bin")
+	if err := utils.MkdirAllShared(helpers); err != nil {
+		t.Fatal(err)
 	}
-	if got := NotProvisionedMessage("debugfs"); strings.Contains(got, "update --libexec") {
-		t.Errorf("NotProvisionedMessage(debugfs) = %q, must not suggest an install", got)
+	want := filepath.Join(helpers, "squashfuse_ll")
+	if err := os.WriteFile(want, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := Path("squashfuse_ll"); !ok || got != want {
+		t.Errorf("Path(squashfuse_ll) = %s, %v; want %s, true", got, ok, want)
+	}
+}
+
+// A bundle with no micromamba still counts as a provisioned toolchain.
+func TestDirCountsABundleWithoutMicromamba(t *testing.T) {
+	dir := withLibexecDir(t)
+	if err := utils.MkdirAllShared(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, manifestName), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Dir(); !ok {
+		t.Error("Dir() did not count a directory holding MANIFEST.json")
+	}
+}
+
+func TestMessagesNameThePackage(t *testing.T) {
+	for name, pkg := range map[string]string{"mksquashfs": "apptainer", "fuse2fs": "apptainer", "micromamba": "micromamba"} {
+		if got := NotProvisionedMessage(name); !strings.Contains(got, "update --libexec "+pkg) {
+			t.Errorf("NotProvisionedMessage(%s) = %q, want it to name %s", name, got, pkg)
+		}
+	}
+	if got := NotProvisionedMessage("rsync"); strings.Contains(got, "update --libexec") {
+		t.Errorf("NotProvisionedMessage(rsync) = %q, must not suggest an install", got)
 	}
 }
 

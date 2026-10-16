@@ -207,7 +207,7 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 	login.Flags().StringVarP(&opts.username, "username", "u", "", "Registry username")
 	login.Flags().StringVarP(&opts.password, "password", "p", "", "Registry password or token")
 	login.Flags().BoolVar(&opts.passwordStdin, "password-stdin", false, "Read the password/token from stdin")
-	login.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Config layer to save in: u/user, e/extra-root, r/app-root")
+	login.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Config layer to save in: u/user, e/extra-root, r/cnt-root")
 
 	logout := &cobra.Command{
 		Use:   "logout [flags] <host>[/<owner>/<repo>]",
@@ -231,7 +231,7 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 			return nil
 		},
 	}
-	logout.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Config layer to remove from: u/user, e/extra-root, r/app-root")
+	logout.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Config layer to remove from: u/user, e/extra-root, r/cnt-root")
 
 	list := &cobra.Command{
 		Use:     "list",

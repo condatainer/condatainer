@@ -116,12 +116,12 @@ func TestKindParse(t *testing.T) {
 
 func TestResolveOrder(t *testing.T) {
 	user := fakeLayer{name: "user", texts: map[string]string{"test.int": "8"}}
-	site := fakeLayer{name: "app-root", texts: map[string]string{"test.int": "16"}}
+	site := fakeLayer{name: "cnt-root", texts: map[string]string{"test.int": "16"}}
 	use(t, user, site)
 
 	res, _ := Resolve("test.int")
 	if res.Value != "8" || res.Source != SourceLayer || res.Layer != "user" ||
-		len(res.Overridden) != 1 || res.Overridden[0] != (Entry{"app-root", "16"}) {
+		len(res.Overridden) != 1 || res.Overridden[0] != (Entry{"cnt-root", "16"}) {
 		t.Errorf("layers: %+v", res)
 	}
 	t.Setenv(EnvName("test.int"), "32")
@@ -164,9 +164,9 @@ func TestAllowEmpty(t *testing.T) {
 func TestBadValueIsSkippedAndNextSourceApplies(t *testing.T) {
 	use(t,
 		fakeLayer{name: "user", texts: map[string]string{"test.int": "abc"}},
-		fakeLayer{name: "app-root", texts: map[string]string{"test.int": "9"}})
+		fakeLayer{name: "cnt-root", texts: map[string]string{"test.int": "9"}})
 	res, _ := Resolve("test.int")
-	if res.Value != "9" || res.Layer != "app-root" {
+	if res.Value != "9" || res.Layer != "cnt-root" {
 		t.Errorf("%+v", res)
 	}
 	if !warned["bad|test.int|user"] {
@@ -345,9 +345,9 @@ var (
 func TestMergedListIsTheUnionHighestFirstWithOrigins(t *testing.T) {
 	use(t,
 		fakeLayer{name: "user", lists: map[string][]string{"test.merge": {"a", "b"}}},
-		fakeLayer{name: "app-root", lists: map[string][]string{"test.merge": {"b", "c"}}})
+		fakeLayer{name: "cnt-root", lists: map[string][]string{"test.merge": {"b", "c"}}})
 	res, _ := Resolve("test.merge")
-	if !slices.Equal(res.List, []string{"a", "b", "c"}) || !slices.Equal(res.Origins, []string{"user", "user", "app-root"}) {
+	if !slices.Equal(res.List, []string{"a", "b", "c"}) || !slices.Equal(res.Origins, []string{"user", "user", "cnt-root"}) {
 		t.Errorf("%v from %v", res.List, res.Origins)
 	}
 	if len(res.Overridden) != 0 {

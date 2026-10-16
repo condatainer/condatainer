@@ -147,23 +147,6 @@ func TestUpdateRejectsAnUnknownPackage(t *testing.T) {
 	}
 }
 
-func TestVerifyToolchainChecksOnlyWhatIsInstalled(t *testing.T) {
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "bin")
-	if err := utils.MkdirAllShared(bin); err != nil {
-		t.Fatal(err)
-	}
-	writeFakeVersionBin(t, bin, "micromamba", "2.0.5\n")
-	if err := verifyToolchain(context.Background(), dir); err != nil {
-		t.Errorf("verifyToolchain(micromamba only) = %v, want nil", err)
-	}
-
-	writeFakeVersionBin(t, bin, "apptainer", "apptainer version 1.3.0\n")
-	if err := verifyToolchain(context.Background(), dir); err == nil {
-		t.Error("verifyToolchain accepted an apptainer below the floor")
-	}
-}
-
 func TestVersionsRefusesWithNothingProvisioned(t *testing.T) {
 	withLibexecDir(t)
 	if _, err := Versions(context.Background()); err != ErrNotProvisioned {
@@ -181,7 +164,7 @@ func TestVersionsParsesEachBinary(t *testing.T) {
 	// prove that case reports "unknown" rather than failing the rest.
 	writeFakeVersionBin(t, bin, "apptainer", "apptainer version 1.5.2\n")
 	writeFakeVersionBin(t, bin, "mksquashfs", "mksquashfs version 4.6.1 (2023-08-19)\n")
-	writeFakeVersionBin(t, bin, "squashfuse", "squashfuse\n") // no version in output
+	writeFakeVersionBin(t, bin, "fuse2fs", "fuse2fs\n") // no version in output
 	writeFakeVersionBin(t, bin, "micromamba", "2.0.5\n")
 
 	versions, err := Versions(context.Background())
@@ -191,7 +174,7 @@ func TestVersionsParsesEachBinary(t *testing.T) {
 	want := map[string]string{
 		"apptainer":  "1.5.2",
 		"mksquashfs": "4.6.1",
-		"squashfuse": "unknown",
+		"fuse2fs":    "unknown",
 		"micromamba": "2.0.5",
 	}
 	got := map[string]string{}
@@ -202,67 +185,6 @@ func TestVersionsParsesEachBinary(t *testing.T) {
 		if got[name] != wantVersion {
 			t.Errorf("%s version = %q, want %q", name, got[name], wantVersion)
 		}
-	}
-}
-
-func TestEnsureFusermount3InBinLinksFromSbin(t *testing.T) {
-	prefix := t.TempDir()
-	sbin := filepath.Join(prefix, "sbin")
-	if err := utils.MkdirAllShared(sbin); err != nil {
-		t.Fatalf("failed to create sbin: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sbin, "fusermount3"), []byte("#!/bin/sh\n"), 0755); err != nil {
-		t.Fatalf("failed to write stub fusermount3: %v", err)
-	}
-	if err := utils.MkdirAllShared(filepath.Join(prefix, "bin")); err != nil {
-		t.Fatalf("failed to create bin: %v", err)
-	}
-
-	if err := ensureFusermount3InBin(prefix); err != nil {
-		t.Fatalf("ensureFusermount3InBin(): %v", err)
-	}
-
-	link, err := os.Readlink(filepath.Join(prefix, "bin", "fusermount3"))
-	if err != nil {
-		t.Fatalf("bin/fusermount3 not created as a symlink: %v", err)
-	}
-	if want := filepath.Join("..", "sbin", "fusermount3"); link != want {
-		t.Errorf("bin/fusermount3 -> %q, want %q", link, want)
-	}
-}
-
-func TestEnsureFusermount3InBinNoOpWhenAlreadyInBin(t *testing.T) {
-	prefix := t.TempDir()
-	bin := filepath.Join(prefix, "bin")
-	if err := utils.MkdirAllShared(bin); err != nil {
-		t.Fatalf("failed to create bin: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(bin, "fusermount3"), []byte("#!/bin/sh\n"), 0755); err != nil {
-		t.Fatalf("failed to write stub fusermount3: %v", err)
-	}
-
-	if err := ensureFusermount3InBin(prefix); err != nil {
-		t.Fatalf("ensureFusermount3InBin(): %v", err)
-	}
-	info, err := os.Lstat(filepath.Join(bin, "fusermount3"))
-	if err != nil {
-		t.Fatalf("bin/fusermount3 disappeared: %v", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		t.Error("ensureFusermount3InBin() replaced an existing bin/fusermount3 with a symlink")
-	}
-}
-
-func TestEnsureFusermount3InBinNoOpWhenNotInSbinEither(t *testing.T) {
-	prefix := t.TempDir()
-	if err := utils.MkdirAllShared(filepath.Join(prefix, "bin")); err != nil {
-		t.Fatalf("failed to create bin: %v", err)
-	}
-	if err := ensureFusermount3InBin(prefix); err != nil {
-		t.Fatalf("ensureFusermount3InBin(): %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(prefix, "bin", "fusermount3")); !os.IsNotExist(err) {
-		t.Error("ensureFusermount3InBin() created bin/fusermount3 out of nothing")
 	}
 }
 
@@ -286,13 +208,5 @@ func TestCheckFloorIgnoresExitStatus(t *testing.T) {
 	}
 	if err := CheckFloor(context.Background(), path, "debugfs"); err != nil {
 		t.Errorf("CheckFloor for a name with no floor = %v, want nil", err)
-	}
-}
-
-func TestSyncRejectsAnUnknownPackage(t *testing.T) {
-	withLibexecDir(t)
-	err := Sync(context.Background(), "e2fsprogs")
-	if err == nil || !strings.Contains(err.Error(), "unknown toolchain package") {
-		t.Errorf("Sync(e2fsprogs) error = %v, want an unknown-package error", err)
 	}
 }

@@ -87,7 +87,7 @@ func TestResolvedSourcesMergesLayers(t *testing.T) {
 	t.Cleanup(func() { configLayers = saved })
 	configLayers = []*Layer{
 		layerFromYAML(t, "user", "sources:\n  - lab: /user/lab\n"),
-		layerFromYAML(t, "app-root", "sources:\n  - lab: /site/lab\n  - cnt: https://site.invalid\n"),
+		layerFromYAML(t, "cnt-root", "sources:\n  - lab: /site/lab\n  - cnt: https://site.invalid\n"),
 	}
 
 	got := ResolvedSources()
@@ -97,7 +97,7 @@ func TestResolvedSourcesMergesLayers(t *testing.T) {
 	if got[0].Name != "lab" || got[0].Base != "/user/lab" || got[0].Layer != "user" {
 		t.Errorf("first = %+v, want the user's lab to win", got[0])
 	}
-	if got[1].Name != "cnt" || got[1].Layer != "app-root" {
+	if got[1].Name != "cnt" || got[1].Layer != "cnt-root" {
 		t.Errorf("second = %+v, want the site's cnt to survive", got[1])
 	}
 }

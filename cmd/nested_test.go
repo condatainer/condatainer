@@ -1,46 +1,14 @@
 package cmd
 
 import (
-	"context"
-	"github.com/condatainer/condatainer/internal/settings"
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/internal/build"
-	"github.com/condatainer/condatainer/internal/config"
-	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/settings"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
-
-func TestPlanNested(t *testing.T) {
-	const (
-		auto = nestedRunAuto
-		on   = nestedRunTrue
-		off  = nestedRunFalse
-	)
-	cases := []struct {
-		name      string
-		mode      string
-		libexec   bool
-		installed []string
-		want      nestedPlan
-	}{
-		{"false does nothing", off, true, []string{"1.5.3"}, nestedPlan{}},
-		{"libexec apptainer is bound", auto, true, []string{"1.5.3"}, nestedPlan{BindLibexec: true}},
-		{"libexec apptainer wins under true too", on, true, nil, nestedPlan{BindLibexec: true}},
-		{"newest installed overlay is mounted", auto, false, []string{"1.4.0", "1.5.3", "1.5.10"}, nestedPlan{Overlay: "1.5.10"}},
-		{"auto builds nothing", auto, false, nil, nestedPlan{}},
-		{"true builds when none installed", on, false, nil, nestedPlan{Build: true}},
-		{"true mounts an installed one instead of building", on, false, []string{"1.5.3"}, nestedPlan{Overlay: "1.5.3"}},
-	}
-	for _, c := range cases {
-		if got := planNested(c.mode, c.libexec, c.installed); got.BindLibexec != c.want.BindLibexec ||
-			got.Overlay != c.want.Overlay || got.Build != c.want.Build {
-			t.Errorf("%s: planNested = %+v, want %+v", c.name, got, c.want)
-		}
-	}
-}
 
 func TestNestedRunKeyNormalizesAndRefuses(t *testing.T) {
 	k, _ := settings.Lookup("nested_run")
@@ -54,45 +22,41 @@ func TestNestedRunKeyNormalizesAndRefuses(t *testing.T) {
 	}
 }
 
-// With nothing in libexec, nestedRun mounts the newest installed apptainer
-// overlay and leaves the caller's list alone; "false" adds nothing.
-func TestNestedRunMountsTheInstalledOverlay(t *testing.T) {
-	dir := t.TempDir()
-	stub := filepath.Join(dir, "apptainer--1.5.3.sqf")
-	if err := os.WriteFile(stub, []byte("stub"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	prevPaths := config.GlobalDataPaths
-	config.GlobalDataPaths.ImagesDirs = []string{dir}
-	t.Setenv("CNT_LIBEXEC", filepath.Join(dir, "libexec"))
-	build.InvalidateInstalledOverlays()
-	container.InvalidateInstalledOverlaysCache()
-	t.Cleanup(func() {
-		config.GlobalDataPaths = prevPaths
-		build.InvalidateInstalledOverlays()
-		container.InvalidateInstalledOverlaysCache()
-	})
+// libexec's apptainer is the only source: bound when installed, and the mode decides what its absence means.
+func TestNestedRun(t *testing.T) {
+	for _, installed := range []bool{true, false} {
+		dir := filepath.Join(t.TempDir(), "libexec")
+		bin := filepath.Join(dir, "bin")
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		names := []string{"micromamba"}
+		if installed {
+			names = append(names, "apptainer")
+		}
+		for _, name := range names {
+			if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Setenv("CNT_LIBEXEC", dir)
 
-	given := []string{"/x/samtools--1.0.sqf"}
-	settingstest.Override(t, "nested_run", nestedRunAuto)
-	got, bind, err := nestedRun(context.Background(), given)
-	if err != nil || bind {
-		t.Fatalf("nestedRun = %v, bind=%v, err=%v", got, bind, err)
-	}
-	if len(got) != 2 || got[0] != stub || got[1] != given[0] {
-		t.Errorf("overlays = %v, want %s first, then the caller's", got, stub)
-	}
-	if len(given) != 1 {
-		t.Error("the caller's slice was modified")
-	}
-
-	// The same file already named is not added twice.
-	if again, _, _ := nestedRun(context.Background(), got); len(again) != 2 {
-		t.Errorf("an overlay already in the list was added again: %v", again)
-	}
-
-	settingstest.Override(t, "nested_run", nestedRunFalse)
-	if got, _, _ := nestedRun(context.Background(), given); len(got) != 1 {
-		t.Errorf("false added overlays: %v", got)
+		for mode, want := range map[string]struct {
+			bind bool
+			err  string
+		}{
+			nestedRunAuto:  {bind: installed},
+			nestedRunFalse: {},
+			nestedRunTrue:  {bind: installed},
+		} {
+			if mode == nestedRunTrue && !installed {
+				want.err = "update --libexec apptainer"
+			}
+			settingstest.Override(t, "nested_run", mode)
+			bind, err := nestedRun()
+			if bind != want.bind || (want.err == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), want.err)) {
+				t.Errorf("installed=%v nested_run=%s: nestedRun = %v, %v; want %v, error containing %q", installed, mode, bind, err, want.bind, want.err)
+			}
+		}
 	}
 }

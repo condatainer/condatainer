@@ -331,12 +331,6 @@ func runScript(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Before submitting, so a nested_run build happens here and not on a node
-	// that may have no network.
-	if err := ensureNestedProvider(cmd.Context()); err != nil {
-		return err
-	}
-
 	// 3. In-job or in-container: always run locally (no nested submission)
 	if scheduler.IsInsideJob() || config.IsInsideContainer() {
 		return runLocally(cmd.Context(), contentScript, overlays, scriptSpecs, scriptArgs)
@@ -594,9 +588,9 @@ export -f module ml
 	rs := effectiveResourceSpec(specs)
 	gpuRequested := rs.Gpu != nil && rs.Gpu.Count > 0
 
-	// Resolved here, at the real launch, so a submitted job provides nested
-	// running from the node it actually runs on.
-	overlays, bindLibexec, err := nestedRun(ctx, overlays)
+	// Resolved here, at the real launch, so a submitted job binds libexec
+	// from the node it actually runs on.
+	bindLibexec, err := nestedRun()
 	if err != nil {
 		return err
 	}

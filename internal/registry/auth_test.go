@@ -48,7 +48,7 @@ func useLayers(t *testing.T, layers map[string]map[string]string) map[string]cre
 	t.Helper()
 	files := map[string]credential.File{}
 	var ordered []credential.File
-	for _, layer := range []string{"user", "extra-root", "app-root"} {
+	for _, layer := range []string{"user", "extra-root", "cnt-root"} {
 		users, ok := layers[layer]
 		if !ok {
 			continue

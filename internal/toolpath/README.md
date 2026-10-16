@@ -21,7 +21,7 @@ The one place that decides which binary runs for an external host tool. Nothing 
   - Then the tools bundled with the host apptainer, read from `apptainer buildcfg` once per process.
   - Then the FHS directories.
 - A host `mksquashfs` or `unsquashfs` below squashfs-tools 4.4 is skipped, with the reason kept for the error. A good copy later in the order can still win.
-- Nothing is special-cased. A name libexec never provisions, such as e2fsprogs, is simply not found there and falls through.
+- Nothing is special-cased. A name libexec does not provide, such as `rsync`, is simply not found there and falls through.
 
 ## Cache
 
@@ -36,12 +36,21 @@ The one place that decides which binary runs for an external host tool. Nothing 
 
 - `Resolve` and `Command` are for a host-side call with no bind mount to build. Examples are freeze's own packing and reading `conda-meta` out of an image.
 - A container-bound call needs the tool's containing directory bound in too, so the absolute path resolves inside the container.
-  - It bypasses this package and uses `libexec.ApptainerPath`, `MksquashfsPath` or `MicromambaPath`.
+  - It bypasses this package and uses `libexec.ApptainerPath`, `libexec.Path` or `libexec.MicromambaPath`.
 - `Command` is `Resolve`, `exec.CommandContext` and a debug log. It has no opinion about stdout, stderr or error shape.
   - Callers wrap the result in their own error type, since they need different information.
 
+## fuse2fs that corrupts a writable image
+
+- A `fuse2fs` before 1.47.3 ignores the truncate in `open`, and a file rewritten shorter keeps its old size.
+  - libfuse 3 passes that truncate to `open`. libfuse 2 sends it separately, so a `fuse2fs` on libfuse 2 is not affected.
+  - The check therefore needs both facts: the version, and whether the binary is linked against libfuse 3.
+- The libraries are read from the ELF header, not by running `ldd`, which executes the binary's loader.
+- A binary that is not ELF, or whose version cannot be parsed, is never blocked. A wrong refusal costs more than a missed warning.
+- The answer is cached per binary.
+
 ## Not routed here
 
-- Apptainer is a policy choice between two named candidates, gated by fakeroot and a zstd floor. `Resolve` has nothing to offer it.
+- Apptainer is a policy choice between two named candidates, gated by a zstd floor and, for a fakeroot exec, by where it runs. `Resolve` has nothing to offer it.
 - Scheduler tools and the proxy tools (`ssh`, `loginctl`) keep their own resolution.
-  - libexec never provisions them, so routing them here would only reach the `PATH` and FHS fallback.
+  - libexec does not provide them, so routing them here would only reach the `PATH` and FHS fallback.

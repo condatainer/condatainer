@@ -1,14 +1,22 @@
 # internal/libexec
 
-The self-provisioned toolchain: one micromamba prefix in one directory.
+The self-provisioned toolchain: one directory holding micromamba and the Apptainer bundle.
 
-- It always holds `micromamba`.
-- It holds `squashfs-tools`, `squashfuse`, `fuse-overlayfs` and an ordinary (non-fakeroot) `apptainer` only when the system lacks them or they are asked for by name.
+- `micromamba` is a standalone binary, `bin/micromamba`.
+- The Apptainer bundle is one release archive of `condatainer/libexec`.
+  - It holds `apptainer`, `mksquashfs`, `unsquashfs`, `squashfuse_ll`, `fuse-overlayfs`, `fusermount3`, `fuse2fs`, `mke2fs`, `e2fsck`, `tune2fs`, `debugfs`, `resize2fs` and a fakeroot.
+  - It is built for the oldest glibc CondaTainer supports, so one archive per architecture runs on every host.
 - It never contributes to an artifact's identity. It is host-local infrastructure, like the Apptainer binary itself.
-- A conda or script build creates it with `micromamba` alone when none is provisioned.
+- A conda or script build installs `micromamba` alone when none is installed.
 - A script build can call its `micromamba`, appended to `PATH` so anything the base provides wins.
   - That is a convenience, not an input. The version is not recorded, and a recipe is identified by its text.
-- Nothing is provisioned automatically. An ordinary `exec`, `run` or build never triggers a first-time download.
+- Nothing is installed automatically. An ordinary `exec`, `run` or build never triggers a first-time download.
+
+## Why a bundle
+
+- A host's own `fuse2fs`, `squashfuse` and `fuse-overlayfs` decide how an image behaves. Hosts differ, and an old `fuse2fs` on libfuse 3 silently keeps the old size of a file that is rewritten shorter.
+- The bundle carries the versions Apptainer was released with, so a run behaves the same everywhere.
+- Micromamba is separate. It is not part of Apptainer, has its own releases, and is needed even where the bundle is not.
 
 ## Placement
 
@@ -18,55 +26,43 @@ The self-provisioned toolchain: one micromamba prefix in one directory.
 - `CNT_LIBEXEC` is a variable only, with no config key, so no config layer can move it.
 - A container binds the directory whole, at its real path.
 - The name is `libexec`, not `tools`. "Tool" already means other things here. `libexec` is the FHS term for executables invoked by other programs.
+- The directory counts as installed when it has `bin/micromamba` or `MANIFEST.json`. Either one alone is a valid toolchain.
 
-## The package table
-
-- `packages` in `provision.go` is the one list of what a prefix may hold.
-  - Each entry has the conda name, its binaries, which are checked, which one is version-checked, and the floor.
-- `Provides`, `Installed`, `Versions`, `verifyToolchain` and every message naming a package derive from it.
-- What a prefix holds is read from its `bin/`, not from code. A prefix with only `micromamba` is complete and valid.
-- `micromamba` is the base. Its binary is what `Dir()` treats as "the toolchain is provisioned".
-
-## Create and update
+## Install and update
 
 - `update --libexec` takes the update lock first. Only someone who can write the directory can update it.
-- **No prefix yet.** A standalone micromamba, downloaded outside the prefix, installs into it at its final path.
-  - It runs `install` into an empty `conda-meta/`, since `create` refuses a directory that already holds the lock.
-  - A failed install clears the directory except the lock, so nothing half-built is reported as provisioned.
-  - A directory holding anything else is refused, never cleared, so a mistyped `CNT_LIBEXEC` loses nothing.
-- **A live prefix.** Its own micromamba installs missing named packages, then updates.
-  - It uses `update`, not `install`, because `install` leaves an already-satisfied spec at its current version.
-- Afterwards it links `fusermount3` into `bin/`, cleans the package cache, shares the tree with the parent group and verifies.
-- A failed update leaves what micromamba left. Re-running repairs it. There is no rollback copy.
-- `micromamba self-update` is not used. It swaps the binary but leaves `conda-meta/` recording the old version.
-- `conda-meta/` stays.
-  - Removing it hides the prefix from IDE scanners, but `install` would then forget every earlier package record.
-  - The cost is that the prefix can be offered as an environment.
+- **Bundle.** The newest release of `condatainer/libexec` is looked up, and the archive for this architecture is downloaded.
+  - Its sha256 is checked before anything is unpacked.
+  - It is unpacked into `.staging/` inside the toolchain, so renaming a file into place never crosses a filesystem.
+  - Apptainer and squashfs-tools are run from there and checked against their version floors before any installed file changes.
+  - Then each file is renamed over the old one, and `MANIFEST.json` goes last.
+- **Replacing files.** `MANIFEST.json` lists every file of the installed bundle.
+  - A file of the previous bundle that the new one lacks is removed.
+  - A file the manifest never listed is left alone, including `bin/micromamba`.
+  - A running process keeps its old inode when a file is renamed over it.
+- A failed update leaves the previous manifest. Running it again repairs the install. There is no rollback copy.
+- **Micromamba.** The standalone release for this platform is downloaded and checked beside `bin/micromamba`, then renamed over it.
+- A directory holding anything else is refused, never written into, so a mistyped `CNT_LIBEXEC` loses nothing.
 
-## Nothing leaks out of the prefix
+## Choosing a version
 
-- `-r <prefix>` alone does not contain micromamba.
-- It also sets `CONDA_PKGS_DIRS`, `XDG_CACHE_HOME` and a throwaway `HOME`.
-  - Otherwise micromamba writes to `~/.mamba/pkgs` and `~/.cache/conda`, and registers the prefix in `~/.conda/environments.txt`.
-  - No variable turns that registration off. On a shared toolchain the cache would land in whichever user ran the update.
-- The throwaway `HOME` cannot live inside the prefix, since an existing directory there makes `create` refuse.
-- `clean -a -f` is required. `-a` alone leaves the unpacked package directories, which micromamba considers in use.
+- A package is named `name` or `name@version`: `apptainer@1.5.4`, `micromamba@2.0`.
+  - Without a version, the newest release is installed.
+  - A partial version picks the newest release it matches: `1.5` is the newest `1.5.x`, and does not match `1.50.0`.
+  - A micromamba release tag carries a build number (`2.8.1-1`). Of two builds of one version, the higher wins.
+- The version asked for is the version installed, so naming an older one is a downgrade. There is no stored pin: the next update without a version moves to the newest.
+- A version is looked up in the releases listing, which holds the newest few hundred. A release older than that cannot be named.
+- Pre-releases and drafts are never chosen.
 
-## Baked-in absolute paths
+## The archive is untrusted until checked
 
-- Micromamba patches absolute paths into installed binaries, using the `-p` prefix given to `create`.
-  - `libfuse3` looks for `<prefix>/bin/fusermount3` before any `PATH` search.
-- So the prefix is created at the path it keeps and never renamed.
-- `bin/fusermount3` is linked to `../sbin/fusermount3` when the package installs it only in `sbin/`.
-- The path given to `-p` is symlink-resolved, since that string is what gets baked in and what a container binds.
-
-## Activation
-
-- Accessors return a binary's absolute path. They do not activate an environment.
-- The self-provisioned `apptainer` is the exception: it runs through a wrapper that sources the prefix's `etc/conda/activate.d/*.sh` first.
-  - This is required. Apptainer hung indefinitely mounting a large overlay when invoked unactivated.
-  - `CONDA_PREFIX` is set only per script, never exported, so it does not reach the containerized command.
-- `conda-meta/`, `activate.d`, `deactivate.d` and `envvars` are left in place, since any of them could matter for the same reason.
+- Only directories, regular files and symlinks are accepted.
+- A path with `..`, an absolute path, and a symlink that points outside the tree are refused.
+- Files get mode 755 when the archive marks them executable and 644 otherwise, and new directories get 755, whatever the umask.
+  - Another user can run the toolchain whatever the umask of whoever installed it.
+  - A file or directory also gets the group bits of the directory it lands in, so a group-writable install stays group-writable.
+- The same applies to micromamba: its binary is checked against the sha256 published beside it before it replaces the installed one.
+- There is no signature check. The sha256 comes from the same release as the archive, so it detects a bad download, not a bad release.
 
 ## Resolved paths
 
@@ -77,14 +73,17 @@ The self-provisioned toolchain: one micromamba prefix in one directory.
   - Apptainer's `--env` replaces a variable outright, so a prepend would have to happen in the script text anyway.
   - An absolute path cannot be shadowed by a same-named tool earlier in the container's `PATH`. A prepend can, silently.
 - A host-side caller needs only a runnable path, and gets one from `internal/toolpath`.
-- `ApptainerPath` also adds `BinDir()` to `PATH` for the Apptainer subprocess, since Apptainer needs `unsquashfs` and `mksquashfs` for some operations.
+- `Path(name)` looks in `bin/`, then in `lib/apptainer/bin/`, where the bundle keeps `squashfuse_ll` and `fuse-overlayfs`.
+  - Apptainer finds its own helpers beside itself.
+- The bundle is relocatable. Apptainer finds its configuration and helpers from its own location.
 
 ## Naming a missing tool
 
-- `Path(name)` returns a path only when the binary is installed in the provisioned `bin/`.
-  - It does not say why a tool is missing. `Provides` says whether the table can install it, and `Installed` whether the toolchain has it.
+- `Path(name)` returns a path only when the binary is installed in the toolchain.
+  - It does not say why a tool is missing. `Installed` says whether the toolchain has it.
 - `ErrNotProvisioned` is the Go sentinel for a caller that fails before starting a container.
 - `NotProvisionedMessage` is a plain string for a generated script or a host-side caller.
+  - It names the update command only for a tool this package installs.
   - `toolpath.NotFoundMessage` re-exports it, so callers that already import `toolpath` need not import this package for a message.
 
 ## Standalone
@@ -92,27 +91,24 @@ The self-provisioned toolchain: one micromamba prefix in one directory.
 - This package imports nothing under `internal/image`.
   - That lets `internal/toolpath` import it with no cycle. `internal/image/squashfs` needs `toolpath`, and `internal/image` must not depend on anything that depends back on its children.
 - It does not know `PATH` or the FHS directories. `toolpath.Resolve` decides which binary wins.
-  - It checks this package first, so the provisioned copy beats a same-named binary on `PATH`.
+  - It checks this package first, so the installed copy beats a same-named binary on `PATH`.
 - The lock mechanism sits in `internal/utils` so both packages reach it without importing each other.
 
 ## Locking
 
-- One non-blocking lock, `<prefix>/.libexec.lock`. `Update` holds it for its whole run, so two updates cannot interleave.
-  - It lives inside the prefix, so it needs no write access anywhere else. No package record lists it, so micromamba never touches it.
+- One non-blocking lock, `<toolchain>/.libexec.lock`. `Update` holds it for its whole run, so two updates cannot interleave.
+  - It lives inside the toolchain, so it needs no write access anywhere else. No manifest lists it.
   - A lock that cannot be created or opened for writing is reported as "not writable", never as another update.
 - A run takes no lock on the toolchain.
   - A reader may be unable to write the toolchain directory.
-  - An in-place update unlinks and relinks files, so a running process keeps its old inodes.
+  - An update renames files over the old ones, so a running process keeps its old inodes.
   - A reader lock would also block every update while anything runs.
   - The cost is a tool started mid-update that briefly sees a mix of old and new files, which fails loudly.
 
-## Verification
+## Version floors
 
-- `verifyToolchain` checks by output content, not exit status. `squashfuse` exits 254 for any argument-free call, though it prints its banner.
-- `micromamba` prints only a bare version, so it is not content-checked.
-- `mksquashfs` and `unsquashfs` take only `-version`. Everything else takes `--version`.
-- Two floors, checked only for installed packages.
+- Checked on the unpacked bundle before it is installed, and on a host binary before it is used.
   - apptainer `>= 1.4`. Below that it cannot mount a zstd-compressed SquashFS.
   - squashfs-tools `>= 4.4`. Below that `mksquashfs` cannot write zstd, and `unsquashfs` has no `-offset`, which reading a SquashFS inside a SIF needs.
-- The apptainer floor is independent of `runtime/apptainer.CheckZstdSupport`. Verifying a prefix must never touch that package's live-apptainer state.
-- A prefix that fails verification is reported, and re-running the update repairs it. `Dir()` still treats it as provisioned, since its `micromamba` runs the repair.
+- The floor is read from the binary's own output, not its exit status. `unsquashfs` prints its version and exits 1.
+- The apptainer floor is independent of `runtime/apptainer.CheckZstdSupport`. Checking a bundle must never touch that package's live-apptainer state.

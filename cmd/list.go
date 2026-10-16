@@ -46,10 +46,10 @@ func init() {
 	listCmd.Flags().BoolVarP(&listRemove, "remove", "r", false, "Remove listed overlays after confirmation (used with search terms)")
 	listCmd.Flags().BoolVarP(&listExact, "exact", "e", false, "Force exact full-name match even for a single term")
 	listCmd.Flags().StringP("dir", "D", "", "Limit to a specific image directory (substring match)")
-	listCmd.Flags().StringP("layer", "l", "", "Limit to a data layer: u/user, r/app-root, e/extra-root")
+	listCmd.Flags().StringP("layer", "l", "", "Limit to a data layer: u/user, r/cnt-root, e/extra-root")
 	listCmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
-			return []string{"user", "app-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp
+			return []string{"user", "cnt-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp
 		})
 	listCmd.Flags().BoolVarP(&listOne, "one", "1", false, "One entry per line (disable multi-column layout)")
 	listCmd.Flags().BoolVar(&listDescription, "description", false, "Show description for each overlay (default: off)")

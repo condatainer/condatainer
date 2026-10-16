@@ -122,7 +122,7 @@ func Setup(cfg SetupConfig) (*SetupResult, error) {
 					if clean, err := ext3.ShutDownCleanly(ol); err == nil && !clean {
 						imageDiagnostics = append(imageDiagnostics, Diagnostic{
 							Level:   "warn",
-							Message: fmt.Sprintf("%s was not shut down cleanly. Run `condatainer overlay fsck %s` to check it.", filepath.Base(ol), ol),
+							Message: fmt.Sprintf("%s was not shut down cleanly. Run `condatainer overlay fscheck %s` to check it.", filepath.Base(ol), ol),
 						})
 					}
 				}

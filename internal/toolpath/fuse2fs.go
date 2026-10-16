@@ -60,5 +60,5 @@ func fuse2fsProblem(path string) string {
 	if version == "" || utils.CompareVersions(version, fixedFuse2fs) >= 0 {
 		return ""
 	}
-	return fmt.Sprintf("fuse2fs %s at %s keeps the old size of a file that is rewritten shorter", version, path)
+	return fmt.Sprintf("fuse2fs %s (%s) has a bug that silently corrupts a file overwritten with shorter content", version, path)
 }

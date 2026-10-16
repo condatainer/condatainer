@@ -22,7 +22,6 @@
 
 - A launch that mounts a writable `.img` is refused when the `fuse2fs` it would use is older than 1.47.3 and linked against libfuse 3.
   - That `fuse2fs` keeps the old size of a file that is rewritten shorter. The image is damaged with no error, and `e2fsck` reports it clean.
-  - The refusal names `condatainer update --libexec apptainer`, whose bundle has a fixed `fuse2fs`.
 - libexec's apptainer is not checked. It mounts with the `fuse2fs` of its own bundle, which is only released when that `fuse2fs` passes the smoke test.
 - A `fuse2fs` whose version or libraries cannot be read never blocks a launch.
 

@@ -16,7 +16,7 @@ Checks run before anything is locked or mounted. Each describes a container that
 
 ## Unclean images
 
-- A writable `.img` whose superblock is not marked clean mounts with a warning that names `overlay fsck`.
+- A writable `.img` whose superblock is not marked clean mounts with a warning that names `overlay fscheck`.
   - Setup never repairs it. A repair modifies an image the user only asked to open.
   - The next clean unmount sets the flag again, so the first mount after an unclean stop is the only one that can warn.
 
@@ -95,8 +95,8 @@ Root selection has already run, so ordering never decides which overlay becomes 
 ## Nested running
 
 - `nested_run` decides whether a container can start containers of its own. The decision is made by the caller, not `Setup`.
-- The only source is the apptainer installed in `libexec/`, which is bound whole.
-- `auto` binds it when installed and stays silent when it is not. `true` refuses the launch when it is not installed. `false` binds nothing.
+- The only source is the apptainer installed in `libexec/`, which is bound whole. Nothing is built or mounted for it.
+- `true` refuses a launch without it, so a job that needs nested running fails at its start.
 
 ## GPU detection
 

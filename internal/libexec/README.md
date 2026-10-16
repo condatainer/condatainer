@@ -83,7 +83,7 @@ The self-provisioned toolchain: one directory holding micromamba and the Apptain
   - It does not say why a tool is missing. `Installed` says whether the toolchain has it.
 - `ErrNotProvisioned` is the Go sentinel for a caller that fails before starting a container.
 - `NotProvisionedMessage` is a plain string for a generated script or a host-side caller.
-  - It names `update --libexec apptainer` for every bundle tool and `update --libexec micromamba` for micromamba.
+  - It names the update command only for a tool this package installs.
   - `toolpath.NotFoundMessage` re-exports it, so callers that already import `toolpath` need not import this package for a message.
 
 ## Standalone

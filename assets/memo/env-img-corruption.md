@@ -50,7 +50,7 @@ The same steps with `fuse2fs` 1.47.0 on libfuse2 give 1058.
 - Non-sparse creation keeps its allocation: `mke2fs` runs with `-E nodiscard`.
 - Where `fallocate` is unsupported (for example NFS 3), zeros are written before formatting. Any other allocation failure fails the create or resize.
 - `Resize` and `CheckIntegrity` hold the exclusive lock for the whole operation.
-- A writable mount of an image whose superblock is not marked clean prints a warning that names `overlay fsck`. Nothing is repaired.
+- A writable mount of an image whose superblock is not marked clean prints a warning that names `overlay fscheck`. Nothing is repaired.
 - libexec holds an Apptainer bundle with `fuse2fs` 1.47.4, downloaded by `update --libexec apptainer`. Apptainer mounts a writable `.img` with the `fuse2fs` beside it.
 - A writable mount is refused when the `fuse2fs` it would use is older than 1.47.3 and linked against libfuse 3. The message names the update command.
 

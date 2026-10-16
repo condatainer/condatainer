@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/config"
@@ -88,7 +89,7 @@ func Prepare(ctx context.Context, options Options) (*Plan, error) {
 
 	if options.WritableImg && utils.IsImg(setupResult.LastImg) {
 		if err := bin.CheckWritableImg(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("cannot mount %s for writing: %w", filepath.Base(setupResult.LastImg), err)
 		}
 	}
 

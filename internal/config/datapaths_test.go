@@ -160,8 +160,8 @@ func TestSharedAndPersonalTierCollapseToOnePath(t *testing.T) {
 			t.Errorf("collapsed path repeated at [%d]", i+1)
 		}
 	}
-	if layer := ClassifyDataDir(shared); layer != LayerAppRoot {
-		t.Errorf("ClassifyDataDir = %s, want %s (writes depend on the shared label)", layer, LayerAppRoot)
+	if layer := ClassifyDataDir(shared); layer != LayerCntRoot {
+		t.Errorf("ClassifyDataDir = %s, want %s (writes depend on the shared label)", layer, LayerCntRoot)
 	}
 }
 
@@ -187,7 +187,7 @@ func TestBindsMergeAcrossLayers(t *testing.T) {
 	t.Cleanup(func() { configLayers = previous })
 	configLayers = []*Layer{
 		layerFromYAML(t, "user", "bind: [/data, '/ref:/ref:ro']\n"),
-		layerFromYAML(t, "app-root", "bind: ['/ref:/ref:ro', /lab]\n"),
+		layerFromYAML(t, "cnt-root", "bind: ['/ref:/ref:ro', /lab]\n"),
 	}
 
 	t.Setenv("CNT_CONFIG_BIND", "")

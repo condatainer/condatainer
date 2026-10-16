@@ -434,7 +434,7 @@ func requireTextScript(path string) error {
 	case text:
 		return nil
 	case utils.IsImg(path):
-		return fmt.Errorf("%s is not a text file; to check an overlay image, run `condatainer overlay fsck %s`", path, path)
+		return fmt.Errorf("%s is not a text file; to check an overlay image, run `condatainer overlay fscheck %s`", path, path)
 	case utils.IsSqf(path):
 		return fmt.Errorf("%s is not a text file; to check an overlay, run `condatainer info %s --validate`", path, path)
 	}

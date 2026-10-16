@@ -7,7 +7,7 @@ import (
 )
 
 // credentialLayers are the layers that can hold credentials, nearest first.
-var credentialLayers = []string{"user", "extra-root", "app-root"}
+var credentialLayers = []string{"user", "extra-root", "cnt-root"}
 
 // CredentialFile is a config layer's credential file, beside its config file,
 // whether or not it exists yet.

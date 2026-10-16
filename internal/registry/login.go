@@ -13,7 +13,7 @@ import (
 )
 
 // Login verifies a credential against the registry host in target and stores it in one config layer, under target itself: a bare host, or host/owner/repo to cover one repository.
-//   - The layer is "user", "extra-root" or "app-root".
+//   - The layer is "user", "extra-root" or "cnt-root".
 //   - The layer's directory must already exist unless it is the user's.
 func Login(ctx context.Context, target, layer, username, password string) error {
 	key, err := splitTarget(target)

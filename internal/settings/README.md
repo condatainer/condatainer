@@ -18,7 +18,7 @@ The registry of config keys. A package declares the keys it reads, and reads the
 - `MergeLists` makes a list the union of every layer, highest first and each element once. `Resolution.Origins` names the layer of each element.
 - A list key reads its environment variable split on `|`, or on `:` when there is no `|`. The first flag element replaces the config list.
 - `Get()` before any layer is installed returns the default. The in-container commands skip config and must stay safe.
-- Precedence is flag, `CNT_CONFIG_*`, layers (user, extra-root, app-root), default. An empty variable counts as unset.
+- Precedence is flag, `CNT_CONFIG_*`, layers (user, extra-root, cnt-root), default. An empty variable counts as unset.
 - A value a kind rejects is reported once and skipped. The next source applies, ending at the default.
   - A bad line in a config file never stops a command.
 - Layers are an interface, not config's file type, so the resolver is tested without files.

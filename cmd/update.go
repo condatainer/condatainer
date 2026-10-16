@@ -34,11 +34,15 @@ var updateCmd = &cobra.Command{
 - With no flags, both caches are refreshed.
 
 --libexec updates the toolchain instead.
-  Tools: apptainer, squashfs-tools, squashfuse, fuse-overlayfs.
+  apptainer: Apptainer and the tools it and CondaTainer use.
+  micromamba: the standalone micromamba binary.
+  With no name, both are installed or updated.
   Writes to $CNT_ROOT/libexec, or $CNT_LIBEXEC when set.`,
-	Example: `  condatainer update                       # Refresh recipe and helper caches
-  condatainer update --libexec             # Install missing tools, update the rest
-  condatainer update --libexec apptainer   # Install and update apptainer`,
+	Example: `  condatainer update                            # Refresh recipe and helper caches
+  condatainer update --libexec                  # Install or update apptainer and micromamba
+  condatainer update --libexec apptainer        # Install or update apptainer only
+  condatainer update --libexec apptainer@1.5.4  # A specific version
+  condatainer update --libexec apptainer@1.5    # The newest 1.5.x`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 && !updateLibexec {
 			return fmt.Errorf("tools can only be named with --libexec")
@@ -51,7 +55,7 @@ var updateCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(updateCmd)
-	updateCmd.Flags().BoolVar(&updateLibexec, "libexec", false, "Install missing tools and update the toolchain; name tools to install just those")
+	updateCmd.Flags().BoolVar(&updateLibexec, "libexec", false, "Install or update the toolchain; name apptainer or micromamba to do just that one")
 }
 
 // errLibexecInContainer is why --libexec does nothing inside a container.
@@ -95,22 +99,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if updateLibexec {
-		// libexec.Update holds its own lock and refuses internally if the
-		// toolchain is in use; no separate check needed here.
-		update := func() error { return libexec.Update(cmd.Context(), args...) }
-		if len(args) == 0 {
-			// Install what the system lacks, and update what is installed.
-			plan, report, warnings := planToolchain(probeSystem(cmd.Context()))
-			for _, line := range report {
-				utils.PrintMessage("  %s", line)
-			}
-			for _, line := range warnings {
-				utils.PrintWarning("%s", line)
-			}
-			update = func() error { return libexec.Sync(cmd.Context(), plan...) }
-		}
 		utils.PrintMessage("Updating the self-provisioned toolchain...")
-		if err := update(); err != nil {
+		if err := libexec.Update(cmd.Context(), args...); err != nil {
 			return fmt.Errorf("failed to update the toolchain: %w", err)
 		}
 		utils.PrintSuccess("Toolchain updated successfully.")

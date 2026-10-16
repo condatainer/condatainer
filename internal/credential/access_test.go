@@ -86,7 +86,7 @@ func TestFindingsReportWhoCanReplaceTheCredential(t *testing.T) {
 	if personal := Findings("user", credFile(t, 0o600, 0o770)); len(personal) != 1 || !personal[0].Warn {
 		t.Errorf("group replace in the user layer should warn: %+v", personal)
 	}
-	for _, layer := range []string{"user", "extra-root", "app-root"} {
+	for _, layer := range []string{"user", "extra-root", "cnt-root"} {
 		anyone := Findings(layer, credFile(t, 0o666, 0o777))
 		warned := false
 		for _, finding := range anyone {

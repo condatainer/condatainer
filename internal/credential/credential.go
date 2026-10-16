@@ -38,7 +38,7 @@ var ErrNotStored = errors.New("no stored credential")
 
 // File is one config layer's credential file.
 type File struct {
-	Layer string // "user", "extra-root" or "app-root"
+	Layer string // "user", "extra-root" or "cnt-root"
 	Path  string
 }
 

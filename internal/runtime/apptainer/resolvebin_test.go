@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
+	"github.com/condatainer/condatainer/internal/utils"
 	"os"
 	"path/filepath"
 	"strings"
@@ -102,7 +103,7 @@ func TestNormalFallsBackToSystem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Normal: %v", err)
 	}
-	if bin.Path != sysBin || bin.Libexec {
+	if bin.Path != sysBin {
 		t.Errorf("Normal = %+v, want the system binary %q", bin, sysBin)
 	}
 }
@@ -129,29 +130,47 @@ func TestNormalUsesLibexec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Normal: %v", err)
 	}
-	if bin.Path != binPath || !bin.Libexec {
+	if bin.Path != binPath {
 		t.Errorf("Normal = %+v, want the libexec binary %q", bin, binPath)
 	}
 }
 
-// Fakeroot and ForBuild use the system/module binary whatever the toolchain
-// state: only its setuid starter can escalate, which libexec's non-setuid
-// apptainer cannot.
-func TestFakerootAndForBuildUseSystemBinary(t *testing.T) {
+// A fakeroot exec uses the apptainer installed in libexec, else the system one.
+func TestFakerootUsesLibexecThenSystem(t *testing.T) {
 	dir := withLibexecTier(t)
 	resetApptainerState(t)
-	writeFakeBin(t, dir, "apptainer", "apptainer version 1.5.3")
 	sysBin := writeFakeBin(t, t.TempDir(), "apptainer", "apptainer version 1.5.3")
 	systemApptainer(t, sysBin)
 
-	for name, resolve := range map[string]func() (Bin, error){"Fakeroot": Fakeroot, "ForBuild": ForBuild} {
-		bin, err := resolve()
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if bin.Path != sysBin || bin.Libexec {
-			t.Errorf("%s = %+v, want the system binary %q", name, bin, sysBin)
-		}
+	bin, err := Fakeroot()
+	if err != nil || bin.Path != sysBin {
+		t.Fatalf("Fakeroot with no libexec apptainer = %+v, %v; want the system binary %q", bin, err, sysBin)
+	}
+
+	libexecBin := writeFakeBin(t, dir, "apptainer", "apptainer version 1.5.4")
+	bin, err = Fakeroot()
+	if err != nil || bin.Path != libexecBin {
+		t.Errorf("Fakeroot = %+v, %v; want the libexec binary %q", bin, err, libexecBin)
+	}
+}
+
+// A definition build uses the system apptainer, and libexec's only when the host has none.
+func TestForBuildUsesSystemThenLibexec(t *testing.T) {
+	dir := withLibexecTier(t)
+	resetApptainerState(t)
+	libexecBin := writeFakeBin(t, dir, "apptainer", "apptainer version 1.5.4")
+	sysBin := writeFakeBin(t, t.TempDir(), "apptainer", "apptainer version 1.5.3")
+	systemApptainer(t, sysBin)
+
+	bin, err := ForBuild()
+	if err != nil || bin.Path != sysBin {
+		t.Fatalf("ForBuild with a system apptainer = %+v, %v; want %q", bin, err, sysBin)
+	}
+
+	systemApptainer(t, filepath.Join(t.TempDir(), "no-apptainer"))
+	bin, err = ForBuild()
+	if err != nil || bin.Path != libexecBin {
+		t.Errorf("ForBuild with no system apptainer = %+v, %v; want the libexec binary %q", bin, err, libexecBin)
 	}
 }
 
@@ -159,6 +178,7 @@ func TestFakerootAndForBuildUseSystemBinary(t *testing.T) {
 // and singularity cannot at any version, so a fakeroot exec refuses rather than
 // failing later inside Apptainer's own mount step.
 func TestFakerootRefusesOldApptainerAndSingularity(t *testing.T) {
+	withLibexecTier(t)
 	resetApptainerState(t)
 	for _, c := range []struct{ name, output, want string }{
 		{"apptainer", "apptainer version 1.3.9", "zstd"},
@@ -173,6 +193,7 @@ func TestFakerootRefusesOldApptainerAndSingularity(t *testing.T) {
 
 // A definition build has no version check: its output is a sandbox.
 func TestForBuildAcceptsAnySystemBinary(t *testing.T) {
+	withLibexecTier(t)
 	resetApptainerState(t)
 	systemApptainer(t, writeFakeBin(t, t.TempDir(), "singularity", "singularity-ce version 3.0.0"))
 
@@ -183,6 +204,7 @@ func TestForBuildAcceptsAnySystemBinary(t *testing.T) {
 
 // A container has no setuid starter, so both refuse at once.
 func TestFakerootAndForBuildRefuseInsideContainer(t *testing.T) {
+	withLibexecTier(t)
 	resetApptainerState(t)
 	insideContainer = func() bool { return true }
 	systemApptainer(t, writeFakeBin(t, t.TempDir(), "apptainer", "apptainer version 1.5.3"))
@@ -191,36 +213,6 @@ func TestFakerootAndForBuildRefuseInsideContainer(t *testing.T) {
 		if _, err := resolve(); !errors.Is(err, ErrNeedsHost) {
 			t.Errorf("%s error = %v, want ErrNeedsHost", name, err)
 		}
-	}
-}
-
-// Apptainer shells out to unsquashfs/mksquashfs for some of its own
-// operations (extracting a .sqf to build a sandbox, or as a mount fallback),
-// on its own PATH — not anything a launched container's environment
-// controls. When the binary is the self-provisioned libexec copy, its own
-// bin/ (where those tools are provisioned alongside it) must be on that PATH
-// too, or Apptainer cannot find them itself.
-func TestRunApptainerPrependsLibexecBinToPath(t *testing.T) {
-	dir := withLibexecTier(t)
-	resetApptainerState(t)
-	binPath := writeFakeBin(t, dir, "apptainer", "unused")
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\necho \"$PATH\"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	bin, err := Normal()
-	if err != nil {
-		t.Fatalf("Normal: %v", err)
-	}
-
-	var out bytes.Buffer
-	if err := runApptainerWithOutput(context.Background(), bin, "exec", "", false, nil, &out, &out, nil, nil, 0); err != nil {
-		t.Fatalf("runApptainerWithOutput: %v", err)
-	}
-
-	libexecBin := filepath.Dir(binPath)
-	if !strings.Contains(out.String(), libexecBin) {
-		t.Errorf("subprocess PATH = %q, want it to contain %q", out.String(), libexecBin)
 	}
 }
 
@@ -274,5 +266,37 @@ func TestRunApptainerDropsUnsetEnv(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "KEEP_ME=1") {
 		t.Errorf("unrelated variable was dropped:\n%s", out.String())
+	}
+}
+
+// Apptainer's INFO lines are hidden with -q, except when debugging.
+func TestRunApptainerIsQuietUnlessDebug(t *testing.T) {
+	dir := withLibexecTier(t)
+	resetApptainerState(t)
+	binPath := writeFakeBin(t, dir, "apptainer", "unused")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\necho \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin, err := Normal()
+	if err != nil {
+		t.Fatalf("Normal: %v", err)
+	}
+
+	t.Cleanup(func() { utils.DebugMode = false })
+	for _, tc := range []struct {
+		debug bool
+		want  string
+	}{
+		{false, "-q exec image cmd"},
+		{true, "exec image cmd"},
+	} {
+		utils.DebugMode = tc.debug
+		var out bytes.Buffer
+		if err := runApptainerWithOutput(context.Background(), bin, "exec", "", false, nil, &out, &out, nil, nil, 0, "exec", "image", "cmd"); err != nil {
+			t.Fatalf("runApptainerWithOutput: %v", err)
+		}
+		if got := strings.TrimSpace(out.String()); got != tc.want {
+			t.Errorf("debug=%v: arguments = %q, want %q", tc.debug, got, tc.want)
+		}
 	}
 }

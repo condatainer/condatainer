@@ -73,8 +73,7 @@ func Prepare(ctx context.Context, options Options) (*Plan, error) {
 	fakeroot, fakerootDiagnostics := container.AutoEnableFakeroot(setupResult.LastImg, options.WritableImg, setupResult.Fakeroot)
 
 	// Resolved last, once fakeroot is final: fakeroot (explicit or
-	// auto-enabled) needs the system apptainer, everything else uses libexec's
-	// when installed and the system one otherwise.
+	// auto-enabled) is refused inside a container.
 	resolve := apptainer.Normal
 	if fakeroot {
 		resolve = apptainer.Fakeroot
@@ -85,6 +84,12 @@ func Prepare(ctx context.Context, options Options) (*Plan, error) {
 			return nil, fmt.Errorf("cannot start a nested container: %w", err)
 		}
 		return nil, err
+	}
+
+	if options.WritableImg && utils.IsImg(setupResult.LastImg) {
+		if err := bin.CheckWritableImg(); err != nil {
+			return nil, err
+		}
 	}
 
 	logger := logging.FromContext(ctx)

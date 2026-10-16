@@ -73,9 +73,9 @@ func unusable(err error) error {
 	found := !errors.As(err, &missing)
 	if insideContainer() {
 		if !found {
-			return errors.New("this container has no apptainer; start it again with `nested_run` enabled (`condatainer config set nested_run true`) or with an apptainer/<version> overlay mounted")
+			return errors.New("this container has no apptainer; start it again with `nested_run` enabled (`condatainer config set nested_run true`), which binds the apptainer installed in libexec")
 		}
-		return fmt.Errorf("the apptainer in this container is unusable: %w; start it again with `nested_run` enabled or with an apptainer/<version> overlay mounted", err)
+		return fmt.Errorf("the apptainer in this container is unusable: %w; start it again with `nested_run` enabled", err)
 	}
 	return fmt.Errorf("%w; install one with `condatainer update --libexec apptainer`", err)
 }

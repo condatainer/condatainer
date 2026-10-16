@@ -96,7 +96,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	resolvedOverlays, bindLibexec, err := nestedRun(cmd.Context(), resolvedOverlays)
+	bindLibexec, err := nestedRun()
 	if err != nil {
 		return err
 	}

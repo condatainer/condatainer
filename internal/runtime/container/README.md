@@ -86,7 +86,7 @@ Root selection has already run, so ordering never decides which overlay becomes 
 - A configured bind whose host path is missing is skipped. One config serves hosts that differ.
 - With a conda environment mounted, the self-provisioned toolchain directory is bound at the same path as on the host.
   - In-container `mm` and `env` then find `micromamba`, without the base image carrying one.
-- It is also bound when `nested_run` supplies apptainer, since apptainer needs its binary and libraries at the host path.
+- It is also bound for nested running, since apptainer needs its binary and libraries at the host path.
 - With `HOME` replaced, the container gets `--home <replacement>`, because Apptainer's default home is the passwd home and ignores `$HOME`. A `--home` the caller passes wins.
 - With `HOME` replaced, the real home is bound read-only at its own path. A nested call reads the config there through `CNT_REAL_HOME`.
   - Skipped when the replacement is inside the real home or the reverse. The config directory is then bound alone.
@@ -95,8 +95,8 @@ Root selection has already run, so ordering never decides which overlay becomes 
 ## Nested running
 
 - `nested_run` decides whether a container can start containers of its own. The decision is made by the caller, not `Setup`.
-- Providers, in order: the apptainer in `libexec/` (bound, never an overlay), else the newest installed `apptainer/<version>` overlay, else, only under `true`, one built on the spot.
-- `auto` builds nothing and stays silent when there is no provider.
+- The only source is the apptainer installed in `libexec/`, which is bound whole.
+- `auto` binds it when installed and stays silent when it is not. `true` refuses the launch when it is not installed. `false` binds nothing.
 
 ## GPU detection
 

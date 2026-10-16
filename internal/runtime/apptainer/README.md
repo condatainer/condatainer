@@ -8,7 +8,7 @@
 - `Normal` is for an ordinary launch.
   - libexec's apptainer when installed, so installing one is how a user chooses it over the host's.
   - Otherwise the host's, refused below the floor. The refusal names the way out, since a later failure inside Apptainer's mount step would not.
-  - Inside a container that advice cannot be followed, so the message points at `nested_run` or an apptainer overlay.
+  - Inside a container that advice cannot be followed, so the message points at `nested_run`.
 - libexec's apptainer is the one that ships its own `fuse2fs`, `squashfuse_ll`, `fuse-overlayfs` and fakeroot. A run behaves the same on every host that has it.
   - The host's apptainer mounts a writable `.img` with whatever `fuse2fs` the host has.
 - `Fakeroot` is `Normal`'s, refused at once inside a container with `ErrNeedsHost`.

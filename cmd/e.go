@@ -161,7 +161,7 @@ func runE(cmd *cobra.Command, args []string) error {
 		announceAutoload()
 	}
 
-	resolvedOverlays, bindLibexec, err := nestedRun(cmd.Context(), resolvedOverlays)
+	bindLibexec, err := nestedRun()
 	if err != nil {
 		return err
 	}

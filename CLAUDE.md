@@ -10,7 +10,7 @@ make test           # go test ./...
 go test -v ./internal/build -run TestParseScriptMetadata
 ```
 
-- Tests skip when `mksquashfs`, `squashfuse` or `fuse-overlayfs` are missing. Put the libexec `bin` on `PATH` to run them.
+- Tests skip when `mksquashfs`, `squashfuse` or `fuse-overlayfs` are missing. Put the libexec `bin` and `lib/apptainer/bin` on `PATH` to run them.
 - Tests that read config call `testenv.Isolate()` in `TestMain`. The root dir is cached, so isolating later is too late.
 - `golang.org/x/crypto` is replaced by `github.com/condatainer/x-crypto`. A workflow bumps it.
 
@@ -26,7 +26,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - `credential/`: per-layer `credentials.json` for registry logins and recipe-source tokens. Lookup and file permissions.
 - `helper/`, `helperhistory/`: helper service jobs and their shared run history.
 - `image/`: overlay CRUD (ext3, SquashFS, sif), freeze, resize, locking.
-- `libexec/`: self-provisioned toolchain (`mksquashfs`, `squashfuse`, `fuse-overlayfs`, `apptainer`) via micromamba.
+- `libexec/`: self-provisioned toolchain: micromamba, and the Apptainer bundle (`apptainer`, `mksquashfs`, `squashfuse_ll`, `fuse-overlayfs`, `fuse2fs`) downloaded from the `condatainer/libexec` release.
 - `logging/`: context-carried logger and raw-output writer.
 - `project/`: `cnt-lock/`, a project's pinned identities and vendored recipes.
 - `registry/`: OCI transport. Publish, resolve, verify, pull, login.

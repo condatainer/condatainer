@@ -22,13 +22,13 @@ import (
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/libexec"
 	"github.com/condatainer/condatainer/internal/toolpath"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // Bin is one resolved apptainer (or singularity) binary. A launch carries the
 // Bin its caller resolved, so nothing about which binary runs is package state.
 type Bin struct {
-	Path    string
-	Libexec bool // the self-provisioned copy in libexec/
+	Path string
 }
 
 // ErrNeedsHost reports an action that needs the host's apptainer: a container
@@ -84,7 +84,7 @@ func unusable(err error) error {
 // libexec, else the system/module one, which must be apptainer >= 1.4.
 func Normal() (Bin, error) {
 	if path, ok := libexec.ApptainerPath(); ok {
-		return remember(Bin{Path: path, Libexec: true}), nil
+		return remember(Bin{Path: path}), nil
 	}
 	bin, err := systemBin()
 	if err == nil {
@@ -96,39 +96,51 @@ func Normal() (Bin, error) {
 	return remember(bin), nil
 }
 
-// Fakeroot returns the apptainer for a fakeroot exec: the system/module one,
-// apptainer >= 1.4, since only its setuid starter can escalate. Never libexec's.
+// Fakeroot returns the apptainer for a fakeroot exec: Normal's, refused inside
+// a container, where a fakeroot namespace cannot be created.
 func Fakeroot() (Bin, error) {
 	if insideContainer() {
 		return Bin{}, fmt.Errorf("fakeroot exec %w", ErrNeedsHost)
 	}
-	bin, err := systemBin()
-	if err != nil {
-		return Bin{}, needSystem("fakeroot exec", err)
-	}
-	if err := bin.requireZstd("fakeroot exec"); err != nil {
-		return Bin{}, err
-	}
-	return remember(bin), nil
+	return Normal()
 }
 
 // ForBuild returns the apptainer for a .def build: the system/module one, with
-// no version check, since the output is a sandbox and no zstd overlay is
-// mounted during the build.
+// no version check since the output is a sandbox and no zstd overlay is mounted
+// during the build, else the one installed in libexec.
 func ForBuild() (Bin, error) {
 	if insideContainer() {
 		return Bin{}, fmt.Errorf("a definition build %w", ErrNeedsHost)
 	}
 	bin, err := systemBin()
-	if err != nil {
-		return Bin{}, needSystem("a definition build", err)
+	if err == nil {
+		return remember(bin), nil
 	}
-	return remember(bin), nil
+	if path, ok := libexec.ApptainerPath(); ok {
+		return remember(Bin{Path: path}), nil
+	}
+	return Bin{}, unusable(err)
 }
 
-// needSystem words a missing system apptainer for an action only that one can do.
-func needSystem(what string, err error) error {
-	return fmt.Errorf("%s needs the system apptainer: %w", what, err)
+// CheckWritableImg refuses a writable .img mount when the fuse2fs found for it
+// would corrupt the image, and says how to get one that does not.
+// The apptainer installed in libexec mounts with the fuse2fs beside it, which is not checked.
+func (b Bin) CheckWritableImg() error {
+	if path, ok := libexec.ApptainerPath(); ok && path == b.Path {
+		return nil
+	}
+	path, err := toolpath.Resolve("fuse2fs")
+	if err != nil {
+		return nil // Apptainer reports a missing fuse2fs itself
+	}
+	problem := toolpath.Fuse2fsProblem(path)
+	if problem == "" {
+		return nil
+	}
+	if insideContainer() {
+		return fmt.Errorf("a writable image cannot be mounted: %s", problem)
+	}
+	return fmt.Errorf("a writable image cannot be mounted: %s; run `condatainer update --libexec apptainer` to install a fixed one", problem)
 }
 
 // requireZstd refuses singularity and an apptainer that cannot mount
@@ -258,13 +270,12 @@ const defaultStopGrace = 5 * time.Second
 //   - procEnv is extra KEY=VALUE settings for apptainer's own environment, on top of the parent's. This is how APPTAINERENV_* reaches the container.
 //   - unsetEnv names variables removed from the inherited environment before procEnv is applied.
 //   - stopGrace is how long apptainer gets after a cancel's SIGTERM before it is killed. Zero means defaultStopGrace.
+//   - apptainer runs with -q unless debug mode is on, so its INFO lines are hidden and its warnings and errors still print.
 func runApptainerWithOutput(ctx context.Context, bin Bin, op string, imagePath string, capture bool, stdin io.Reader, stdout, stderr io.Writer, procEnv, unsetEnv []string, stopGrace time.Duration, args ...string) error {
-	var cmd *exec.Cmd
-	if dir, ok := libexec.Dir(); bin.Libexec && ok {
-		cmd = exec.CommandContext(ctx, "bash", append([]string{"-c", libexecActivationScript(dir), bin.Path}, args...)...)
-	} else {
-		cmd = exec.CommandContext(ctx, bin.Path, args...)
+	if !utils.DebugMode {
+		args = append([]string{"-q"}, args...)
 	}
+	cmd := exec.CommandContext(ctx, bin.Path, args...)
 
 	cmd.Stdin = stdin
 
@@ -291,13 +302,6 @@ func runApptainerWithOutput(ctx context.Context, bin Bin, op string, imagePath s
 			}
 		}
 		env = kept
-	}
-
-	// Apptainer needs unsquashfs/mksquashfs in PATH (e.g. to extract a .sqf
-	// into a sandbox). When the binary is the self-provisioned libexec copy,
-	// add its bin/ to PATH so it finds them there.
-	if bin.Libexec {
-		env = append(env, "PATH="+filepath.Dir(bin.Path)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
 
 	cmd.Env = append(env, procEnv...)
@@ -359,18 +363,6 @@ func runApptainerWithOutput(ctx context.Context, bin Bin, op string, imagePath s
 		}
 	}
 	return nil
-}
-
-func libexecActivationScript(prefix string) string {
-	q := "'" + strings.ReplaceAll(prefix, "'", `'\''`) + "'"
-	return fmt.Sprintf(`if [ -d %[1]s/etc/conda/activate.d ]; then
-  for __cnt_f in %[1]s/etc/conda/activate.d/*.sh; do
-    [ -e "$__cnt_f" ] || continue
-    CONDA_PREFIX=%[1]s . "$__cnt_f"
-  done
-fi
-exec "$0" "$@"
-`, q)
 }
 
 func captureOutput(stdoutBuf, stderrBuf *bytes.Buffer) string {

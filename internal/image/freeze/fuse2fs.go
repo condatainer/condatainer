@@ -18,7 +18,7 @@ var ErrNoSquashfuse = errors.New("no squashfuse available to read the artifact")
 
 // FindSquashfuse locates the squashfuse that mounts a frozen artifact, for MountedRun to run directly.
 //   - toolpath.Resolve prefers libexec's own copy, so one is found even on a host without it.
-//   - squashfuse_ll is tried first. libexec provisions both names from one package.
+//   - squashfuse_ll is tried first. libexec provides that one; a host may have only squashfuse.
 //   - Exported so internal/build can mount a .sif's partition the same way.
 func FindSquashfuse() (string, error) {
 	for _, name := range []string{"squashfuse_ll", "squashfuse"} {
@@ -26,13 +26,11 @@ func FindSquashfuse() (string, error) {
 			return p, nil
 		}
 	}
-	return "", fmt.Errorf("%w: %s", ErrNoSquashfuse, toolpath.NotFoundMessage("squashfuse"))
+	return "", fmt.Errorf("%w: %s", ErrNoSquashfuse, toolpath.NotFoundMessage("squashfuse_ll"))
 }
 
 // findFuse2fs locates the fuse2fs that will read the image, the same way
-// FindSquashfuse locates its counterpart — except libexec never provisions
-// it, so NotFoundMessage never suggests `condatainer update --libexec` for it:
-// that command would not help.
+// FindSquashfuse locates its counterpart.
 func findFuse2fs() (string, error) {
 	if p, err := toolpath.Resolve("fuse2fs"); err == nil {
 		return p, nil
@@ -41,8 +39,7 @@ func findFuse2fs() (string, error) {
 }
 
 // FindFuseOverlayfs locates the fuse-overlayfs that layers an image over its
-// snapshot. libexec provisions it, so a missing one is fixed by `condatainer
-// update --libexec`. Exported so that command can tell whether one is missing.
+// snapshot. A missing one is fixed by `condatainer update --libexec apptainer`.
 func FindFuseOverlayfs() (string, error) {
 	if p, err := toolpath.Resolve("fuse-overlayfs"); err == nil {
 		return p, nil

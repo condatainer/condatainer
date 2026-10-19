@@ -13,6 +13,7 @@ import (
 
 const (
 	recipesDir     = "recipes"
+	helpersDir     = "helpers"
 	indexDir       = "index"
 	descriptorFile = "source.json"
 )

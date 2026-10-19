@@ -5,9 +5,9 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -73,15 +73,27 @@ func RefreshRemoteMetadata(ctx context.Context, force bool, w io.Writer) (map[st
 	return merged, nil
 }
 
-// readHelperIndex reads index/helpers.json.gz, falling back to the plain file.
-
-// helperIndexNotFound identifies an optional index that a source does not
-// publish. Catalog HTTP errors include the response status in their stable
-// message; local sources return an os.ErrNotExist wrapper.
+// helperIndexNotFound identifies an optional index that an HTTP source does not
+// publish. The catalog's HTTP errors include the response status in their
+// stable message.
 func helperIndexNotFound(err error) bool {
-	return os.IsNotExist(err) || strings.HasSuffix(err.Error(), ": 404 Not Found")
+	return strings.HasSuffix(err.Error(), ": 404 Not Found")
 }
+
+// readHelperIndex lists the helpers a source offers.
+//   - A directory source is scanned for helpers/, and has no index to read.
+//   - An HTTP source lists them in index/helpers.json.gz, falling back to the plain file.
 func readHelperIndex(ctx context.Context, cat catalog.Catalog, src *catalog.Source, w io.Writer) (map[string]RemoteScriptEntry, error) {
+	if files, local, err := src.HelperFiles(); local {
+		if err != nil {
+			return nil, err
+		}
+		scripts := make(map[string]RemoteScriptEntry, len(files))
+		for _, file := range files {
+			scripts[filepath.Base(file)] = RemoteScriptEntry{Path: file}
+		}
+		return scripts, nil
+	}
 	if data, err := cat.ReadPath(ctx, src, helperIndexPath+".gz"); err == nil {
 		if plain, err := gunzip(data); err == nil {
 			return decodeHelperIndex(plain)
@@ -151,8 +163,11 @@ func UpdateRemoteScripts(ctx context.Context, name string, layer config.DataLaye
 	return nil
 }
 
+// ErrNotScript reports a downloaded helper that does not start with a #! line.
+var ErrNotScript = errors.New("helper: not a script")
+
 // installScripts reads each script from its source and writes it into dir, executable.
-//   - A script that cannot be read or written is reported and skipped.
+//   - A file that cannot be read or written, or does not start with #!, is reported and skipped. An installed copy stays as it was.
 func installScripts(ctx context.Context, entries map[string]RemoteScriptEntry, dir string, w io.Writer) {
 	for scriptName, entry := range entries {
 		if entry.Path == "" || entry.Source == nil {
@@ -162,6 +177,9 @@ func installScripts(ctx context.Context, entries map[string]RemoteScriptEntry, d
 			fmt.Fprintf(w, "Updating %s\n", scriptName)
 		}
 		data, err := entry.Source.ReadFresh(ctx, entry.Path)
+		if err == nil && !bytes.HasPrefix(data, []byte("#!")) {
+			err = fmt.Errorf("%w: %s has no #! line", ErrNotScript, entry.Path)
+		}
 		if err == nil {
 			err = writeExecutable(filepath.Join(dir, filepath.Base(entry.Path)), data)
 		}

@@ -24,6 +24,7 @@ import (
 
 var (
 	updateLibexec bool
+	updateForce   bool
 )
 
 var updateCmd = &cobra.Command{
@@ -47,6 +48,9 @@ var updateCmd = &cobra.Command{
 		if len(args) > 0 && !updateLibexec {
 			return fmt.Errorf("tools can only be named with --libexec")
 		}
+		if updateForce && !updateLibexec {
+			return fmt.Errorf("--force only works with --libexec")
+		}
 		return nil
 	},
 	SilenceUsage: true,
@@ -55,6 +59,7 @@ var updateCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(updateCmd)
+	updateCmd.Flags().BoolVar(&updateForce, "force", false, "With --libexec, reinstall a package that is already at the version to install")
 	updateCmd.Flags().BoolVar(&updateLibexec, "libexec", false, "Install or update the toolchain; name apptainer or micromamba to do just that one")
 }
 
@@ -100,10 +105,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	if updateLibexec {
 		utils.PrintMessage("Updating the self-provisioned toolchain...")
-		if err := libexec.Update(cmd.Context(), args...); err != nil {
+		if err := libexec.Update(cmd.Context(), updateForce, args...); err != nil {
 			return fmt.Errorf("failed to update the toolchain: %w", err)
 		}
-		utils.PrintSuccess("Toolchain updated successfully.")
+		utils.PrintSuccess("Toolchain is up to date.")
 		if versions, err := libexec.Versions(cmd.Context()); err == nil {
 			for _, v := range versions {
 				utils.PrintMessage("  %-10s %s", v.Name, v.Version)

@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -51,6 +52,29 @@ func (d *dirBackend) entries(_ context.Context) (map[string]*Entry, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// HelperFiles lists the helper scripts of a directory source: the files directly in helpers/.
+//   - local is false for a source served over HTTP, which lists its helpers in index/helpers.json.
+//   - Subdirectories and names that start with a dot are left out.
+//   - A directory source without helpers/ offers none.
+func (s *Source) HelperFiles() (files []string, local bool, err error) {
+	if isURL(s.Base) {
+		return nil, false, nil
+	}
+	entries, err := os.ReadDir(filepath.Join(s.Base, helpersDir))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, true, nil
+	}
+	if err != nil {
+		return nil, true, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			files = append(files, helpersDir+"/"+entry.Name())
+		}
+	}
+	return files, true, nil
 }
 
 // skipName drops files a collection carries but does not offer: documentation,

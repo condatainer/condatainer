@@ -196,6 +196,38 @@ func TestReadFreshBypassesCacheAndSendsToken(t *testing.T) {
 	}
 }
 
+// A directory source lists its helpers/ files, and an HTTP source leaves that to its index.
+func TestHelperFiles(t *testing.T) {
+	root := fakeSource(t)
+	for _, name := range []string{"svc", "notes.md", ".hidden"} {
+		path := filepath.Join(root, "helpers", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	local, err := Open(t.Context(), []Spec{{Name: "local", Base: root}}, Cache{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, isLocal, err := local[0].HelperFiles()
+	if err != nil || !isLocal || !slices.Equal(files, []string{"helpers/notes.md", "helpers/svc"}) {
+		t.Errorf("directory source: %v, local=%v, %v", files, isLocal, err)
+	}
+
+	srv := httptest.NewServer(http.FileServer(http.Dir(root)))
+	defer srv.Close()
+	remote, err := Open(t.Context(), []Spec{{Name: "remote", Base: srv.URL}}, Cache{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, isLocal, _ := remote[0].HelperFiles(); isLocal {
+		t.Error("an HTTP source was scanned as a directory")
+	}
+}
+
 func TestBackendsAgree(t *testing.T) {
 	root := fakeSource(t)
 	srv := httptest.NewServer(http.FileServer(http.Dir(root)))

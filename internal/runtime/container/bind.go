@@ -25,6 +25,20 @@ const (
 	BoundExecPath = BoundExecDir + "/condatainer"
 )
 
+// EnvBind names the variable that adds binds to every run, "|"-separated, each as host[:container[:opts]].
+const EnvBind = "CNT_BIND"
+
+// EnvBinds returns the binds listed in CNT_BIND.
+func EnvBinds() []string {
+	var out []string
+	for _, b := range strings.Split(os.Getenv(EnvBind), "|") {
+		if b = strings.TrimSpace(b); b != "" {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // tmpDirEnvVars are the temp directory environment variables read by name, in
 // priority order: CNT_TMPDIR is condatainer's own staging root, the rest are what
 // the C++ standard library's temp_directory_path() consults. The scheduler's

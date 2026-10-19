@@ -163,7 +163,6 @@ func TestVersionsParsesEachBinary(t *testing.T) {
 	// tool a version-shaped banner, one printing nothing --version-shaped to
 	// prove that case reports "unknown" rather than failing the rest.
 	writeFakeVersionBin(t, bin, "apptainer", "apptainer version 1.5.2\n")
-	writeFakeVersionBin(t, bin, "mksquashfs", "mksquashfs version 4.6.1 (2023-08-19)\n")
 	writeFakeVersionBin(t, bin, "fuse2fs", "fuse2fs\n") // no version in output
 	writeFakeVersionBin(t, bin, "micromamba", "2.0.5\n")
 
@@ -173,7 +172,6 @@ func TestVersionsParsesEachBinary(t *testing.T) {
 	}
 	want := map[string]string{
 		"apptainer":  "1.5.2",
-		"mksquashfs": "4.6.1",
 		"fuse2fs":    "unknown",
 		"micromamba": "2.0.5",
 	}

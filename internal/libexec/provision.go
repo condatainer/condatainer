@@ -258,7 +258,7 @@ type ToolVersion struct {
 }
 
 // reported lists the binaries whose version Versions shows.
-var reported = []string{PackageMicromamba, PackageApptainer, "mksquashfs", "fuse2fs"}
+var reported = []string{PackageMicromamba, PackageApptainer, "fuse2fs"}
 
 // Versions runs each installed reported binary's own version flag. A binary
 // that fails to run or prints nothing parseVersion recognizes reports

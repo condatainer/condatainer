@@ -40,6 +40,7 @@ The self-provisioned toolchain: one directory holding micromamba and the Apptain
   - A file of the previous bundle that the new one lacks is removed.
   - A file the manifest never listed is left alone, including `bin/micromamba`.
   - A running process keeps its old inode when a file is renamed over it.
+- A package already at the version to install is left alone, and `--force` reinstalls it.
 - A failed update leaves the previous manifest. Running it again repairs the install. There is no rollback copy.
 - **Micromamba.** The standalone release for this platform is downloaded and checked beside `bin/micromamba`, then renamed over it.
 - A directory holding anything else is refused, never written into, so a mistyped `CNT_LIBEXEC` loses nothing.

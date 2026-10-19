@@ -48,14 +48,15 @@ var floors = map[string]floor{
 
 // Update installs or updates the named packages, or both with no names, under an exclusive lock.
 //   - A package is named as name or name@version. The version may be partial: apptainer@1.5 is the newest 1.5.x.
+//   - A package already at the version to install is left alone unless force is set.
 //   - micromamba is a standalone binary from its own release.
 //   - apptainer is the bundle: apptainer and the tools it and CondaTainer use.
-func Update(ctx context.Context, tools ...string) error {
+func Update(ctx context.Context, force bool, tools ...string) error {
 	want, err := parseSpecs(tools)
 	if err != nil {
 		return err
 	}
-	return run(ctx, want, false)
+	return run(ctx, want, false, force)
 }
 
 // EnsureMicromamba installs micromamba when the toolchain has none, and does
@@ -67,12 +68,12 @@ func EnsureMicromamba(ctx context.Context) error {
 	if Installed(PackageMicromamba) {
 		return nil
 	}
-	return run(ctx, []spec{{name: PackageMicromamba}}, true)
+	return run(ctx, []spec{{name: PackageMicromamba}}, true, false)
 }
 
 // run installs the packages in want. ifMissing returns once the update lock is
 // held if micromamba is by then installed.
-func run(ctx context.Context, want []spec, ifMissing bool) error {
+func run(ctx context.Context, want []spec, ifMissing, force bool) error {
 	target, err := prepareTarget()
 	if err != nil {
 		return err
@@ -88,9 +89,9 @@ func run(ctx context.Context, want []spec, ifMissing bool) error {
 	for _, w := range want {
 		switch w.name {
 		case PackageMicromamba:
-			err = installMicromamba(ctx, target, w.version)
+			err = installMicromamba(ctx, target, w.version, force)
 		case PackageApptainer:
-			err = installBundle(ctx, target, w.version)
+			err = installBundle(ctx, target, w.version, force)
 		}
 		if err != nil {
 			return fmt.Errorf("failed to install %s: %w", w.name, err)
@@ -146,13 +147,20 @@ func acquireUpdateLock(path string) (*utils.FileLock, error) {
 
 // installMicromamba downloads the standalone micromamba for this platform to bin/micromamba.
 // version is empty for the newest release, or a full or partial version.
+//   - An installed micromamba of the release's version is kept unless force is set.
 //   - The binary is checked against its published sha256 before it replaces the installed one.
-func installMicromamba(ctx context.Context, target, version string) error {
+func installMicromamba(ctx context.Context, target, version string, force bool) error {
 	asset, err := micromambaAssetName()
 	if err != nil {
 		return err
 	}
 	base := micromambaDownloads + "/latest/download/"
+	bin := filepath.Join(target, "bin")
+	installed := ""
+	if !force {
+		installed = binaryVersion(filepath.Join(bin, PackageMicromamba), PackageMicromamba)
+	}
+	tag := ""
 	if version != "" {
 		rels, err := listReleases(ctx, micromambaAPI)
 		if err != nil {
@@ -162,14 +170,23 @@ func installMicromamba(ctx context.Context, target, version string) error {
 		for i, r := range rels {
 			tags[i] = r.Tag
 		}
-		tag, err := pickTag(tags, version)
-		if err != nil {
+		if tag, err = pickTag(tags, version); err != nil {
 			return fmt.Errorf("micromamba: %w", err)
 		}
+	} else if installed != "" {
+		var latest release
+		if getJSON(ctx, micromambaAPI+"/latest", &latest) == nil {
+			tag = latest.Tag
+		}
+	}
+	if tag != "" {
 		base = micromambaDownloads + "/download/" + tag + "/"
+		if m := tagPattern.FindStringSubmatch(tag); m != nil && m[1] == installed {
+			utils.PrintMessage("micromamba %s is already installed. Use --force to reinstall.", installed)
+			return nil
+		}
 	}
 
-	bin := filepath.Join(target, "bin")
 	if err := makeDir(bin); err != nil {
 		return notWritable(target, err)
 	}
@@ -250,6 +267,12 @@ func parseVersion(output string) string {
 	return versionPattern.FindString(strings.TrimSpace(output))
 }
 
+// binaryVersion runs the binary at path with name's version flag and returns the version it prints, "" when it cannot be read.
+func binaryVersion(path, name string) string {
+	out, _ := exec.Command(path, versionFlag(name)).CombinedOutput()
+	return parseVersion(string(out))
+}
+
 // ToolVersion is one provisioned binary's name and the version its own
 // version flag (see versionFlag) reported.
 type ToolVersion struct {
@@ -273,8 +296,7 @@ func Versions(ctx context.Context) ([]ToolVersion, error) {
 		if !ok {
 			continue
 		}
-		out, _ := exec.CommandContext(ctx, path, versionFlag(name)).CombinedOutput()
-		version := parseVersion(string(out))
+		version := binaryVersion(path, name)
 		if version == "" {
 			version = "unknown"
 		}

@@ -3,6 +3,9 @@ package apptainer
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -56,7 +59,57 @@ func Exec(ctx context.Context, imagePath string, command []string, opts *ExecOpt
 
 	logging.FromContext(ctx).Debug("executing in container", "image", imagePath, "command", strings.Join(command, " "))
 
-	return runApptainerWithOutput(ctx, opts.Bin, "exec", imagePath, false, opts.Stdin, opts.Stdout, opts.Stderr, envPrefixed(opts.Bin, opts.Env), opts.UnsetEnv, opts.StopGrace, args...)
+	setEnv, unsetEnv := nestedBindEnv(opts.Bind)
+	procEnv := append(envPrefixed(opts.Bin, opts.Env), setEnv...)
+	unsetEnv = append(slices.Clone(opts.UnsetEnv), unsetEnv...)
+
+	return runApptainerWithOutput(ctx, opts.Bin, "exec", imagePath, false, opts.Stdin, opts.Stdout, opts.Stderr, procEnv, unsetEnv, opts.StopGrace, args...)
+}
+
+// inheritedBindVars are the variables apptainer reads binds from. A container's apptainer exports its binds under them.
+var inheritedBindVars = []string{"APPTAINER_BIND", "SINGULARITY_BIND", "APPTAINER_BINDPATH", "SINGULARITY_BINDPATH"}
+
+// nestedBindEnv returns the bind variables of a nested launch with the entries already in binds removed.
+//   - set holds NAME=value for a variable that keeps some entries. unset names one left with none.
+//   - An entry is a duplicate when its container path is one of binds. The launch's own bind wins.
+//   - Outside a container nothing is changed.
+func nestedBindEnv(binds []string) (set, unset []string) {
+	if !insideContainer() {
+		return nil, nil
+	}
+	taken := make(map[string]bool, len(binds))
+	for _, b := range binds {
+		taken[bindDest(b)] = true
+	}
+	for _, name := range inheritedBindVars {
+		raw := os.Getenv(name)
+		if raw == "" {
+			continue
+		}
+		var keep []string
+		for _, entry := range strings.Split(raw, ",") {
+			if entry = strings.TrimSpace(entry); entry != "" && !taken[bindDest(entry)] {
+				keep = append(keep, entry)
+			}
+		}
+		switch joined := strings.Join(keep, ","); {
+		case joined == raw:
+		case len(keep) == 0:
+			unset = append(unset, name)
+		default:
+			set = append(set, name+"="+joined)
+		}
+	}
+	return set, unset
+}
+
+// bindDest is the container path of a host[:container[:opts]] bind.
+func bindDest(spec string) string {
+	parts := strings.SplitN(spec, ":", 3)
+	if len(parts) > 1 && parts[1] != "" {
+		return filepath.Clean(parts[1])
+	}
+	return filepath.Clean(parts[0])
 }
 
 // envPrefixed rewrites KEY=VALUE settings as APPTAINERENV_KEY=VALUE for the apptainer process's own environment.

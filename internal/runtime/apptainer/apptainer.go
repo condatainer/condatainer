@@ -281,16 +281,9 @@ func runApptainerWithOutput(ctx context.Context, bin Bin, op string, imagePath s
 
 	env := os.Environ()
 
-	// For build operations, unset SINGULARITY_BIND and APPTAINER_BIND to prevent
-	// mount conflicts during container build (e.g., when %post tries to access bound paths)
+	// A build drops every inherited bind, so %post does not see the host's mounts.
 	if op == "build" {
-		filteredEnv := make([]string, 0, len(env))
-		for _, e := range env {
-			if !strings.HasPrefix(e, "SINGULARITY_BIND=") && !strings.HasPrefix(e, "APPTAINER_BIND=") {
-				filteredEnv = append(filteredEnv, e)
-			}
-		}
-		env = filteredEnv
+		unsetEnv = append(slices.Clone(unsetEnv), inheritedBindVars...)
 	}
 
 	if len(unsetEnv) > 0 {

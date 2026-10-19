@@ -77,24 +77,18 @@ var rootCmd = &cobra.Command{
 		// Step 4: Replace HOME when home_override is set
 		config.ApplyHomeOverride()
 
-		// Warn if apptainer is still not accessible after auto-detection, unless
-		// the toolchain has its own or this is already inside a container, where
-		// none is reachable. Skip for all `config` commands so users can
-		// inspect/repair config without seeing contradictory warnings before
-		// re-detection runs.
+		// Warn if no apptainer is accessible, unless the toolchain has its own or
+		// this is already inside a container, where none is reachable. Skip for
+		// all `config` commands so users can inspect and repair config without
+		// seeing contradictory warnings.
 		isConfigCommand := strings.HasPrefix(cmd.CommandPath(), "condatainer config")
-		if bad := toolpath.InvalidSystemApptainer(); bad != "" && !isCompleteRequest && !isConfigCommand &&
-			!config.IsInsideContainer() {
-			if fallback := toolpath.SystemApptainer(); fallback != "" {
-				utils.PrintWarning("The host_apptainer setting %q is not usable; using %s from PATH instead.", bad, fallback)
-			} else {
-				utils.PrintWarning("The host_apptainer setting %q is not usable, and no apptainer was found on PATH.", bad)
-			}
-			utils.PrintHint("Run `condatainer config init`.")
-		} else if !isCompleteRequest && !isConfigCommand && !config.IsInsideContainer() &&
-			!libexec.Installed("apptainer") && !utils.ValidateBinary(toolpath.SystemApptainer()) {
+		warnApptainer := !isCompleteRequest && !isConfigCommand && !config.IsInsideContainer()
+		if bad := toolpath.InvalidSystemApptainer(); bad != "" && warnApptainer {
+			utils.PrintWarning("The host_apptainer setting %q is not usable, so it is ignored.", bad)
+		}
+		if warnApptainer && !libexec.Installed("apptainer") && !utils.ValidateBinary(toolpath.SystemApptainer()) {
 			utils.PrintWarning("Apptainer not accessible.")
-			utils.PrintHint("Run `condatainer config init`.")
+			utils.PrintHint("Run `condatainer update --libexec apptainer`.")
 		}
 
 		// Everything past config management and the registry expands bare names

@@ -105,21 +105,23 @@ func Fakeroot() (Bin, error) {
 	return Normal()
 }
 
-// ForBuild returns the apptainer for a .def build: the system/module one, with
-// no version check since the output is a sandbox and no zstd overlay is mounted
-// during the build, else the one installed in libexec.
+// ForBuild returns the apptainer for a .def build: the configured host_apptainer,
+// else the one installed in libexec, else the first on PATH. There is no version
+// check, since the output is a sandbox and no zstd overlay is mounted during the build.
 func ForBuild() (Bin, error) {
 	if insideContainer() {
 		return Bin{}, fmt.Errorf("a definition build %w", ErrNeedsHost)
 	}
+	if toolpath.HostApptainer() == "" {
+		if path, ok := libexec.ApptainerPath(); ok {
+			return remember(Bin{Path: path}), nil
+		}
+	}
 	bin, err := systemBin()
-	if err == nil {
-		return remember(bin), nil
+	if err != nil {
+		return Bin{}, unusable(err)
 	}
-	if path, ok := libexec.ApptainerPath(); ok {
-		return remember(Bin{Path: path}), nil
-	}
-	return Bin{}, unusable(err)
+	return remember(bin), nil
 }
 
 // CheckWritableImg refuses a writable .img mount when the fuse2fs found for it

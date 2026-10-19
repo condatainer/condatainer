@@ -75,6 +75,9 @@ Resolves a module name to a recipe, and a set of names to a build order.
 
 ## Decisions that may surprise you
 
+- **A downloaded file skips the cache.**
+  - The cache holds indexes, and a stale one is better than none.
+  - A script is fetched to be installed, so `ReadFresh` returns what is served now or fails.
 - **Sorting happens once, where the separator is visible.**
   - `#PH:` value lists are ordered by their separator. Comma sorts newest first, pipe keeps the author's order.
   - `values[0]` is the default offered to users.

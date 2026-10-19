@@ -126,6 +126,7 @@ type Catalog []*Source
 type backend interface {
 	entries(ctx context.Context) (map[string]*Entry, error)
 	read(ctx context.Context, path string) ([]byte, error)
+	readFresh(ctx context.Context, path string) ([]byte, error)
 }
 
 // Open prepares the configured sources. A source that cannot be reached keeps

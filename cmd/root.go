@@ -29,6 +29,19 @@ var (
 	yesMode   bool
 )
 
+// hostOnlyCommands run no container and expand no name, so they need neither an apptainer nor a default_distro.
+var hostOnlyCommands = []string{"condatainer update", "condatainer self-update", "condatainer scheduler", "condatainer proxy", "condatainer search"}
+
+func isHostOnlyCommand(cmd *cobra.Command) bool {
+	path := cmd.CommandPath()
+	for _, name := range hostOnlyCommands {
+		if path == name || strings.HasPrefix(path, name+" ") {
+			return true
+		}
+	}
+	return false
+}
+
 var rootCmd = &cobra.Command{
 	Use:           "condatainer",
 	Short:         "Pack tools, data and Conda environments into modular images and run them on HPC.",
@@ -82,7 +95,8 @@ var rootCmd = &cobra.Command{
 		// all `config` commands so users can inspect and repair config without
 		// seeing contradictory warnings.
 		isConfigCommand := strings.HasPrefix(cmd.CommandPath(), "condatainer config")
-		warnApptainer := !isCompleteRequest && !isConfigCommand && !config.IsInsideContainer()
+		hostOnly := isHostOnlyCommand(cmd)
+		warnApptainer := !isCompleteRequest && !isConfigCommand && !hostOnly && !config.IsInsideContainer()
 		if bad := toolpath.InvalidSystemApptainer(); bad != "" && warnApptainer {
 			utils.PrintWarning("The host_apptainer setting %q is not usable, so it is ignored.", bad)
 		}
@@ -91,11 +105,11 @@ var rootCmd = &cobra.Command{
 			utils.PrintHint("Run `condatainer update --libexec apptainer`.")
 		}
 
-		// Everything past config management and the registry expands bare names
-		// against the default distro; without one there is nothing to run. The
-		// registry takes full names only.
+		// Everything past config management, the registry and the host-only
+		// commands expands bare names against the default distro; without one
+		// there is nothing to run. The registry takes full names only.
 		isRegistryCommand := strings.HasPrefix(cmd.CommandPath(), "condatainer registry")
-		if !isCompleteRequest && !isConfigCommand && !isRegistryCommand && cmdName != "help" && !strings.HasPrefix(cmdName, "_") &&
+		if !isCompleteRequest && !isConfigCommand && !isRegistryCommand && !hostOnly && cmdName != "help" && !strings.HasPrefix(cmdName, "_") &&
 			config.ResolvedDefaultDistro() == "" {
 			ExitWithError("default_distro is not set. Run `condatainer config init`, or `condatainer config set default_distro <name>`")
 		}

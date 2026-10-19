@@ -14,7 +14,7 @@
 - `Fakeroot` is `Normal`'s, refused at once inside a container with `ErrNeedsHost`.
   - libexec's apptainer is not setuid. It fakeroots in a root-mapped user namespace, with its bundled `fakeroot-sysv` for the owner changes that namespace cannot make.
 - `ForBuild` is for a `.def` build's own `apptainer build --fakeroot`.
-  - The host's with no floor, else libexec's. The output is a sandbox, and `#DEP:` is data-only, so no zstd artifact is mounted during the build.
+  - The configured `host_apptainer`, else libexec's, else the one on `PATH`, with no floor. The output is a sandbox, and `#DEP:` is data-only, so no zstd artifact is mounted during the build.
   - Packing the sandbox runs `mksquashfs` on the host, never in a container.
   - It refuses at once inside a container with `ErrNeedsHost`.
 

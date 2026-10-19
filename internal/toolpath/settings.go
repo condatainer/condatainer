@@ -11,14 +11,13 @@ const keyApptainerName = "host_apptainer"
 
 var keyHostApptainer = settings.String(keyApptainerName,
 	settings.Default("apptainer"), settings.AllowEmpty(), settings.Order(2),
-	settings.Detect(FindApptainerBin),
 	settings.Check(func(stored string) error {
 		if !utils.ValidateBinary(stored) {
 			return fmt.Errorf("%q is not an executable file or a command on PATH", stored)
 		}
 		return nil
 	}),
-	settings.Help("The apptainer or singularity of the host or a module. Fakeroot and .def builds need it, and it is used when libexec has none."))
+	settings.Help("The apptainer or singularity of the host. It builds .def files, and it runs containers when libexec has no apptainer."))
 
 func init() {
 	keyHostApptainer.SetShow(func(string) string { return SystemApptainer() })
@@ -32,9 +31,17 @@ func configuredApptainer() string {
 	return ""
 }
 
+// HostApptainer is the host_apptainer that a layer, the environment or a flag sets, when it can be run. "" otherwise.
+func HostApptainer() string {
+	if bin := configuredApptainer(); bin != "" && utils.ValidateBinary(bin) {
+		return bin
+	}
+	return ""
+}
+
 // SystemApptainer is the apptainer of the system or a module: the configured one when it can be run, else the first on PATH. "" when there is none.
 func SystemApptainer() string {
-	if bin := configuredApptainer(); bin != "" && utils.ValidateBinary(bin) {
+	if bin := HostApptainer(); bin != "" {
 		return bin
 	}
 	return apptainerOnPath()

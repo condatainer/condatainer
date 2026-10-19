@@ -43,6 +43,11 @@ func (h *httpBackend) read(ctx context.Context, path string) ([]byte, error) {
 	return nil, err
 }
 
+// readFresh fetches one file past the cache, and does not cache it.
+func (h *httpBackend) readFresh(ctx context.Context, path string) ([]byte, error) {
+	return h.fetch(ctx, path)
+}
+
 // fetch reads one file of the source, sending its token when it has one.
 //   - A 401 with the token is retried once without it. If that answers, the token is set aside for later reads and TokenRefused is set.
 //   - If that is refused too, the error is ErrTokenRefused naming where the token is stored.

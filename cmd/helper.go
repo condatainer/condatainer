@@ -52,6 +52,7 @@ var (
 	helperPath   bool
 	helperList   bool
 	helperUpdate bool
+	helperLayer  string
 )
 
 var helperCmd = &cobra.Command{
@@ -71,7 +72,8 @@ var helperCmd = &cobra.Command{
   condatainer helper code-server -h      # Show its flags and defaults
   condatainer helper code-server config  # Show or save its defaults
   condatainer helper stop                # Stop a running app
-  condatainer helper --update            # Update helper scripts from remote`,
+  condatainer helper --update            # Update helper scripts from remote
+  condatainer helper --update -l e       # Update them into the extra-root layer`,
 	SilenceUsage:      true,
 	RunE:              runHelper,
 	ValidArgsFunction: completeHelperScripts,
@@ -80,8 +82,9 @@ var helperCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(helperCmd)
 	helperCmd.Flags().BoolVar(&helperPath, "path", false, "Show the helper scripts directory")
-	helperCmd.Flags().BoolVarP(&helperList, "list", "l", false, "List available helper scripts")
+	helperCmd.Flags().BoolVarP(&helperList, "list", "L", false, "List available helper scripts")
 	helperCmd.Flags().BoolVarP(&helperUpdate, "update", "u", false, "Update helper scripts from remote")
+	helperCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "With --update, install into this layer: u/user, r/cnt-root, e/extra-root")
 	settings.AddSwitch(helperCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run headless on this node)"))
 
 	// Stop flag parsing after the first positional argument so helper-specific flags
@@ -339,6 +342,11 @@ func runHelper(cmd *cobra.Command, args []string) error {
 		ExitWithError("helper commands are not available inside a scheduler job")
 	}
 
+	if helperLayer != "" && !helperUpdate {
+		cmd.SilenceUsage = true
+		ExitWithError("--layer only applies with --update")
+	}
+
 	// --- Path Mode ---
 	if helperPath {
 		if len(args) > 0 {
@@ -415,7 +423,15 @@ func runHelper(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
 			name = args[0]
 		}
-		if err := helper.UpdateRemoteScripts(cmd.Context(), name, false, os.Stdout); err != nil {
+		var layer config.DataLayer
+		if helperLayer != "" {
+			var err error
+			if layer, err = config.ParseDataLayer(helperLayer); err != nil {
+				cmd.SilenceUsage = true
+				ExitWithError("%v", err)
+			}
+		}
+		if err := helper.UpdateRemoteScripts(cmd.Context(), name, layer, false, os.Stdout); err != nil {
 			cmd.SilenceUsage = true
 			ExitWithError("%v", err)
 		}

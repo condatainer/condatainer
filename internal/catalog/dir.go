@@ -17,6 +17,10 @@ func (d *dirBackend) read(_ context.Context, path string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(d.src.Base, filepath.FromSlash(path)))
 }
 
+func (d *dirBackend) readFresh(ctx context.Context, path string) ([]byte, error) {
+	return d.read(ctx, path)
+}
+
 // entries walks recipes/ and parses each file's headers.
 func (d *dirBackend) entries(_ context.Context) (map[string]*Entry, error) {
 	root := filepath.Join(d.src.Base, recipesDir)

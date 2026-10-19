@@ -147,6 +147,55 @@ func TestInvalidDescriptorDoesNotDisableRecipes(t *testing.T) {
 
 // Both backends must produce the same Entry for the same recipe, which is the
 // one place the index and the walk can drift apart.
+// ReadFresh returns the file as it is now, with the source's token, while a read
+// through the cache still returns the copy cached before.
+func TestReadFreshBypassesCacheAndSendsToken(t *testing.T) {
+	root := fakeSource(t)
+	script := filepath.Join(root, "helpers", "svc")
+	if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(body string) {
+		if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	local, err := Open(t.Context(), []Spec{{Name: "local", Base: root}}, Cache{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("v1")
+	if got, err := local[0].ReadFresh(t.Context(), "helpers/svc"); err != nil || string(got) != "v1" {
+		t.Errorf("directory source: ReadFresh = %q, %v", got, err)
+	}
+
+	spec := Spec{Name: "lab", Base: privateServer(t, root, false), Token: NewToken("good", "127.0.0.1/lab", "user")}
+	remote, err := Open(t.Context(), []Spec{spec}, Cache{Dir: t.TempDir(), TTL: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := remote.ReadPath(t.Context(), remote[0], "helpers/svc"); err != nil || string(got) != "v1" {
+		t.Fatalf("cached read = %q, %v", got, err)
+	}
+	write("v2")
+	if got, _ := remote.ReadPath(t.Context(), remote[0], "helpers/svc"); string(got) != "v1" {
+		t.Errorf("a read through the cache = %q, want the cached v1", got)
+	}
+	if got, err := remote[0].ReadFresh(t.Context(), "helpers/svc"); err != nil || string(got) != "v2" {
+		t.Errorf("http source: ReadFresh = %q, %v, want v2", got, err)
+	}
+
+	anon := Spec{Name: "anon", Base: spec.Base}
+	noToken, err := Open(t.Context(), []Spec{anon}, Cache{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := noToken[0].ReadFresh(t.Context(), "helpers/svc"); err == nil {
+		t.Error("ReadFresh read a private source without its token")
+	}
+}
+
 func TestBackendsAgree(t *testing.T) {
 	root := fakeSource(t)
 	srv := httptest.NewServer(http.FileServer(http.Dir(root)))

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,8 +21,8 @@ const helperIndexPath = "index/helpers.json"
 
 // RemoteScriptEntry is one helper a source offers.
 type RemoteScriptEntry struct {
-	Path   string `json:"path"`
-	Source string `json:"-"` // the source base it came from
+	Path   string          `json:"path"`
+	Source *catalog.Source `json:"-"` // the source it came from
 }
 
 // RefreshRemoteMetadata reads the helper index from every configured source, merged with earlier sources winning.
@@ -62,7 +61,7 @@ func RefreshRemoteMetadata(ctx context.Context, force bool, w io.Writer) (map[st
 		}
 		for name, entry := range meta {
 			if _, exists := merged[name]; !exists {
-				entry.Source = src.Base
+				entry.Source = src
 				merged[name] = entry
 			}
 		}
@@ -113,8 +112,10 @@ func gunzip(data []byte) ([]byte, error) {
 }
 
 // UpdateRemoteScripts syncs helper scripts from the configured sources.
-// When name is non-empty, only that helper is updated.
-func UpdateRemoteScripts(ctx context.Context, name string, forceMetadata bool, w io.Writer) error {
+//   - When name is non-empty, only that helper is updated.
+//   - layer picks the data layer that receives them. Empty takes the furthest writable one.
+//   - Each script is read the way the source's recipes are, so its token and host apply.
+func UpdateRemoteScripts(ctx context.Context, name string, layer config.DataLayer, forceMetadata bool, w io.Writer) error {
 	entries, err := RefreshRemoteMetadata(ctx, forceMetadata, w)
 	if err != nil {
 		return fmt.Errorf("failed to read helper indexes: %w", err)
@@ -127,7 +128,12 @@ func UpdateRemoteScripts(ctx context.Context, name string, forceMetadata bool, w
 		entries = map[string]RemoteScriptEntry{name: entry}
 	}
 
-	helperScriptsDir, err := config.GetWritableHelperScriptsDir()
+	var helperScriptsDir string
+	if layer == "" {
+		helperScriptsDir, err = config.GetWritableHelperScriptsDir()
+	} else {
+		helperScriptsDir, err = config.GetWritableHelperScriptsDirIn(layer)
+	}
 	if err != nil {
 		return err
 	}
@@ -135,60 +141,45 @@ func UpdateRemoteScripts(ctx context.Context, name string, forceMetadata bool, w
 		return fmt.Errorf("failed to create helper scripts directory: %w", err)
 	}
 
-	if name == "" && w != nil {
-		fmt.Fprintln(w, "Updating all helper scripts...")
+	if w != nil {
+		fmt.Fprintf(w, "Updating helper scripts in %s (%s)\n", helperScriptsDir, config.ClassifyDataDir(helperScriptsDir))
 	}
-	for scriptName, entry := range entries {
-		if entry.Path == "" || entry.Source == "" {
-			continue
-		}
-		url := fmt.Sprintf("%s/%s", entry.Source, entry.Path)
-		dest := filepath.Join(helperScriptsDir, filepath.Base(entry.Path))
-		if w != nil {
-			fmt.Fprintf(w, "Updating %s\n", scriptName)
-		}
-		if err := downloadRemoteExecutable(ctx, url, dest); err != nil {
-			if w != nil {
-				fmt.Fprintf(w, "WARN: failed to update %s: %v\n", scriptName, err)
-			}
-			continue
-		}
-	}
+	installScripts(ctx, entries, helperScriptsDir, w)
 	if w != nil {
 		fmt.Fprintln(w, "Helper update finished.")
 	}
 	return nil
 }
 
-func downloadRemoteExecutable(ctx context.Context, url, destPath string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
+// installScripts reads each script from its source and writes it into dir, executable.
+//   - A script that cannot be read or written is reported and skipped.
+func installScripts(ctx context.Context, entries map[string]RemoteScriptEntry, dir string, w io.Writer) {
+	for scriptName, entry := range entries {
+		if entry.Path == "" || entry.Source == nil {
+			continue
+		}
+		if w != nil {
+			fmt.Fprintf(w, "Updating %s\n", scriptName)
+		}
+		data, err := entry.Source.ReadFresh(ctx, entry.Path)
+		if err == nil {
+			err = writeExecutable(filepath.Join(dir, filepath.Base(entry.Path)), data)
+		}
+		if err != nil && w != nil {
+			fmt.Fprintf(w, "WARN: failed to update %s: %v\n", scriptName, err)
+		}
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	destDir := filepath.Dir(destPath)
-	if err := utils.MkdirAllShared(destDir); err != nil {
-		return err
-	}
+// writeExecutable replaces the file at destPath with data and makes it executable.
+func writeExecutable(destPath string, data []byte) error {
 	out, err := utils.CreateFileWritable(destPath)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-
-	if _, err := io.Copy(out, resp.Body); err != nil {
+	if _, err := out.Write(data); err != nil {
 		return err
 	}
-	if err := utils.MakeExecutable(destPath); err != nil {
-		return err
-	}
-	return nil
+	return utils.MakeExecutable(destPath)
 }

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image/freeze"
 	"github.com/condatainer/condatainer/internal/logging"
@@ -19,7 +20,6 @@ import (
 	"github.com/condatainer/condatainer/internal/project/orchestrate"
 	"github.com/condatainer/condatainer/internal/project/publish"
 	"github.com/condatainer/condatainer/internal/project/restore"
-	"github.com/condatainer/condatainer/internal/registry"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -676,9 +676,13 @@ func newProjectRegistrySetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			destination, err := catalog.NormalizeRepository(args[0])
+			if err != nil {
+				return err
+			}
 			previous := l.OCI
 			l.OCI = lock.OCI{
-				Push:     registry.TrimBaseScheme(args[0]),
+				Push:     destination,
 				Audience: strings.ToLower(strings.TrimSpace(audience)),
 			}
 			if cmd.Flags().Changed("source") {

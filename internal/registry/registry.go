@@ -28,9 +28,8 @@ const (
 	AnnTitle = "org.opencontainers.image.title"
 	// AnnVersion is the name's last segment.
 	AnnVersion = "org.opencontainers.image.version"
-	// AnnCreated is manifest.build.created in RFC 3339, the same field the
-	// version-less date tag derives from, so tag and annotation cannot disagree.
-	// Omitted rather than filled with the push time.
+	// AnnCreated is manifest.build.created in RFC 3339. Omitted rather than
+	// filled with the push time.
 	AnnCreated = "org.opencontainers.image.created"
 	// AnnSource is the repository a package came from: the recipe collection the
 	// artifact recorded, or PublishRequest.Source when the publisher supplies one.
@@ -65,11 +64,9 @@ const (
 	// without downloading it.
 	AnnEquivScheme = "org.condatainer.equiv.scheme"
 	AnnEquivSHA    = "org.condatainer.equiv.sha256"
-	// AnnNoarch marks an artifact that declared #ARCH:noarch. Architecture is
-	// otherwise structural — the index child's platform descriptor — but "runs
-	// anywhere" has no platform spelling, and inferring it from a missing index
-	// is fragile.
-	AnnNoarch = "org.condatainer.noarch"
+	// AnnArch is the architecture the artifact runs on: amd64, arm64 or noarch.
+	// A pull compares it with the host before any transfer, and it outranks the tag.
+	AnnArch = "org.condatainer.arch"
 	// AnnSchema is the embedded metadata schema, so a future format is refused
 	// before the payload is transferred.
 	AnnSchema = "org.condatainer.schema"

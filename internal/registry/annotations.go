@@ -43,12 +43,7 @@ func Annotations(m meta.Manifest, compression string) map[string]string {
 	set(AnnIdentitySHA, m.Keys.Identity.SHA256)
 	set(AnnEquivScheme, m.Keys.Equiv.Scheme)
 	set(AnnEquivSHA, m.Keys.Equiv.SHA256)
-
-	// Architecture is otherwise structural — the index child's platform
-	// descriptor — but "runs anywhere" has no platform spelling.
-	if m.Platform.Arch == meta.ArchNone {
-		ann[AnnNoarch] = "true"
-	}
+	set(AnnArch, m.Platform.Arch)
 	return ann
 }
 
@@ -75,6 +70,8 @@ func keyRef(scheme, sha string) meta.KeyRef {
 type Want struct {
 	Name     string
 	Identity meta.KeyRef
+	// Arch is the host architecture, or empty for the running machine.
+	Arch string
 }
 
 // Check reports why the artifact described by ann cannot satisfy want, or nil.
@@ -87,6 +84,9 @@ func Check(ann map[string]string, want Want) error {
 	if err := checkSchema(ann); err != nil {
 		return err
 	}
+	if err := checkArch(ann, want.Arch); err != nil {
+		return err
+	}
 	if want.Name != "" && ann[AnnTitle] != want.Name {
 		return fmt.Errorf("%w: published as %q, wanted %q", ErrMismatch, ann[AnnTitle], want.Name)
 	}
@@ -97,6 +97,26 @@ func Check(ann map[string]string, want Want) error {
 		}
 	}
 	return nil
+}
+
+// checkArch reports whether the artifact runs on host, or on the running machine when host is empty.
+func checkArch(ann map[string]string, host string) error {
+	arch := ann[AnnArch]
+	if !ValidArch(arch) {
+		return fmt.Errorf("%w: it records no architecture", ErrNoAnnotations)
+	}
+	if host == "" {
+		host = meta.NativeArch()
+	}
+	if arch != ArchNoarch && arch != host {
+		return fmt.Errorf("%w: built for %s, this host is %s", ErrUnsupportedPlatform, arch, host)
+	}
+	return nil
+}
+
+// sameCollection reports whether two collection URLs name one repository.
+func sameCollection(a, b string) bool {
+	return strings.TrimRight(strings.TrimSpace(a), "/") == strings.TrimRight(strings.TrimSpace(b), "/")
 }
 
 // checkSchema reports whether this build can read the artifact's metadata.
@@ -113,10 +133,10 @@ func checkSchema(ann map[string]string) error {
 	}
 	switch {
 	case schema > meta.SchemaVersion:
-		return fmt.Errorf("%w: artifact schema is %d, this build reads %d — upgrade CondaTainer",
+		return fmt.Errorf("%w: overlay schema is %d, this build reads %d — upgrade CondaTainer",
 			ErrIncompatible, schema, meta.SchemaVersion)
 	case schema < meta.SchemaVersion:
-		return fmt.Errorf("%w: artifact schema is %d, this build reads %d — the artifact predates this format and must be rebuilt",
+		return fmt.Errorf("%w: overlay schema is %d, this build reads %d — the overlay predates this format and must be rebuilt",
 			ErrIncompatible, schema, meta.SchemaVersion)
 	}
 	return nil

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
@@ -24,6 +25,8 @@ import (
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image"
 )
+
+var buildTime = time.Date(2026, 7, 21, 13, 45, 0, 0, time.UTC)
 
 func requireSquashfsTools(t *testing.T) {
 	t.Helper()
@@ -89,8 +92,7 @@ func packImage(t *testing.T, s imageSpec) (path string, m meta.Manifest) {
 		Type:          s.typ,
 		BuildType:     buildType,
 		Platform:      platform,
-		// Stamped as a real build stamps it. A version-less artifact has no date
-		// tag without this, and no key scheme hashes it.
+		// Stamped as a real build stamps it. No key scheme hashes it.
 		Build: meta.Build{Created: buildTime},
 	}
 	if err := meta.StageBytes(dir, meta.RecipeFileName, []byte(s.recipe)); err != nil {
@@ -140,25 +142,15 @@ func publishImage(t *testing.T, f *fakeRegistry, repo, artifactPath string, ann 
 	// oras fetches the config blob like any other.
 	f.blobs[ocispec.DescriptorEmptyJSON.Digest] = ocispec.DescriptorEmptyJSON.Data
 
-	child := f.publish(t, repo, ocispec.MediaTypeImageManifest, ocispec.Manifest{
+	return f.publish(t, repo, ocispec.MediaTypeImageManifest, ocispec.Manifest{
 		Versioned:    specs.Versioned{SchemaVersion: 2},
 		MediaType:    ocispec.MediaTypeImageManifest,
 		ArtifactType: artifactType,
 		Config:       ocispec.DescriptorEmptyJSON,
 		Layers:       layers,
 		Annotations:  ann,
-	})
-	child.Platform = ptr(nativePlatform(t))
-	f.publish(t, repo, ocispec.MediaTypeImageIndex, ocispec.Index{
-		Versioned:   specs.Versioned{SchemaVersion: 2},
-		MediaType:   ocispec.MediaTypeImageIndex,
-		Manifests:   []ocispec.Descriptor{child},
-		Annotations: indexAnnotations(ann),
 	}, tag)
-	return child
 }
-
-func ptr[T any](v T) *T { return &v }
 
 // pullFixture is a published artifact and a place to install it.
 type pullFixture struct {

@@ -14,7 +14,7 @@
 - `Fakeroot` is `Normal`'s, refused at once inside a container with `ErrNeedsHost`.
   - libexec's apptainer is not setuid. It fakeroots in a root-mapped user namespace, with its bundled `fakeroot-sysv` for the owner changes that namespace cannot make.
 - `ForBuild` is for a `.def` build's own `apptainer build --fakeroot`.
-  - The host's with no floor, else libexec's. The output is a sandbox, and `#DEP:` is data-only, so no zstd artifact is mounted during the build.
+  - The configured `host_apptainer`, else libexec's, else the one on `PATH`, with no floor. The output is a sandbox, and `#DEP:` is data-only, so no zstd artifact is mounted during the build.
   - Packing the sandbox runs `mksquashfs` on the host, never in a container.
   - It refuses at once inside a container with `ErrNeedsHost`.
 
@@ -42,7 +42,10 @@
 
 - Every launch passes `-q`, so Apptainer's INFO lines are hidden. Warnings and errors still print.
   - `--debug` leaves it off, to show what Apptainer does.
-- Build operations unset `SINGULARITY_BIND` and `APPTAINER_BIND`, to avoid `%post` mount conflicts.
+- Build operations unset all four bind variables (`APPTAINER_BIND`, `SINGULARITY_BIND` and the two `*_BINDPATH`), to avoid `%post` mount conflicts.
+- A launch from inside a container removes the inherited bind entries it passes itself, from all four bind variables.
+  - The outer apptainer exports its binds under those variables, so a repeat is a duplicate-mount warning.
+  - Entries it does not pass, such as a site's, are kept.
 - Definition builds pass `--fix-perms`, so an OCI base's owner-unreadable files and no-write directories are packed with their content and removable at cleanup.
 - Cancellation sends SIGTERM, then SIGKILL after `ExecOptions.StopGrace` (5s when unset).
 - Environment values go as `APPTAINERENV_*`, not `--env`, which is parsed with CSV rules and also exposes values in `ps`.

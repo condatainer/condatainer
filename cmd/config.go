@@ -515,10 +515,7 @@ Without -l, the layer follows the install location:
 				detected[k.Name] = v
 			}
 		}
-		detectedApptainerBin, detectedSchedulerBin := detected["host_apptainer"], detected["scheduler.bin"]
-		if detectedApptainerBin == "" {
-			utils.PrintWarning("Neither 'apptainer' nor 'singularity' binary found (checked PATH and 'module avail'), so os overlays cannot be built.")
-		}
+		detectedSchedulerBin := detected["scheduler.bin"]
 
 		if err := config.SaveDetectedConfigTo(configPath, detected, lowerLayersFor(layerType)); err != nil {
 			ExitWithError("Failed to save config: %v", err)
@@ -537,11 +534,6 @@ Without -l, the layer follows the install location:
 		// Show what was detected
 		fmt.Println()
 		fmt.Println(utils.StyleTitle("Detected settings:"))
-		if detectedApptainerBin != "" {
-			fmt.Printf("  Apptainer: %s\n", detectedApptainerBin)
-		} else {
-			fmt.Printf("  Apptainer: %s\n", utils.StyleWarning("not found"))
-		}
 		if detectedSchedulerBin != "" {
 			fmt.Printf("  Scheduler: %s (%s)\n", detectedSchedulerBin, scheduler.TypeFromBin(detectedSchedulerBin))
 		} else {

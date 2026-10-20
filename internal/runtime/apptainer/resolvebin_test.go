@@ -154,23 +154,25 @@ func TestFakerootUsesLibexecThenSystem(t *testing.T) {
 	}
 }
 
-// A definition build uses the system apptainer, and libexec's only when the host has none.
-func TestForBuildUsesSystemThenLibexec(t *testing.T) {
+// A definition build uses the configured host_apptainer, else libexec's, else the one on PATH.
+func TestForBuildPrefersConfiguredThenLibexecThenPath(t *testing.T) {
 	dir := withLibexecTier(t)
 	resetApptainerState(t)
-	libexecBin := writeFakeBin(t, dir, "apptainer", "apptainer version 1.5.4")
-	sysBin := writeFakeBin(t, t.TempDir(), "apptainer", "apptainer version 1.5.3")
-	systemApptainer(t, sysBin)
-
-	bin, err := ForBuild()
-	if err != nil || bin.Path != sysBin {
-		t.Fatalf("ForBuild with a system apptainer = %+v, %v; want %q", bin, err, sysBin)
+	onPath := writeFakeBin(t, t.TempDir(), "apptainer", "apptainer version 1.5.2")
+	t.Setenv("PATH", filepath.Dir(onPath))
+	if bin, err := ForBuild(); err != nil || bin.Path != onPath {
+		t.Fatalf("ForBuild with only PATH = %+v, %v; want %q", bin, err, onPath)
 	}
 
-	systemApptainer(t, filepath.Join(t.TempDir(), "no-apptainer"))
-	bin, err = ForBuild()
-	if err != nil || bin.Path != libexecBin {
-		t.Errorf("ForBuild with no system apptainer = %+v, %v; want the libexec binary %q", bin, err, libexecBin)
+	libexecBin := writeFakeBin(t, dir, "apptainer", "apptainer version 1.5.4")
+	if bin, err := ForBuild(); err != nil || bin.Path != libexecBin {
+		t.Fatalf("ForBuild with libexec and PATH = %+v, %v; want the libexec binary %q", bin, err, libexecBin)
+	}
+
+	sysBin := writeFakeBin(t, t.TempDir(), "apptainer", "apptainer version 1.5.3")
+	systemApptainer(t, sysBin)
+	if bin, err := ForBuild(); err != nil || bin.Path != sysBin {
+		t.Errorf("ForBuild with host_apptainer set = %+v, %v; want %q", bin, err, sysBin)
 	}
 }
 

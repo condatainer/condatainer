@@ -92,7 +92,7 @@ func TestUpdateRefusals(t *testing.T) {
 		}
 		defer other.Close()
 
-		err = Update(context.Background())
+		err = Update(context.Background(), false)
 		if err == nil || !strings.Contains(err.Error(), "another condatainer update") {
 			t.Fatalf("Update() = %v, want another-update refusal", err)
 		}
@@ -113,7 +113,7 @@ func TestUpdateRefusals(t *testing.T) {
 			t.Skip("running with privileges that ignore permissions")
 		}
 
-		err := Update(context.Background())
+		err := Update(context.Background(), false)
 		if err == nil || !strings.Contains(err.Error(), "not writable") {
 			t.Fatalf("Update() = %v, want a not-writable refusal", err)
 		}
@@ -129,7 +129,7 @@ func TestUpdateRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err := Update(context.Background())
+		err := Update(context.Background(), false)
 		if err == nil || !strings.Contains(err.Error(), "is not a toolchain") {
 			t.Fatalf("Update() = %v, want a not-a-toolchain refusal", err)
 		}
@@ -141,7 +141,7 @@ func TestUpdateRefusals(t *testing.T) {
 
 func TestUpdateRejectsAnUnknownPackage(t *testing.T) {
 	withLibexecDir(t)
-	err := Update(context.Background(), "e2fsprogs")
+	err := Update(context.Background(), false, "e2fsprogs")
 	if err == nil || !strings.Contains(err.Error(), "unknown toolchain package") {
 		t.Errorf("Update(e2fsprogs) error = %v, want an unknown-package error", err)
 	}
@@ -163,7 +163,6 @@ func TestVersionsParsesEachBinary(t *testing.T) {
 	// tool a version-shaped banner, one printing nothing --version-shaped to
 	// prove that case reports "unknown" rather than failing the rest.
 	writeFakeVersionBin(t, bin, "apptainer", "apptainer version 1.5.2\n")
-	writeFakeVersionBin(t, bin, "mksquashfs", "mksquashfs version 4.6.1 (2023-08-19)\n")
 	writeFakeVersionBin(t, bin, "fuse2fs", "fuse2fs\n") // no version in output
 	writeFakeVersionBin(t, bin, "micromamba", "2.0.5\n")
 
@@ -173,7 +172,6 @@ func TestVersionsParsesEachBinary(t *testing.T) {
 	}
 	want := map[string]string{
 		"apptainer":  "1.5.2",
-		"mksquashfs": "4.6.1",
 		"fuse2fs":    "unknown",
 		"micromamba": "2.0.5",
 	}

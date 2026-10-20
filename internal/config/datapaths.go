@@ -523,6 +523,28 @@ func GetWritableHelperScriptsDir() (string, error) {
 	return "", fmt.Errorf("no writable helper scripts directory found (searched: %v)", paths)
 }
 
+// GetWritableHelperScriptsDirIn returns the first writable helper scripts directory belonging to one data layer.
+//   - Only LayerUser can hold two directories. They resolve in write order, scratch before user.
+func GetWritableHelperScriptsDirIn(layer DataLayer) (string, error) {
+	var candidates []SearchDir
+	for _, d := range helperWriteDirs() {
+		if ClassifyDataDir(d.Path) == layer {
+			candidates = append(candidates, d)
+		}
+	}
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("no helper scripts directory belongs to the %s layer", layer)
+	}
+	if dir := firstWritableDir(candidates); dir != "" {
+		return dir, nil
+	}
+	paths := make([]string, len(candidates))
+	for i, d := range candidates {
+		paths[i] = d.Path
+	}
+	return "", fmt.Errorf("no writable helper scripts directory in the %s layer (searched: %v)", layer, paths)
+}
+
 // GetWritableCacheDir returns the writable personal cache directory
 // ($XDG_CACHE_HOME/condatainer or ~/.cache/condatainer) — never a shared dir.
 func GetWritableCacheDir() (string, error) {

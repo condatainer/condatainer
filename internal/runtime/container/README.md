@@ -81,7 +81,8 @@ Root selection has already run, so ordering never decides which overlay becomes 
 ## Binds
 
 - A bind is its host and container path together. A later repeat wins, so an explicit remap or `ro` replaces an automatic bind.
-- Order: automatic binds, then configured `bind`, then `--bind`.
+- Order: automatic binds, then configured `bind`, then `CNT_BIND`, then `--bind`.
+- `CNT_BIND` adds to the configured list, where `CNT_CONFIG_BIND` replaces it. Entries are `|`-separated, since a bind holds `:`.
 - Configured binds apply to runs, never to builds, so a build does not depend on the host's binds.
 - A configured bind whose host path is missing is skipped. One config serves hosts that differ.
 - With a conda environment mounted, the self-provisioned toolchain directory is bound at the same path as on the host.

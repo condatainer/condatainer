@@ -143,7 +143,7 @@ func TestUpdateInstallsTheBundle(t *testing.T) {
 	dir := withLibexecDir(t)
 	serveRelease(t, "1.5.4", tarball(t, fakeBundle(t, "1.5.4", nil)), "")
 
-	if err := Update(context.Background(), PackageApptainer); err != nil {
+	if err := Update(context.Background(), false, PackageApptainer); err != nil {
 		t.Fatalf("Update(apptainer): %v", err)
 	}
 
@@ -172,7 +172,7 @@ func TestUpdateInstallsTheBundle(t *testing.T) {
 func TestUpdateReplacesThePreviousBundle(t *testing.T) {
 	dir := withLibexecDir(t)
 	serveRelease(t, "1.5.4", tarball(t, fakeBundle(t, "1.5.4", map[string]fakeFile{"lib/old-only": {body: "old"}})), "")
-	if err := Update(context.Background(), PackageApptainer); err != nil {
+	if err := Update(context.Background(), false, PackageApptainer); err != nil {
 		t.Fatalf("first update: %v", err)
 	}
 	mine := filepath.Join(dir, "bin", "micromamba")
@@ -181,7 +181,7 @@ func TestUpdateReplacesThePreviousBundle(t *testing.T) {
 	}
 
 	serveRelease(t, "1.5.5", tarball(t, fakeBundle(t, "1.5.5", nil)), "")
-	if err := Update(context.Background(), PackageApptainer); err != nil {
+	if err := Update(context.Background(), false, PackageApptainer); err != nil {
 		t.Fatalf("second update: %v", err)
 	}
 
@@ -197,11 +197,35 @@ func TestUpdateReplacesThePreviousBundle(t *testing.T) {
 	}
 }
 
+// A bundle of the installed Apptainer version is left alone unless force is set.
+func TestUpdateSkipsTheInstalledBundleUnlessForced(t *testing.T) {
+	dir := withLibexecDir(t)
+	serveRelease(t, "1.5.4", tarball(t, fakeBundle(t, "1.5.4", nil)), "")
+	if err := Update(context.Background(), false, PackageApptainer); err != nil {
+		t.Fatal(err)
+	}
+	extra := filepath.Join(dir, "lib", "extra")
+	serveRelease(t, "1.5.4", tarball(t, fakeBundle(t, "1.5.4", map[string]fakeFile{"lib/extra": {body: "x"}})), "")
+
+	if err := Update(context.Background(), false, PackageApptainer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(extra); !os.IsNotExist(err) {
+		t.Errorf("an unforced update reinstalled the same version: %v", err)
+	}
+	if err := Update(context.Background(), true, PackageApptainer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(extra); err != nil {
+		t.Errorf("a forced update did not reinstall: %v", err)
+	}
+}
+
 func TestUpdateRefusesACorruptArchive(t *testing.T) {
 	dir := withLibexecDir(t)
 	serveRelease(t, "1.5.4", tarball(t, fakeBundle(t, "1.5.4", nil)), strings.Repeat("0", 64))
 
-	err := Update(context.Background(), PackageApptainer)
+	err := Update(context.Background(), false, PackageApptainer)
 	if err == nil || !strings.Contains(err.Error(), "corrupt") {
 		t.Fatalf("Update() = %v, want a corrupt-download error", err)
 	}
@@ -222,7 +246,7 @@ func TestUpdateRefusesAnArchiveThatEscapes(t *testing.T) {
 		"an absolute symlink": {"bin/abs": {link: "/etc/passwd"}},
 	} {
 		serveRelease(t, "1.5.4", tarball(t, fakeBundle(t, "1.5.4", files)), "")
-		err := Update(context.Background(), PackageApptainer)
+		err := Update(context.Background(), false, PackageApptainer)
 		if err == nil {
 			t.Errorf("%s: Update() accepted the archive", name)
 		}
@@ -234,7 +258,7 @@ func TestUpdateRefusesABundleBelowTheFloor(t *testing.T) {
 	dir := withLibexecDir(t)
 	serveRelease(t, "1.3.0", tarball(t, fakeBundle(t, "1.3.0", nil)), "")
 
-	err := Update(context.Background(), PackageApptainer)
+	err := Update(context.Background(), false, PackageApptainer)
 	if err == nil || !strings.Contains(err.Error(), "below the required") {
 		t.Fatalf("Update() = %v, want a floor error", err)
 	}
@@ -272,6 +296,7 @@ func serveMicromamba(t *testing.T, tags []string, badSum string) {
 	mux.HandleFunc("/dl/latest/download/"+asset, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body(newest)) })
 	mux.HandleFunc("/dl/latest/download/"+asset+".sha256", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, sum(newest)) })
 	mux.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintf(w, "[%s]", strings.Join(list, ",")) })
+	mux.HandleFunc("/api/latest", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintf(w, `{"tag_name":%q}`, newest) })
 	oldAPI, oldDL := micromambaAPI, micromambaDownloads
 	micromambaAPI, micromambaDownloads = srv.URL+"/api", srv.URL+"/dl"
 	t.Cleanup(func() { micromambaAPI, micromambaDownloads = oldAPI, oldDL })
@@ -290,7 +315,7 @@ func TestUpdateInstallsMicromamba(t *testing.T) {
 	dir := withLibexecDir(t)
 	serveMicromamba(t, []string{"2.1.0-0", "2.0.5-1", "2.0.5-0"}, "")
 
-	if err := Update(context.Background(), PackageMicromamba); err != nil {
+	if err := Update(context.Background(), false, PackageMicromamba); err != nil {
 		t.Fatalf("Update(micromamba): %v", err)
 	}
 	if path, ok := MicromambaPath(); !ok || path != filepath.Join(dir, "bin", "micromamba") {
@@ -313,15 +338,45 @@ func TestUpdateChoosesAMicromambaVersion(t *testing.T) {
 		"micromamba@2.0.4": "2.0.4-0",
 		"micromamba@2":     "2.1.0-0",
 	} {
-		if err := Update(context.Background(), spec); err != nil {
+		if err := Update(context.Background(), false, spec); err != nil {
 			t.Fatalf("Update(%s): %v", spec, err)
 		}
 		if got := micromambaSays(t, dir); got != want {
 			t.Errorf("%s installed %s, want %s", spec, got, want)
 		}
 	}
-	if err := Update(context.Background(), "micromamba@3"); err == nil || !strings.Contains(err.Error(), "no release matches") {
+	if err := Update(context.Background(), false, "micromamba@3"); err == nil || !strings.Contains(err.Error(), "no release matches") {
 		t.Errorf("Update(micromamba@3) = %v, want no release matches", err)
+	}
+}
+
+// A micromamba of the newest release's version is left alone unless force is set, whatever its build.
+func TestUpdateSkipsTheInstalledMicromambaUnlessForced(t *testing.T) {
+	dir := withLibexecDir(t)
+	serveMicromamba(t, []string{"2.0.5-0"}, "")
+	if err := Update(context.Background(), false, PackageMicromamba); err != nil {
+		t.Fatal(err)
+	}
+	serveMicromamba(t, []string{"2.0.5-1", "2.0.5-0"}, "")
+
+	if err := Update(context.Background(), false, PackageMicromamba); err != nil {
+		t.Fatal(err)
+	}
+	if got := micromambaSays(t, dir); got != "2.0.5-0" {
+		t.Errorf("an unforced update replaced the same version with %s", got)
+	}
+	if err := Update(context.Background(), true, PackageMicromamba); err != nil {
+		t.Fatal(err)
+	}
+	if got := micromambaSays(t, dir); got != "2.0.5-1" {
+		t.Errorf("a forced update installed %s, want 2.0.5-1", got)
+	}
+	serveMicromamba(t, []string{"2.1.0-0", "2.0.5-1"}, "")
+	if err := Update(context.Background(), false, PackageMicromamba); err != nil {
+		t.Fatal(err)
+	}
+	if got := micromambaSays(t, dir); got != "2.1.0-0" {
+		t.Errorf("a newer release installed %s, want 2.1.0-0", got)
 	}
 }
 
@@ -329,12 +384,12 @@ func TestUpdateChoosesAMicromambaVersion(t *testing.T) {
 func TestUpdateKeepsMicromambaWhenTheChecksumFails(t *testing.T) {
 	dir := withLibexecDir(t)
 	serveMicromamba(t, []string{"2.0.5-0"}, "")
-	if err := Update(context.Background(), PackageMicromamba); err != nil {
+	if err := Update(context.Background(), false, PackageMicromamba); err != nil {
 		t.Fatal(err)
 	}
 	serveMicromamba(t, []string{"2.1.0-0", "2.0.5-0"}, "2.1.0-0")
 
-	err := Update(context.Background(), PackageMicromamba)
+	err := Update(context.Background(), false, PackageMicromamba)
 	if err == nil || !strings.Contains(err.Error(), "corrupt") {
 		t.Fatalf("Update() = %v, want a corrupt-download error", err)
 	}
@@ -356,7 +411,7 @@ func TestUpdateChoosesABundleVersion(t *testing.T) {
 	} {
 		dir := withLibexecDir(t)
 		serveReleases(t, releases...)
-		if err := Update(context.Background(), spec); err != nil {
+		if err := Update(context.Background(), false, spec); err != nil {
 			t.Fatalf("Update(%s): %v", spec, err)
 		}
 		if m, err := readManifest(dir); err != nil || m.Apptainer != want {
@@ -365,7 +420,7 @@ func TestUpdateChoosesABundleVersion(t *testing.T) {
 	}
 	withLibexecDir(t)
 	serveReleases(t, releases...)
-	if err := Update(context.Background(), "apptainer@2"); err == nil || !strings.Contains(err.Error(), "no release matches") {
+	if err := Update(context.Background(), false, "apptainer@2"); err == nil || !strings.Contains(err.Error(), "no release matches") {
 		t.Errorf("Update(apptainer@2) = %v, want no release matches", err)
 	}
 }
@@ -405,7 +460,7 @@ func TestUpdateSetsModesAndFollowsTheGroupBit(t *testing.T) {
 			t.Fatal(err)
 		}
 		serveRelease(t, "1.5.4", tarball(t, fakeBundle(t, "1.5.4", nil)), "")
-		if err := Update(context.Background(), PackageApptainer); err != nil {
+		if err := Update(context.Background(), false, PackageApptainer); err != nil {
 			t.Fatalf("%s: Update: %v", name, err)
 		}
 		for path, want := range map[string]os.FileMode{

@@ -63,10 +63,11 @@ func bundleArch() (string, error) {
 
 // installBundle downloads the bundle for this architecture, checks it and
 // installs it into target. version is empty for the newest release, or a full or partial version.
+//   - An installed bundle of the release's Apptainer version is kept unless force is set.
 //   - The archive is checked against its published sha256 before anything is unpacked.
 //   - It is unpacked into target/.staging and checked against the version floors before any installed file changes.
 //   - Files of the previous bundle that the new one lacks are removed, and every other file in target is left alone.
-func installBundle(ctx context.Context, target, version string) error {
+func installBundle(ctx context.Context, target, version string, force bool) error {
 	arch, err := bundleArch()
 	if err != nil {
 		return err
@@ -75,7 +76,13 @@ func installBundle(ctx context.Context, target, version string) error {
 	if err != nil {
 		return err
 	}
-	archive := fmt.Sprintf("libexec-%s-linux-%s.tar.gz", strings.TrimPrefix(rel.Tag, "v"), arch)
+	apptainerVersion := strings.TrimPrefix(rel.Tag, "v")
+	previous, _ := readManifest(target)
+	if !force && previous.Apptainer == apptainerVersion {
+		utils.PrintMessage("apptainer %s is already installed. Use --force to reinstall.", apptainerVersion)
+		return nil
+	}
+	archive := fmt.Sprintf("libexec-%s-linux-%s.tar.gz", apptainerVersion, arch)
 	archiveURL, sumURL := rel.assetURL(archive), rel.assetURL(archive+".sha256")
 	if archiveURL == "" || sumURL == "" {
 		return fmt.Errorf("release %s of the apptainer bundle has no %s", rel.Tag, archive)
@@ -116,7 +123,6 @@ func installBundle(ctx context.Context, target, version string) error {
 		}
 	}
 
-	previous, _ := readManifest(target)
 	return replaceFiles(target, tree, previous, next)
 }
 

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -105,6 +106,30 @@ func TestHelperScriptsShareTheImageOrder(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("[%d] = %s, want %s", i, got[i], want[i])
 		}
+	}
+}
+
+// A layer names the helper scripts directory that receives an update.
+func TestWritableHelperScriptsDirIn(t *testing.T) {
+	scratch, _, extraRoot, root := withAllTiers(t)
+	for _, dir := range []string{extraRoot, root} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for layer, want := range map[DataLayer]string{
+		LayerExtraRoot: filepath.Join(extraRoot, "helper-scripts"),
+		LayerCntRoot:   filepath.Join(root, "helper-scripts"),
+		LayerUser:      filepath.Join(scratch, "helper-scripts"),
+	} {
+		got, err := GetWritableHelperScriptsDirIn(layer)
+		if err != nil || got != want {
+			t.Errorf("%s: GetWritableHelperScriptsDirIn = %q, %v, want %q", layer, got, err, want)
+		}
+	}
+	if _, err := GetWritableHelperScriptsDirIn(LayerUnknown); err == nil {
+		t.Error("a layer no directory belongs to was accepted")
 	}
 }
 

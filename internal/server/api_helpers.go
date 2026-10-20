@@ -157,7 +157,7 @@ func (s *srv) handleHelpersUpdate(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		defer s.scheduleTaskCleanup(taskID)
 
-		if err := helper.UpdateRemoteScripts(ctx, req.Name, false, bw); err != nil {
+		if err := helper.UpdateRemoteScripts(ctx, req.Name, "", false, bw); err != nil {
 			broadcastResult(broker, ctx, err)
 			return
 		}

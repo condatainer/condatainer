@@ -105,21 +105,23 @@ func Fakeroot() (Bin, error) {
 	return Normal()
 }
 
-// ForBuild returns the apptainer for a .def build: the system/module one, with
-// no version check since the output is a sandbox and no zstd overlay is mounted
-// during the build, else the one installed in libexec.
+// ForBuild returns the apptainer for a .def build: the configured host_apptainer,
+// else the one installed in libexec, else the first on PATH. There is no version
+// check, since the output is a sandbox and no zstd overlay is mounted during the build.
 func ForBuild() (Bin, error) {
 	if insideContainer() {
 		return Bin{}, fmt.Errorf("a definition build %w", ErrNeedsHost)
 	}
+	if toolpath.HostApptainer() == "" {
+		if path, ok := libexec.ApptainerPath(); ok {
+			return remember(Bin{Path: path}), nil
+		}
+	}
 	bin, err := systemBin()
-	if err == nil {
-		return remember(bin), nil
+	if err != nil {
+		return Bin{}, unusable(err)
 	}
-	if path, ok := libexec.ApptainerPath(); ok {
-		return remember(Bin{Path: path}), nil
-	}
-	return Bin{}, unusable(err)
+	return remember(bin), nil
 }
 
 // CheckWritableImg refuses a writable .img mount when the fuse2fs found for it
@@ -281,16 +283,9 @@ func runApptainerWithOutput(ctx context.Context, bin Bin, op string, imagePath s
 
 	env := os.Environ()
 
-	// For build operations, unset SINGULARITY_BIND and APPTAINER_BIND to prevent
-	// mount conflicts during container build (e.g., when %post tries to access bound paths)
+	// A build drops every inherited bind, so %post does not see the host's mounts.
 	if op == "build" {
-		filteredEnv := make([]string, 0, len(env))
-		for _, e := range env {
-			if !strings.HasPrefix(e, "SINGULARITY_BIND=") && !strings.HasPrefix(e, "APPTAINER_BIND=") {
-				filteredEnv = append(filteredEnv, e)
-			}
-		}
-		env = filteredEnv
+		unsetEnv = append(slices.Clone(unsetEnv), inheritedBindVars...)
 	}
 
 	if len(unsetEnv) > 0 {

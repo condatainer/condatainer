@@ -150,3 +150,9 @@ func (c Catalog) Open(ctx context.Context, name string, vars map[string]string) 
 func (c Catalog) ReadPath(ctx context.Context, s *Source, path string) ([]byte, error) {
 	return s.b.read(ctx, path)
 }
+
+// ReadFresh reads one file of the source past the cache, for a file that is
+// downloaded rather than indexed. It sends the source's token like any read.
+func (s *Source) ReadFresh(ctx context.Context, path string) ([]byte, error) {
+	return s.b.readFresh(ctx, path)
+}

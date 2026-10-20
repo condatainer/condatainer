@@ -91,3 +91,15 @@ func TestReplacedHomeFlags(t *testing.T) {
 		t.Errorf("flags beside a user --home: %v", got)
 	}
 }
+
+// CNT_BIND lists binds separated by "|", so a remap with ":" stays one bind.
+func TestEnvBinds(t *testing.T) {
+	t.Setenv(EnvBind, " /a | /b:/c:ro ||")
+	if got, want := EnvBinds(), []string{"/a", "/b:/c:ro"}; !slices.Equal(got, want) {
+		t.Errorf("EnvBinds() = %v, want %v", got, want)
+	}
+	t.Setenv(EnvBind, "")
+	if got := EnvBinds(); len(got) != 0 {
+		t.Errorf("EnvBinds() = %v, want none", got)
+	}
+}

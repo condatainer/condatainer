@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/errcode"
 	"oras.land/oras-go/v2/registry/remote/retry"
@@ -190,13 +191,15 @@ func (c *client) init(ctx context.Context) {
 	})
 }
 
-// authClient sends found to host only; an empty found is anonymous.
+// authClient sends found to the host that requests for host go to; an empty
+// found is anonymous.
 func (c *client) authClient(host string, found credential.Found) *auth.Client {
 	a := &auth.Client{Client: c.inner, Cache: auth.NewCache()}
 	if found.Secret != "" {
 		cred := auth.Credential{Username: found.Username, Password: found.Secret}
+		sendTo := registry.Reference{Registry: host}.Host()
 		a.Credential = func(_ context.Context, h string) (auth.Credential, error) {
-			if !strings.EqualFold(h, host) {
+			if !strings.EqualFold(h, sendTo) {
 				return auth.EmptyCredential, nil
 			}
 			return cred, nil

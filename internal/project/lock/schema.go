@@ -307,20 +307,20 @@ func validateRemotes(artifact string, remotes []Remote) error {
 func validEntryPath(p string) error {
 	switch {
 	case p == "":
-		return errors.New("artifact path is empty")
+		return errors.New("overlay path is empty")
 	case strings.ContainsRune(p, '\\'):
-		return fmt.Errorf("artifact path %q is not slash-separated", p)
+		return fmt.Errorf("overlay path %q is not slash-separated", p)
 	case path.IsAbs(p), strings.HasPrefix(p, "/"):
-		return fmt.Errorf("artifact path %q is absolute", p)
+		return fmt.Errorf("overlay path %q is absolute", p)
 	case p != path.Clean(p):
-		return fmt.Errorf("artifact path %q is not clean", p)
+		return fmt.Errorf("overlay path %q is not clean", p)
 	case !strings.HasPrefix(p, ProvenanceDir+"/"):
-		return fmt.Errorf("artifact path %q is outside %s/", p, ProvenanceDir)
+		return fmt.Errorf("overlay path %q is outside %s/", p, ProvenanceDir)
 	case strings.Contains(p, "/../"), strings.HasSuffix(p, "/.."):
-		return fmt.Errorf("artifact path %q escapes the lock directory", p)
+		return fmt.Errorf("overlay path %q escapes the lock directory", p)
 	}
 	if len(strings.Split(p, "/")) != 2 {
-		return fmt.Errorf("artifact path %q is not %s/<entry>", p, ProvenanceDir)
+		return fmt.Errorf("overlay path %q is not %s/<entry>", p, ProvenanceDir)
 	}
 	return nil
 }

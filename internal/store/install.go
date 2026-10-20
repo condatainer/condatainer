@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	ErrIdentityCollision = errors.New("artifact identity filename collision")
+	ErrIdentityCollision = errors.New("overlay identity filename collision")
 	ErrTransactionClosed = errors.New("store transaction is closed")
 )
 
@@ -63,7 +63,7 @@ func Begin(name string, identity meta.KeyRef, opts BeginOptions) (*Transaction, 
 func begin(name string, identity meta.KeyRef, opts BeginOptions, read artifactReader) (*Transaction, error) {
 	name = catalog.Normalize(name)
 	if name == "" {
-		return nil, errors.New("store artifact name is empty")
+		return nil, errors.New("overlay name is empty")
 	}
 	if _, err := ParseKeyRef(FormatKeyRef(identity)); err != nil {
 		return nil, err
@@ -254,7 +254,7 @@ func (tx *Transaction) Commit() (Candidate, error) {
 	defer tx.finish()
 	info, err := os.Lstat(tx.Prepared)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || filepath.Ext(tx.Prepared) != ".part" {
-		return Candidate{}, fmt.Errorf("invalid prepared store artifact %s", tx.Prepared)
+		return Candidate{}, fmt.Errorf("invalid prepared overlay %s", tx.Prepared)
 	}
 	file, err := os.OpenFile(tx.Prepared, os.O_RDWR, 0)
 	if err != nil {
@@ -273,10 +273,10 @@ func (tx *Transaction) Commit() (Candidate, error) {
 	}
 	identity, equiv := keyRef(artifact.IdentityScheme, artifact.Identity), keyRef(artifact.EquivScheme, artifact.Equiv)
 	if artifact.Name != tx.Name || identity != tx.Identity || (!tx.Equiv.Empty() && equiv != tx.Equiv) {
-		return Candidate{}, fmt.Errorf("prepared artifact does not match requested name and keys")
+		return Candidate{}, fmt.Errorf("prepared overlay does not match requested name and keys")
 	}
 	if _, err := ParseKeyRef(FormatKeyRef(equiv)); err != nil {
-		return Candidate{}, fmt.Errorf("prepared artifact has invalid equivalence key: %w", err)
+		return Candidate{}, fmt.Errorf("prepared overlay has invalid equivalence key: %w", err)
 	}
 	if candidate, occupied, err := inspectTarget(tx.TargetPath, tx.Root, tx.Layout, tx.Name, tx.Identity, tx.Equiv, tx.read); err != nil {
 		return Candidate{}, err
@@ -286,7 +286,7 @@ func (tx *Transaction) Commit() (Candidate, error) {
 		return Candidate{}, fmt.Errorf("target appeared during publication: %s", tx.TargetPath)
 	}
 	if err := os.Rename(tx.Prepared, tx.TargetPath); err != nil {
-		return Candidate{}, fmt.Errorf("failed to publish store artifact: %w", err)
+		return Candidate{}, fmt.Errorf("failed to add overlay to the store: %w", err)
 	}
 	utils.ShareWithParentGroup(tx.TargetPath)
 	installed, err := os.Lstat(tx.TargetPath)

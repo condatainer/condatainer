@@ -391,7 +391,7 @@ func restrict(steps []Step, only, baseArtifact string) ([]Step, string) {
 		}
 	}
 	if !found {
-		return nil, fmt.Sprintf("--only %s is not an artifact this restore covers", only)
+		return nil, fmt.Sprintf("--only %s is not an overlay this restore covers", only)
 	}
 	kept := make([]Step, 0, len(steps))
 	for _, step := range steps {
@@ -574,7 +574,7 @@ func sortedKeys[V any](in map[string]V) []string {
 func runsOn(arch, hostArch string) string {
 	switch arch {
 	case "":
-		return "the artifact records no architecture"
+		return "the overlay records no architecture"
 	case meta.ArchNone, hostArch:
 		return ""
 	default:

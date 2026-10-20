@@ -40,8 +40,8 @@ Per-user overlays:
 - An .img with a snapshot beside it is frozen together with it. --use-tmp is refused for it.`
 
 var overlayFreezeCmd = &cobra.Command{
-	Use:   "freeze [flags] <overlay.img> [artifact.sqf]",
-	Short: "Pack a writable overlay into an immutable artifact",
+	Use:   "freeze [flags] <overlay.img> [output.sqf]",
+	Short: "Pack a writable overlay into an immutable one",
 	Long:  overlayFreezeHelp,
 	Args:  cobra.RangeArgs(1, 2),
 	Example: `  condatainer overlay freeze env.img                     # env.sqf beside it, env.img removed
@@ -65,7 +65,7 @@ var overlayFreezeCmd = &cobra.Command{
 		// freeze still runs, just without that translation.
 		base, err := config.GetBaseImage()
 		if err != nil {
-			utils.PrintWarning("No base image found (%v); a directory deleted wholesale (not file by file) will not be recorded as deleted, and its original contents will come back when this artifact is used", err)
+			utils.PrintWarning("No base image found (%v); a directory deleted wholesale (not file by file) will not be recorded as deleted, and its original contents will come back when this overlay is used", err)
 		}
 		// Held across the whole freeze rather than probed: a payload being written
 		// to has no defined content to pack, and the pack takes minutes, so a
@@ -234,7 +234,7 @@ func reportFreeze(res freeze.Result, source string, removed bool) {
 func init() {
 	overlayCmd.AddCommand(overlayFreezeCmd)
 	f := overlayFreezeCmd.Flags()
-	f.StringVarP(&freezeDescription, "description", "d", "", "Description recorded in the artifact")
+	f.StringVarP(&freezeDescription, "description", "d", "", "Description recorded in the overlay")
 	settings.AddFlag(f, "build.block_size", "block-size", settings.Usage("SquashFS block size (default: build.block_size)"))
 	f.BoolVar(&freezeUseTmp, "use-tmp", false, "Pack from a temporary copy (faster; needs space for the whole overlay; not for an .img with a snapshot beside it)")
 	f.BoolVar(&freezeKeep, "keep", false, "Keep the source .img after a bare freeze (default: remove it)")

@@ -136,7 +136,7 @@ func pruneRemotes(l *Lock, verified *Verified) {
 // existing entry is left as it is, since one (name, identity) has one set of records.
 func StageEntry(root, entryName string, files map[string][]byte) (string, error) {
 	if entryName != filepath.Base(entryName) || entryName == "." || entryName == ".." {
-		return "", fmt.Errorf("%w: artifact entry %q is not a plain name", ErrInvalid, entryName)
+		return "", fmt.Errorf("%w: lock entry %q is not a plain name", ErrInvalid, entryName)
 	}
 	relative := EntryPath(entryName)
 	if err := validEntryPath(relative); err != nil {

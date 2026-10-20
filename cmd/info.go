@@ -308,7 +308,7 @@ func displayKeys(imagePath string) {
 
 	fmt.Println(utils.StyleTitle("Keys"))
 	if artifact.Name != "" {
-		fmt.Printf("  %-14s %s\n", "Artifact:", artifact.Name)
+		fmt.Printf("  %-14s %s\n", "Overlay:", artifact.Name)
 	}
 	if identity != "" {
 		fmt.Printf("  %-14s %s\n", "Identity:", identity)

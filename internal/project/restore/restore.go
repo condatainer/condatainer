@@ -28,7 +28,7 @@ import (
 var ErrIncomplete = errors.New("restore is incomplete")
 
 // ErrNotAcquirable reports an acquisition this build cannot perform.
-var ErrNotAcquirable = errors.New("cannot acquire artifact")
+var ErrNotAcquirable = errors.New("cannot acquire overlay")
 
 // ErrJobsSubmitted reports that the restore handed work to the scheduler, so
 // the project is not available yet. It is not a failure: re-running the restore
@@ -180,7 +180,7 @@ func Run(ctx context.Context, root string, l *lock.Lock, opts Options) (*Report,
 			entry, ok := verified.Entries[step.Artifact]
 			if !ok {
 				report.Failures = append(report.Failures, Failure{Artifact: step.Artifact,
-					Name: step.Name, Reason: "the artifact is no longer vendored"})
+					Name: step.Name, Reason: "the overlay is no longer vendored"})
 				stopped[step.Artifact] = step.Artifact
 				continue
 			}
@@ -213,7 +213,7 @@ func Run(ctx context.Context, root string, l *lock.Lock, opts Options) (*Report,
 	}
 	switch {
 	case len(report.Failures) > 0 || len(report.Blocked) > 0:
-		return report, fmt.Errorf("%w: %d artifact(s) unavailable, %d blocked",
+		return report, fmt.Errorf("%w: %d overlay(s) unavailable, %d blocked",
 			ErrIncomplete, len(report.Failures), len(report.Blocked))
 	case len(report.Submitted) > 0:
 		return report, fmt.Errorf("%w: %d job(s)", ErrJobsSubmitted, len(report.Submitted))
@@ -272,7 +272,7 @@ func execute(ctx context.Context, root string, verified *lock.Verified, step Ste
 	entry, ok := verified.Entries[step.Artifact]
 	if !ok {
 		return nil, &Failure{Artifact: step.Artifact, Name: step.Name,
-			Reason: "the artifact is no longer vendored"}
+			Reason: "the overlay is no longer vendored"}
 	}
 	result := &Result{
 		Artifact: step.Artifact, Name: step.Name, Identity: step.Identity,
@@ -394,7 +394,7 @@ func rebuild(ctx context.Context, root string, entry *lock.Entry, step Step, mat
 
 	verdict, diffs, err := verify(entry, output, match)
 	if err != nil {
-		return nil, fail("cannot verify the rebuilt artifact: %v", err)
+		return nil, fail("cannot verify the rebuilt overlay: %v", err)
 	}
 	if verdict != compare.Exact && verdict != compare.Equivalent {
 		return nil, reject(ctx, step, transient, output, verdict, diffs)
@@ -559,7 +559,7 @@ func reject(ctx context.Context, step Step, transient bool, output string,
 	verdict compare.Verdict, diffs []string) *Failure {
 
 	failure := &Failure{Artifact: step.Artifact, Name: step.Name, Diffs: diffs,
-		Reason: fmt.Sprintf("the rebuild is %s, not the locked artifact", verdict)}
+		Reason: fmt.Sprintf("the rebuild is %s, not the locked overlay", verdict)}
 	if step.Destination != "" || transient {
 		return failure
 	}
@@ -606,7 +606,7 @@ func fetch(ctx context.Context, root string, entry *lock.Entry, step Step, match
 		if ctx.Err() != nil {
 			return nil, fail("%v", ctx.Err())
 		}
-		log.Debug("remote did not serve the artifact", "name", step.Name, "from", where, "err", err)
+		log.Debug("remote did not serve the overlay", "name", step.Name, "from", where, "err", err)
 		attempts = append(attempts, fmt.Sprintf("%s: %v", where, err))
 	}
 	// Distinct from "nothing was recorded", which the planner turns into a build
@@ -738,11 +738,11 @@ func fetchToDestination(ctx context.Context, root string, entry *lock.Entry, ste
 	verdict, diffs, err := verify(entry, staged, match)
 	if err != nil {
 		os.Remove(staged) //nolint:errcheck
-		return fetched{}, fmt.Errorf("cannot verify the fetched artifact: %w", err)
+		return fetched{}, fmt.Errorf("cannot verify the fetched overlay: %w", err)
 	}
 	if verdict != compare.Exact && verdict != compare.Equivalent {
 		os.Remove(staged) //nolint:errcheck
-		return fetched{}, fmt.Errorf("the fetched artifact is %s: %s", verdict, strings.Join(diffs, "; "))
+		return fetched{}, fmt.Errorf("the fetched overlay is %s: %s", verdict, strings.Join(diffs, "; "))
 	}
 	path, err := placeAt(ctx, destination, staged)
 	if err != nil {

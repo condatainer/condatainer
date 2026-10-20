@@ -64,7 +64,7 @@ func compareOn(want, got Artifact, hostArch string) Result {
 		return Result{Verdict: Unverifiable, Reason: reason}
 	}
 	if reason := want.Unusable(); reason != "" {
-		return Result{Verdict: Unverifiable, Reason: "requested artifact: " + reason}
+		return Result{Verdict: Unverifiable, Reason: "requested overlay: " + reason}
 	}
 	// A free integrity check: runtime.json was never part of the hashed preimage,
 	// so an edited one cannot agree with the record beside it.

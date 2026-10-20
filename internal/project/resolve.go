@@ -290,7 +290,7 @@ func Resolve(ctx context.Context, root string, l *lock.Lock, requests []lock.Req
 		entry, ok := verified.Entries[pin.Artifact]
 		if !ok {
 			resolution.Unresolved = append(resolution.Unresolved, Unresolved{Request: request.Key,
-				Reason: "the pinned artifact is not vendored"})
+				Reason: "the pinned overlay is not vendored"})
 			continue
 		}
 		keys := meta.Keys{Identity: entry.Identity, Equiv: entry.Equiv}

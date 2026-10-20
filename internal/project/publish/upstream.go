@@ -32,7 +32,7 @@ func Upstream(ctx context.Context, root string, artifacts []string, cat catalog.
 	for _, artifact := range artifacts {
 		entry, err := lock.ReadEntry(root, artifact)
 		if err != nil {
-			log.Debug("cannot read a vendored artifact while looking for upstream copies", "artifact", artifact, "err", err)
+			log.Debug("cannot read a vendored overlay while looking for upstream copies", "overlay", artifact, "err", err)
 			continue
 		}
 		remote, ok := upstreamOf(ctx, entry, cat)
@@ -74,7 +74,7 @@ func upstreamOf(ctx context.Context, entry *lock.Entry, cat catalog.Catalog) (lo
 		Arch:     entry.Manifest.Platform.Arch,
 	})
 	if err != nil {
-		log.Debug("registry did not answer for this artifact", "endpoint", endpoint, "name", entry.Manifest.Name, "err", err)
+		log.Debug("registry did not answer for this overlay", "endpoint", endpoint, "name", entry.Manifest.Name, "err", err)
 		return lock.Remote{}, false
 	}
 	if got := registry.Identity(found.Annotations); got != entry.Identity {

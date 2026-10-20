@@ -15,7 +15,7 @@ var resolveIdentityFor = ResolveIdentity
 
 // ErrNotStored reports an artifact that resolved to a flat install rather than
 // a store entry.
-var ErrNotStored = errors.New("artifact is not a store entry")
+var ErrNotStored = errors.New("overlay is not a store entry")
 
 // Remove deletes one store entry, lock and protection permitting.
 //   - Store layout only. A flat artifact answers to a bare name and belongs to `remove`.

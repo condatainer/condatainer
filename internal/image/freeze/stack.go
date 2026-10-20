@@ -232,7 +232,7 @@ func packStacked(ctx context.Context, opts PackOptions, img, target, stage, mksq
 		return meta.BuildTools{}, fmt.Errorf("pack %s: %w", opts.Target, err)
 	}
 	if _, err := os.Stat(target); err != nil {
-		return meta.BuildTools{}, fmt.Errorf("pack produced no artifact at %s: %w", opts.Target, err)
+		return meta.BuildTools{}, fmt.Errorf("pack produced no overlay at %s: %w", opts.Target, err)
 	}
 	return tools, nil
 }

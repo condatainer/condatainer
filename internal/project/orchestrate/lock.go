@@ -118,7 +118,7 @@ func RecordUpstream(ctx context.Context, root string, l *lock.Lock, pinned *lock
 	for artifact, remotes := range found {
 		for _, remote := range remotes {
 			if err := l.AddRemote(artifact, remote); err != nil {
-				logging.FromContext(ctx).Debug("could not record an upstream location", "artifact", artifact, "err", err)
+				logging.FromContext(ctx).Debug("could not record an upstream location", "overlay", artifact, "err", err)
 				continue
 			}
 			shown[artifact] = remote.Repository

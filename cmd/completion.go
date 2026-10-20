@@ -233,7 +233,7 @@ func postProcessBashCompletion(script string) string {
 
     __condatainer_debug "The completions are: ${out}"
 
-    # fzf-pick an overlay, or an artifact for the nested 'registry push' command.
+    # fzf-pick an overlay.
     # words[0] is the binary.
     if command -v fzf >/dev/null 2>&1 && [[ -n "$out" ]]; then
         local sub="${words[1]}"
@@ -243,7 +243,6 @@ func postProcessBashCompletion(script string) string {
             is_overlay_cmd=true
         elif [[ "$sub" == "registry" && "${words[2]}" == "push" ]]; then
             is_overlay_cmd=true
-            fzf_header="Select artifact"
         fi
 
         # Only on an argument, not while the subcommand itself is being typed.
@@ -274,7 +273,7 @@ func postProcessZshCompletion(script string) string {
 	// Add fzf support for overlay/artifact selectors.
 	fzfInject := `    __condatainer_debug "completions: ${out}"
 
-    # fzf-pick an overlay, or an artifact for the nested 'registry push' command.
+    # fzf-pick an overlay.
     # words[1] is the binary in zsh.
     if command -v fzf >/dev/null 2>&1 && [[ -n "$out" ]]; then
         local sub="${words[2]}"
@@ -284,7 +283,6 @@ func postProcessZshCompletion(script string) string {
             is_overlay_cmd=true
         elif [[ "$sub" == "registry" && "${words[3]}" == "push" ]]; then
             is_overlay_cmd=true
-            fzf_header="Select artifact"
         fi
 
         # Only on an argument, not while the subcommand itself is being typed.
@@ -328,7 +326,7 @@ func postProcessFishCompletion(script string) string {
 
 	fzfInject := target + `
 
-    # fzf-pick an overlay, or an artifact for the nested 'registry push' command.
+    # fzf-pick an overlay.
     # args[1] is the binary in fish.
     if type -q fzf
         set -l _is_overlay_cmd false
@@ -337,7 +335,6 @@ func postProcessFishCompletion(script string) string {
             set _is_overlay_cmd true
         else if test "$args[2]" = registry; and test "$args[3]" = push
             set _is_overlay_cmd true
-            set _fzf_header "Select artifact"
         end
         if test $_is_overlay_cmd = true
             if not string match -q -- "-*" (commandline -t)

@@ -19,7 +19,7 @@ import (
 )
 
 // ErrNoCandidate reports that nothing local answers a pin.
-var ErrNoCandidate = errors.New("no artifact matches")
+var ErrNoCandidate = errors.New("no overlay matches")
 
 // PinOptions tunes candidate discovery.
 type PinOptions struct {
@@ -330,7 +330,7 @@ func readStagedManifest(metaDir string) (meta.Manifest, error) {
 		return meta.Manifest{}, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	if manifest.Keys.Identity.Empty() || manifest.Keys.Equiv.Empty() {
-		return meta.Manifest{}, fmt.Errorf("%w: the artifact records no complete keys", ErrInvalid)
+		return meta.Manifest{}, fmt.Errorf("%w: the overlay records no complete keys", ErrInvalid)
 	}
 	return manifest, nil
 }

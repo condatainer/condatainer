@@ -40,7 +40,7 @@ type Verified struct {
 
 // reasonUnreachable is the problem for a vendored entry no pin leads to. Publish
 // prunes such entries, so it does not stop a lock being written.
-const reasonUnreachable = "artifact directory is not reachable from any pin"
+const reasonUnreachable = "overlay directory is not reachable from any pin"
 
 // Problem is one validation failure, attributed to what it is about.
 type Problem struct {
@@ -89,7 +89,7 @@ func Verify(root string, l *Lock) (*Verified, []Problem) {
 		entry, ok := out.Entries[artifact]
 		if !ok {
 			problems = append(problems, Problem{Request: request, Artifact: artifact,
-				Reason: "pin points at a missing or invalid artifact directory"})
+				Reason: "pin points at a missing or invalid overlay directory"})
 			continue
 		}
 		if reason := satisfies(request, entry.Manifest.Name); reason != "" {
@@ -135,7 +135,7 @@ func Verify(root string, l *Lock) (*Verified, []Problem) {
 	for _, artifact := range sortedKeys(remoteKeys(l)) {
 		if _, ok := out.Entries[artifact]; !ok {
 			problems = append(problems, Problem{Artifact: artifact,
-				Reason: "remote refers to an artifact that is not vendored"})
+				Reason: "remote refers to an overlay that is not vendored"})
 		}
 	}
 
@@ -275,7 +275,7 @@ func satisfies(request, name string) string {
 		return reason
 	}
 	if dep.NameVersion() != name {
-		return fmt.Sprintf("request names %s but the artifact is %s", dep.NameVersion(), name)
+		return fmt.Sprintf("request names %s but the overlay is %s", dep.NameVersion(), name)
 	}
 	return ""
 }

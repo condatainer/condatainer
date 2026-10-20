@@ -22,7 +22,7 @@ import (
 // ErrUnkeyed reports an artifact whose keys cannot be regenerated from vendored
 // sources. Only a snapshot is, and callers that can recompute from the payload
 // branch on this rather than treating it as a missing key.
-var ErrUnkeyed = errors.New("artifact carries no regenerable keys")
+var ErrUnkeyed = errors.New("overlay carries no regenerable keys")
 
 // IsSnapshot reports whether a manifest describes a frozen writable overlay.
 func IsSnapshot(m meta.Manifest) bool { return m.BuildType == meta.BuildTypeSnapshot }

@@ -83,14 +83,14 @@ func markAlreadyPublished(ctx context.Context, plan *Plan) {
 		}
 		desc, annotations, err := registry.ResolveArtifact(ctx, base, repo, step.Tags[0])
 		if err != nil {
-			log.Debug("destination does not hold this artifact yet", "name", step.Name, "err", err)
+			log.Debug("destination does not hold this overlay yet", "name", step.Name, "err", err)
 			continue
 		}
 		if got := registry.Identity(annotations); got.Digest() != step.Identity {
 			// A content-keyed tag holding different content is a corrupted
 			// package, not something to overwrite.
 			plan.Steps[i].Disposition = Refused
-			plan.Steps[i].Reason = fmt.Sprintf("%s already publishes %s, which is not this artifact",
+			plan.Steps[i].Reason = fmt.Sprintf("%s already publishes %s, which is not this overlay",
 				step.Tags[0], describe(got))
 			plan.Problems = append(plan.Problems, fmt.Sprintf("%s: %s", step.Name, plan.Steps[i].Reason))
 			continue

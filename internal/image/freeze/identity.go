@@ -62,7 +62,7 @@ var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // ErrNoPayloadKey reports an artifact whose manifest records no payload key: a
 // Conda or definition build, which its other keys already pin.
-var ErrNoPayloadKey = errors.New("artifact records no payload key")
+var ErrNoPayloadKey = errors.New("overlay records no payload key")
 
 // VerifyPayload reads the packed artifact's payload and checks it against the key
 // its manifest records: the payload key, or for a frozen environment its

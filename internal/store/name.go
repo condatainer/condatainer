@@ -22,7 +22,7 @@ const (
 )
 
 var (
-	ErrInvalidIdentity = errors.New("invalid artifact identity")
+	ErrInvalidIdentity = errors.New("invalid overlay identity")
 	hexPattern         = regexp.MustCompile(`^[0-9a-f]+$`)
 )
 
@@ -100,7 +100,7 @@ func Filename(name string, identity meta.KeyRef, prefixChars int) (string, error
 	}
 	name = catalog.Normalize(name)
 	if name == "" || strings.ContainsAny(name, `\\`) {
-		return "", fmt.Errorf("invalid artifact name %q", name)
+		return "", fmt.Errorf("invalid overlay name %q", name)
 	}
 	return image.EncodeArtifactName(name) + "@" + identity.SHA256[:prefixChars] + ".sqf", nil
 }
@@ -124,7 +124,7 @@ func ParseFilename(filename string) (ParsedFilename, error) {
 	}
 	name := image.DecodeArtifactName(encoded)
 	if image.EncodeArtifactName(name) != encoded {
-		return ParsedFilename{}, fmt.Errorf("invalid encoded artifact name in %q", filename)
+		return ParsedFilename{}, fmt.Errorf("invalid encoded overlay name in %q", filename)
 	}
 	return ParsedFilename{Name: name, Prefix: prefix}, nil
 }

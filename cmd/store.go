@@ -97,7 +97,7 @@ func newStorePathCmd() *cobra.Command {
 		Short: "Print the file path of one exact build",
 		Long: `Print the file path of one exact build, for use in a script.
 
-- It fails unless the name and identity select exactly one artifact.`,
+- It fails unless the name and identity select exactly one overlay.`,
 		Example: `  condatainer store path star/2.7.11b@9f2c1ab
   condatainer store path star/2.7.11b --identity 9f2c1ab`,
 		Args:         cobra.ExactArgs(1),

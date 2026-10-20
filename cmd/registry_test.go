@@ -93,7 +93,7 @@ func TestCompletionScriptsRecognizeRegistryPushFZF(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := tc.process(tc.input)
-			if !strings.Contains(got, tc.marker) || !strings.Contains(got, "Select artifact") {
+			if !strings.Contains(got, tc.marker) || !strings.Contains(got, "Select overlay") {
 				t.Fatalf("processed completion lacks registry push fzf hook:\n%s", got)
 			}
 		})

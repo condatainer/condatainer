@@ -46,16 +46,12 @@ func TestAnnotations(t *testing.T) {
 		AnnIdentitySHA:    strings.Repeat("a", 64),
 		AnnEquivScheme:    "script-equiv-v1",
 		AnnEquivSHA:       strings.Repeat("b", 64),
+		AnnArch:           "amd64",
 	}
 	for key, wantValue := range want {
 		if got := ann[key]; got != wantValue {
 			t.Errorf("%s = %q, want %q", key, got, wantValue)
 		}
-	}
-	// A native artifact carries no arch annotation: the index child's platform
-	// descriptor is the one place architecture lives.
-	if _, ok := ann[AnnNoarch]; ok {
-		t.Error("a native artifact was marked noarch")
 	}
 	if len(ann) != len(want) {
 		t.Errorf("annotations = %v\nwant exactly the %d keys above", ann, len(want))
@@ -75,7 +71,7 @@ func TestAnnotationsOmitsWhatIsNotRecorded(t *testing.T) {
 
 	for _, key := range []string{
 		AnnDescription, AnnURL, AnnSource, AnnCreated, AnnCompression,
-		AnnIdentityScheme, AnnIdentitySHA, AnnEquivScheme, AnnEquivSHA, AnnNoarch,
+		AnnIdentityScheme, AnnIdentitySHA, AnnEquivScheme, AnnEquivSHA,
 	} {
 		if _, ok := ann[key]; ok {
 			t.Errorf("%s was published as %q with nothing to say", key, ann[key])
@@ -87,16 +83,15 @@ func TestAnnotationsOmitsWhatIsNotRecorded(t *testing.T) {
 	}
 }
 
-// #ARCH:noarch is the one architecture fact OCI cannot express structurally.
-func TestAnnotationsMarksNoarch(t *testing.T) {
+func TestAnnotationsRecordTheArchitecture(t *testing.T) {
 	m := fullManifest()
 	m.Platform.Arch = meta.ArchNone
 
-	if ann := Annotations(m, "zstd"); ann[AnnNoarch] != "true" {
-		t.Errorf("noarch artifact not marked: %v", ann)
+	if ann := Annotations(m, "zstd"); ann[AnnArch] != "noarch" {
+		t.Errorf("noarch artifact recorded %q", ann[AnnArch])
 	}
-	if ann := Annotations(fullManifest(), "zstd"); ann[AnnNoarch] == "true" {
-		t.Error("a native artifact was reported as noarch")
+	if ann := Annotations(fullManifest(), "zstd"); ann[AnnArch] != "amd64" {
+		t.Errorf("amd64 artifact recorded %q", ann[AnnArch])
 	}
 }
 
@@ -132,19 +127,41 @@ func TestCheck(t *testing.T) {
 	ann := Annotations(m, "zstd")
 
 	t.Run("the right artifact passes", func(t *testing.T) {
-		if err := Check(ann, Want{Name: m.Name, Identity: m.Keys.Identity}); err != nil {
+		if err := Check(ann, Want{Name: m.Name, Identity: m.Keys.Identity, Arch: ArchAMD64}); err != nil {
 			t.Errorf("Check: %v", err)
 		}
 	})
 
 	t.Run("a pull by name insists on no identity", func(t *testing.T) {
-		if err := Check(ann, Want{Name: m.Name}); err != nil {
+		if err := Check(ann, Want{Name: m.Name, Arch: ArchAMD64}); err != nil {
 			t.Errorf("Check: %v", err)
 		}
 	})
 
+	t.Run("an artifact for another architecture is not for this host", func(t *testing.T) {
+		if err := Check(ann, Want{Name: m.Name, Arch: ArchARM64}); !errors.Is(err, ErrUnsupportedPlatform) {
+			t.Errorf("err = %v, want ErrUnsupportedPlatform", err)
+		}
+	})
+
+	t.Run("a noarch artifact passes on any host", func(t *testing.T) {
+		portable := fullManifest()
+		portable.Platform.Arch = meta.ArchNone
+		if err := Check(Annotations(portable, ""), Want{Name: m.Name, Arch: ArchARM64}); err != nil {
+			t.Errorf("Check: %v", err)
+		}
+	})
+
+	t.Run("an artifact that records no architecture is refused", func(t *testing.T) {
+		bare := Annotations(m, "zstd")
+		delete(bare, AnnArch)
+		if err := Check(bare, Want{Name: m.Name, Arch: ArchAMD64}); !errors.Is(err, ErrNoAnnotations) {
+			t.Errorf("err = %v, want ErrNoAnnotations", err)
+		}
+	})
+
 	t.Run("a different name is a mismatch", func(t *testing.T) {
-		err := Check(ann, Want{Name: "cellranger/9.0.1"})
+		err := Check(ann, Want{Name: "cellranger/9.0.1", Arch: ArchAMD64})
 		if !errors.Is(err, ErrMismatch) {
 			t.Errorf("err = %v, want ErrMismatch", err)
 		}
@@ -152,7 +169,7 @@ func TestCheck(t *testing.T) {
 
 	t.Run("a different identity is a mismatch", func(t *testing.T) {
 		other := meta.KeyRef{Scheme: "script-identity-v1", SHA256: strings.Repeat("c", 64)}
-		err := Check(ann, Want{Name: m.Name, Identity: other})
+		err := Check(ann, Want{Name: m.Name, Identity: other, Arch: ArchAMD64})
 		if !errors.Is(err, ErrMismatch) {
 			t.Errorf("err = %v, want ErrMismatch", err)
 		}
@@ -160,7 +177,7 @@ func TestCheck(t *testing.T) {
 
 	t.Run("one digest under two schemes is two artifacts", func(t *testing.T) {
 		other := meta.KeyRef{Scheme: "conda-explicit-v1", SHA256: m.Keys.Identity.SHA256}
-		err := Check(ann, Want{Name: m.Name, Identity: other})
+		err := Check(ann, Want{Name: m.Name, Identity: other, Arch: ArchAMD64})
 		if !errors.Is(err, ErrMismatch) {
 			t.Errorf("err = %v, want ErrMismatch — the scheme is half the key", err)
 		}

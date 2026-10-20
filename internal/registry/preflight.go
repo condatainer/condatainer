@@ -70,13 +70,13 @@ type uploadPlan struct {
 //
 // The profile's per-layer maximum clamps the derived size here, so a registry's
 // hard limit is respected before anything is hashed.
-func preflightUpload(ctx context.Context, artifactPath, base string, tags []string, profile transferProfile) (uploadPlan, error) {
+func preflightUpload(ctx context.Context, artifactPath, repository string, tags []string, profile transferProfile) (uploadPlan, error) {
 	info, err := os.Stat(artifactPath)
 	if err != nil {
 		return uploadPlan{}, err
 	}
 	if !info.Mode().IsRegular() {
-		return uploadPlan{}, fmt.Errorf("%s is not a regular file, so its bytes are not a stable artifact", artifactPath)
+		return uploadPlan{}, fmt.Errorf("%s is not a regular file, so its bytes are not a stable overlay", artifactPath)
 	}
 	if info.Size() == 0 {
 		return uploadPlan{}, fmt.Errorf("%s is empty", artifactPath)
@@ -95,7 +95,7 @@ func preflightUpload(ctx context.Context, artifactPath, base string, tags []stri
 	if err := checkManifestFits(plan.Layers); err != nil {
 		return uploadPlan{}, err
 	}
-	if err := checkNames(base, artifactPath, tags, plan.Layers); err != nil {
+	if err := checkNames(repository, artifactPath, tags, plan.Layers); err != nil {
 		return uploadPlan{}, err
 	}
 
@@ -105,7 +105,7 @@ func preflightUpload(ctx context.Context, artifactPath, base string, tags []stri
 		"layer-size", fmt.Sprintf("%s (%s)", utils.FormatSize(plan.LayerSize), plan.Reason),
 		"layers", plan.Layers,
 		"requests", "~"+fmt.Sprint(plan.Requests),
-		"registry", registryHost(base))
+		"registry", registryHost(repository))
 	// An expectation, not a failure: the push is correct, it will simply pause,
 	// and an operator told so in advance does not report it as a hang.
 	if plan.Requests > expectedRequestCeiling {
@@ -243,7 +243,7 @@ func checkManifestFits(layers int) error {
 //
 // The longest title is checked rather than the first: a chunk suffix adds to
 // every name equally, so the last layer is the one that overruns.
-func checkNames(base, artifactPath string, tags []string, layers int) error {
+func checkNames(repository, artifactPath string, tags []string, layers int) error {
 	name := filepath.Base(artifactPath)
 	if layers > 1 {
 		name += fmt.Sprintf(chunkSuffix, layers-1)
@@ -255,14 +255,14 @@ func checkNames(base, artifactPath string, tags []string, layers int) error {
 		if len(tag) > maxTagLength {
 			return fmt.Errorf("tag %q is %d characters, past the OCI limit of %d", tag, len(tag), maxTagLength)
 		}
-		if ref := TrimBaseScheme(base) + ":" + tag; len(ref) > maxReferenceLength {
+		if ref := TrimBaseScheme(repository) + ":" + tag; len(ref) > maxReferenceLength {
 			return fmt.Errorf("reference %q is %d characters, past the %d clients assume", ref, len(ref), maxReferenceLength)
 		}
 	}
 	return nil
 }
 
-// registryHost returns just the host of a registry base, for the plan summary.
+// registryHost returns just the host of a registry coordinate, for the plan summary.
 func registryHost(base string) string {
 	host, _, _ := strings.Cut(TrimBaseScheme(base), "/")
 	return host

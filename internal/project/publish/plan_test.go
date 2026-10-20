@@ -7,6 +7,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/project/lock"
+	"github.com/condatainer/condatainer/internal/registry"
 )
 
 // buildPlan vendors the artifacts, pins the named ones, and plans a push.
@@ -51,7 +52,13 @@ func TestBuildDefaultsToSelectionsAndAddsClosureOnDemand(t *testing.T) {
 		t.Fatalf("the default set is not the pins alone: %#v", plan.Steps)
 	}
 	if !plan.Steps[0].Pinned {
-		t.Error("a pin is not marked selected, so it would lose its plain tag")
+		t.Error("a pin is not marked selected, so it would lose its name tag")
+	}
+	// A pin takes the build tag, then the name tag, each ending in the architecture.
+	tags := plan.Steps[0].Tags
+	if len(tags) != 2 || registry.IsNameTag(tags[0]) || !registry.IsNameTag(tags[1]) ||
+		!strings.HasSuffix(tags[0], "__amd64") || !strings.HasSuffix(tags[1], "__amd64") {
+		t.Errorf("a pin's tags = %v, want its build tag and its name tag for amd64", tags)
 	}
 
 	plan = buildPlan(t, root, l, Options{Closure: true})
@@ -105,9 +112,9 @@ func TestBuildRefusesWhatTheEndpointWillNotTake(t *testing.T) {
 	}
 }
 
-// Two pins sharing a manifest name: neither can hold the plain tag, since
+// Two pins sharing a manifest name: neither can hold the name tag, since
 // it is a claim about which one the project uses.
-func TestAmbiguousNamesLoseThePlainTag(t *testing.T) {
+func TestAmbiguousNamesLoseTheNameTag(t *testing.T) {
 	root := projectRoot(t)
 	one, _ := vendorData(t, root, "grch38/genome/gencode49", "echo one\n")
 	two, _ := vendorData(t, root, "grch38/genome/gencode49", "echo two\n")
@@ -130,8 +137,8 @@ func TestAmbiguousNamesLoseThePlainTag(t *testing.T) {
 	}
 	for _, step := range plan.Steps {
 		for _, tag := range step.Tags {
-			if !strings.Contains(tag, "__") {
-				t.Errorf("%s kept the ambiguous plain tag %q", step.Name, tag)
+			if registry.IsNameTag(tag) {
+				t.Errorf("%s kept the ambiguous name tag %q", step.Name, tag)
 			}
 		}
 		if len(step.Tags) != 1 {

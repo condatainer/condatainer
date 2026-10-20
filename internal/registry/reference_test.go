@@ -60,10 +60,9 @@ func TestTrimBaseScheme(t *testing.T) {
 func TestFullRef(t *testing.T) {
 	const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	tests := []struct{ base, repo, tag, want string }{
-		{"ghcr.io/lab/cnt", "cellranger", "9.0.1", "ghcr.io/lab/cnt/cellranger:9.0.1"},
-		{"oci://ghcr.io/lab/cnt/", "ubuntu24/base", "latest", "ghcr.io/lab/cnt/ubuntu24/base:latest"},
-		{"ghcr.io/lab/cnt", "ubuntu24/base", "20260721", "ghcr.io/lab/cnt/ubuntu24/base:20260721"},
-		{"ghcr.io/lab/cnt", "cellranger", digest, "ghcr.io/lab/cnt/cellranger@" + digest},
+		{"ghcr.io/lab", "cnt", "cellranger--9.0.1__amd64", "ghcr.io/lab/cnt:cellranger--9.0.1__amd64"},
+		{"oci://ghcr.io/lab/", "cnt", "ubuntu24--base__noarch", "ghcr.io/lab/cnt:ubuntu24--base__noarch"},
+		{"ghcr.io/lab", "cnt", digest, "ghcr.io/lab/cnt@" + digest},
 	}
 	for _, tt := range tests {
 		if got := FullRef(tt.base, tt.repo, tt.tag); got != tt.want {
@@ -88,118 +87,97 @@ func TestIsLoopback(t *testing.T) {
 	}
 }
 
-func projectManifest(name, sha string) meta.Manifest {
+func builtManifest(name, arch string, buildType meta.BuildType) meta.Manifest {
 	return meta.Manifest{
-		Name: name,
-		Type: catalog.TypeApp,
-		Keys: meta.Keys{Identity: meta.KeyRef{Scheme: "script-identity-v1", SHA256: sha}},
+		Name:      name,
+		Type:      catalog.TypeApp,
+		BuildType: buildType,
+		Platform:  meta.Platform{OS: "linux", Arch: arch},
+		Keys: meta.Keys{
+			Identity: meta.KeyRef{Scheme: "script-identity-v1", SHA256: "a31f902c12ab" + strings.Repeat("0", 52)},
+			Equiv:    meta.KeyRef{Scheme: "script-equiv-v1", SHA256: "e90d3b7714cf" + strings.Repeat("1", 52)},
+		},
 	}
 }
 
-func TestProjectTags(t *testing.T) {
-	sha := "a31f902c12ab" + strings.Repeat("0", 52)
-
-	// A selection gets both: the qualified tag is the retention anchor every
-	// artifact needs, the plain one is the human handle that says which identity
-	// the project uses now.
-	got, err := ProjectTags(projectManifest("star/2.7.11b", sha), true)
-	if err != nil {
-		t.Fatalf("ProjectTags: %v", err)
+func TestTagSpelling(t *testing.T) {
+	identity := meta.KeyRef{Scheme: "script-identity-v1", SHA256: "a31f902c12ab" + strings.Repeat("0", 52)}
+	equiv := meta.KeyRef{Scheme: "script-equiv-v1", SHA256: "e90d3b7714cf" + strings.Repeat("1", 52)}
+	tests := []struct {
+		name, arch                string
+		wantName, wantBuild, want string
+	}{
+		{"star/2.7.11b", "amd64", "star--2.7.11b__amd64", "star--2.7.11b__a31f902c12ab__amd64", "star--2.7.11b__eq-e90d3b7714cf__amd64"},
+		{"ubuntu24/build-essential", "noarch", "ubuntu24--build-essential__noarch", "ubuntu24--build-essential__a31f902c12ab__noarch", "ubuntu24--build-essential__eq-e90d3b7714cf__noarch"},
+		{"grch38/star/2.7.11b/Gencode49", "arm64", "grch38--star--2.7.11b--Gencode49__arm64", "grch38--star--2.7.11b--Gencode49__a31f902c12ab__arm64", "grch38--star--2.7.11b--Gencode49__eq-e90d3b7714cf__arm64"},
+		{"myenv", "amd64", "myenv__amd64", "myenv__a31f902c12ab__amd64", "myenv__eq-e90d3b7714cf__amd64"},
 	}
-	want := []string{"star--2.7.11b__a31f902c12ab", "star--2.7.11b"}
-	if !slices.Equal(got, want) {
-		t.Errorf("tags = %v, want %v", got, want)
-	}
-
-	// A closure-only artifact gets only the anchor: nothing points at it by
-	// name, and a plain tag would claim it is what the project uses.
-	got, err = ProjectTags(projectManifest("grch38/genome/gencode49", sha), false)
-	if err != nil {
-		t.Fatalf("ProjectTags: %v", err)
-	}
-	if !slices.Equal(got, []string{"grch38--genome--gencode49__a31f902c12ab"}) {
-		t.Errorf("closure tags = %v", got)
+	for _, tt := range tests {
+		gotName, err := NameTag(tt.name, tt.arch)
+		if err != nil {
+			t.Fatalf("NameTag(%q): %v", tt.name, err)
+		}
+		gotBuild, _ := BuildTag(tt.name, identity, tt.arch)
+		gotEquiv, _ := EquivTag(tt.name, equiv, tt.arch)
+		if gotName != tt.wantName || gotBuild != tt.wantBuild || gotEquiv != tt.want {
+			t.Errorf("%s/%s = %q, %q, %q; want %q, %q, %q", tt.name, tt.arch,
+				gotName, gotBuild, gotEquiv, tt.wantName, tt.wantBuild, tt.want)
+		}
 	}
 }
 
-func TestProjectTagsRefuseWhatCannotBeATag(t *testing.T) {
-	sha := strings.Repeat("a", 64)
-	// Refused, never truncated: a truncated tag is a different artifact's
-	// address, and the name is what a puller reads back out of it.
-	long := strings.Repeat("segment/", 20) + "1.0"
-	if _, err := ProjectTags(projectManifest(long, sha), true); err == nil {
+func TestTagsRefuseWhatCannotBeATag(t *testing.T) {
+	identity := meta.KeyRef{Scheme: "script-identity-v1", SHA256: strings.Repeat("a", 64)}
+	if _, err := NameTag("star/2.7.11b", "s390x"); err == nil {
+		t.Error("an architecture nothing is published for must be refused")
+	}
+	// Refused, never truncated: a truncated tag is another artifact's address.
+	if _, err := NameTag(strings.Repeat("segment/", 20)+"1.0", "amd64"); err == nil {
 		t.Error("a name too long for an OCI tag must be refused")
 	}
-	if _, err := ProjectTags(projectManifest("star/2.7.11b", ""), true); err == nil {
-		t.Error("an artifact with no identity has no retention anchor and must be refused")
+	for _, name := range []string{"", "star/2.7.11b:tag", "star//2.7.11b", "star/2__0", "star/-1", "star/1.0."} {
+		if _, err := NameTag(name, "amd64"); err == nil {
+			t.Errorf("NameTag(%q) accepted a name that does not fit the tag grammar", name)
+		}
 	}
-	if _, err := ProjectTags(projectManifest("", sha), true); err == nil {
-		t.Error("an artifact with no name must be refused")
+	if _, err := BuildTag("star/2.7.11b", meta.KeyRef{}, "amd64"); err == nil {
+		t.Error("a build with no identity has no build tag")
+	}
+	if _, err := BuildTag("star/2.7.11b", identity, "amd64"); err != nil {
+		t.Errorf("BuildTag: %v", err)
 	}
 }
 
-func TestParseProjectTag(t *testing.T) {
-	for tag, want := range map[string]string{
-		"star--2.7.11b__a31f902c12ab":             "star/2.7.11b",
-		"star--2.7.11b":                           "star/2.7.11b",
-		"grch38--genome--gencode49__a31f902c12ab": "grch38/genome/gencode49",
-		// A single-component name has no `--` to be recognised by. The `__` is
-		// the proof for the qualified tag; the plain one is accepted because a
-		// frozen environment is the only artifact named without a version.
-		"env__a31f902c12ab": "env",
-		"env":               "env",
-	} {
-		got, _, ok := ParseProjectTag(tag)
-		if !ok || got != want {
-			t.Errorf("ParseProjectTag(%q) = %q, %v; want %q", tag, got, ok, want)
-		}
+// Each build type takes the tags its consumers read: the equivalence tag exists
+// for the prebuilt check, which a Conda build and a frozen environment never use.
+func TestTagsFor(t *testing.T) {
+	tests := []struct {
+		why       string
+		buildType meta.BuildType
+		arch      string
+		req       TagRequest
+		want      []string
+	}{
+		{"a script build takes all three", meta.BuildTypeScript, "amd64", TagRequest{Name: true, Equiv: true},
+			[]string{"star__a31f902c12ab__amd64", "star__eq-e90d3b7714cf__amd64", "star__amd64"}},
+		{"a def build takes all three", meta.BuildTypeDef, "noarch", TagRequest{Name: true, Equiv: true},
+			[]string{"star__a31f902c12ab__noarch", "star__eq-e90d3b7714cf__noarch", "star__noarch"}},
+		{"a Conda build takes no equivalence tag", meta.BuildTypeConda, "arm64", TagRequest{Name: true, Equiv: true},
+			[]string{"star__a31f902c12ab__arm64", "star__arm64"}},
+		{"a frozen environment takes no equivalence tag", meta.BuildTypeSnapshot, "amd64", TagRequest{Name: true, Equiv: true},
+			[]string{"star__a31f902c12ab__amd64", "star__amd64"}},
+		{"a project closure entry takes only the build tag", meta.BuildTypeScript, "amd64", TagRequest{},
+			[]string{"star__a31f902c12ab__amd64"}},
+		{"a project pin adds the name tag", meta.BuildTypeScript, "amd64", TagRequest{Name: true},
+			[]string{"star__a31f902c12ab__amd64", "star__amd64"}},
 	}
-	// A catalog tag is a single version segment and never contains `--`, so the
-	// two namespaces cannot be confused into inventing a name.
-	for _, notAProjectTag := range []string{"gencode49", "latest", "20260721", "4.4.4", "", "__abc", "star--2.7.11b__zz"} {
-		if _, _, ok := ParseProjectTag(notAProjectTag); ok {
-			t.Errorf("ParseProjectTag(%q) claimed to be a project tag", notAProjectTag)
-		}
-	}
-}
-
-// Round trip: what a push writes is what a pull reads back as the name.
-func TestProjectTagRoundTrip(t *testing.T) {
-	sha := strings.Repeat("c", 64)
-	for _, name := range []string{"star/2.7.11b", "grch38/genome/gencode49", "ubuntu24/r/4.4.4"} {
-		tags, err := ProjectTags(projectManifest(name, sha), true)
+	for _, tt := range tests {
+		tags, err := TagsFor(builtManifest("star", tt.arch, tt.buildType), tt.req)
 		if err != nil {
-			t.Fatalf("%s: %v", name, err)
+			t.Fatalf("%s: %v", tt.why, err)
 		}
-		for _, tag := range tags {
-			got, _, ok := ParseProjectTag(tag)
-			if !ok || got != name {
-				t.Errorf("%s -> %q -> %q, %v", name, tag, got, ok)
-			}
-		}
-	}
-}
-
-// A frozen environment publishes under a name with no version, which is the one
-// shape the plain `--` rule cannot recognise. What a project push writes for it
-// must still read back as `env`, or a pull would install it under a name the
-// project never used.
-func TestProjectTagRoundTripSnapshot(t *testing.T) {
-	m := meta.Manifest{Name: meta.EnvName, Type: catalog.TypeEnv, BuildType: meta.BuildTypeSnapshot}
-	m.Keys.Identity = meta.KeyRef{Scheme: "payload-tree-v1", SHA256: strings.Repeat("d", 64)}
-	m.Keys.Equiv = m.Keys.Identity
-
-	tags, err := ProjectTags(m, true)
-	if err != nil {
-		t.Fatalf("ProjectTags: %v", err)
-	}
-	if !slices.Equal(tags, []string{"env__dddddddddddd", "env"}) {
-		t.Fatalf("tags = %v", tags)
-	}
-	for _, tag := range tags {
-		got, _, ok := ParseProjectTag(tag)
-		if !ok || got != meta.EnvName {
-			t.Errorf("%q -> %q, %v; want %q", tag, got, ok, meta.EnvName)
+		if got := tags.List(); !slices.Equal(got, tt.want) {
+			t.Errorf("%s: tags = %v, want %v", tt.why, got, tt.want)
 		}
 	}
 }

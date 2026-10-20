@@ -156,12 +156,12 @@ func planStep(step Step, entry *lock.Entry, audience registry.Audience) Step {
 		step.Disposition, step.Reason = Refused, err.Error()
 		return step
 	}
-	tags, err := registry.ProjectTags(entry.Manifest, step.Pinned)
+	tags, err := registry.TagsFor(entry.Manifest, registry.TagRequest{Name: step.Pinned})
 	if err != nil {
 		step.Disposition, step.Reason = Refused, err.Error()
 		return step
 	}
-	step.Disposition, step.Tags = Upload, tags
+	step.Disposition, step.Tags = Upload, tags.List()
 	return step
 }
 
@@ -181,9 +181,9 @@ func checkTagCollisions(plan *Plan) error {
 	return nil
 }
 
-// dropAmbiguousPlainTags removes the unqualified name tag where two artifacts in one set share a manifest name, and reports each name once.
-//   - The plain tag is a human handle for "what the project uses", and two artifacts cannot both be that.
-//   - Qualified tags still identify each.
+// dropAmbiguousPlainTags removes the name tag where two artifacts in one set share a manifest name, and reports each name once.
+//   - The name tag is a human handle for "what the project uses", and two artifacts cannot both be that.
+//   - Build tags still identify each.
 //   - Every frozen environment shares meta.EnvName, so two pinned ones always collide.
 func dropAmbiguousPlainTags(plan *Plan) []string {
 	byName := map[string]int{}
@@ -200,7 +200,7 @@ func dropAmbiguousPlainTags(plan *Plan) []string {
 		}
 		var kept []string
 		for _, tag := range step.Tags {
-			if strings.Contains(tag, "__") {
+			if !registry.IsNameTag(tag) {
 				kept = append(kept, tag)
 			}
 		}

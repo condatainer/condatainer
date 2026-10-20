@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -24,9 +26,11 @@ import (
 )
 
 type registryOptions struct {
-	base          string
+	repository    string
+	source        string
 	audience      string
-	force         bool
+	arch          string
+	digest        string
 	prefix        string
 	username      string
 	password      string
@@ -42,8 +46,8 @@ func newRegistryCommand() *cobra.Command {
 	opts := &registryOptions{}
 	cmd := &cobra.Command{
 		Use:   "registry",
-		Short: "Publish and fetch artifacts through an OCI registry",
-		Long: `Publish and fetch read-only .sqf artifacts through an OCI registry such as ghcr.io.
+		Short: "Publish overlays to a registry and install published ones",
+		Long: `Publish overlays to a registry such as ghcr.io, and install overlays published there.
 
 Credentials are used in this order:
 - Your login, saved by ` + "`condatainer registry login`" + `.
@@ -57,15 +61,20 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 
 	push := &cobra.Command{
 		Use:   "push [flags] <path|name/version>",
-		Short: "Publish a local artifact",
-		Long: `Publish one local overlay or base image, given by path or by installed name/version.
+		Short: "Publish an overlay to a registry",
+		Long: `Publish a local overlay to a registry, so other machines can download it.
 
-- --registry says where it goes.
-- An installed name/version can find it from the recipe source it was built from.
-- A push the endpoint's audience or the recipe's redistribution terms do not allow is refused.
-- It shows the destination and asks before uploading. -y skips the question.`,
+- Give a path, or the name and version of an installed overlay.
+- Without --source or --registry, an installed overlay goes to its recipe source's registry.
+- A new build of a name becomes the one that name installs. The older build stays.
+
+Registry audience, public (default) or restricted, says who can download from the registry.
+- A public registry refuses overlays that may not be redistributed.
+- A source's audience is "oci.audience" in its source.json. --audience is for --registry.
+- It does not change who can access the registry on the host.`,
 		Example: `  condatainer registry push star/2.7.11b
-  condatainer registry push ./overlays/star.sqf --registry ghcr.io/my-lab/cnt`,
+  condatainer registry push ./overlays/star.sqf --registry ghcr.io/my-lab/cnt
+  condatainer registry push star/2.7.11b --source lab`,
 		Args:              cobra.ExactArgs(1),
 		SilenceUsage:      true,
 		ValidArgsFunction: registryPushCompletion,
@@ -74,13 +83,15 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 			if err != nil {
 				return err
 			}
-			base, audience, err := registryPushDestination(cmd, opts, artifact)
+			dest, err := registryPushDestination(cmd, opts, artifact)
 			if err != nil {
 				return err
 			}
-			_, err = registry.Publish(cmd.Context(), registry.PublishRequest{
-				Path: artifact.path, Base: base, Audience: audience, Force: opts.force,
-				Confirm: func(plan registry.PublishPlan) bool { return confirmPush(cmd, plan) },
+			_, err = registry.Publish(dest.ctx, registry.PublishRequest{
+				Path: artifact.path, Repository: dest.repository, Audience: dest.audience,
+				Tags:       registry.TagRequest{Name: true, Equiv: true},
+				Collection: dest.collection,
+				Confirm:    func(plan registry.PublishPlan) bool { return confirmPush(cmd, plan) },
 			})
 			if errors.Is(err, registry.ErrDeclined) {
 				return nil
@@ -92,42 +103,38 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 			return nil
 		},
 	}
-	push.Flags().StringVar(&opts.base, "registry", "", "Registry base, including owner/prefix (inferred from the recipe source when omitted)")
-	push.Flags().StringVar(&opts.audience, "audience", string(registry.Public), "What a push may publish here: public or restricted")
-	push.Flags().BoolVarP(&opts.force, "force", "f", false, "Replace the existing published version for this platform")
+	addEndpointFlags(push, opts)
+	push.Flags().StringVar(&opts.audience, "audience", string(registry.Public), "Who can download: public or restricted")
 
 	pull := &cobra.Command{
-		Use:   "pull [flags] <name/version|repository:tag|repository@digest>",
-		Short: "Install an exact published artifact",
-		Long: `Download one published artifact and install it.
+		Use:   "pull [flags] <name|name@identity>",
+		Short: "Install a published overlay",
+		Long: `Install a published overlay, using the copy for this machine's architecture.
 
-- The address must be exact. The copy for this machine's platform is taken.
-- It is installed under the name it was published as, unless --prefix says otherwise.
-- To pick a version rather than name one, use 'condatainer create'.`,
+- A name installs the current build of that name, such as star/2.7.11b.
+- name@identity installs one particular build.`,
 		Example: `  condatainer registry pull star/2.7.11b --registry ghcr.io/my-lab/cnt
-  condatainer registry pull star/2.7.11b --registry ghcr.io/my-lab/cnt -p ./overlays/star.sqf`,
-		Args:         cobra.ExactArgs(1),
+  condatainer registry pull star/2.7.11b@9f2c1ab --source lab
+  condatainer registry pull star/2.7.11b --source lab -p ./overlays/star.sqf`,
+		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRegistryPull(cmd, opts, args[0])
+			return runRegistryPull(cmd, opts, firstArg(args))
 		},
 	}
-	pull.Flags().StringVar(&opts.base, "registry", "", "Registry base, including owner/prefix (required)")
+	addEndpointFlags(pull, opts)
+	pull.Flags().StringVar(&opts.digest, "digest", "", "Install the copy with this digest (sha256:<hex>)")
 	pull.Flags().StringVarP(&opts.prefix, "prefix", "p", "", "Install at this path (the image extension is optional)")
 
 	resolve := &cobra.Command{
-		Use:          "resolve [flags] <name/version|repository:tag|repository@digest>",
-		Short:        "Print the digest an address resolves to",
-		Long:         `Print the digest this machine would pull for an address. Nothing is downloaded.`,
-		Example:      `  condatainer registry resolve star/2.7.11b --registry ghcr.io/my-lab/cnt`,
-		Args:         cobra.ExactArgs(1),
+		Use:   "resolve [flags] <name|name@identity>",
+		Short: "Print the digest of a published overlay without downloading it",
+		Example: `  condatainer registry resolve star/2.7.11b --registry ghcr.io/my-lab/cnt
+  condatainer registry resolve star/2.7.11b --source lab --arch arm64`,
+		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			base, err := requireRegistryBase(opts.base)
-			if err != nil {
-				return err
-			}
-			resolved, err := resolveRegistryArtifact(cmd, base, args[0])
+			resolved, _, err := resolveRegistryArtifact(cmd, opts, firstArg(args))
 			if err != nil {
 				return err
 			}
@@ -135,25 +142,32 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 			return nil
 		},
 	}
-	resolve.Flags().StringVar(&opts.base, "registry", "", "Registry base, including owner/prefix (required)")
+	addEndpointFlags(resolve, opts)
+	resolve.Flags().StringVar(&opts.digest, "digest", "", "Check the copy with this digest (sha256:<hex>)")
+	resolve.Flags().StringVar(&opts.arch, "arch", "", "Machine architecture: amd64, arm64 or noarch")
 
 	tags := &cobra.Command{
-		Use:          "tags [flags] <repository>",
-		Short:        "List the tags published for a repository",
-		Long:         `List every tag in a repository, to see which versions are published.`,
-		Example:      `  condatainer registry tags star --registry ghcr.io/my-lab/cnt`,
-		Args:         cobra.ExactArgs(1),
+		Use:   "tags [flags]",
+		Short: "List what a registry holds",
+		Long: `Print every tag in the registry. Each ends with its architecture.
+
+- name: star--2.7.11b__amd64
+- identity: star--2.7.11b__9f2c1ab4d3e8__amd64 (one exact build)
+- equivalence: star--2.7.11b__eq-e90d3b7714cf__amd64 (newest build from the same recipe)`,
+		Example: `  condatainer registry tags --source lab
+  condatainer registry tags --registry ghcr.io/my-lab/cnt | grep star`,
+		Args:         cobra.NoArgs,
 		SilenceUsage: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			base, err := requireRegistryBase(opts.base)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ep, err := resolveRegistryEndpoint(cmd, opts)
 			if err != nil {
 				return err
 			}
-			repo := strings.Trim(catalog.Normalize(args[0]), "/")
-			if repo == "" || strings.ContainsAny(repo, ":@") {
-				return fmt.Errorf("tags needs an OCI repository path, got %q", args[0])
+			base, repo, err := registry.SplitCoordinate(ep.repository)
+			if err != nil {
+				return err
 			}
-			listed, err := registry.ListTags(cmd.Context(), base, repo)
+			listed, err := registry.ListTags(ep.ctx, base, repo)
 			if err != nil {
 				return err
 			}
@@ -163,16 +177,14 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 			return nil
 		},
 	}
-	tags.Flags().StringVar(&opts.base, "registry", "", "Registry base, including owner/prefix (required)")
+	addEndpointFlags(tags, opts)
 
 	login := &cobra.Command{
 		Use:   "login [flags] <host>[/<owner>/<repo>]",
 		Short: "Verify and store registry credentials",
 		Long: `Check credentials against the registry, and save them once they work.
 
-- Give a host or a repository (host/owner/repo).
 - A repository's credential is used before its host's.
-- -l chooses which config layer keeps the credential. The default is the user layer.
 - Without --username or --password, they are asked for on the terminal.
 
 ` + configLayersHelp,
@@ -207,15 +219,13 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 	login.Flags().StringVarP(&opts.username, "username", "u", "", "Registry username")
 	login.Flags().StringVarP(&opts.password, "password", "p", "", "Registry password or token")
 	login.Flags().BoolVar(&opts.passwordStdin, "password-stdin", false, "Read the password/token from stdin")
-	login.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Config layer to save in: u/user, e/extra-root, r/cnt-root")
+	login.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Layer to save in: u/user, e/extra-root, r/cnt-root")
 
 	logout := &cobra.Command{
 		Use:   "logout [flags] <host>[/<owner>/<repo>]",
 		Short: "Remove stored registry credentials",
 		Long: `Remove the credential saved under exactly this host or repository.
-
-- -l chooses the config layer to remove it from.
-- GITHUB_TOKEN is not affected.`,
+GITHUB_TOKEN is not affected.`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -231,7 +241,7 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 			return nil
 		},
 	}
-	logout.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Config layer to remove from: u/user, e/extra-root, r/cnt-root")
+	logout.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Layer to remove from: u/user, e/extra-root, r/cnt-root")
 
 	list := &cobra.Command{
 		Use:     "list",
@@ -239,8 +249,8 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 		Short:   "List stored registry credentials",
 		Long: `List the saved registry credentials with their layer and username.
 
-- FROM is login for one saved by ` + "`condatainer registry login`" + `, or the source a registry token was added with.
-- For a registry, logins are tried before source tokens. A build from a source tries that source's token first.
+- FROM is login for a saved login, or the source a registry token was added with.
+- Logins are tried before source tokens. A build from a source tries its own token first.
 - Passwords and tokens are never shown.
 - GITHUB_TOKEN, when set, is used for ghcr.io when none of these matches.`,
 		Args:         cobra.NoArgs,
@@ -283,6 +293,14 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 	return cmd
 }
 
+// firstArg is the one optional argument, or empty.
+func firstArg(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
+}
+
 // reportDone announces a finished registry operation through the command's logger,
 // not straight to stderr. A transfer leaves its progress line open, and the log
 // handler ends it on the first record that is not progress; a direct write would land
@@ -298,51 +316,151 @@ func registryPushCompletion(cmd *cobra.Command, args []string, toComplete string
 	return overlayChoices(true, false, false, toComplete)
 }
 
-// registryPushDestination resolves the publishing endpoint and its policy.
+// addEndpointFlags adds the two ways to name a repository.
+func addEndpointFlags(cmd *cobra.Command, opts *registryOptions) {
+	cmd.Flags().StringVar(&opts.repository, "registry", "", "Registry repository to use, such as ghcr.io/my-lab/cnt")
+	cmd.Flags().StringVarP(&opts.source, "source", "s", "", "Use the registry of this recipe source")
+}
+
+// registryEndpoint is the repository a command works on.
+type registryEndpoint struct {
+	// repository is the repository coordinate, host included.
+	repository string
+	// ctx carries the source's registry token when --source named one.
+	ctx context.Context
+	// source is the configured source behind --source, or nil.
+	source *catalog.Source
+}
+
+// pushCollection is the recipe collection a push to this endpoint is matched to.
+// A bare repository, and a source that names no collection, match any.
+func (e registryEndpoint) pushCollection() string {
+	if e.source == nil {
+		return ""
+	}
+	return strings.TrimSpace(e.source.Desc.Source)
+}
+
+// resolveRegistryEndpoint turns --registry or --source into a repository.
+//   - A source must declare a registry and the collection its artifacts come from.
+//   - A project's repository is reached with --registry.
+func resolveRegistryEndpoint(cmd *cobra.Command, opts *registryOptions) (registryEndpoint, error) {
+	registryFlag, sourceFlag := strings.TrimSpace(opts.repository), strings.TrimSpace(opts.source)
+	switch {
+	case registryFlag != "" && sourceFlag != "":
+		return registryEndpoint{}, fmt.Errorf("use --registry or --source, not both")
+	case registryFlag != "":
+		repository := registry.TrimBaseScheme(registryFlag)
+		if _, _, err := registry.SplitCoordinate(repository); err != nil {
+			return registryEndpoint{}, fmt.Errorf("--registry: %w", err)
+		}
+		return registryEndpoint{repository: repository, ctx: cmd.Context()}, nil
+	case sourceFlag != "":
+		cat, err := config.OpenCatalog(cmd.Context())
+		if err != nil {
+			return registryEndpoint{}, fmt.Errorf("cannot read the configured sources: %w", err)
+		}
+		return endpointOfSource(cmd.Context(), cat, sourceFlag)
+	}
+	return registryEndpoint{}, fmt.Errorf("--registry or --source is required (for example, --registry ghcr.io/your-lab/cnt)")
+}
+
+// endpointOfSource finds a configured source by name and reads its registry.
+func endpointOfSource(ctx context.Context, cat catalog.Catalog, name string) (registryEndpoint, error) {
+	for _, source := range cat {
+		if source.Name != name {
+			continue
+		}
+		return endpointFromSource(ctx, source)
+	}
+	return registryEndpoint{}, fmt.Errorf("no configured source is named %q", name)
+}
+
+func endpointFromSource(ctx context.Context, source *catalog.Source) (registryEndpoint, error) {
+	switch {
+	case source.DescriptorErr != nil:
+		return registryEndpoint{}, fmt.Errorf("source %q has an invalid descriptor: %w", source.Name, source.DescriptorErr)
+	case source.Err != nil || source.Stale:
+		return registryEndpoint{}, fmt.Errorf("source %q is unavailable or stale", source.Name)
+	case source.Desc.OCI.Registry == "":
+		return registryEndpoint{}, fmt.Errorf("source %q declares no OCI registry", source.Name)
+	}
+	return registryEndpoint{
+		repository: registry.TrimBaseScheme(source.Desc.OCI.Registry),
+		ctx:        registry.WithSource(ctx, source.Base),
+		source:     source,
+	}, nil
+}
+
+// pushDestination is where a push goes and under what policy.
+type pushDestination struct {
+	repository string
+	audience   registry.Audience
+	collection string
+	ctx        context.Context
+}
+
+// registryPushDestination resolves the publishing repository and its policy.
 //
-//   - Explicit flags win.
+//   - --registry or --source wins.
 //   - Otherwise the artifact's recorded build.source must match exactly one configured source, whose registry it is.
 //   - Only an installed name/version infers. A file is where the destination is least likely to be the recipe collection's, so inferring would publish somewhere nobody named.
-func registryPushDestination(cmd *cobra.Command, opts *registryOptions, artifact registryArtifact) (string, registry.Audience, error) {
-	if strings.TrimSpace(opts.base) != "" {
-		base, err := requireRegistryBase(opts.base)
+func registryPushDestination(cmd *cobra.Command, opts *registryOptions, artifact registryArtifact) (pushDestination, error) {
+	if strings.TrimSpace(opts.repository) != "" || strings.TrimSpace(opts.source) != "" {
+		ep, err := resolveRegistryEndpoint(cmd, opts)
 		if err != nil {
-			return "", "", err
+			return pushDestination{}, err
 		}
-		audience, err := parseAudience(opts.audience)
-		return base, audience, err
+		audience := opts.audience
+		if ep.source != nil {
+			audience = ep.source.Desc.OCI.Audience
+		}
+		parsed, err := pushAudience(cmd, ep.source, audience)
+		if err != nil {
+			return pushDestination{}, err
+		}
+		return pushDestination{repository: ep.repository, audience: parsed, collection: ep.pushCollection(), ctx: ep.ctx}, nil
 	}
 	if !artifact.managed {
-		return "", "", fmt.Errorf("cannot infer registry for %s: only an installed name/version infers its destination; use --registry", artifact.path)
+		return pushDestination{}, fmt.Errorf("cannot infer registry for %s: only an installed name/version infers its destination; use --registry or --source", artifact.path)
 	}
 
 	manifest, err := meta.ReadManifest(artifact.path)
 	if err != nil {
-		return "", "", fmt.Errorf("cannot infer registry from %s: cannot read artifact provenance: %w; use --registry", artifact.path, err)
+		return pushDestination{}, fmt.Errorf("cannot infer registry from %s: cannot read the overlay's provenance: %w; use --registry or --source", artifact.path, err)
 	}
 	repository := strings.TrimRight(strings.TrimSpace(manifest.Build.Source), "/")
 	if repository == "" {
-		return "", "", fmt.Errorf("cannot infer registry: artifact records no build source; use --registry")
+		return pushDestination{}, fmt.Errorf("cannot infer registry: the overlay records no build source; use --registry or --source")
 	}
 	cat, err := config.OpenCatalog(cmd.Context())
 	if err != nil {
-		return "", "", fmt.Errorf("cannot infer registry from build source %q: %w; use --registry", repository, err)
+		return pushDestination{}, fmt.Errorf("cannot infer registry from build source %q: %w; use --registry or --source", repository, err)
 	}
 
 	source, err := inferPushSource(repository, cat)
 	if err != nil {
-		return "", "", err
+		return pushDestination{}, err
+	}
+	ep, err := endpointFromSource(cmd.Context(), source)
+	if err != nil {
+		return pushDestination{}, err
 	}
 
-	audience := source.Desc.OCI.Audience
-	if cmd.Flags().Changed("audience") {
-		audience = opts.audience
-	}
-	parsed, err := parseAudience(audience)
+	parsed, err := pushAudience(cmd, source, source.Desc.OCI.Audience)
 	if err != nil {
-		return "", "", err
+		return pushDestination{}, err
 	}
-	return source.Desc.OCI.Registry, parsed, nil
+	return pushDestination{repository: ep.repository, audience: parsed, collection: ep.pushCollection(), ctx: ep.ctx}, nil
+}
+
+// pushAudience parses the audience a push is checked against.
+// A source declares its own, so --audience applies only to a push by --registry.
+func pushAudience(cmd *cobra.Command, source *catalog.Source, audience string) (registry.Audience, error) {
+	if source != nil && cmd.Flags().Changed("audience") {
+		return "", fmt.Errorf("--audience applies to --registry; source %s declares its own", source.Name)
+	}
+	return parseAudience(audience)
 }
 
 func inferPushSource(repository string, cat catalog.Catalog) (*catalog.Source, error) {
@@ -354,26 +472,19 @@ func inferPushSource(repository string, cat catalog.Catalog) (*catalog.Source, e
 		}
 	}
 	if len(matches) != 1 {
-		return nil, fmt.Errorf("cannot infer registry: build source %q matches %d configured sources; use --registry", repository, len(matches))
+		return nil, fmt.Errorf("cannot infer registry: build source %q matches %d configured sources; use --registry or --source", repository, len(matches))
 	}
 	source := matches[0]
 	if source.DescriptorErr != nil {
-		return nil, fmt.Errorf("cannot infer registry from source %q: invalid source descriptor: %w; use --registry", source.Name, source.DescriptorErr)
+		return nil, fmt.Errorf("cannot infer registry from source %q: invalid source descriptor: %w; use --registry or --source", source.Name, source.DescriptorErr)
 	}
 	if source.Err != nil || source.Stale {
-		return nil, fmt.Errorf("cannot infer registry from source %q: source metadata is unavailable or stale; use --registry", source.Name)
+		return nil, fmt.Errorf("cannot infer registry from source %q: source metadata is unavailable or stale; use --registry or --source", source.Name)
 	}
 	if source.Desc.OCI.Registry == "" {
-		return nil, fmt.Errorf("cannot infer registry: source %q declares no OCI registry; use --registry", source.Name)
+		return nil, fmt.Errorf("cannot infer registry: source %q declares no OCI registry; use --registry or --source", source.Name)
 	}
 	return source, nil
-}
-
-func requireRegistryBase(base string) (string, error) {
-	if base = registry.TrimBaseScheme(base); base == "" {
-		return "", fmt.Errorf("--registry is required (for example, ghcr.io/your-lab/condatainer)")
-	}
-	return base, nil
 }
 
 func parseAudience(raw string) (registry.Audience, error) {
@@ -407,71 +518,94 @@ func findRegistryArtifact(arg string) (registryArtifact, error) {
 			}
 		}
 	}
-	return registryArtifact{}, fmt.Errorf("no local .sqf artifact found for %q; give its full name/version, such as ubuntu24/base, or a path", arg)
+	return registryArtifact{}, fmt.Errorf("no local overlay found for %q; give its full name/version, such as ubuntu24/base, or a path", arg)
 }
 
 type resolvedRegistryArtifact struct {
-	repo, reference string
-	desc            ocispec.Descriptor
-	annotations     map[string]string
+	base, repo  string
+	desc        ocispec.Descriptor
+	annotations map[string]string
+	// name is the artifact name the address gave, or empty for a bare digest.
+	name string
 }
 
-func resolveRegistryArtifact(cmd *cobra.Command, base, spec string) (resolvedRegistryArtifact, error) {
-	name, selector, err := registry.SplitPullSpec(spec)
-	if err != nil {
-		return resolvedRegistryArtifact{}, err
+// parseRegistryAddress reads <name>, <name>@<identity> or <name>:eq-<key>.
+// An identity is the same spelling the store commands take.
+func parseRegistryAddress(spec, arch string) (registry.Address, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return registry.Address{}, fmt.Errorf("name is empty")
 	}
-	if name == "" {
-		return resolvedRegistryArtifact{}, fmt.Errorf("artifact address is empty")
-	}
-
-	type candidate struct{ repo, reference string }
-	var candidates []candidate
-	if selector != "" {
-		candidates = append(candidates, candidate{name, selector})
-	} else {
-		if !strings.Contains(name, "/") {
-			return resolvedRegistryArtifact{}, fmt.Errorf("%q is a bare name; use create for version selection or give registry pull an exact address", spec)
-		}
-		if i := strings.LastIndex(name, "/"); i > 0 {
-			candidates = append(candidates, candidate{name[:i], name[i+1:]})
-		}
-		candidates = append(candidates, candidate{name, registry.RollingTag})
-	}
-
-	var lastErr error
-	for _, candidate := range candidates {
-		desc, ann, err := registry.ResolveArtifact(cmd.Context(), base, candidate.repo, candidate.reference)
+	if strings.Contains(spec, "@") {
+		name, query, err := splitStoreAddress(spec, "")
 		if err != nil {
-			lastErr = err
-			continue
+			return registry.Address{}, err
 		}
-		return resolvedRegistryArtifact{candidate.repo, candidate.reference, desc, ann}, nil
+		return registry.Address{Name: catalog.Normalize(name), Identity: query.SHA256, Scheme: query.Scheme, Arch: arch}, nil
 	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no registry address could be derived from %q", spec)
+	if name, key, ok := strings.Cut(spec, ":eq-"); ok {
+		return registry.Address{Name: catalog.Normalize(name), Equiv: key, Arch: arch}, nil
 	}
-	return resolvedRegistryArtifact{}, lastErr
+	if strings.Contains(spec, ":") {
+		return registry.Address{}, fmt.Errorf("%q is not an address; give a name, name@identity or name:eq-key", spec)
+	}
+	return registry.Address{Name: catalog.Normalize(spec), Arch: arch}, nil
+}
+
+// resolveRegistryArtifact locates the manifest an address or --digest names.
+//   - A miss on this machine's architecture says which architectures are published instead.
+func resolveRegistryArtifact(cmd *cobra.Command, opts *registryOptions, spec string) (resolvedRegistryArtifact, registryEndpoint, error) {
+	ep, err := resolveRegistryEndpoint(cmd, opts)
+	if err != nil {
+		return resolvedRegistryArtifact{}, ep, err
+	}
+	base, repo, err := registry.SplitCoordinate(ep.repository)
+	if err != nil {
+		return resolvedRegistryArtifact{}, ep, err
+	}
+	want := registry.Want{Arch: opts.arch}
+	out := resolvedRegistryArtifact{base: base, repo: repo}
+
+	if opts.digest != "" {
+		if _, err := digest.Parse(opts.digest); err != nil || !strings.HasPrefix(opts.digest, "sha256:") {
+			return out, ep, fmt.Errorf("--digest %q is not a sha256:<hex> digest", opts.digest)
+		}
+		if strings.TrimSpace(spec) != "" {
+			out.name = catalog.Normalize(spec)
+			want.Name = out.name
+		}
+		out.desc, out.annotations, err = registry.ResolveArtifact(ep.ctx, base, repo, opts.digest)
+		if err != nil {
+			return out, ep, err
+		}
+	} else {
+		addr, err := parseRegistryAddress(spec, opts.arch)
+		if err != nil {
+			return out, ep, err
+		}
+		found, err := registry.Lookup(ep.ctx, base, repo, addr)
+		if err = registry.ExplainMiss(ep.ctx, base, repo, addr, err); err != nil {
+			return out, ep, err
+		}
+		out.name, out.desc, out.annotations = addr.Name, found.Desc, found.Annotations
+		want.Name = addr.Name
+	}
+	if err := registry.Check(out.annotations, want); err != nil {
+		return out, ep, fmt.Errorf("cannot use %s: %w", registry.FullRef(base, repo, out.desc.Digest.String()), err)
+	}
+	return out, ep, nil
 }
 
 func runRegistryPull(cmd *cobra.Command, opts *registryOptions, spec string) error {
-	base, err := requireRegistryBase(opts.base)
+	resolved, ep, err := resolveRegistryArtifact(cmd, opts, spec)
 	if err != nil {
 		return err
 	}
-	resolved, err := resolveRegistryArtifact(cmd, base, spec)
+	dest, err := registryPullDestination(opts.prefix, resolved.name, resolved.annotations[registry.AnnTitle])
 	if err != nil {
 		return err
 	}
-	if err := registry.Check(resolved.annotations, registry.Want{}); err != nil {
-		return fmt.Errorf("cannot pull %s: %w", registry.FullRef(base, resolved.repo, resolved.reference), err)
-	}
-	name, selector, _ := registry.SplitPullSpec(spec)
-	dest, err := registryPullDestination(opts.prefix, name, selector, resolved.annotations[registry.AnnTitle])
-	if err != nil {
-		return err
-	}
-	if err := registry.Pull(cmd.Context(), base, resolved.repo, resolved.desc, resolved.annotations, dest); err != nil {
+	if err := registry.Pull(ep.ctx, resolved.base, resolved.repo, resolved.desc, resolved.annotations, dest); err != nil {
 		return err
 	}
 	reportDone(cmd, "pulled", dest)
@@ -483,9 +617,10 @@ func runRegistryPull(cmd *cobra.Command, opts *registryOptions, spec string) err
 const pullExt = ".sqf"
 
 // registryPullDestination picks where a pull installs. --prefix names the path
-// and gains the extension when it has none; otherwise the name the artifact was
-// published under goes into the writable images directory.
-func registryPullDestination(prefix, addressName, selector, title string) (string, error) {
+// and gains the extension when it has none; otherwise the artifact's name, or the
+// one it was published as when only a digest was given, goes into the writable
+// images directory.
+func registryPullDestination(prefix, name, title string) (string, error) {
 	if prefix != "" {
 		if !utils.IsSqf(filepath.Base(prefix)) {
 			prefix += pullExt
@@ -493,7 +628,9 @@ func registryPullDestination(prefix, addressName, selector, title string) (strin
 		return prefix, nil
 	}
 
-	name := addressPlacementName(addressName, selector, title)
+	if name == "" {
+		name = catalog.Normalize(title)
+	}
 	if name == "" {
 		return "", fmt.Errorf("cannot choose an install name from this address; use --prefix")
 	}
@@ -502,33 +639,6 @@ func registryPullDestination(prefix, addressName, selector, title string) (strin
 		return "", fmt.Errorf("no writable images directory: %w", err)
 	}
 	return filepath.Join(dir, strings.ReplaceAll(name, "/", "--")+pullExt), nil
-}
-
-func addressPlacementName(name, selector, title string) string {
-	name = catalog.Normalize(name)
-	title = catalog.Normalize(title)
-	if selector == "" {
-		return name
-	}
-	// A project publishes every artifact into one repository with the name in
-	// the tag, so composing repository and tag the catalog way would install
-	// star/2.7.11b as cnt/star--2.7.11b. Decoding is more specific than that
-	// composition rather than a fallback to the payload, and it cannot be
-	// confused with a catalog tag, which is a single version segment and never
-	// contains `--`.
-	if decoded, _, ok := registry.ParseProjectTag(selector); ok {
-		return decoded
-	}
-	if strings.HasPrefix(selector, "sha256:") {
-		if title == name {
-			return name
-		}
-		return title
-	}
-	if title == name {
-		return name
-	}
-	return name + "/" + selector
 }
 
 // registryUsername is --username, or one typed on the terminal when it is
@@ -605,17 +715,32 @@ func printFindings(findings []credential.Finding) {
 func confirmPush(cmd *cobra.Command, plan registry.PublishPlan) bool {
 	utils.PrintMessage("Publish %s (%s)", plan.Name, utils.FormatSize(plan.Size))
 	utils.PrintMessage("  to %s (%s)", plan.Reference, plan.Audience)
-	utils.PrintMessage("  %d layer(s) of up to %s", plan.Layers, utils.FormatSize(plan.LayerSize))
+	if plan.Existing {
+		utils.PrintMessage("  already published: nothing is uploaded")
+	} else {
+		utils.PrintMessage("  %d layer(s) of up to %s", plan.Layers, utils.FormatSize(plan.LayerSize))
+	}
 	if len(plan.Tags) > 1 {
 		utils.PrintMessage("  tags %s", strings.Join(plan.Tags, ", "))
 	}
-	if plan.Replace {
-		utils.PrintWarning("--force replaces this platform at an existing versioned tag.")
+	if plan.MovedTag != "" {
+		utils.PrintWarning("Moves %s off build %s.", plan.MovedTag, plan.MovedFrom)
+	}
+	if mismatch := plan.Mismatch; mismatch != nil {
+		recorded := "no recipe collection"
+		if mismatch.Recorded != "" {
+			recorded = "the collection " + mismatch.Recorded
+		}
+		utils.PrintWarning("This overlay records %s, but the repository belongs to %s.", recorded, mismatch.Expected)
+		utils.PrintNote("A package links to one code repository.")
 	}
 	if utils.ShouldAnswerYes() {
 		return true
 	}
-	return utils.Confirm(cmd.Context(), cmd.ErrOrStderr(), "Push? [y/N]: ")
+	if plan.Mismatch != nil {
+		return utils.Confirm(cmd.Context(), cmd.ErrOrStderr(), "Push anyway? [y/N]: ")
+	}
+	return utils.ConfirmDefaultYes(cmd.Context(), cmd.ErrOrStderr(), "Push? [Y/n]: ")
 }
 
 // registryCredentials lists the logins and the registry tokens stored with

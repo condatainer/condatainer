@@ -22,11 +22,11 @@ import (
 // because a token expired is a worse outcome than an error.
 var (
 	// ErrNotFound reports that no such artifact is published. Fall back.
-	ErrNotFound = errors.New("artifact is not published")
-	// ErrUnsupportedPlatform reports that the artifact exists but carries no
-	// payload for this architecture. Fall back, with a different message: this
-	// one is somebody's missing push, not a missing artifact.
-	ErrUnsupportedPlatform = errors.New("artifact is not published for this platform")
+	ErrNotFound = errors.New("overlay is not published")
+	// ErrUnsupportedPlatform reports that the artifact is published only for
+	// other architectures. Fall back, with a different message: this one is
+	// somebody's missing push, not a missing artifact.
+	ErrUnsupportedPlatform = errors.New("overlay is not published for this platform")
 	// ErrUnavailable reports that the registry could not be reached or answered
 	// that it was in trouble. Fall back, with a note.
 	ErrUnavailable = errors.New("registry is unavailable")
@@ -39,25 +39,25 @@ var (
 	// ErrIncompatibleRegistry reports a registry that will not store the OCI 1.1
 	// artifact shape CondaTainer publishes. Report; it is a property of the
 	// destination, not of the artifact, and no retry or rebuild changes it.
-	ErrIncompatibleRegistry = errors.New("registry does not accept this artifact format")
+	ErrIncompatibleRegistry = errors.New("registry does not accept this overlay format")
 	// ErrUnauthorized reports that the credential in hand does not open this
 	// artifact. Report; never fall back, or an expired token silently becomes a
 	// long rebuild.
 	ErrUnauthorized = errors.New("not authorized for this registry")
 	// ErrIncompatible reports metadata this build cannot read. Report.
-	ErrIncompatible = errors.New("artifact needs a different CondaTainer version")
+	ErrIncompatible = errors.New("overlay needs a different CondaTainer version")
 	// ErrMismatch reports a well-formed artifact that is not the one asked for.
 	// Report, or keep looking; never install.
-	ErrMismatch = errors.New("artifact is not the one requested")
+	ErrMismatch = errors.New("overlay is not the one requested")
 	// ErrNoAnnotations reports a manifest carrying no CondaTainer metadata at
 	// all, which means it was not published by CondaTainer.
-	ErrNoAnnotations = errors.New("not a CondaTainer artifact")
+	ErrNoAnnotations = errors.New("not a CondaTainer overlay")
 	// ErrInvalidArtifact reports a published artifact that contradicts itself —
 	// a payload whose regenerated keys are not the ones advertised, a manifest
 	// whose layers are not the type it claims. Report; never install. One
 	// sentinel covers them because a caller does the same thing about each: the
 	// difference between them is a message, not a decision.
-	ErrInvalidArtifact = errors.New("published artifact is not coherent")
+	ErrInvalidArtifact = errors.New("published overlay is not coherent")
 )
 
 // categories is every verdict classify can reach, used to recognize an error it

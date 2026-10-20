@@ -177,8 +177,8 @@ type Remote struct {
 	// Repository is the complete OCI repository coordinate, with no scheme,
 	// tag, or digest.
 	Repository string `json:"repository"`
-	// ManifestDigest is the pinned platform manifest digest — not a mutable
-	// tag, and not merely the multi-platform index digest.
+	// ManifestDigest is the pinned manifest digest of the artifact's
+	// architecture — not a mutable tag.
 	ManifestDigest string `json:"manifest_digest"`
 }
 

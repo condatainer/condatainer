@@ -16,6 +16,8 @@ import (
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 )
 
 // fakeRegistry serves just enough of the distribution API to resolve a manifest
@@ -239,105 +241,193 @@ func (f *fakeRegistry) publish(t *testing.T, repo, mediaType string, payload any
 	return desc
 }
 
-// publishArtifact stores a per-platform manifest under an index, the shape a
-// native push produces.
-func publishArtifact(t *testing.T, f *fakeRegistry, repo string, plat ocispec.Platform, ann map[string]string, tags ...string) ocispec.Descriptor {
+// publishArtifact stores one manifest under every tag and lists the tags, the
+// shape a push produces.
+func publishArtifact(t *testing.T, f *fakeRegistry, repo string, ann map[string]string, tags ...string) ocispec.Descriptor {
 	t.Helper()
-	child := f.publish(t, repo, ocispec.MediaTypeImageManifest, ocispec.Manifest{
+	desc := f.publish(t, repo, ocispec.MediaTypeImageManifest, ocispec.Manifest{
 		Versioned:    specs.Versioned{SchemaVersion: 2},
 		MediaType:    ocispec.MediaTypeImageManifest,
 		ArtifactType: ArtifactTypeOverlay,
 		Config:       ocispec.DescriptorEmptyJSON,
 		Layers:       []ocispec.Descriptor{{MediaType: MediaTypeOverlayBlob, Size: 10}},
 		Annotations:  ann,
-	})
-	child.Platform = &plat
-	f.publish(t, repo, ocispec.MediaTypeImageIndex, ocispec.Index{
-		Versioned:   specs.Versioned{SchemaVersion: 2},
-		MediaType:   ocispec.MediaTypeImageIndex,
-		Manifests:   []ocispec.Descriptor{child},
-		Annotations: indexAnnotations(ann),
 	}, tags...)
-	return child
-}
-
-func nativePlatform(t *testing.T) ocispec.Platform {
-	t.Helper()
-	plat, ok := platform()
-	if !ok {
-		t.Skip("not a distribution architecture")
+	for _, tag := range tags {
+		if !slices.Contains(f.tags[repo], tag) {
+			f.tags[repo] = append(f.tags[repo], tag)
+		}
 	}
-	return plat
+	return desc
 }
 
-func TestResolveArtifactDescendsTheIndex(t *testing.T) {
+func TestResolveArtifactReturnsTheManifest(t *testing.T) {
 	f := newFakeRegistry(t)
 	want := Annotations(fullManifest(), "zstd")
-	child := publishArtifact(t, f, "grch38/star/2.7.11b", nativePlatform(t), want, "gencode49-101")
+	published := publishArtifact(t, f, "cnt", want, "star--2.7.11b__amd64")
 
-	desc, ann, err := ResolveArtifact(context.Background(), f.base(), "grch38/star/2.7.11b", "gencode49-101")
+	desc, ann, err := ResolveArtifact(context.Background(), f.base(), "cnt", "star--2.7.11b__amd64")
 	if err != nil {
 		t.Fatalf("ResolveArtifact: %v", err)
 	}
-	if desc.Digest != child.Digest {
-		t.Errorf("resolved %s, want this platform's child %s", desc.Digest, child.Digest)
-	}
-	if desc.ArtifactType != ArtifactTypeOverlay {
-		t.Errorf("artifact type = %q, want %q", desc.ArtifactType, ArtifactTypeOverlay)
+	if desc.Digest != published.Digest || desc.ArtifactType != ArtifactTypeOverlay {
+		t.Errorf("resolved %s (%q), want %s (%q)", desc.Digest, desc.ArtifactType, published.Digest, ArtifactTypeOverlay)
 	}
 	if ann[AnnIdentitySHA] != want[AnnIdentitySHA] || ann[AnnCompression] != "zstd" {
-		t.Errorf("annotations = %v, want the child's own", ann)
+		t.Errorf("annotations = %v, want the manifest's own", ann)
 	}
 	// The resolved descriptor must be usable as an address on its own.
-	if _, _, err := ResolveArtifact(context.Background(), f.base(), "grch38/star/2.7.11b", desc.Digest.String()); err != nil {
+	if _, _, err := ResolveArtifact(context.Background(), f.base(), "cnt", desc.Digest.String()); err != nil {
 		t.Errorf("resolving the returned digest: %v", err)
 	}
 }
 
-// A noarch artifact is tagged as a bare manifest with no index above it.
-func TestResolveArtifactAcceptsABareManifest(t *testing.T) {
+// A repository holds one manifest per architecture, so an index in it is not
+// something CondaTainer published.
+func TestResolveArtifactRefusesAnIndex(t *testing.T) {
 	f := newFakeRegistry(t)
-	m := fullManifest()
-	m.Platform.Arch = "noarch"
-	want := Annotations(m, "zstd")
-	f.publish(t, "hello", ocispec.MediaTypeImageManifest, ocispec.Manifest{
-		Versioned:    specs.Versioned{SchemaVersion: 2},
-		MediaType:    ocispec.MediaTypeImageManifest,
-		ArtifactType: ArtifactTypeOverlay,
-		Config:       ocispec.DescriptorEmptyJSON,
-		Annotations:  want,
-	}, "1.0")
+	f.publish(t, "cnt", ocispec.MediaTypeImageIndex, ocispec.Index{
+		Versioned: specs.Versioned{SchemaVersion: 2},
+		MediaType: ocispec.MediaTypeImageIndex,
+	}, "star--2.7.11b__amd64")
 
-	desc, ann, err := ResolveArtifact(context.Background(), f.base(), "hello", "1.0")
-	if err != nil {
-		t.Fatalf("ResolveArtifact: %v", err)
-	}
-	if ann[AnnNoarch] != "true" {
-		t.Errorf("annotations = %v, want the noarch mark", ann)
-	}
-	if desc.ArtifactType != ArtifactTypeOverlay {
-		t.Errorf("artifact type = %q, want %q", desc.ArtifactType, ArtifactTypeOverlay)
+	_, _, err := ResolveArtifact(context.Background(), f.base(), "cnt", "star--2.7.11b__amd64")
+	if !errors.Is(err, ErrInvalidArtifact) {
+		t.Fatalf("err = %v, want ErrInvalidArtifact", err)
 	}
 }
 
-// The artifact exists but nobody published this architecture. That is a
-// different answer from "no such artifact", and the message must name what was
-// published so the reader knows a push is missing rather than a name wrong.
-func TestResolveArtifactReportsAMissingPlatform(t *testing.T) {
-	f := newFakeRegistry(t)
-	native := nativePlatform(t)
-	foreign := ocispec.Platform{OS: "linux", Architecture: "s390x"}
-	if native.Architecture == foreign.Architecture {
-		t.Skip("running on the architecture used as the foreign one")
+// publishBuild stores a manifest under the tags a catalog push writes for m.
+func publishBuild(t *testing.T, f *fakeRegistry, m meta.Manifest) Tags {
+	t.Helper()
+	tags, err := TagsFor(m, TagRequest{Name: true, Equiv: true})
+	if err != nil {
+		t.Fatal(err)
 	}
-	publishArtifact(t, f, "cellranger", foreign, Annotations(fullManifest(), ""), "9.0.1")
+	publishArtifact(t, f, "cnt", Annotations(m, ""), tags.List()...)
+	return tags
+}
 
-	_, _, err := ResolveArtifact(context.Background(), f.base(), "cellranger", "9.0.1")
-	if !errors.Is(err, ErrUnsupportedPlatform) {
-		t.Fatalf("err = %v, want ErrUnsupportedPlatform", err)
+func TestLookup(t *testing.T) {
+	f := newFakeRegistry(t)
+	m := fullManifest()
+	m.Name = "star/2.7.11b"
+	tags := publishBuild(t, f, m)
+	identity, equiv := m.Keys.Identity.SHA256, m.Keys.Equiv.SHA256
+
+	tests := []struct {
+		why  string
+		addr Address
+		want string
+	}{
+		{"a name reads the name tag", Address{Name: m.Name, Arch: ArchAMD64}, tags.Name},
+		{"a complete identity reads the build tag", Address{Name: m.Name, Identity: identity, Arch: ArchAMD64}, tags.Build},
+		{"a short identity prefix is matched against the build tags", Address{Name: m.Name, Identity: "aaa", Arch: ArchAMD64}, tags.Build},
+		{"an equivalence key reads the equivalence tag", Address{Name: m.Name, Equiv: equiv, Arch: ArchAMD64}, tags.Equiv},
+		{"the scheme is half the identity", Address{Name: m.Name, Identity: identity, Scheme: "script-identity-v1", Arch: ArchAMD64}, tags.Build},
 	}
-	if !strings.Contains(err.Error(), "linux/s390x") {
-		t.Errorf("the refusal does not name what was published: %v", err)
+	for _, tt := range tests {
+		found, err := Lookup(context.Background(), f.base(), "cnt", tt.addr)
+		if err != nil {
+			t.Errorf("%s: %v", tt.why, err)
+			continue
+		}
+		if found.Tag != tt.want || found.Arch != ArchAMD64 {
+			t.Errorf("%s: found %s (%s), want %s", tt.why, found.Tag, found.Arch, tt.want)
+		}
+	}
+}
+
+func TestLookupRefusals(t *testing.T) {
+	f := newFakeRegistry(t)
+	m := fullManifest()
+	m.Name = "star/2.7.11b"
+	publishBuild(t, f, m)
+	other := m
+	other.Keys.Identity.SHA256 = "aaab" + strings.Repeat("a", 60)
+	publishBuild(t, f, other)
+
+	_, err := Lookup(context.Background(), f.base(), "cnt", Address{Name: m.Name, Identity: "aaa", Arch: ArchAMD64})
+	if !errors.Is(err, ErrMismatch) {
+		t.Errorf("a prefix of two builds: err = %v, want ErrMismatch", err)
+	}
+	_, err = Lookup(context.Background(), f.base(), "cnt", Address{Name: m.Name, Identity: "ccc", Arch: ArchAMD64})
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("a prefix of no build: err = %v, want ErrNotFound", err)
+	}
+	_, err = Lookup(context.Background(), f.base(), "cnt",
+		Address{Name: m.Name, Identity: m.Keys.Identity.SHA256, Scheme: "conda-explicit-v1", Arch: ArchAMD64})
+	if !errors.Is(err, ErrMismatch) {
+		t.Errorf("one digest under another scheme: err = %v, want ErrMismatch", err)
+	}
+	_, err = Lookup(context.Background(), f.base(), "cnt", Address{Name: m.Name, Identity: "aaa", Equiv: "bbb", Arch: ArchAMD64})
+	if err == nil {
+		t.Error("an address with an identity and an equivalence key was accepted")
+	}
+}
+
+// A tag carries a key prefix, so the full key in the annotations decides.
+func TestLookupComparesTheFullKey(t *testing.T) {
+	f := newFakeRegistry(t)
+	m := fullManifest()
+	m.Name = "star/2.7.11b"
+	collider := m
+	collider.Keys.Identity.SHA256 = strings.Repeat("a", 12) + strings.Repeat("c", 52)
+	tag, err := BuildTag(m.Name, m.Keys.Identity, ArchAMD64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishArtifact(t, f, "cnt", Annotations(collider, ""), tag)
+
+	_, err = Lookup(context.Background(), f.base(), "cnt", Address{Name: m.Name, Identity: m.Keys.Identity.SHA256, Arch: ArchAMD64})
+	if !errors.Is(err, ErrMismatch) {
+		t.Fatalf("err = %v, want ErrMismatch", err)
+	}
+}
+
+// With no architecture given, the host's tag is tried before noarch, and a
+// miss on both leaves PublishedArches to say what exists.
+func TestLookupDefaultsToTheHostThenNoarch(t *testing.T) {
+	if host := meta.NativeArch(); host != ArchAMD64 && host != ArchARM64 {
+		t.Skip("not a distribution architecture")
+	}
+	f := newFakeRegistry(t)
+	portable := fullManifest()
+	portable.Name = "ubuntu24/build-essential"
+	portable.Platform.Arch = meta.ArchNone
+	tags := publishBuild(t, f, portable)
+
+	found, err := Lookup(context.Background(), f.base(), "cnt", Address{Name: portable.Name})
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if found.Tag != tags.Name || found.Arch != ArchNoarch {
+		t.Errorf("found %s (%s), want %s (noarch)", found.Tag, found.Arch, tags.Name)
+	}
+
+	foreign := ArchARM64
+	if meta.NativeArch() == ArchARM64 {
+		foreign = ArchAMD64
+	}
+	elsewhere := fullManifest()
+	elsewhere.Name = "cellranger/9.0.1"
+	elsewhere.Platform.Arch = foreign
+	publishBuild(t, f, elsewhere)
+
+	_, err = Lookup(context.Background(), f.base(), "cnt", Address{Name: elsewhere.Name})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	addr := Address{Name: elsewhere.Name}
+	if got := PublishedArches(context.Background(), f.base(), "cnt", addr); !slices.Equal(got, []string{foreign}) {
+		t.Errorf("PublishedArches = %v, want [%s]", got, foreign)
+	}
+	explained := ExplainMiss(context.Background(), f.base(), "cnt", addr, err)
+	if !errors.Is(explained, ErrUnsupportedPlatform) || !strings.Contains(explained.Error(), "published for "+foreign+" only") {
+		t.Errorf("ExplainMiss = %v, want the architectures published", explained)
+	}
+	if got := ExplainMiss(context.Background(), f.base(), "cnt", Address{Name: "absent/1.0"}, ErrNotFound); !errors.Is(got, ErrNotFound) || errors.Is(got, ErrUnsupportedPlatform) {
+		t.Errorf("a name published nowhere: ExplainMiss = %v, want ErrNotFound", got)
 	}
 }
 
@@ -366,13 +456,14 @@ func TestResolveArtifactUnauthorized(t *testing.T) {
 
 func TestListTags(t *testing.T) {
 	f := newFakeRegistry(t)
-	f.tags["ubuntu24/base"] = []string{"20260721", "20260801", RollingTag}
+	want := []string{"ubuntu24--base__amd64", "ubuntu24--base__a31f902c12ab__amd64", "ubuntu24--base__noarch"}
+	f.tags["cnt"] = want
 
-	tags, err := ListTags(context.Background(), f.base(), "ubuntu24/base")
+	tags, err := ListTags(context.Background(), f.base(), "cnt")
 	if err != nil {
 		t.Fatalf("ListTags: %v", err)
 	}
-	for _, want := range []string{"20260721", "20260801", RollingTag} {
+	for _, want := range want {
 		if !slices.Contains(tags, want) {
 			t.Errorf("tags = %v, missing %q", tags, want)
 		}

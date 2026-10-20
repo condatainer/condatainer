@@ -2,14 +2,13 @@ package registry
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/opencontainers/go-digest"
 
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
@@ -76,6 +75,45 @@ func TestAudienceRefusalNamesBothRemedies(t *testing.T) {
 	}
 }
 
+// catalogTags is what a source's repository takes: every tag.
+var catalogTags = TagRequest{Name: true, Equiv: true}
+
+// repo is a repository coordinate on the fake registry.
+func (f *fakeRegistry) repo() string { return f.base() + "/cnt" }
+
+func (f *fakeRegistry) request(path string) PublishRequest {
+	return PublishRequest{Path: path, Repository: f.repo(), Tags: catalogTags}
+}
+
+// digestAt reports what a tag points at in the fake registry.
+func (f *fakeRegistry) digestAt(t *testing.T, tag string) digest.Digest {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	desc, ok := f.content["cnt/"+tag]
+	if !ok {
+		t.Fatalf("nothing published at %s", tag)
+	}
+	return desc.Digest
+}
+
+// dropTag removes a tag the way a registry console does.
+func (f *fakeRegistry) dropTag(tag string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.content, "cnt/"+tag)
+	f.tags["cnt"] = slices.DeleteFunc(f.tags["cnt"], func(have string) bool { return have == tag })
+}
+
+func tagsOf(t *testing.T, m meta.Manifest) Tags {
+	t.Helper()
+	tags, err := TagsFor(m, catalogTags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tags
+}
+
 // The default is the restrictive one: an endpoint that never declared its
 // audience must not be treated as private.
 func TestPublishDefaultsToPublic(t *testing.T) {
@@ -83,7 +121,7 @@ func TestPublishDefaultsToPublic(t *testing.T) {
 	source, _ := packImage(t, imageSpec{name: "hello/1.0", typ: catalog.TypeApp, recipe: "#!/bin/bash\n"})
 	f := newFakeRegistry(t)
 
-	_, err := Publish(context.Background(), PublishRequest{Path: source, Base: f.base()})
+	_, err := Publish(context.Background(), f.request(source))
 	if err == nil {
 		t.Fatal("an app was published to an endpoint with no declared audience")
 	}
@@ -102,24 +140,20 @@ func TestPublishAndPullRoundTrip(t *testing.T) {
 	f := newFakeRegistry(t)
 	ctx := context.Background()
 
-	if _, err := Publish(ctx, PublishRequest{Path: source, Base: f.base()}); err != nil {
+	if _, err := Publish(ctx, f.request(source)); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
-	repo, tag, err := PullReference(m.Type, m.Name)
+	found, err := Lookup(ctx, f.base(), "cnt", Address{Name: m.Name})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Lookup: %v", err)
 	}
-	desc, ann, err := ResolveArtifact(ctx, f.base(), repo, tag)
-	if err != nil {
-		t.Fatalf("ResolveArtifact: %v", err)
-	}
-	if err := Check(ann, Want{Name: m.Name, Identity: m.Keys.Identity}); err != nil {
+	if err := Check(found.Annotations, Want{Name: m.Name, Identity: m.Keys.Identity}); err != nil {
 		t.Fatalf("Check: %v", err)
 	}
 
 	dest := filepath.Join(t.TempDir(), "grch38-genome--gencode49.sqf")
-	if err := Pull(ctx, f.base(), repo, desc, ann, dest); err != nil {
+	if err := Pull(ctx, f.base(), "cnt", found.Desc, found.Annotations, dest); err != nil {
 		t.Fatalf("Pull: %v", err)
 	}
 	if !sameBytes(t, source, dest) {
@@ -136,7 +170,7 @@ func TestPublishRefusesAnArtifactWithNoKeys(t *testing.T) {
 	})
 	f := newFakeRegistry(t)
 
-	_, err := Publish(context.Background(), PublishRequest{Path: source, Base: f.base()})
+	_, err := Publish(context.Background(), f.request(source))
 	if err == nil {
 		t.Fatal("an artifact with no keys was published")
 	}
@@ -154,7 +188,7 @@ func TestPublishRefusesKeysThatDoNotRegenerate(t *testing.T) {
 	})
 	f := newFakeRegistry(t)
 
-	_, err := Publish(context.Background(), PublishRequest{Path: source, Base: f.base()})
+	_, err := Publish(context.Background(), f.request(source))
 	if !errors.Is(err, ErrInvalidArtifact) {
 		t.Fatalf("err = %v, want ErrInvalidArtifact", err)
 	}
@@ -163,82 +197,176 @@ func TestPublishRefusesKeysThatDoNotRegenerate(t *testing.T) {
 	}
 }
 
-// A versioned tag is immutable, because the one thing a version promises is that
-// it does not change under someone who already pulled it.
-func TestPublishRefusesAnExistingVersionedTag(t *testing.T) {
+// Nothing is published for an architecture no puller can name in a tag.
+func TestPublishRefusesAnArchitectureNothingIsPublishedFor(t *testing.T) {
 	requireSquashfsTools(t)
 	source, _ := packImage(t, imageSpec{
+		name: "hello/1.0", typ: catalog.TypeData, arch: "s390x", recipe: "#!/bin/bash\n",
+	})
+	f := newFakeRegistry(t)
+
+	_, err := Publish(context.Background(), f.request(source))
+	if !errors.Is(err, ErrUnsupportedPlatform) {
+		t.Fatalf("err = %v, want ErrUnsupportedPlatform", err)
+	}
+	if len(f.tags) != 0 {
+		t.Errorf("a refused artifact was published anyway: %v", f.tags)
+	}
+}
+
+// Every tag points at the one manifest, so any of them finds the build.
+func TestPublishWritesEveryTag(t *testing.T) {
+	requireSquashfsTools(t)
+	source, m := packImage(t, imageSpec{
 		name: "grch38/genome/gencode49", typ: catalog.TypeData, recipe: "#!/bin/bash\n",
 	})
 	f := newFakeRegistry(t)
 	ctx := context.Background()
 
-	if _, err := Publish(ctx, PublishRequest{Path: source, Base: f.base()}); err != nil {
-		t.Fatalf("first publish: %v", err)
-	}
-	_, err := Publish(ctx, PublishRequest{Path: source, Base: f.base()})
-	if err == nil {
-		t.Fatal("a versioned tag was silently replaced")
-	}
-	if !strings.Contains(err.Error(), "--force") {
-		t.Errorf("the refusal does not name the way through: %v", err)
-	}
-	if _, err := Publish(ctx, PublishRequest{Path: source, Base: f.base(), Force: true}); err != nil {
-		t.Errorf("--force did not permit the replacement: %v", err)
-	}
-}
-
-// A version-less artifact is addressed by build date and a rolling tag;
-// republishing it is the point of that scheme, so nothing is protected.
-func TestPublishVersionLessRepublishesUnderBothTags(t *testing.T) {
-	requireSquashfsTools(t)
-	source, m := packImage(t, imageSpec{
-		name: "ubuntu24/build-essential", typ: catalog.TypeOS, recipe: "#!/bin/bash\n",
-	})
-	f := newFakeRegistry(t)
-	ctx := context.Background()
-
-	if _, err := Publish(ctx, PublishRequest{Path: source, Base: f.base()}); err != nil {
-		t.Fatalf("Publish: %v", err)
-	}
-	if _, err := Publish(ctx, PublishRequest{Path: source, Base: f.base()}); err != nil {
-		t.Errorf("a version-less artifact could not be republished: %v", err)
-	}
-
-	tags, err := ListTags(ctx, f.base(), "ubuntu24/build-essential")
+	desc, err := Publish(ctx, f.request(source))
 	if err != nil {
 		t.Fatal(err)
 	}
-	dateTag := m.Build.Created.UTC().Format(dateTagLayout)
-	for _, want := range []string{dateTag, RollingTag} {
-		if !slices.Contains(tags, want) {
-			t.Errorf("tags = %v, missing %q", tags, want)
+	tags := tagsOf(t, m)
+	if len(tags.List()) != 3 {
+		t.Fatalf("a script build takes three tags, got %v", tags.List())
+	}
+	for _, tag := range tags.List() {
+		if got := f.digestAt(t, tag); got != desc.Digest {
+			t.Errorf("%s points at %s, want the manifest %s", tag, got, desc.Digest)
+		}
+	}
+	listed, err := ListTags(ctx, f.base(), "cnt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 3 {
+		t.Errorf("tags = %v, want exactly the three written", listed)
+	}
+}
+
+// A build already published uploads nothing. Pushing it again points whichever
+// tags are missing at it, which finishes a push that stopped part way.
+func TestPublishOfAPublishedBuildUploadsNothing(t *testing.T) {
+	requireSquashfsTools(t)
+	source, m := packImage(t, imageSpec{
+		name: "grch38/genome/gencode49", typ: catalog.TypeData, recipe: "#!/bin/bash\n",
+	})
+	f := newFakeRegistry(t)
+	ctx := context.Background()
+	tags := tagsOf(t, m)
+
+	first, err := Publish(ctx, f.request(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobs := len(f.blobs)
+	again, err := Publish(ctx, f.request(source))
+	if err != nil || again.Digest != first.Digest {
+		t.Fatalf("second publish = %v, %v; want the first manifest", again.Digest, err)
+	}
+
+	f.dropTag(tags.Name)
+	f.dropTag(tags.Equiv)
+	var shown PublishPlan
+	req := f.request(source)
+	req.Confirm = func(plan PublishPlan) bool { shown = plan; return true }
+	if _, err := Publish(ctx, req); err != nil {
+		t.Fatalf("finishing publish: %v", err)
+	}
+	for _, tag := range []string{tags.Name, tags.Equiv} {
+		if got := f.digestAt(t, tag); got != first.Digest {
+			t.Errorf("%s points at %s, want %s", tag, got, first.Digest)
+		}
+	}
+	if !shown.Existing || !slices.Equal(shown.Tags, []string{tags.Equiv, tags.Name}) {
+		t.Errorf("plan = %+v, want the two missing tags of a published build", shown)
+	}
+	if len(f.blobs) != blobs {
+		t.Errorf("blobs went from %d to %d: a published build was uploaded again", blobs, len(f.blobs))
+	}
+}
+
+// A different build of the same name takes the name tag and leaves the old build
+// under its own, so nothing a lock pins loses its tag.
+func TestPublishAnotherBuildMovesTheNameTag(t *testing.T) {
+	requireSquashfsTools(t)
+	first, mFirst := packImage(t, imageSpec{name: "star/2.7.11b", recipe: "#!/bin/bash\none\n"})
+	second, mSecond := packImage(t, imageSpec{name: "star/2.7.11b", recipe: "#!/bin/bash\ntwo\n"})
+	f := newFakeRegistry(t)
+	ctx := context.Background()
+	restricted := func(path string) PublishRequest {
+		req := f.request(path)
+		req.Audience = Restricted
+		return req
+	}
+
+	oldDesc, err := Publish(ctx, restricted(first))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shown PublishPlan
+	req := restricted(second)
+	req.Confirm = func(plan PublishPlan) bool { shown = plan; return true }
+	newDesc, err := Publish(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldTags, newTags := tagsOf(t, mFirst), tagsOf(t, mSecond)
+	if got := f.digestAt(t, newTags.Name); got != newDesc.Digest {
+		t.Errorf("the name tag serves %s, want the new build %s", got, newDesc.Digest)
+	}
+	if got := f.digestAt(t, oldTags.Build); got != oldDesc.Digest {
+		t.Errorf("the replaced build's tag points at %s, want %s", got, oldDesc.Digest)
+	}
+	if shown.MovedTag != newTags.Name || !strings.HasPrefix(mFirst.Keys.Identity.SHA256, shown.MovedFrom) || shown.MovedFrom == "" {
+		t.Errorf("plan = %+v, want the name tag moving off %s", shown, mFirst.Keys.Identity.SHA256[:keyChars])
+	}
+	if shown.Existing {
+		t.Error("a new build was reported as already published")
+	}
+}
+
+// Each architecture is its own manifest under its own tags, so pushing one
+// never reads or rewrites another.
+func TestPublishLeavesAnotherArchitectureAlone(t *testing.T) {
+	requireSquashfsTools(t)
+	amd, mAMD := packImage(t, imageSpec{name: "star/2.7.11b", arch: "amd64", recipe: "#!/bin/bash\nbuild\n"})
+	arm, mARM := packImage(t, imageSpec{name: "star/2.7.11b", arch: "arm64", recipe: "#!/bin/bash\nbuild\n"})
+	f := newFakeRegistry(t)
+	ctx := context.Background()
+	restricted := func(path string) PublishRequest {
+		req := f.request(path)
+		req.Audience = Restricted
+		return req
+	}
+
+	amdDesc, err := Publish(ctx, restricted(amd))
+	if err != nil {
+		t.Fatal(err)
+	}
+	armDesc, err := Publish(ctx, restricted(arm))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if amdDesc.Digest == armDesc.Digest {
+		t.Fatal("two architectures share a manifest")
+	}
+	for _, tag := range tagsOf(t, mAMD).List() {
+		if got := f.digestAt(t, tag); got != amdDesc.Digest || !strings.HasSuffix(tag, "__amd64") {
+			t.Errorf("%s points at %s after the arm64 push, want the amd64 manifest", tag, got)
+		}
+	}
+	for _, tag := range tagsOf(t, mARM).List() {
+		if got := f.digestAt(t, tag); got != armDesc.Digest || !strings.HasSuffix(tag, "__arm64") {
+			t.Errorf("%s points at %s, want the arm64 manifest", tag, got)
 		}
 	}
 }
 
-// A native artifact is published under an index, so a second architecture can add
-// itself to the same tag.
-func TestPublishWrapsANativeArtifactInAnIndex(t *testing.T) {
-	requireSquashfsTools(t)
-	source, m := packImage(t, imageSpec{
-		name: "grch38/genome/gencode49", typ: catalog.TypeData, recipe: "#!/bin/bash\n",
-	})
-	f := newFakeRegistry(t)
-	ctx := context.Background()
-
-	if _, err := Publish(ctx, PublishRequest{Path: source, Base: f.base()}); err != nil {
-		t.Fatal(err)
-	}
-	repo, tag, _ := PullReference(m.Type, m.Name)
-	if got := f.mediaTypeAt(t, repo, tag); got != ocispec.MediaTypeImageIndex {
-		t.Errorf("tag resolves to %q, want an image index", got)
-	}
-}
-
-// #ARCH:noarch has no platform spelling, and an index over a single child would
-// imply the payload varies by architecture when it does not.
-func TestPublishTagsANoarchArtifactDirectly(t *testing.T) {
+// #ARCH:noarch publishes under noarch tags, and the annotation says so.
+func TestPublishTagsANoarchArtifact(t *testing.T) {
 	requireSquashfsTools(t)
 	source, m := packImage(t, imageSpec{
 		name: "grch38/genome/gencode49", typ: catalog.TypeData,
@@ -247,79 +375,78 @@ func TestPublishTagsANoarchArtifactDirectly(t *testing.T) {
 	f := newFakeRegistry(t)
 	ctx := context.Background()
 
-	if _, err := Publish(ctx, PublishRequest{Path: source, Base: f.base()}); err != nil {
+	if _, err := Publish(ctx, f.request(source)); err != nil {
 		t.Fatal(err)
 	}
-	repo, tag, _ := PullReference(m.Type, m.Name)
-	if got := f.mediaTypeAt(t, repo, tag); got != ocispec.MediaTypeImageManifest {
-		t.Errorf("tag resolves to %q, want a bare image manifest", got)
-	}
-
-	_, ann, err := ResolveArtifact(ctx, f.base(), repo, tag)
+	found, err := Lookup(ctx, f.base(), "cnt", Address{Name: m.Name, Arch: ArchNoarch})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ann[AnnNoarch] != "true" {
-		t.Errorf("annotations = %v, want the noarch mark", ann)
+	if !strings.HasSuffix(found.Tag, "__noarch") || found.Annotations[AnnArch] != "noarch" {
+		t.Errorf("found %s with annotations %v, want the noarch tag and mark", found.Tag, found.Annotations)
 	}
 }
 
-// The index child takes the architecture the artifact records, not the pushing
-// machine's, so one machine can publish every architecture's build.
-func TestPublishUsesTheArtifactsArchitecture(t *testing.T) {
+// A tag carries only a key prefix, so a build tag that holds another identity is
+// never overwritten.
+func TestPublishRefusesABuildTagHoldingAnotherIdentity(t *testing.T) {
 	requireSquashfsTools(t)
-	other := "arm64"
-	if nativePlatform(t).Architecture == other {
-		other = "amd64"
-	}
-	source, m := packImage(t, imageSpec{
-		name: "grch38/genome/gencode49", typ: catalog.TypeData,
-		arch: other, recipe: "#!/bin/bash\n",
-	})
+	source, m := packImage(t, imageSpec{name: "star/2.7.11b", recipe: "#!/bin/bash\nbuild\n"})
 	f := newFakeRegistry(t)
+	other := m
+	other.Keys.Identity.SHA256 = m.Keys.Identity.SHA256[:keyChars] + strings.Repeat("0", 64-keyChars)
+	publishArtifact(t, f, "cnt", Annotations(other, ""), tagsOf(t, m).Build)
 
-	if _, err := Publish(context.Background(), PublishRequest{Path: source, Base: f.base()}); err != nil {
-		t.Fatal(err)
-	}
-	repo, tag, _ := PullReference(m.Type, m.Name)
-	if got := f.indexPlatformsAt(t, repo, tag); !slices.Equal(got, []string{"linux/" + other}) {
-		t.Errorf("index carries %v, want only linux/%s", got, other)
+	req := f.request(source)
+	req.Audience = Restricted
+	if _, err := Publish(context.Background(), req); !errors.Is(err, ErrMismatch) {
+		t.Fatalf("err = %v, want ErrMismatch", err)
 	}
 }
 
-// Pushing this architecture must not unpublish another one that was already
-// there: the whole point of the index is that one tag serves both.
-func TestPublishPreservesAnotherArchitecture(t *testing.T) {
+// A source's repository takes an artifact recording another collection, or none,
+// when the publisher agrees: the package links to one code repository, but the
+// keys are sound. The plan tells the publisher before anything moves.
+func TestPublishReportsAnotherOrNoCollection(t *testing.T) {
 	requireSquashfsTools(t)
-	source, m := packImage(t, imageSpec{
-		name: "grch38/genome/gencode49", typ: catalog.TypeData, recipe: "#!/bin/bash\n",
+	recorded, _ := packImage(t, imageSpec{
+		name: "star/2.7.11b", recipe: "#!/bin/bash\nbuild\n",
+		tamper: func(m *meta.Manifest) { m.Build.Source = "https://example.org/recipes" },
 	})
+	unrecorded, _ := packImage(t, imageSpec{name: "hello/1.0", recipe: "#!/bin/bash\nbuild\n"})
 	f := newFakeRegistry(t)
-	ctx := context.Background()
-
-	native := nativePlatform(t)
-	foreign := ocispec.Platform{OS: "linux", Architecture: "s390x"}
-	if native.Architecture == foreign.Architecture {
-		t.Skip("running on the architecture used as the foreign one")
-	}
-	repo, tag, _ := PullReference(m.Type, m.Name)
-	publishArtifact(t, f, repo, foreign, Annotations(m, ""), tag)
-
-	if _, err := Publish(ctx, PublishRequest{Path: source, Base: f.base()}); err != nil {
-		t.Fatalf("Publish: %v", err)
+	push := func(path, collection string, agree bool) (*CollectionMismatch, error) {
+		var shown *CollectionMismatch
+		req := f.request(path)
+		req.Audience, req.Collection = Restricted, collection
+		req.Confirm = func(plan PublishPlan) bool { shown = plan.Mismatch; return agree }
+		_, err := Publish(context.Background(), req)
+		return shown, err
 	}
 
-	got := f.indexPlatformsAt(t, repo, tag)
-	for _, want := range []string{platformKey(&native), platformKey(&foreign)} {
-		if !slices.Contains(got, want) {
-			t.Errorf("index carries %v, missing %q", got, want)
-		}
+	got, err := push(recorded, "https://example.org/other", false)
+	if !errors.Is(err, ErrDeclined) || got == nil || got.Recorded != "https://example.org/recipes" || got.Expected != "https://example.org/other" {
+		t.Fatalf("another collection: mismatch = %+v, err = %v; want it shown and declined", got, err)
+	}
+	if len(f.tags) != 0 {
+		t.Errorf("a declined push published anyway: %v", f.tags)
+	}
+	got, err = push(unrecorded, "https://example.org/other", true)
+	if err != nil || got == nil || got.Recorded != "" {
+		t.Errorf("no collection: mismatch = %+v, err = %v; want it shown and published", got, err)
+	}
+	if got, err := push(recorded, "https://example.org/recipes/", true); err != nil || got != nil {
+		t.Errorf("the artifact's own collection: mismatch = %+v, err = %v; want none", got, err)
+	}
+	other, _ := packImage(t, imageSpec{name: "bare/1.0", recipe: "#!/bin/bash\nbare\n"})
+	if got, err := push(other, "", true); err != nil || got != nil {
+		t.Errorf("a repository with no collection: mismatch = %+v, err = %v; want none", got, err)
 	}
 }
 
 func TestPushRefusesAWritableOverlay(t *testing.T) {
 	f := newFakeRegistry(t)
-	_, err := Push(context.Background(), "/images/dev.img", f.base(), "dev", []string{"1.0"}, nil, "amd64")
+	_, err := Push(context.Background(), "/images/dev.img", f.base(), "cnt", []string{"dev__amd64"}, nil)
 	if err == nil {
 		t.Fatal("a writable overlay was pushed")
 	}
@@ -330,37 +457,9 @@ func TestPushRefusesAWritableOverlay(t *testing.T) {
 
 func TestPushRefusesNoTags(t *testing.T) {
 	f := newFakeRegistry(t)
-	if _, err := Push(context.Background(), "/images/x.sqf", f.base(), "x", nil, nil, "amd64"); err == nil {
+	if _, err := Push(context.Background(), "/images/x.sqf", f.base(), "cnt", nil, nil); err == nil {
 		t.Fatal("a push with no tags was accepted")
 	}
-}
-
-// mediaTypeAt reports what a tag resolves to in the fake registry.
-func (f *fakeRegistry) mediaTypeAt(t *testing.T, repo, tag string) string {
-	t.Helper()
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	desc, ok := f.content[repo+"/"+tag]
-	if !ok {
-		t.Fatalf("nothing published at %s:%s", repo, tag)
-	}
-	return desc.MediaType
-}
-
-// indexPlatformsAt reports the platforms carried by the index at a tag.
-func (f *fakeRegistry) indexPlatformsAt(t *testing.T, repo, tag string) []string {
-	t.Helper()
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	desc, ok := f.content[repo+"/"+tag]
-	if !ok {
-		t.Fatalf("nothing published at %s:%s", repo, tag)
-	}
-	var idx ocispec.Index
-	if err := json.Unmarshal(f.blobs[desc.Digest], &idx); err != nil {
-		t.Fatalf("%s:%s is not an index: %v", repo, tag, err)
-	}
-	return indexPlatforms(idx)
 }
 
 // A project keeps artifacts from several collections in one repository, so that
@@ -373,17 +472,19 @@ func TestPublishSourceOverridesTheRecordedCollection(t *testing.T) {
 		name: "star/2.7.11b", typ: catalog.TypeApp, recipe: "#!/bin/bash\nbuild\n",
 	})
 	ctx := context.Background()
+	nameTag, err := NameTag(m.Name, m.Platform.Arch)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	f := newFakeRegistry(t)
 	project := "https://github.com/my-lab/rnaseq-2026"
-	if _, err := Publish(ctx, PublishRequest{
-		Path: source, Base: f.base(), Audience: Restricted,
-		Placement: &Placement{Repo: "cnt", Tags: []string{"star--2.7.11b"}},
-		Source:    project,
-	}); err != nil {
+	req := f.request(source)
+	req.Audience, req.Tags, req.Source = Restricted, TagRequest{Name: true}, project
+	if _, err := Publish(ctx, req); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	_, ann, err := ResolveArtifact(ctx, f.base(), "cnt", "star--2.7.11b")
+	_, ann, err := ResolveArtifact(ctx, f.base(), "cnt", nameTag)
 	if err != nil {
 		t.Fatalf("ResolveArtifact: %v", err)
 	}
@@ -394,12 +495,12 @@ func TestPublishSourceOverridesTheRecordedCollection(t *testing.T) {
 	// No override: whatever the artifact recorded, which for this fixture is
 	// nothing, so the annotation is absent rather than empty.
 	g := newFakeRegistry(t)
-	if _, err := Publish(ctx, PublishRequest{
-		Path: source, Base: g.base(), Audience: Restricted,
-	}); err != nil {
+	req = g.request(source)
+	req.Audience = Restricted
+	if _, err := Publish(ctx, req); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	_, ann, err = ResolveArtifact(ctx, g.base(), "star", "2.7.11b")
+	_, ann, err = ResolveArtifact(ctx, g.base(), "cnt", nameTag)
 	if err != nil {
 		t.Fatalf("ResolveArtifact: %v", err)
 	}
@@ -420,9 +521,9 @@ func TestPublishKeepsTheSourceAnnotationUsable(t *testing.T) {
 		name: "star/2.7.11b", typ: catalog.TypeApp, recipe: "#!/bin/bash\nbuild\n",
 	})
 	f := newFakeRegistry(t)
-	_, err := Publish(ctx, PublishRequest{
-		Path: clean, Base: f.base(), Audience: Restricted, Source: "ftp://example.invalid/p",
-	})
+	req := f.request(clean)
+	req.Audience, req.Source = Restricted, "ftp://example.invalid/p"
+	_, err := Publish(ctx, req)
 	if err == nil || !strings.Contains(err.Error(), "http(s)") {
 		t.Fatalf("error = %v, want a refusal naming the scheme", err)
 	}
@@ -430,17 +531,18 @@ func TestPublishKeepsTheSourceAnnotationUsable(t *testing.T) {
 	// An artifact whose own recorded source is unusable still publishes, because
 	// a descriptor that predates the check is not a reason to block distribution.
 	// The annotation is simply absent.
-	dirty, _ := packImage(t, imageSpec{
+	dirty, m := packImage(t, imageSpec{
 		name: "star/2.7.11b", typ: catalog.TypeApp, recipe: "#!/bin/bash\nbuild\n",
 		tamper: func(m *meta.Manifest) { m.Build.Source = "not a url" },
 	})
 	g := newFakeRegistry(t)
-	if _, err := Publish(ctx, PublishRequest{
-		Path: dirty, Base: g.base(), Audience: Restricted,
-	}); err != nil {
+	req = g.request(dirty)
+	req.Audience = Restricted
+	if _, err := Publish(ctx, req); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	_, ann, err := ResolveArtifact(ctx, g.base(), "star", "2.7.11b")
+	nameTag, _ := NameTag(m.Name, m.Platform.Arch)
+	_, ann, err := ResolveArtifact(ctx, g.base(), "cnt", nameTag)
 	if err != nil {
 		t.Fatalf("ResolveArtifact: %v", err)
 	}
@@ -460,8 +562,9 @@ func TestPublishStopsWhenTheConfirmationIsDeclined(t *testing.T) {
 	ctx := context.Background()
 
 	var shown PublishPlan
-	_, err := Publish(ctx, PublishRequest{Path: source, Base: f.base(),
-		Confirm: func(plan PublishPlan) bool { shown = plan; return false }})
+	req := f.request(source)
+	req.Confirm = func(plan PublishPlan) bool { shown = plan; return false }
+	_, err := Publish(ctx, req)
 	if !errors.Is(err, ErrDeclined) {
 		t.Fatalf("err = %v, want ErrDeclined", err)
 	}
@@ -471,11 +574,7 @@ func TestPublishStopsWhenTheConfirmationIsDeclined(t *testing.T) {
 	if shown.Name != m.Name || shown.Size == 0 || !strings.HasPrefix(shown.Reference, f.base()) {
 		t.Errorf("plan = %+v", shown)
 	}
-	repo, tag, err := PullReference(m.Type, m.Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := ResolveArtifact(ctx, f.base(), repo, tag); err == nil {
-		t.Error("a declined push uploaded the artifact")
+	if _, err := Lookup(ctx, f.base(), "cnt", Address{Name: m.Name}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a declined push uploaded the artifact: %v", err)
 	}
 }

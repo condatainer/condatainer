@@ -19,7 +19,7 @@ import (
 )
 
 // Upstream finds the vendored artifacts a recipe collection already publishes at the exact identity the lock pins, and returns one remote per match.
-//   - It is a resolve-and-compare, never a search: name and identity are known, so it asks one coordinate per declared endpoint.
+//   - It is a resolve-and-compare, never a search: name, identity and architecture are known, so it asks one tag per declared endpoint.
 //   - Nothing enumerates tags.
 //   - It is best effort.
 //   - Any failure records nothing and is not an error: locking works offline, and an absent remote costs a rebuild.
@@ -51,34 +51,40 @@ func Upstream(ctx context.Context, root string, artifacts []string, cat catalog.
 
 // upstreamOf returns the artifact's collection registry as its remote when that
 // registry advertises this exact identity.
+//   - The build tag is asked for directly, so a build is found after the name has moved on.
 func upstreamOf(ctx context.Context, entry *lock.Entry, cat catalog.Catalog) (lock.Remote, bool) {
 	source := collectionOf(entry.Manifest, cat)
 	if source == nil {
 		return lock.Remote{}, false
 	}
-	repo, tag, err := registry.PullReference(entry.Manifest.Type, entry.Manifest.Name)
+	endpoint := source.Desc.OCI.Registry
+	base, repo, err := registry.SplitCoordinate(endpoint)
 	if err != nil {
 		return lock.Remote{}, false
 	}
 	log := logging.FromContext(ctx)
-	endpoint := source.Desc.OCI.Registry
-	desc, annotations, err := registry.ResolveArtifact(registry.WithSource(ctx, source.Base), endpoint, repo, tag)
-	if err != nil {
-		log.Debug("registry did not answer for this artifact", "endpoint", endpoint, "name", entry.Manifest.Name, "err", err)
-		return lock.Remote{}, false
-	}
 	// Identity, not equivalence. A lock remote is an address for one exact
 	// build: an equivalent artifact at that digest is a different build
 	// wearing the right label, and restore would spend the bytes fetching it
 	// and then reject it against the lock.
-	if got := registry.Identity(annotations); got != entry.Identity {
+	found, err := registry.Lookup(registry.WithSource(ctx, source.Base), base, repo, registry.Address{
+		Name:     entry.Manifest.Name,
+		Identity: entry.Identity.SHA256,
+		Scheme:   entry.Identity.Scheme,
+		Arch:     entry.Manifest.Platform.Arch,
+	})
+	if err != nil {
+		log.Debug("registry did not answer for this artifact", "endpoint", endpoint, "name", entry.Manifest.Name, "err", err)
+		return lock.Remote{}, false
+	}
+	if got := registry.Identity(found.Annotations); got != entry.Identity {
 		log.Debug("registry publishes a different build", "endpoint", endpoint,
 			"name", entry.Manifest.Name, "published", describe(got), "locked", entry.Identity.Digest())
 		return lock.Remote{}, false
 	}
 	return lock.Remote{
-		Repository:     strings.TrimRight(registry.TrimBaseScheme(endpoint), "/") + "/" + repo,
-		ManifestDigest: desc.Digest.String(),
+		Repository:     registry.TrimBaseScheme(endpoint),
+		ManifestDigest: found.Desc.Digest.String(),
 	}, true
 }
 

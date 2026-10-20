@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/catalog"
@@ -108,8 +109,7 @@ func markAlreadyPublished(ctx context.Context, plan *Plan) {
 func Run(ctx context.Context, root string, plan *Plan, opts Options) (*Report, error) {
 	log := logging.FromContext(ctx)
 	report := &Report{Repository: plan.Repository, AmbiguousNames: plan.Ambiguous}
-	base, repo, err := registry.SplitCoordinate(plan.Repository)
-	if err != nil {
+	if _, _, err := registry.SplitCoordinate(plan.Repository); err != nil {
 		return report, err
 	}
 	audience := registry.Audience(plan.Audience)
@@ -135,11 +135,11 @@ func Run(ctx context.Context, root string, plan *Plan, opts Options) (*Report, e
 		}
 		log.Info("Publishing", "kind", "note", "name", step.Name, "tags", strings.Join(step.Tags, ", "))
 		desc, err := registry.Publish(ctx, registry.PublishRequest{
-			Path:      path,
-			Base:      base,
-			Audience:  audience,
-			Placement: &registry.Placement{Repo: repo, Tags: step.Tags},
-			Source:    plan.Source,
+			Path:       path,
+			Repository: plan.Repository,
+			Audience:   audience,
+			Tags:       registry.TagRequest{Name: slices.ContainsFunc(step.Tags, registry.IsNameTag)},
+			Source:     plan.Source,
 		})
 		if err != nil {
 			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", step.Name, err))

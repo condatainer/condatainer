@@ -149,7 +149,7 @@ func collection(t *testing.T, endpoint string) catalog.Catalog {
 		Desc: catalog.Descriptor{
 			Schema: 1,
 			Source: collectionRepo,
-			OCI:    catalog.OCI{Registry: endpoint, Audience: string(registry.Public)},
+			OCI:    catalog.OCI{Registry: endpoint + "/cnt", Audience: string(registry.Public)},
 		},
 	}}
 }
@@ -163,6 +163,7 @@ func TestUpstreamRecordsOnlyAnExactIdentityMatch(t *testing.T) {
 	exact := map[string]string{
 		registry.AnnTitle:          manifest.Name,
 		registry.AnnSchema:         "1",
+		registry.AnnArch:           "amd64",
 		registry.AnnIdentityScheme: manifest.Keys.Identity.Scheme,
 		registry.AnnIdentitySHA:    manifest.Keys.Identity.SHA256,
 		registry.AnnEquivScheme:    manifest.Keys.Equiv.Scheme,
@@ -172,8 +173,8 @@ func TestUpstreamRecordsOnlyAnExactIdentityMatch(t *testing.T) {
 	if len(got[artifact]) != 1 {
 		t.Fatalf("an exact identity match recorded %#v", got)
 	}
-	if !strings.HasSuffix(got[artifact][0].Repository, "/grch38/genome") {
-		t.Errorf("repository = %q, want the catalog scheme's repo path", got[artifact][0].Repository)
+	if !strings.HasSuffix(got[artifact][0].Repository, "/cnt") {
+		t.Errorf("repository = %q, want the source's repository coordinate", got[artifact][0].Repository)
 	}
 	if !strings.HasPrefix(got[artifact][0].ManifestDigest, "sha256:") {
 		t.Errorf("manifest digest = %q", got[artifact][0].ManifestDigest)
@@ -208,7 +209,7 @@ func TestUpstreamIsBestEffort(t *testing.T) {
 		"a collection that published nothing this artifact came from": {{
 			Name: "other",
 			Desc: catalog.Descriptor{Schema: 1, Source: "https://github.com/somebody/else",
-				OCI: catalog.OCI{Registry: "127.0.0.1:1"}},
+				OCI: catalog.OCI{Registry: "127.0.0.1:1/cnt"}},
 		}},
 	}
 	for why, cat := range cases {

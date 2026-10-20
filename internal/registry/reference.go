@@ -5,28 +5,42 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/opencontainers/go-digest"
-
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image"
 )
 
-// RollingTag moves with every push of a version-less artifact, so a puller that
-// does not know a build date still resolves the current one.
-const RollingTag = "latest"
-
-// dateTagLayout formats a version-less artifact's build-date tag.
-const dateTagLayout = "20060102"
-
-var (
-	ociRepoSegmentPattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
-	ociTagPattern         = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+// Architectures a manifest is published for. A tag and the architecture
+// annotation spell them alike.
+const (
+	ArchAMD64  = "amd64"
+	ArchARM64  = "arm64"
+	ArchNoarch = meta.ArchNone
 )
 
-// TrimBaseScheme strips an optional oci:// or oras:// scheme and a trailing
-// slash from a registry base, which already includes the owner and prefix.
+// ValidArch reports whether arch is one a manifest is published for.
+func ValidArch(arch string) bool {
+	return arch == ArchAMD64 || arch == ArchARM64 || arch == ArchNoarch
+}
+
+const (
+	// tagSeparator joins the encoded name, a qualifier and the architecture.
+	// Name segments never hold a doubled separator, so it cannot occur inside a name.
+	tagSeparator = "__"
+	// equivMarker starts an equivalence qualifier. A build qualifier is bare hex.
+	equivMarker = "eq-"
+	// keyChars is how many hex characters of a key a tag carries.
+	keyChars = capsule.IdentityChars
+)
+
+var (
+	nameSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$`)
+	ociTagPattern      = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+)
+
+// TrimBaseScheme strips an optional oci:// or oras:// scheme and trailing
+// slashes from a registry host or repository coordinate.
 func TrimBaseScheme(base string) string {
 	base = strings.TrimSpace(base)
 	for _, scheme := range []string{"oci://", "oras://"} {
@@ -35,7 +49,7 @@ func TrimBaseScheme(base string) string {
 	return strings.TrimRight(base, "/")
 }
 
-// FullRef joins a registry base, a repository path, and a tag or digest into one
+// FullRef joins a registry host, a repository path, and a tag or digest into one
 // pullable reference. A digest joins with "@", a tag with ":".
 func FullRef(base, repo, tag string) string {
 	if strings.HasPrefix(tag, digestPrefix) {
@@ -47,180 +61,130 @@ func FullRef(base, repo, tag string) string {
 // digestPrefix is the only digest algorithm this package writes or accepts.
 const digestPrefix = "sha256:"
 
-// isVersionLess reports whether an artifact is addressed by build date and a
-// rolling tag because its name carries no version segment. The type decides how
-// many segments make a version:
-//
-//   - os needs three: ubuntu24/build-essential is version-less, ubuntu24/r/4.4.4 is not.
-//   - app and data need two: cellranger/9.0.1 is versioned, a bare `myenv` is not.
-//
-// The catalog parses every name as <name>/<version>, so the shape alone cannot tell.
-func isVersionLess(typ catalog.Type, name string) bool {
-	segments := strings.Count(catalog.Normalize(name), "/") + 1
-	switch typ {
-	case catalog.TypeOS:
-		return segments < 3
-	default:
-		return segments < 2
+// EncodeName spells an artifact name as the first part of its tags. Every segment
+// must match the name grammar, so a doubled separator is refused.
+func EncodeName(name string) (string, error) {
+	normalized := catalog.Normalize(name)
+	if normalized == "" || strings.ContainsAny(normalized, ":@") {
+		return "", fmt.Errorf("registry name %q is empty or carries a selector", name)
 	}
+	for _, segment := range strings.Split(normalized, "/") {
+		if !nameSegmentPattern.MatchString(segment) {
+			return "", fmt.Errorf("name segment %q of %q does not fit a registry tag", segment, name)
+		}
+	}
+	return image.EncodeArtifactName(normalized), nil
 }
 
-// ValidateIdentity rejects a name that cannot map reversibly onto an OCI repository and tag.
-//   - Repository segments must already be lowercase.
-//   - Nothing is down-cased here: two distinct names that differ only in case would collide into one repository, and silently publishing one over the other is worse than refusing both.
-func ValidateIdentity(nameVersion string, versionLess bool) error {
-	nv := catalog.Normalize(nameVersion)
-	if nv == "" || strings.ContainsAny(nv, ":@") {
-		return fmt.Errorf("registry identity %q is empty or carries a selector", nameVersion)
+// NameTag is the tag a name is served under for one architecture.
+func NameTag(name, arch string) (string, error) { return spell(name, "", arch) }
+
+// BuildTag is the tag of one build for one architecture.
+func BuildTag(name string, identity meta.KeyRef, arch string) (string, error) {
+	prefix, err := keyPrefix(identity)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
 	}
-	parts := strings.Split(nv, "/")
-	repoParts := parts
-	if !versionLess {
-		if len(parts) < 2 {
-			return fmt.Errorf("versioned artifact %q must be name/version", nameVersion)
-		}
-		tag := parts[len(parts)-1]
-		if !ociTagPattern.MatchString(tag) || tag == "." || tag == ".." {
-			return fmt.Errorf("identity tag segment %q is not OCI-safe", tag)
-		}
-		repoParts = parts[:len(parts)-1]
-	}
-	for _, segment := range repoParts {
-		if segment == "." || segment == ".." || !ociRepoSegmentPattern.MatchString(segment) {
-			return fmt.Errorf("identity repository segment %q must already be lowercase and OCI-safe", segment)
-		}
-	}
-	return nil
+	return spell(name, prefix, arch)
 }
 
-// SplitPullSpec separates an artifact name from an optional selector.
-//   - The forms are "name", "name:tag", and "name@sha256:<hex>".
-//   - A colon counts as a tag separator only after the final slash, so a registry host with a port stays the separate base argument's problem.
-func SplitPullSpec(spec string) (name, selector string, err error) {
-	spec = strings.TrimSpace(spec)
-	if at := strings.LastIndex(spec, "@"); at >= 0 {
-		name, selector = catalog.Normalize(spec[:at]), spec[at+1:]
-		if name == "" || digest.Digest(selector).Validate() != nil {
-			return "", "", fmt.Errorf("invalid digest pull reference %q", spec)
-		}
-		return name, selector, nil
+// EquivTag is the tag of the newest build of an equivalence class for one architecture.
+func EquivTag(name string, equiv meta.KeyRef, arch string) (string, error) {
+	prefix, err := keyPrefix(equiv)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
 	}
-	if slash, colon := strings.LastIndex(spec, "/"), strings.LastIndex(spec, ":"); colon > slash {
-		name, selector = catalog.Normalize(spec[:colon]), spec[colon+1:]
-		if name == "" || selector == "" {
-			return "", "", fmt.Errorf("invalid tagged pull reference %q", spec)
-		}
-		return name, selector, nil
-	}
-	return catalog.Normalize(spec), "", nil
+	return spell(name, equivMarker+prefix, arch)
 }
 
-// PushReference derives the repository and ordered tags for publishing m. The first tag is canonical; a version-less artifact also gets [RollingTag].
-//   - Tags are architecture-independent.
-//   - A native artifact's tag resolves to an image index whose children carry per-arch platform descriptors, so pushing on each architecture builds one multi-arch tag.
-func PushReference(m meta.Manifest) (repo string, tags []string, err error) {
-	nv := catalog.Normalize(m.Name)
-	versionLess := isVersionLess(m.Type, nv)
-	if err := ValidateIdentity(nv, versionLess); err != nil {
-		return "", nil, err
+func keyPrefix(k meta.KeyRef) (string, error) {
+	sha := strings.TrimPrefix(k.SHA256, digestPrefix)
+	if len(sha) < keyChars {
+		return "", fmt.Errorf("records no key to tag it under")
 	}
+	return sha[:keyChars], nil
+}
 
-	if versionLess {
-		// No fallback to the push time: a date tag is an address, and one that
-		// records when it was uploaded rather than when it was built is a lie
-		// that only shows up as a wrong artifact months later.
-		if m.Build.Created.IsZero() {
-			return "", nil, fmt.Errorf("%s records no build time, so it has no date tag", m.Name)
+// spell joins name, qualifier and architecture, refusing a tag that does not fit.
+// A tag is refused and never truncated: a truncated tag is another artifact's address.
+func spell(name, qualifier, arch string) (string, error) {
+	encoded, err := EncodeName(name)
+	if err != nil {
+		return "", err
+	}
+	if !ValidArch(arch) {
+		return "", fmt.Errorf("%q is not an architecture a manifest is published for", arch)
+	}
+	tag := encoded
+	if qualifier != "" {
+		tag += tagSeparator + qualifier
+	}
+	tag += tagSeparator + arch
+	if len(tag) > maxTagLength || !ociTagPattern.MatchString(tag) {
+		return "", fmt.Errorf("%s does not fit an OCI tag as %q", name, tag)
+	}
+	return tag, nil
+}
+
+// IsNameTag reports whether tag is a name tag, which has one separator. A build
+// or equivalence tag has two.
+func IsNameTag(tag string) bool { return strings.Count(tag, tagSeparator) == 1 }
+
+// TagRequest says which tags a push writes besides the build tag.
+type TagRequest struct {
+	// Name also writes the name tag.
+	Name bool
+	// Equiv also writes the equivalence tag, for a build type that takes one.
+	Equiv bool
+}
+
+// Tags are the tags one push writes for one manifest. An unwritten tag is empty.
+type Tags struct {
+	Build, Equiv, Name string
+}
+
+// List returns the written tags, build first, so a push that stops part way leaves a tagged manifest.
+func (t Tags) List() []string {
+	var out []string
+	for _, tag := range []string{t.Build, t.Equiv, t.Name} {
+		if tag != "" {
+			out = append(out, tag)
 		}
-		return nv, []string{m.Build.Created.UTC().Format(dateTagLayout), RollingTag}, nil
 	}
-
-	idx := strings.LastIndex(nv, "/")
-	return nv[:idx], []string{nv[idx+1:]}, nil
+	return out
 }
 
-// PullReference derives the repository and single tag to fetch nameVersion,
-// mirroring PushReference's canonical tag. A version-less artifact resolves
-// RollingTag, since the puller does not know its build date; an explicit date or
-// digest arrives through SplitPullSpec. typ comes from the recipe, as there is no
-// manifest to read yet.
-func PullReference(typ catalog.Type, nameVersion string) (repo, tag string, err error) {
-	nv := catalog.Normalize(nameVersion)
-	versionLess := isVersionLess(typ, nv)
-	if err := ValidateIdentity(nv, versionLess); err != nil {
-		return "", "", err
+// TagsFor spells the tags a push of m writes.
+//   - Every tag is spelled before anything is uploaded, so a name that does not fit fails first.
+//   - Only a script or def build takes an equivalence tag. A Conda build has no prebuilt to match, and a frozen environment's equivalence key is its identity.
+func TagsFor(m meta.Manifest, req TagRequest) (Tags, error) {
+	arch := m.Platform.Arch
+	build, err := BuildTag(m.Name, m.Keys.Identity, arch)
+	if err != nil {
+		return Tags{}, err
 	}
-	if versionLess {
-		return nv, RollingTag, nil
+	tags := Tags{Build: build}
+	if req.Equiv && takesEquivTag(m.BuildType) {
+		if tags.Equiv, err = EquivTag(m.Name, m.Keys.Equiv, arch); err != nil {
+			return Tags{}, err
+		}
 	}
-	idx := strings.LastIndex(nv, "/")
-	return nv[:idx], nv[idx+1:], nil
-}
-
-// projectTagSeparator joins an encoded artifact name to its identity prefix in a
-// project's flat tag namespace.
-//
-// Doubled for the same reason `--` works as the name separator: catalog's
-// segment grammar allows a single `.`, `_` or `-` between alphanumerics and
-// never two, so a doubled separator cannot occur inside a name. `@`, which the
-// store filename uses, is not legal in an OCI tag at all.
-const projectTagSeparator = "__"
-
-// ProjectTags renders the tags a project publishes one artifact under, canonical
-// first. The name lives in the tag because a project keeps one repository.
-//
-//   - The qualified tag is the retention anchor; every artifact gets one.
-//   - A tag only keeps a manifest referenced: locks record digests, nothing fetches by tag.
-//   - selected also writes the plain name tag, a moving handle; dropping it breaks no restore.
-func ProjectTags(m meta.Manifest, selected bool) ([]string, error) {
-	encoded := image.EncodeArtifactName(catalog.Normalize(m.Name))
-	if encoded == "" {
-		return nil, fmt.Errorf("artifact has no name to publish under")
-	}
-	sha := strings.TrimPrefix(m.Keys.Identity.SHA256, "sha256:")
-	if len(sha) < capsule.IdentityChars {
-		return nil, fmt.Errorf("%s records no identity to publish under", m.Name)
-	}
-	qualified := encoded + projectTagSeparator + sha[:capsule.IdentityChars]
-
-	tags := []string{qualified}
-	if selected {
-		tags = append(tags, encoded)
-	}
-	for _, tag := range tags {
-		// Refused, never truncated: a truncated tag is a different artifact's
-		// address, and the name is what a puller reads back out of it.
-		if len(tag) > maxTagLength || !ociTagPattern.MatchString(tag) {
-			return nil, fmt.Errorf("%s does not fit an OCI tag as %q", m.Name, tag)
+	if req.Name {
+		if tags.Name, err = NameTag(m.Name, arch); err != nil {
+			return Tags{}, err
 		}
 	}
 	return tags, nil
 }
 
-// ParseProjectTag decodes a project tag into the artifact name and the identity
-// prefix qualifying it, if any. Anything else reports false, so a catalog tag is
-// never read as a name. Accepted:
-//
-//   - a tag with a `__<hex>` identity suffix, whose name may be one component;
-//   - a plain tag containing `--`, or [meta.EnvName].
-func ParseProjectTag(tag string) (name, sha string, ok bool) {
-	encoded, qualified := tag, false
-	if base, prefix, found := strings.Cut(tag, projectTagSeparator); found {
-		if base == "" || !isHex(prefix) {
-			return "", "", false
-		}
-		encoded, sha, qualified = base, prefix, true
-	}
-	name = image.DecodeArtifactName(encoded)
-	if catalog.Normalize(name) != name || name == "" {
-		return "", "", false
-	}
-	if !qualified && !strings.Contains(encoded, "--") && name != meta.EnvName {
-		return "", "", false
-	}
-	return name, sha, true
+// TakesEquivTag reports whether a build type is published under an equivalence tag.
+func TakesEquivTag(t meta.BuildType) bool { return takesEquivTag(t) }
+
+func takesEquivTag(t meta.BuildType) bool {
+	return t == meta.BuildTypeScript || t == meta.BuildTypeDef
 }
 
+// isHex reports whether s is a nonempty string of lowercase hex digits.
 func isHex(s string) bool {
 	if s == "" {
 		return false

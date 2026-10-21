@@ -93,8 +93,7 @@ type Lock struct {
 	Pins map[string]PinEntry `json:"pins"`
 	// Remotes records where an artifact can be fetched from, keyed by the same
 	// relative artifact path pins use. It is absent until something
-	// records a location: `project pin`, and later `project registry push`, append to it. A closure-only artifact may have remotes too, which
-	// is why this is keyed by artifact rather than nested under a pin.
+	// records a location: `project pin`, and later `project registry push`, append to it.
 	Remotes map[string][]Remote `json:"remotes,omitempty"`
 }
 
@@ -420,7 +419,7 @@ func isPortColon(repository string, i int) bool {
 
 // AddRemote records one fetch location for an artifact, deduplicated, in insertion order.
 //   - Order is retry priority, so an existing entry keeps its place.
-//   - `project registry push` writes through it for pinned and closure-only artifacts alike.
+//   - `project registry push` writes through it for each pinned artifact.
 func (l *Lock) AddRemote(artifact string, remote Remote) error {
 	if err := validEntryPath(artifact); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalid, err)

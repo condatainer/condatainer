@@ -103,7 +103,7 @@ func Lock(ctx context.Context, root string, opts LockOptions) (*LockResult, erro
 	}, nil
 }
 
-// RecordUpstream adds a fetch location for every vendored artifact its own recipe collection already publishes at the same identity, and reports which.
+// RecordUpstream adds a fetch location for the pinned artifact when its own recipe collection already publishes it at the same identity, and reports it.
 //   - It mutates the lock; Publish persists it.
 //   - `project pin`, `project set-distro` and Init call it too.
 //   - It never fails the pin: locking works offline, and an absent remote costs a rebuild.
@@ -113,7 +113,7 @@ func RecordUpstream(ctx context.Context, root string, l *lock.Lock, pinned *lock
 		logging.FromContext(ctx).Debug("no catalog, so no upstream locations were recorded", "err", err)
 		return nil
 	}
-	found := publish.Upstream(ctx, root, pinned.Vendored, cat)
+	found := publish.Upstream(ctx, root, []string{pinned.Artifact}, cat)
 	shown := make(map[string]string, len(found))
 	for artifact, remotes := range found {
 		for _, remote := range remotes {

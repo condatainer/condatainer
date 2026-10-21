@@ -42,12 +42,15 @@ func TestTryPrebuiltPullsAMatchingArtifact(t *testing.T) {
 
 	oldResolve, oldPull := resolvePrebuilt, pullPrebuilt
 	t.Cleanup(func() { resolvePrebuilt, pullPrebuilt = oldResolve, oldPull })
-	resolvePrebuilt = func(_ context.Context, base, repo, tag string) (ocispec.Descriptor, map[string]string, error) {
-		return ocispec.Descriptor{}, annotationsFor(want), nil
+	resolvePrebuilt = func(_ context.Context, base, repo string, a registry.Address) (registry.Found, error) {
+		if base != "origin.invalid" || repo != "lab" || a.Equiv != want.SHA256 || a.Name != "demo/1" {
+			t.Errorf("looked up %s/%s for %+v", base, repo, a)
+		}
+		return registry.Found{Annotations: annotationsFor(want)}, nil
 	}
 	pulled := false
 	pullPrebuilt = func(_ context.Context, base, repo string, _ ocispec.Descriptor, _ map[string]string, dest string) error {
-		pulled = base == "origin.invalid/lab" && repo == "demo" && dest == b.tgt.Path
+		pulled = base == "origin.invalid" && repo == "lab" && dest == b.tgt.Path
 		return nil
 	}
 
@@ -60,17 +63,12 @@ func TestTryPrebuiltPullsAMatchingArtifact(t *testing.T) {
 	}
 }
 
-func TestTryPrebuiltSkipsEquivalenceMismatch(t *testing.T) {
+func TestTryPrebuiltSkipsAnotherRecipe(t *testing.T) {
 	b := prebuiltObject(t, []byte("echo current\n"), "registry.invalid/lab")
 	oldResolve, oldPull := resolvePrebuilt, pullPrebuilt
 	t.Cleanup(func() { resolvePrebuilt, pullPrebuilt = oldResolve, oldPull })
-	resolvePrebuilt = func(context.Context, string, string, string) (ocispec.Descriptor, map[string]string, error) {
-		return ocispec.Descriptor{}, map[string]string{
-			registry.AnnTitle:       "demo/1",
-			registry.AnnSchema:      strconv.Itoa(meta.SchemaVersion),
-			registry.AnnEquivScheme: "script-equiv-v1",
-			registry.AnnEquivSHA:    "different",
-		}, nil
+	resolvePrebuilt = func(context.Context, string, string, registry.Address) (registry.Found, error) {
+		return registry.Found{Annotations: annotationsFor(meta.KeyRef{Scheme: "script-equiv-v1", SHA256: "different"})}, nil
 	}
 	pullPrebuilt = func(context.Context, string, string, ocispec.Descriptor, map[string]string, string) error {
 		t.Fatal("pull called for mismatched candidate")
@@ -86,8 +84,8 @@ func TestTryPrebuiltFallsBackWhenTheRegistryIsUnavailable(t *testing.T) {
 	b := prebuiltObject(t, []byte("echo demo\n"), "origin.invalid/lab")
 	oldResolve := resolvePrebuilt
 	t.Cleanup(func() { resolvePrebuilt = oldResolve })
-	resolvePrebuilt = func(context.Context, string, string, string) (ocispec.Descriptor, map[string]string, error) {
-		return ocispec.Descriptor{}, nil, registry.ErrUnavailable
+	resolvePrebuilt = func(context.Context, string, string, registry.Address) (registry.Found, error) {
+		return registry.Found{}, registry.ErrUnavailable
 	}
 
 	if pulled, err := b.tryPrebuilt(t.Context()); err != nil || pulled {
@@ -101,9 +99,9 @@ func TestTryPrebuiltSkippedByNoPrebuilt(t *testing.T) {
 
 	oldResolve := resolvePrebuilt
 	t.Cleanup(func() { resolvePrebuilt = oldResolve })
-	resolvePrebuilt = func(context.Context, string, string, string) (ocispec.Descriptor, map[string]string, error) {
+	resolvePrebuilt = func(context.Context, string, string, registry.Address) (registry.Found, error) {
 		t.Error("a registry was consulted under --no-prebuilt")
-		return ocispec.Descriptor{}, nil, registry.ErrNotFound
+		return registry.Found{}, registry.ErrNotFound
 	}
 	prev := config.Global.SkipPrebuilt
 	config.Global.SkipPrebuilt = true
@@ -120,6 +118,7 @@ func annotationsFor(equiv meta.KeyRef) map[string]string {
 	return map[string]string{
 		registry.AnnTitle:       "demo/1",
 		registry.AnnSchema:      strconv.Itoa(meta.SchemaVersion),
+		registry.AnnArch:        registry.ArchNoarch,
 		registry.AnnEquivScheme: equiv.Scheme,
 		registry.AnnEquivSHA:    equiv.SHA256,
 	}
@@ -146,8 +145,8 @@ func TestPlanPrebuiltDecides(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resolvePrebuilt = func(context.Context, string, string, string) (ocispec.Descriptor, map[string]string, error) {
-				return ocispec.Descriptor{}, annotationsFor(tt.published(want)), nil
+			resolvePrebuilt = func(context.Context, string, string, registry.Address) (registry.Found, error) {
+				return registry.Found{Annotations: annotationsFor(tt.published(want))}, nil
 			}
 			if err := b.planPrebuilt(t.Context(), tt.known); err != nil {
 				t.Fatal(err)
@@ -170,9 +169,9 @@ func TestTryPrebuiltFollowsThePlan(t *testing.T) {
 	oldResolve, oldPull := resolvePrebuilt, pullPrebuilt
 	t.Cleanup(func() { resolvePrebuilt, pullPrebuilt = oldResolve, oldPull })
 	resolves := 0
-	resolvePrebuilt = func(context.Context, string, string, string) (ocispec.Descriptor, map[string]string, error) {
+	resolvePrebuilt = func(context.Context, string, string, registry.Address) (registry.Found, error) {
 		resolves++
-		return ocispec.Descriptor{}, annotationsFor(want), nil
+		return registry.Found{Annotations: annotationsFor(want)}, nil
 	}
 	pulls := 0
 	pullPrebuilt = func(context.Context, string, string, ocispec.Descriptor, map[string]string, string) error {

@@ -1,8 +1,6 @@
 package server
 
 import (
-	"github.com/condatainer/condatainer/internal/helper"
-
 	"context"
 	"errors"
 	"fmt"
@@ -17,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/helper"
 	internalproxy "github.com/condatainer/condatainer/internal/runtime/proxy"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"

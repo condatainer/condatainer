@@ -70,7 +70,7 @@ func resolveOverlayValues(ctx context.Context, values []string, standing *projec
 		out[kept[n]] = mount.Path + suffixes[n]
 		switch {
 		case mount.Found != "":
-			utils.PrintNote("%s is mounted from an equivalent artifact, not %s",
+			utils.PrintNote("%s is mounted from an equivalent overlay, not %s",
 				mount.Name, short(mount.Identity))
 		case mount.Live && standing != nil:
 			utils.PrintNote("%s resolved to %s, not pinned",

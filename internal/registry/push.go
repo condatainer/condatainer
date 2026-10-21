@@ -1,9 +1,11 @@
 package registry
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -40,11 +42,6 @@ const (
 	Restricted Audience = "restricted"
 )
 
-// maxIndexReconcileAttempts bounds the retry when another architecture is
-// publishing at the same time. Registries offer no compare-and-swap on tags, so
-// this converges rather than locks; CI should still publish sequentially.
-const maxIndexReconcileAttempts = 3
-
 // Accepts reports why an artifact may not be published to an endpoint of this
 // audience, or nil. Restricted takes everything. Public answers in order:
 //
@@ -70,22 +67,7 @@ func (v Audience) Accepts(m meta.Manifest) error {
 	case catalog.TypeOS, catalog.TypeData:
 		return nil
 	}
-	return fmt.Errorf("%s artifacts are not published to a %s registry: %s installs software that is not ours to redistribute; declare #REDISTRIBUTE: yes in its recipe if its licence permits it, or push to an endpoint declared restricted", m.Type, v, m.Name)
-}
-
-// Placement overrides where an artifact is published, for a caller that owns a
-// naming scheme of its own.
-//
-// A project keeps every artifact in one repository with the name in the tag,
-// which PushReference cannot express — it derives both from the name, for the
-// catalog's nested layout. Everything else about publishing is unchanged, which
-// is the point of overriding only this: audience, key regeneration, and the
-// annotations all still come from the artifact's own bytes.
-type Placement struct {
-	// Repo is the repository path beneath the base.
-	Repo string
-	// Tags are the tags to write, canonical first.
-	Tags []string
+	return fmt.Errorf("%s overlays are not published to a %s registry: %s installs software that is not ours to redistribute; declare #REDISTRIBUTE: yes in its recipe if its licence permits it, or push to an endpoint declared restricted", m.Type, v, m.Name)
 }
 
 // PublishRequest is one artifact and where it is going.
@@ -93,16 +75,12 @@ type PublishRequest struct {
 	// Path is the local artifact. Its embedded manifest decides everything
 	// about the destination, so renaming the file cannot smuggle it anywhere.
 	Path string
-	// Base is the registry base, owner and prefix included.
-	Base string
+	// Repository is the destination repository coordinate, host included.
+	Repository string
 	// Audience is what the endpoint declared.
 	Audience Audience
-	// Force allows replacing an existing versioned tag, which is otherwise
-	// immutable.
-	Force bool
-	// Placement overrides the catalog repository and tags. Nil derives them from
-	// the artifact's name, which is what an ordinary `registry push` does.
-	Placement *Placement
+	// Tags says which tags are written besides the build tag.
+	Tags TagRequest
 	// Source overrides org.opencontainers.image.source, which otherwise names the
 	// recipe collection the artifact recorded at build time. Empty keeps that.
 	//
@@ -111,6 +89,10 @@ type PublishRequest struct {
 	// is not what that package's source is. The artifact keeps its own
 	// Build.Source in the embedded manifest either way.
 	Source string
+	// Collection, when set, is the recipe collection a source's repository
+	// belongs to. An artifact recording another one, or none, is reported in the
+	// plan, since the package links to one code repository.
+	Collection string
 	// Confirm, when set, is asked once the destination is settled and before
 	// any bytes move. Returning false stops the push with ErrDeclined.
 	Confirm func(PublishPlan) bool
@@ -119,24 +101,38 @@ type PublishRequest struct {
 // PublishPlan is what a push is about to do, for a caller to show and confirm.
 type PublishPlan struct {
 	Name      string
-	Reference string   // the canonical tag's full reference
+	Reference string   // the build tag's full reference
 	Tags      []string // every tag written
 	Size      int64
 	Layers    int
 	LayerSize int64
 	Audience  Audience
-	Replace   bool // Force will replace an existing versioned tag
+	// Existing reports that the build is already published, so only tags are
+	// written and nothing is uploaded.
+	Existing bool
+	// MovedTag is the tag that moves off another build, and MovedFrom is the
+	// leading hex of that build's identity.
+	MovedTag, MovedFrom string
+	// Mismatch is set when the artifact does not record the repository's collection.
+	Mismatch *CollectionMismatch
+}
+
+// CollectionMismatch says which collection an artifact records, which may be
+// none, against the one its repository belongs to.
+type CollectionMismatch struct {
+	Recorded, Expected string
 }
 
 // ErrDeclined reports a push its caller's Confirm turned down.
 var ErrDeclined = errors.New("push declined")
 
 // Publish validates an artifact against its destination, pushes it, and returns
-// the platform manifest descriptor it published.
+// the manifest descriptor it published.
 //
 //   - Everything published is derived from the artifact's own bytes.
-//   - The caller supplies only where it goes, through Placement.
-//   - The returned digest is this architecture's index child, the address a lock records.
+//   - The caller supplies only where it goes and which tags it wants.
+//   - A build already published uploads nothing: the other tags are pointed at it.
+//   - The returned digest is the manifest of this architecture, the address a lock records.
 func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error) {
 	ctx = withPush(ctx)
 	log := logging.FromContext(ctx)
@@ -157,6 +153,10 @@ func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error
 	if m.Keys.Identity.Empty() || m.Keys.Equiv.Empty() {
 		return ocispec.Descriptor{}, fmt.Errorf("%s records no scheme-backed identity, so nothing could pin what was pulled", m.Name)
 	}
+	if !ValidArch(m.Platform.Arch) {
+		return ocispec.Descriptor{}, fmt.Errorf("%w: %s is built for %q; only amd64, arm64 and noarch are published",
+			ErrUnsupportedPlatform, m.Name, m.Platform.Arch)
+	}
 	// Held to its own claim before anyone else has to trust it: a published
 	// artifact whose files do not reproduce its recorded keys is one that pull
 	// would refuse on arrival, and finding that out here is cheaper for everyone.
@@ -168,24 +168,13 @@ func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error
 		return ocispec.Descriptor{}, err
 	}
 
-	repo, tags := "", []string(nil)
-	if req.Placement != nil {
-		repo, tags = req.Placement.Repo, req.Placement.Tags
-		if repo == "" || len(tags) == 0 {
-			return ocispec.Descriptor{}, fmt.Errorf("placement for %s names no repository or tags", m.Name)
-		}
-		// No immutability check: a placement's canonical tag carries the content
-		// key, so it can only ever be re-pushed with the same content, and any
-		// unqualified tag beside it is a moving pointer by design. Whether this
-		// artifact is already there is the caller's question, asked before it
-		// spends the bytes.
-	} else {
-		if repo, tags, err = PushReference(m); err != nil {
-			return ocispec.Descriptor{}, err
-		}
-		if err := checkTagIsFree(ctx, req, m, repo, tags[0]); err != nil {
-			return ocispec.Descriptor{}, err
-		}
+	base, repo, err := SplitCoordinate(req.Repository)
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	tags, err := TagsFor(m, req.Tags)
+	if err != nil {
+		return ocispec.Descriptor{}, err
 	}
 
 	annotations := Annotations(m, compressionOf(req.Path))
@@ -204,78 +193,109 @@ func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error
 	// refused: a malformed provenance URL links nothing either way, and it is not
 	// a reason to block distribution.
 	if err := catalog.ValidSourceURL(annotations[AnnSource]); err != nil {
-		log.Warn("Dropping the source annotation", "artifact", m.Name, "err", err)
+		log.Warn("Dropping the source annotation", "name", m.Name, "err", err)
 		delete(annotations, AnnSource)
 	}
+	var mismatch *CollectionMismatch
+	if recorded := annotations[AnnSource]; req.Collection != "" && !sameCollection(recorded, req.Collection) {
+		mismatch = &CollectionMismatch{Recorded: recorded, Expected: req.Collection}
+	}
+
+	repository, err := newRepository(base, repo)
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	held, err := survey(ctx, repository, tags, m.Keys.Identity)
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	if held.built && len(held.pending) == 0 {
+		log.Info("Already published", "name", m.Name, "reference", FullRef(base, repo, tags.Build))
+		return held.build, nil
+	}
+
 	if req.Confirm != nil {
 		var size int64
 		if info, err := os.Stat(req.Path); err == nil {
 			size = info.Size()
 		}
-		layerSize, _ := planLayerSize(size, profileFor(registryHost(req.Base)).MaxLayerSize)
+		layerSize, _ := planLayerSize(size, profileFor(registryHost(base)).MaxLayerSize)
 		plan := PublishPlan{
-			Name: m.Name, Reference: FullRef(req.Base, repo, tags[0]), Tags: tags,
+			Name: m.Name, Reference: FullRef(base, repo, tags.Build), Tags: held.pending,
 			Size: size, Layers: layerCount(size, layerSize), LayerSize: layerSize,
-			Audience: req.Audience, Replace: req.Force,
+			Audience: req.Audience, Existing: held.built,
+			MovedTag: held.movedTag, MovedFrom: held.movedFrom, Mismatch: mismatch,
 		}
 		if !req.Confirm(plan) {
 			return ocispec.Descriptor{}, ErrDeclined
 		}
+	} else if mismatch != nil {
+		log.Warn("Overlay was not built from this repository's recipe collection",
+			"name", m.Name, "recorded", mismatch.Recorded, "repository", mismatch.Expected)
 	}
-	log.Info("Publishing", "artifact", m.Name, "reference", FullRef(req.Base, repo, tags[0]))
-	return Push(ctx, req.Path, req.Base, repo, tags, annotations, m.Platform.Arch)
+	if held.built {
+		log.Info("Tagging published build", "name", m.Name, "tags", strings.Join(held.pending, ", "))
+		return held.build, tagAll(ctx, repository, base, repo, held.build, held.pending)
+	}
+	log.Info("Publishing", "name", m.Name, "reference", FullRef(base, repo, tags.Build))
+	return Push(ctx, req.Path, base, repo, tags.List(), annotations)
 }
 
-// checkTagIsFree refuses to displace published content without Force.
-//
-//   - A version-less artifact is addressed by date and a rolling tag, so re-publishing is allowed.
-//   - A tag whose index lacks this architecture is an addition, so it is allowed.
-//   - A child for this platform, or any content under a tag with no index, is refused.
-func checkTagIsFree(ctx context.Context, req PublishRequest, m meta.Manifest, repo, tag string) error {
-	if req.Force || isVersionLess(m.Type, m.Name) {
-		return nil
-	}
-	repository, err := newRepository(req.Base, repo)
-	if err != nil {
-		return err
-	}
-	desc, err := repository.Resolve(ctx, tag)
-	if err != nil {
-		if err = classify(err); errors.Is(err, ErrNotFound) {
-			return nil
-		}
-		return err
-	}
-
-	occupant := "it"
-	if desc.MediaType == ocispec.MediaTypeImageIndex && m.Platform.Arch != meta.ArchNone {
-		plat, ok := platformFor(m.Platform.Arch)
-		if !ok {
-			return unpublishableArch(m.Name, m.Platform.Arch)
-		}
-		if _, taken := readIndexEntries(ctx, repository, tag)[platformKey(&plat)]; !taken {
-			return nil
-		}
-		occupant = platformKey(&plat)
-	}
-	return fmt.Errorf("%s already publishes %s; a versioned tag is immutable, so replacing it needs --force",
-		FullRef(req.Base, repo, tag), occupant)
+// surveyed is what a repository already holds for one push.
+type surveyed struct {
+	// built reports that the build tag exists, and build is its manifest.
+	built bool
+	build ocispec.Descriptor
+	// pending are the tags that do not yet point at the build, in write order.
+	pending []string
+	// movedTag and movedFrom name the name tag's current build when it differs.
+	movedTag, movedFrom string
 }
 
-// unpublishableArch refuses an artifact built for an architecture no index
-// child is published for.
-func unpublishableArch(what, arch string) error {
-	return fmt.Errorf("%w: %s is built for %q; only amd64, arm64 and noarch are published",
-		ErrUnsupportedPlatform, what, arch)
+// survey reads the tags a push would write.
+//   - A build tag that holds another identity is refused, since a tag carries only a key prefix.
+//   - The name tag's occupant is read for the build it would leave.
+func survey(ctx context.Context, repository *remote.Repository, tags Tags, identity meta.KeyRef) (surveyed, error) {
+	var s surveyed
+	desc, ann, err := resolveManifest(ctx, repository, tags.Build)
+	switch {
+	case err == nil:
+		if got := Identity(ann); got != identity {
+			return s, fmt.Errorf("%w: %s holds %s, not this build", ErrMismatch, tags.Build, describeKey(got))
+		}
+		s.built, s.build = true, desc
+	case errors.Is(classify(err), ErrNotFound):
+		s.pending = append(s.pending, tags.Build)
+	default:
+		return s, classify(err)
+	}
+	for _, tag := range tags.List()[1:] {
+		current, err := repository.Resolve(ctx, tag)
+		if err != nil {
+			if err = classify(err); !errors.Is(err, ErrNotFound) {
+				return s, err
+			}
+		} else if s.built && current.Digest == s.build.Digest {
+			continue
+		}
+		s.pending = append(s.pending, tag)
+		if tag == tags.Name && err == nil {
+			if _, occupant, oerr := resolveManifest(ctx, repository, tag); oerr == nil {
+				if from := Identity(occupant); from != identity && !from.Empty() {
+					s.movedTag, s.movedFrom = tag, from.SHA256[:min(keyChars, len(from.SHA256))]
+				}
+			}
+		}
+	}
+	return s, nil
 }
 
-// Push uploads artifactPath, built for arch, to "<base>/<repo>" under every tag,
-// the first canonical.
+// Push uploads artifactPath to "<base>/<repo>" and tags its manifest with every
+// tag, in order.
 //
 //   - annotations are carried, never read: policy lives in [Publish].
-//   - amd64 or arm64: the manifest joins the tag's OCI image index as that platform, merged with what is published.
-//   - noarch: tagged directly, since an index over one child would imply otherwise.
-func Push(ctx context.Context, artifactPath, base, repo string, tags []string, annotations map[string]string, arch string) (ocispec.Descriptor, error) {
+//   - Each architecture is its own manifest, so nothing of another architecture is read or merged.
+func Push(ctx context.Context, artifactPath, base, repo string, tags []string, annotations map[string]string) (ocispec.Descriptor, error) {
 	if len(tags) == 0 {
 		return ocispec.Descriptor{}, fmt.Errorf("no tags to push %s under", artifactPath)
 	}
@@ -288,20 +308,12 @@ func Push(ctx context.Context, artifactPath, base, repo string, tags []string, a
 	// One profile decides both how much is asked for at once and how fast: it
 	// clamps the layer plan, and it spaces the writes that follow.
 	profile := profileFor(registryHost(base))
-	plan, err := preflightUpload(ctx, artifactPath, base, tags, profile)
+	plan, err := preflightUpload(ctx, artifactPath, TrimBaseScheme(base)+"/"+repo, tags, profile)
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	ctx = withPacer(ctx, newPacer(profile.MinMutationGap))
 	ctx = withThroughputGuard(ctx, newThroughputGuard(profile))
-	archIndependent := arch == meta.ArchNone
-	var plat ocispec.Platform
-	if !archIndependent {
-		var ok bool
-		if plat, ok = platformFor(arch); !ok {
-			return ocispec.Descriptor{}, unpublishableArch(artifactPath, arch)
-		}
-	}
 
 	repository, err := newRepository(base, repo)
 	if err != nil {
@@ -329,59 +341,65 @@ func Push(ctx context.Context, artifactPath, base, repo string, tags []string, a
 	// most likely single mutation in a large push to be refused.
 	var manifestDesc ocispec.Descriptor
 	err = retryPolicyFrom(ctx).run(ctx, mutation{verb: verbPublish, attrs: []any{"target", "manifest"}, do: func(ctx context.Context) error {
+		capture := &manifestCapture{Repository: repository}
 		var packErr error
-		manifestDesc, packErr = oras.PackManifest(ctx, repository, oras.PackManifestVersion1_1, ArtifactTypeOverlay, oras.PackManifestOptions{
+		manifestDesc, packErr = oras.PackManifest(ctx, capture, oras.PackManifestVersion1_1, ArtifactTypeOverlay, oras.PackManifestOptions{
 			Layers:              layers,
 			ManifestAnnotations: annotations,
 		})
+		if packErr == nil {
+			_, packErr = rememberManifest(repository, manifestDesc, capture.raw)
+		}
 		return packErr
 	}})
 	if err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("failed to publish manifest: %w", err)
 	}
 	manifestDesc.ArtifactType = ArtifactTypeOverlay
-
-	if archIndependent {
-		for _, tag := range tags {
-			if err := retryPolicyFrom(ctx).run(ctx, mutation{
-				verb:  verbPublish,
-				attrs: []any{"tag", tag},
-				do:    func(ctx context.Context) error { return repository.Tag(ctx, manifestDesc, tag) },
-			}); err != nil {
-				return ocispec.Descriptor{}, fmt.Errorf("failed to tag %s: %w", FullRef(base, repo, tag), err)
-			}
-		}
-		return manifestDesc, nil
-	}
-	manifestDesc.Platform = &plat
-	if err := reconcileIndex(ctx, repository, tags, manifestDesc, annotations, ArtifactTypeOverlay, base, repo); err != nil {
-		return ocispec.Descriptor{}, err
-	}
-	return manifestDesc, nil
+	return manifestDesc, tagAll(ctx, repository, base, repo, manifestDesc, tags)
 }
 
-// reconcileIndex points every tag at an index containing this architecture's
-// child, keeping the architectures others published. Tagging is not atomic and
-// tags have no compare-and-swap, so it re-reads and retries, folding in what it
-// observed, until concurrent publishers converge.
-func reconcileIndex(ctx context.Context, repository *remote.Repository, tags []string, child ocispec.Descriptor, annotations map[string]string, artifactType, base, repo string) error {
-	entries := collectIndexEntries(ctx, repository, tags)
-	// Inserted before the merge, so the child being pushed wins over the one
-	// already published for this platform.
-	entries[platformKey(child.Platform)] = child
+// manifestCapture keeps the bytes of the manifest packed through it, so tagging it later reads nothing back.
+type manifestCapture struct {
+	*remote.Repository
+	raw []byte
+}
 
-	for range maxIndexReconcileAttempts {
-		if err := publishIndex(ctx, repository, tags, entries, annotations, artifactType); err != nil {
-			return classify(err)
-		}
-		observed, complete := verifyTaggedIndexes(ctx, repository, tags, entries)
-		if complete {
-			return nil
-		}
-		mergeIndexEntries(entries, observed)
+func (c *manifestCapture) Push(ctx context.Context, expected ocispec.Descriptor, body io.Reader) error {
+	if expected.MediaType != ocispec.MediaTypeImageManifest {
+		return c.Repository.Push(ctx, expected, body)
 	}
-	return fmt.Errorf("%s kept changing under a concurrent push; publish architectures sequentially and retry",
-		FullRef(base, repo, tags[0]))
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	c.raw = raw
+	return c.Repository.Push(ctx, expected, bytes.NewReader(raw))
+}
+
+// tagAll points every tag at desc, in order.
+func tagAll(ctx context.Context, repository *remote.Repository, base, repo string, desc ocispec.Descriptor, tags []string) error {
+	for _, tag := range tags {
+		if err := retryPolicyFrom(ctx).run(ctx, mutation{
+			verb:  verbPublish,
+			attrs: []any{"tag", tag},
+			do:    func(ctx context.Context) error { return tagManifest(ctx, repository, desc, tag) },
+		}); err != nil {
+			return fmt.Errorf("failed to tag %s: %w", FullRef(base, repo, tag), err)
+		}
+	}
+	return nil
+}
+
+// tagManifest writes tag against the manifest's own bytes.
+//   - The bytes come from what this process already read or wrote, so a tag costs one write and no read.
+//   - A read that counts against a pull limit is spent only for a manifest this process has not seen.
+func tagManifest(ctx context.Context, repository *remote.Repository, desc ocispec.Descriptor, tag string) error {
+	raw, err := manifestBytes(ctx, repository, desc)
+	if err != nil {
+		return err
+	}
+	return repository.Manifests().PushReference(ctx, desc, bytes.NewReader(raw), tag)
 }
 
 // compressionOf reports the SquashFS compressor of an image, or "" when it

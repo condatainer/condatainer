@@ -100,7 +100,7 @@ func pull(ctx context.Context, base, repo string, desc ocispec.Descriptor, annot
 		// Reported, never fatal: identity already answered whether these are the
 		// wanted bytes, and what an image answers to is decided by where its file
 		// sits, not by what it calls itself.
-		log.Warn("Published name disagrees with the artifact's own",
+		log.Warn("Published name disagrees with the overlay's own",
 			"published", name, "embedded", embedded.Name)
 	}
 
@@ -115,10 +115,10 @@ func pull(ctx context.Context, base, repo string, desc ocispec.Descriptor, annot
 		}
 	}
 	if err := os.Rename(staged, destPath); err != nil {
-		return fmt.Errorf("failed to install pulled artifact: %w", err)
+		return fmt.Errorf("failed to install pulled overlay: %w", err)
 	}
 	utils.ShareWithParentGroup(destPath)
-	log.Info("Installed", "artifact", destPath)
+	log.Info("Installed", "path", destPath)
 	return nil
 }
 
@@ -153,7 +153,7 @@ func Fetch(ctx context.Context, base, repo string, desc ocispec.Descriptor, anno
 }
 
 // SplitCoordinate separates a repository coordinate such as
-// "ghcr.io/org/cnt/grch38/genome" into registry base and repository path.
+// "ghcr.io/org/cnt/grch38/genome" into registry host and repository path.
 // It splits at the first slash and does not trim a leading one:
 // "/lab/p" names no registry.
 func SplitCoordinate(coordinate string) (base, repo string, err error) {

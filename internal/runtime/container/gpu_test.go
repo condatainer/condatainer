@@ -1,8 +1,9 @@
 package container
 
 import (
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 // autoload_gpu: false is the escape hatch for a node whose driver is installed

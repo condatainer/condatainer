@@ -29,6 +29,7 @@ const (
 	verbUpload   = "upload"
 	verbDownload = "download"
 	verbPublish  = "publish"
+	verbRemove   = "remove"
 )
 
 // downloadProgress narrates a whole artifact rather than one layer at a time.

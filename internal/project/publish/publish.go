@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/catalog"
@@ -67,9 +68,8 @@ func markUpstreamServed(ctx context.Context, root string, plan *Plan, cat catalo
 
 // markAlreadyPublished skips an upload the destination already holds.
 //
-//   - The recorded digest is asked first: resolving is proof in one request, and it is the address restore uses.
-//   - The qualified tag is the fallback and the repair path: a lock that lost its remotes finds its artifacts again.
-//   - Tags are re-applied either way, to repair a manifest that lost its retention anchor.
+//   - The build tag is resolved, which no pull limit counts. A digest the lock already records for this destination is proof of identical content, so nothing is read.
+//   - Otherwise the manifest is read and its identity checked: a lock that lost its remotes finds its artifacts again.
 func markAlreadyPublished(ctx context.Context, plan *Plan) {
 	log := logging.FromContext(ctx)
 	base, repo, err := registry.SplitCoordinate(plan.Repository)
@@ -80,16 +80,29 @@ func markAlreadyPublished(ctx context.Context, plan *Plan) {
 		if step.Disposition != Upload || len(step.Tags) == 0 {
 			continue
 		}
+		head, err := registry.ResolveTag(ctx, base, repo, step.Tags[0])
+		if err != nil {
+			log.Debug("destination does not hold this overlay yet", "name", step.Name, "err", err)
+			continue
+		}
+		if recorded(step, plan.Repository, head.Digest.String()) {
+			plan.Steps[i].Disposition = Present
+			plan.Steps[i].Remote = &lock.Remote{
+				Repository:     strings.TrimRight(registry.TrimBaseScheme(plan.Repository), "/"),
+				ManifestDigest: head.Digest.String(),
+			}
+			continue
+		}
 		desc, annotations, err := registry.ResolveArtifact(ctx, base, repo, step.Tags[0])
 		if err != nil {
-			log.Debug("destination does not hold this artifact yet", "name", step.Name, "err", err)
+			log.Debug("destination does not hold this overlay yet", "name", step.Name, "err", err)
 			continue
 		}
 		if got := registry.Identity(annotations); got.Digest() != step.Identity {
 			// A content-keyed tag holding different content is a corrupted
 			// package, not something to overwrite.
 			plan.Steps[i].Disposition = Refused
-			plan.Steps[i].Reason = fmt.Sprintf("%s already publishes %s, which is not this artifact",
+			plan.Steps[i].Reason = fmt.Sprintf("%s already publishes %s, which is not this overlay",
 				step.Tags[0], describe(got))
 			plan.Problems = append(plan.Problems, fmt.Sprintf("%s: %s", step.Name, plan.Steps[i].Reason))
 			continue
@@ -102,14 +115,21 @@ func markAlreadyPublished(ctx context.Context, plan *Plan) {
 	}
 }
 
+// recorded reports whether the lock already records digest for this step in repository.
+func recorded(step Step, repository, digest string) bool {
+	want := registry.TrimBaseScheme(repository)
+	return slices.ContainsFunc(step.Recorded, func(r lock.Remote) bool {
+		return registry.TrimBaseScheme(r.Repository) == want && r.ManifestDigest == digest
+	})
+}
+
 // Run publishes the plan and records where each artifact landed.
 //   - It takes one lock transaction per artifact, not one at the end: a push is long over a link that can drop, and losing the record of completed uploads is worse than several small rewrites.
 //   - Each transaction is atomic, and a recorded location stays true.
 func Run(ctx context.Context, root string, plan *Plan, opts Options) (*Report, error) {
 	log := logging.FromContext(ctx)
 	report := &Report{Repository: plan.Repository, AmbiguousNames: plan.Ambiguous}
-	base, repo, err := registry.SplitCoordinate(plan.Repository)
-	if err != nil {
+	if _, _, err := registry.SplitCoordinate(plan.Repository); err != nil {
 		return report, err
 	}
 	audience := registry.Audience(plan.Audience)
@@ -135,11 +155,11 @@ func Run(ctx context.Context, root string, plan *Plan, opts Options) (*Report, e
 		}
 		log.Info("Publishing", "kind", "note", "name", step.Name, "tags", strings.Join(step.Tags, ", "))
 		desc, err := registry.Publish(ctx, registry.PublishRequest{
-			Path:      path,
-			Base:      base,
-			Audience:  audience,
-			Placement: &registry.Placement{Repo: repo, Tags: step.Tags},
-			Source:    plan.Source,
+			Path:       path,
+			Repository: plan.Repository,
+			Audience:   audience,
+			Tags:       registry.TagRequest{Name: slices.ContainsFunc(step.Tags, registry.IsNameTag)},
+			Source:     plan.Source,
 		})
 		if err != nil {
 			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", step.Name, err))

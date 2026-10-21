@@ -62,7 +62,7 @@ func stageMetadata(ctx context.Context, b *BuildObject) (string, error) {
 const EnvSourceDateEpoch = "SOURCE_DATE_EPOCH"
 
 // buildTime is SOURCE_DATE_EPOCH when set, so builds of one artifact on several
-// machines share a date tag; otherwise now. Both are UTC.
+// machines record one time; otherwise now. Both are UTC.
 func buildTime() (time.Time, error) {
 	raw := strings.TrimSpace(os.Getenv(EnvSourceDateEpoch))
 	if raw == "" {

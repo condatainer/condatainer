@@ -3,14 +3,13 @@ package build
 import (
 	"context"
 	"fmt"
-	"github.com/condatainer/condatainer/internal/conda"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"log/slog"
-
 	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/conda"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/libexec"
 	"github.com/condatainer/condatainer/internal/logging"

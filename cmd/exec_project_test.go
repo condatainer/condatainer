@@ -2,12 +2,12 @@ package cmd
 
 import (
 	"context"
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/project/lock"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 // Outside a project, `-o` means exactly what it always meant.

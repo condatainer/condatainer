@@ -1,11 +1,12 @@
 package config
 
 import (
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 // withImageDir points every image search at one scratch directory.

@@ -43,7 +43,9 @@ GHCR is the registry these come from.
 
 The request limit shapes the design.
 
-- Layers are planned by count, not by size. A bigger artifact gets bigger layers, not more of them.
+- Layers are planned by count. They are 2 GiB until the artifact passes 48 GiB, then grow to keep the count near 24.
+- A push costs about two requests per layer and nine more, and each tag is one write.
+- A registry's documented layer limit caps the growth, so a very large artifact then gets more layers.
 - Writes are spaced out.
 - A rate limit is waited out, never treated as a failure.
 
@@ -63,7 +65,7 @@ Identity is defined in `internal/artifact`.
 - A digest is the OCI content address. It names exact bytes and survives mirroring.
 - An identity says what the artifact is. It comes from the artifact itself, never from the caller.
 - A mirror cannot claim an artifact by asserting metadata about it.
-- An index child's platform is the architecture the artifact records, not the pushing machine's. One machine can publish every architecture's build.
+- A manifest's architecture is the one the artifact records, not the pushing machine's. One machine can publish every architecture's build.
 
 ## Credentials
 
@@ -81,3 +83,63 @@ Storage and lookup are in `internal/credential`. What is particular to registrie
 - One warning names each refused credential once a later one answers. When all are refused, the error names them all.
 - Only a 401 moves on. A rate limit can arrive as a 403 and must be waited out, not retried.
 - A push never moves on. It names the credential refused and the key to log in to.
+
+## Tags and layout
+
+- A source or a project keeps every artifact in one repository, and the name goes in the tag.
+  - A GHCR package has one visibility, so a lab sets it once.
+  - Docker Hub allows `user/repo` only, so a name with a slash cannot be a repository path.
+- A tag is `<name>__<arch>`, `<name>__<id12>__<arch>` or `<name>__eq-<eq12>__<arch>`.
+  - The name is the encoded artifact name. `--` stands for `/`.
+  - `<arch>` is `amd64`, `arm64` or `noarch`.
+  - `id12` and `eq12` are the first 12 hex characters of the identity and equivalence digests.
+- A name segment never holds a doubled separator, so `--` and `__` cannot occur inside a name and a qualifier is never part of one.
+- A tag is refused when it does not fit 128 characters. It is never truncated, since a truncated tag is another artifact's address.
+- A tag carries a key prefix, so the full key in the annotations is compared on every lookup.
+- The architecture is in the tag and in `org.condatainer.arch`. The annotation outranks the tag.
+
+## No image index
+
+- Every architecture is its own manifest, and no index is written.
+- An index loses its tag whenever an architecture is added or a name moves. The untagged version it leaves can be deleted by a registry's cleanup, and a lock may pin its children.
+- Merging into a shared index also folds another build's architectures into this one.
+- The architecture comes from the tag, so a pull needs no index.
+- A tool that expects one multi-arch tag does not work against these repositories.
+- Base images such as `ubuntu:24.04` are other people's, so their indexes are still read.
+
+## Which tags a push writes
+
+- Order is build tag, equivalence tag, name tag. A push that stops part way leaves a tagged manifest.
+- The build tag is the retention anchor. A lock pins a manifest digest, and a registry cleans up untagged versions.
+- The build tag is immutable. Publishing a build whose tag exists uploads nothing and writes the missing tags.
+- The name tag moves to every published build. The build it leaves keeps its own tag.
+- A frozen environment takes no name tag. Every one is called `env`, so only its build tag addresses it.
+- The equivalence tag is for the prebuilt check, which asks for it directly so the name tag's position does not matter.
+- Only script and def builds get one. A Conda build has no prebuilt to match, and a frozen environment's equivalence key is its identity.
+
+## Sources and collections
+
+- A push to a source's repository warns when the artifact records another collection as `org.opencontainers.image.source`, and asks before going on.
+  - That keeps a source's repository from mixing collections by accident.
+- Nothing on the read side checks a collection.
+  - Published artifacts are read-only, so a renamed collection would leave every old one failing the check.
+  - The keys already prove an artifact can stand in for a recipe.
+- A source declares its own audience. `--audience` applies to `--registry` only, so a flag never loosens a source's.
+- A project repository is reached with `--registry`. No collection is checked there.
+
+## Removal
+
+- A delete by digest drops every tag on the manifest, and GHCR has no single-tag delete.
+- GHCR refuses the standard delete calls, so its packages are managed through GitHub's REST API. Every other host uses the standard calls.
+- The `ghcr.io` credential is sent to `api.github.com` and to no other host.
+- GHCR refuses to remove the last tagged version of a package. Deleting a package also drops its visibility and repository link, so no command does it.
+- Tags move off a manifest before the manifest is removed. A name or equivalence tag never points at nothing.
+- The registry is read again after the answer. A push writes the build tag before the others, and a user can take a while to answer, so a fresh upload briefly looks unserved.
+- `gc --no-recipe` removes builds of names the source has no recipe for. The recipe list is cached, so it is refreshed first. An unreadable or empty list stops the run, since every name would look unrecipe'd.
+- `remove` and `gc` take only `--source`. A project's repository has no declaring source, so neither can empty one by accident.
+- A manifest holding a tag this package did not write is never removed, since removing it would drop that tag too.
+- On Docker Hub a manifest fetch counts as a pull and a tag resolve does not. A manifest is fetched once per digest in a run, so a lookup and its pull share one fetch.
+- A tag is written from the manifest bytes the run holds. A push of a new build reads no manifest, and a tag move reads the target once.
+- A check that downloads nothing resolves the tag and reads no manifest. A pull reads it, and the keys are checked then.
+- The bytes are kept as pushed or fetched, since a tag can only be written against its own digest's exact bytes.
+

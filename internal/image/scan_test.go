@@ -1,10 +1,11 @@
 package image
 
 import (
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 // writeImages creates dir and touches one file per name.

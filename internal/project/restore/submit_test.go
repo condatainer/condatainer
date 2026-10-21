@@ -1,11 +1,11 @@
 package restore
 
 import (
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"strings"
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 // buildStep is one plan entry, named so a partition case reads as a graph.

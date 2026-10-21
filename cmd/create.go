@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/condatainer/condatainer/internal/conda"
-	"github.com/condatainer/condatainer/internal/scheduler"
-	"github.com/condatainer/condatainer/internal/settings"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,10 +14,13 @@ import (
 	"github.com/chzyer/readline"
 	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/conda"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -193,7 +193,7 @@ func init() {
 		"Use only this configured recipe source, in flag order (repeatable)")
 	f.BoolVarP(&createUpdate, "update", "u", false, "Rebuild overlays even if they already exist")
 	f.BoolVar(&createStore, "store", false, "Build into the store, filed under its identity")
-	f.BoolVar(&createNoPrebuilt, "no-prebuilt", false, "Build from the recipe instead of pulling a prebuilt artifact")
+	f.BoolVar(&createNoPrebuilt, "no-prebuilt", false, "Build from the recipe instead of pulling a prebuilt overlay")
 	f.StringVarP(&createLayer, "layer", "l", "", "Build into this data layer: u/user, r/cnt-root, e/extra-root")
 	settings.AddSwitch(f, "build.always_submit_data", "always-submit-data", "true", settings.Usage("Submit data builds as scheduler jobs, even without directives"))
 	settings.AddSwitch(f, "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))

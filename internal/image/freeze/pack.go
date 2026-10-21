@@ -132,7 +132,7 @@ func Pack(ctx context.Context, opts PackOptions, entries []Entry, tr Translation
 	}
 
 	script := packScript(packSources, target, args, opts, mksquashfsBin)
-	log.Info("Packing frozen environment",
+	log.Info("Packing snapshot",
 		"source", opts.Image, "target", opts.Target, "route", route,
 		"roots", strings.Join(sources, " "), "deletions", tr.Deletions())
 
@@ -149,7 +149,7 @@ func Pack(ctx context.Context, opts PackOptions, entries []Entry, tr Translation
 		return meta.BuildTools{}, fmt.Errorf("pack %s: %w", opts.Target, err)
 	}
 	if _, err := os.Stat(target); err != nil {
-		return meta.BuildTools{}, fmt.Errorf("pack produced no artifact at %s: %w", opts.Target, err)
+		return meta.BuildTools{}, fmt.Errorf("pack produced no overlay at %s: %w", opts.Target, err)
 	}
 	return tools, nil
 }

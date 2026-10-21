@@ -1,12 +1,12 @@
 package config
 
 import (
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 func TestEnsureDefaultDistroRecordsOnce(t *testing.T) {

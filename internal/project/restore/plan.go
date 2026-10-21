@@ -391,7 +391,7 @@ func restrict(steps []Step, only, baseArtifact string) ([]Step, string) {
 		}
 	}
 	if !found {
-		return nil, fmt.Sprintf("--only %s is not an artifact this restore covers", only)
+		return nil, fmt.Sprintf("--only %s is not an overlay this restore covers", only)
 	}
 	kept := make([]Step, 0, len(steps))
 	for _, step := range steps {
@@ -511,7 +511,7 @@ func (p *Plan) classify(step Step, keys meta.Keys, hostArch string, opts Options
 		// anywhere.
 		step.Action = ActionUnavailable
 		problems = append(problems, fmt.Sprintf(
-			"%s is a frozen environment and cannot be rebuilt; it is only obtainable from a registry, so publish it with `condatainer project registry push` from a checkout that has it",
+			"%s is a snapshot and cannot be rebuilt; it is only obtainable from a registry, so publish it with `condatainer project registry push` from a checkout that has it",
 			step.Name))
 	default:
 		step.Action = ActionBuild
@@ -574,7 +574,7 @@ func sortedKeys[V any](in map[string]V) []string {
 func runsOn(arch, hostArch string) string {
 	switch arch {
 	case "":
-		return "the artifact records no architecture"
+		return "the overlay records no architecture"
 	case meta.ArchNone, hostArch:
 		return ""
 	default:

@@ -172,18 +172,54 @@ var (
 // ReadLineContext reads a trimmed line from stdin, preserving case.
 // Returns context.Canceled if ctx is done before input arrives.
 func ReadLineContext(ctx context.Context) (string, error) {
+	line, _, err := readLineFrom(ctx, sharedStdin())
+	return line, err
+}
+
+func sharedStdin() *bufio.Reader {
 	stdinReaderOnce.Do(func() { stdinReader = bufio.NewReader(os.Stdin) })
-	ch := make(chan string, 1)
+	return stdinReader
+}
+
+// readLineFrom reads a trimmed line from r. closed reports that the input ended
+// before any character arrived, which is not the same as an empty line.
+func readLineFrom(ctx context.Context, r *bufio.Reader) (line string, closed bool, err error) {
+	type result struct {
+		raw string
+		err error
+	}
+	ch := make(chan result, 1)
 	go func() {
-		s, _ := stdinReader.ReadString('\n')
-		ch <- strings.TrimSpace(s)
+		s, err := r.ReadString('\n')
+		ch <- result{s, err}
 	}()
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
-	case s := <-ch:
-		return s, nil
+		return "", false, ctx.Err()
+	case res := <-ch:
+		return strings.TrimSpace(res.raw), res.raw == "" && res.err != nil, nil
 	}
+}
+
+// ConfirmDefaultYes is Confirm for a question whose default answer is yes.
+//   - An empty line, y and yes agree.
+//   - Input that has ended answers no, so a closed stdin never agrees by default.
+func ConfirmDefaultYes(ctx context.Context, w io.Writer, prompt string) bool {
+	return confirmDefaultYes(ctx, w, prompt, sharedStdin())
+}
+
+func confirmDefaultYes(ctx context.Context, w io.Writer, prompt string, r *bufio.Reader) bool {
+	fmt.Fprint(w, prompt)
+	choice, closed, err := readLineFrom(ctx, r)
+	if err != nil || closed {
+		fmt.Fprintln(w)
+		return false
+	}
+	switch strings.ToLower(choice) {
+	case "", "y", "yes":
+		return true
+	}
+	return false
 }
 
 // Confirm writes prompt to w and reports whether the answer is y or yes. When

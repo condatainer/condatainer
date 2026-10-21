@@ -103,8 +103,10 @@ func TestParseDescriptorOCI(t *testing.T) {
 			want: Descriptor{Schema: 1, OCI: OCI{Registry: "ghcr.io/lab/cnt", Audience: "restricted"}},
 		},
 		{name: "bad audience", json: `{"schema":1,"oci":{"registry":"ghcr.io/lab/cnt","audience":"private"}}`, wantErr: "audience"},
-		{name: "host alone is not a root", json: `{"schema":1,"oci":{"registry":"ghcr.io"}}`, wantErr: "registry/repository root"},
-		{name: "unsupported scheme", json: `{"schema":1,"oci":{"registry":"https://ghcr.io/lab/cnt"}}`, wantErr: "registry/repository root"},
+		{name: "host alone is not a repository", json: `{"schema":1,"oci":{"registry":"ghcr.io"}}`, wantErr: "registry/repository coordinate"},
+		{name: "unsupported scheme", json: `{"schema":1,"oci":{"registry":"https://ghcr.io/lab/cnt"}}`, wantErr: "registry/repository coordinate"},
+		{name: "Docker Hub takes user/repo", json: `{"schema":1,"oci":{"registry":"docker.io/lab/cnt/deep"}}`, wantErr: "two parts"},
+		{name: "Docker Hub namespace alone is no repository", json: `{"schema":1,"oci":{"registry":"docker.io/lab"}}`, wantErr: "two parts"},
 		{name: "unsupported schema", json: `{"schema":2}`, wantErr: "unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

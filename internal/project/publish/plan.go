@@ -3,6 +3,8 @@ package publish
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -30,12 +32,9 @@ const (
 // Step is one artifact's place in a push.
 type Step struct {
 	// Artifact is the vendored directory, relative to the lock directory.
-	Artifact string `json:"artifact"`
-	Name     string `json:"name"`
-	Identity string `json:"identity"`
-	// Pinned reports that a pin points at this artifact rather than only
-	// a dependency edge. It decides the plain name tag.
-	Pinned      bool        `json:"pinned"`
+	Artifact    string      `json:"artifact"`
+	Name        string      `json:"name"`
+	Identity    string      `json:"identity"`
 	Disposition Disposition `json:"disposition"`
 	// Path is the local artifact to upload, empty for anything not uploaded.
 	Path string `json:"path,omitempty"`
@@ -47,6 +46,8 @@ type Step struct {
 	// Remote is the location to record: what an upload will create, or where an
 	// existing copy was found.
 	Remote *lock.Remote `json:"remote,omitempty"`
+	// Recorded are the locations the lock already records for this artifact.
+	Recorded []lock.Remote `json:"-"`
 	// Reason explains a refusal.
 	Reason string `json:"reason,omitempty"`
 	// Channels are a Conda build's recorded channels, reported and never judged:
@@ -91,10 +92,6 @@ type Options struct {
 	// a paper's artifacts outliving the lab's recipe repository — where holding
 	// a second copy is exactly the point.
 	All bool
-	// Closure adds every vendored build dependency. Restore prunes a closure
-	// node whenever its dependent is adopted or fetched, so these are reachable
-	// only on the rebuild path, which is the path a push exists to avoid.
-	Closure bool
 }
 
 // Build computes what a push would do, without contacting anything.
@@ -118,17 +115,16 @@ func Build(ctx context.Context, root string, l *lock.Lock, verified *lock.Verifi
 
 	for _, artifact := range sortedArtifacts(verified) {
 		entry := verified.Entries[artifact]
-		isPinned := pinned[artifact]
-		if !isPinned && !opts.Closure {
+		if !pinned[artifact] {
 			continue
 		}
 		step := Step{
 			Artifact:    artifact,
 			Name:        entry.Manifest.Name,
 			Identity:    entry.Identity.Digest(),
-			Pinned:      isPinned,
 			Destination: destinations[artifact],
 			Channels:    entry.Manifest.Build.Channels,
+			Recorded:    l.Remotes[artifact],
 		}
 		plan.Steps = append(plan.Steps, planStep(step, entry, audience))
 	}
@@ -156,12 +152,12 @@ func planStep(step Step, entry *lock.Entry, audience registry.Audience) Step {
 		step.Disposition, step.Reason = Refused, err.Error()
 		return step
 	}
-	tags, err := registry.ProjectTags(entry.Manifest, step.Pinned)
+	tags, err := registry.TagsFor(entry.Manifest, registry.TagRequest{Name: true})
 	if err != nil {
 		step.Disposition, step.Reason = Refused, err.Error()
 		return step
 	}
-	step.Disposition, step.Tags = Upload, tags
+	step.Disposition, step.Tags = Upload, tags.List()
 	return step
 }
 
@@ -181,34 +177,34 @@ func checkTagCollisions(plan *Plan) error {
 	return nil
 }
 
-// dropAmbiguousPlainTags removes the unqualified name tag where two artifacts in one set share a manifest name, and reports each name once.
-//   - The plain tag is a human handle for "what the project uses", and two artifacts cannot both be that.
-//   - Qualified tags still identify each.
-//   - Every frozen environment shares meta.EnvName, so two pinned ones always collide.
+// dropAmbiguousPlainTags removes the name tag where two artifacts in one set share a manifest name.
+//   - A name tag holds one build, so two artifacts cannot both have it.
+//   - Both lose it, and build tags still identify each.
+//   - It reports each such name, once.
+//   - Only artifacts that carry a name tag take part; a frozen environment has none.
 func dropAmbiguousPlainTags(plan *Plan) []string {
-	byName := map[string]int{}
-	for _, step := range plan.Steps {
-		if step.Pinned && step.Disposition != Refused {
-			byName[step.Name]++
+	byName := map[string][]int{}
+	for i, step := range plan.Steps {
+		if step.Disposition != Refused && slices.ContainsFunc(step.Tags, registry.IsNameTag) {
+			byName[step.Name] = append(byName[step.Name], i)
 		}
 	}
 	var dropped []string
-	seen := map[string]bool{}
-	for i, step := range plan.Steps {
-		if !step.Pinned || byName[step.Name] < 2 {
+	for _, name := range slices.Sorted(maps.Keys(byName)) {
+		sharing := byName[name]
+		if len(sharing) < 2 {
 			continue
 		}
-		var kept []string
-		for _, tag := range step.Tags {
-			if strings.Contains(tag, "__") {
-				kept = append(kept, tag)
+		for _, i := range sharing {
+			var kept []string
+			for _, tag := range plan.Steps[i].Tags {
+				if !registry.IsNameTag(tag) {
+					kept = append(kept, tag)
+				}
 			}
+			plan.Steps[i].Tags = kept
 		}
-		plan.Steps[i].Tags = kept
-		if !seen[step.Name] {
-			seen[step.Name] = true
-			dropped = append(dropped, step.Name)
-		}
+		dropped = append(dropped, name)
 	}
 	return dropped
 }

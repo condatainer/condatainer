@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 // setTestSource points the catalog at a single filesystem collection.

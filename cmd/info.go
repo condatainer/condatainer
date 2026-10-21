@@ -102,7 +102,7 @@ func verifyKeys(overlayPath string) error {
 		utils.PrintMessage("No keys recorded; there is nothing to regenerate.")
 		return nil
 	case m.BuildType == meta.BuildTypeSnapshot:
-		utils.PrintMessage("A frozen environment's identity is its payload; the payload check covers it.")
+		utils.PrintMessage("A snapshot's identity is its payload; the payload check covers it.")
 		return nil
 	}
 	artifact, err := compare.Read(overlayPath)
@@ -308,7 +308,7 @@ func displayKeys(imagePath string) {
 
 	fmt.Println(utils.StyleTitle("Keys"))
 	if artifact.Name != "" {
-		fmt.Printf("  %-14s %s\n", "Artifact:", artifact.Name)
+		fmt.Printf("  %-14s %s\n", "Overlay:", artifact.Name)
 	}
 	if identity != "" {
 		fmt.Printf("  %-14s %s\n", "Identity:", identity)

@@ -263,7 +263,7 @@ func TestVerifyRejectsAnOriginForAnAbsentArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, problems := Verify(root, l)
-	if !strings.Contains(problemText(problems), "remote refers to an artifact that is not vendored") {
+	if !strings.Contains(problemText(problems), "remote refers to an overlay that is not vendored") {
 		t.Fatalf("problems:\n%s", problemText(problems))
 	}
 }

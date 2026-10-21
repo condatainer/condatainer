@@ -3,13 +3,13 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/condatainer/condatainer/internal/conda"
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
-
+	"github.com/condatainer/condatainer/internal/conda"
 	"github.com/condatainer/condatainer/internal/utils"
+
+	"github.com/spf13/cobra"
 )
 
 var searchJSON bool

@@ -1,12 +1,12 @@
 package config
 
 import (
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 

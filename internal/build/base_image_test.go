@@ -1,12 +1,12 @@
 package build
 
 import (
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 // withInstalledBase installs a base image and points every image search at it.

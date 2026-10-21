@@ -3,17 +3,17 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"github.com/condatainer/condatainer/internal/build"
-	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/image/freeze"
 	"github.com/condatainer/condatainer/internal/image/producer"
 	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )

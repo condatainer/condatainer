@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +13,7 @@ import (
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/project"
 	"github.com/condatainer/condatainer/internal/project/lock"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 func TestProjectCreateThenInfo(t *testing.T) {

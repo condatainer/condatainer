@@ -14,7 +14,7 @@ var ErrNoFuse2fs = errors.New("no fuse2fs available to read the overlay")
 var ErrNoFuseOverlayfs = errors.New("no fuse-overlayfs available to layer the overlay over its snapshot")
 
 // ErrNoSquashfuse reports that no squashfuse could be found to read an artifact.
-var ErrNoSquashfuse = errors.New("no squashfuse available to read the artifact")
+var ErrNoSquashfuse = errors.New("no squashfuse available to read the overlay")
 
 // FindSquashfuse locates the squashfuse that mounts a frozen artifact, for MountedRun to run directly.
 //   - toolpath.Resolve prefers libexec's own copy, so one is found even on a host without it.

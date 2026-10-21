@@ -2,7 +2,6 @@ package helper
 
 import (
 	"context"
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 // checkAndInstallNamedOverlays resolves a bare, distro-unprefixed name

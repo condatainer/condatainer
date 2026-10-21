@@ -2,13 +2,13 @@ package cmd
 
 import (
 	"context"
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 func TestResolveOverlayValuesOutsideAProject(t *testing.T) {

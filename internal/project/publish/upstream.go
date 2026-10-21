@@ -19,7 +19,7 @@ import (
 )
 
 // Upstream finds the vendored artifacts a recipe collection already publishes at the exact identity the lock pins, and returns one remote per match.
-//   - It is a resolve-and-compare, never a search: name and identity are known, so it asks one coordinate per declared endpoint.
+//   - It is a resolve, never a search: name, identity and architecture are known, so it asks one tag per declared endpoint.
 //   - Nothing enumerates tags.
 //   - It is best effort.
 //   - Any failure records nothing and is not an error: locking works offline, and an absent remote costs a rebuild.
@@ -32,7 +32,7 @@ func Upstream(ctx context.Context, root string, artifacts []string, cat catalog.
 	for _, artifact := range artifacts {
 		entry, err := lock.ReadEntry(root, artifact)
 		if err != nil {
-			log.Debug("cannot read a vendored artifact while looking for upstream copies", "artifact", artifact, "err", err)
+			log.Debug("cannot read a vendored overlay while looking for upstream copies", "overlay", artifact, "err", err)
 			continue
 		}
 		remote, ok := upstreamOf(ctx, entry, cat)
@@ -50,35 +50,34 @@ func Upstream(ctx context.Context, root string, artifacts []string, cat catalog.
 }
 
 // upstreamOf returns the artifact's collection registry as its remote when that
-// registry advertises this exact identity.
+// registry holds the build tag of this exact identity.
+//   - The build tag is asked for directly, so a build is found after the name has moved on.
+//   - Only the tag is resolved. Nothing is downloaded here, so the manifest is not read; restore reads it and checks the full identity before spending the bytes.
 func upstreamOf(ctx context.Context, entry *lock.Entry, cat catalog.Catalog) (lock.Remote, bool) {
 	source := collectionOf(entry.Manifest, cat)
 	if source == nil {
 		return lock.Remote{}, false
 	}
-	repo, tag, err := registry.PullReference(entry.Manifest.Type, entry.Manifest.Name)
+	endpoint := source.Desc.OCI.Registry
+	base, repo, err := registry.SplitCoordinate(endpoint)
 	if err != nil {
 		return lock.Remote{}, false
 	}
 	log := logging.FromContext(ctx)
-	endpoint := source.Desc.OCI.Registry
-	desc, annotations, err := registry.ResolveArtifact(registry.WithSource(ctx, source.Base), endpoint, repo, tag)
+	// Identity, not equivalence: a lock remote is an address for one exact build.
+	found, err := registry.Probe(registry.WithSource(ctx, source.Base), base, repo, registry.Address{
+		Name:     entry.Manifest.Name,
+		Identity: entry.Identity.SHA256,
+		Scheme:   entry.Identity.Scheme,
+		Arch:     entry.Manifest.Platform.Arch,
+	})
 	if err != nil {
-		log.Debug("registry did not answer for this artifact", "endpoint", endpoint, "name", entry.Manifest.Name, "err", err)
-		return lock.Remote{}, false
-	}
-	// Identity, not equivalence. A lock remote is an address for one exact
-	// build: an equivalent artifact at that digest is a different build
-	// wearing the right label, and restore would spend the bytes fetching it
-	// and then reject it against the lock.
-	if got := registry.Identity(annotations); got != entry.Identity {
-		log.Debug("registry publishes a different build", "endpoint", endpoint,
-			"name", entry.Manifest.Name, "published", describe(got), "locked", entry.Identity.Digest())
+		log.Debug("registry did not answer for this overlay", "endpoint", endpoint, "name", entry.Manifest.Name, "err", err)
 		return lock.Remote{}, false
 	}
 	return lock.Remote{
-		Repository:     strings.TrimRight(registry.TrimBaseScheme(endpoint), "/") + "/" + repo,
-		ManifestDigest: desc.Digest.String(),
+		Repository:     registry.TrimBaseScheme(endpoint),
+		ManifestDigest: found.Desc.Digest.String(),
 	}, true
 }
 

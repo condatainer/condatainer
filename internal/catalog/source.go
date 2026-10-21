@@ -245,21 +245,28 @@ func (o *OCI) normalize() error {
 		return nil
 	}
 	var err error
-	if o.Registry, err = normalizeOCIEndpoint(o.Registry); err != nil {
+	if o.Registry, err = NormalizeRepository(o.Registry); err != nil {
 		return fmt.Errorf("catalog: OCI registry: %w", err)
 	}
 	return nil
 }
 
-func normalizeOCIEndpoint(endpoint string) (string, error) {
-	endpoint = strings.TrimSpace(endpoint)
-	endpoint = strings.TrimPrefix(endpoint, "oci://")
-	endpoint = strings.TrimRight(endpoint, "/")
-	if endpoint == "" || strings.Contains(endpoint, "://") ||
-		strings.ContainsAny(endpoint, " \t\r\n") || !strings.Contains(endpoint, "/") {
-		return "", fmt.Errorf("%q must be a registry/repository root", endpoint)
+// NormalizeRepository tidies an OCI repository coordinate such as ghcr.io/lab/cnt.
+//   - A scheme and trailing slashes are dropped.
+//   - It needs a host and a path. Docker Hub takes exactly user/repo.
+func NormalizeRepository(coordinate string) (string, error) {
+	coordinate = strings.TrimSpace(coordinate)
+	coordinate = strings.TrimPrefix(coordinate, "oci://")
+	coordinate = strings.TrimRight(coordinate, "/")
+	host, path, found := strings.Cut(coordinate, "/")
+	if coordinate == "" || strings.Contains(coordinate, "://") ||
+		strings.ContainsAny(coordinate, " \t\r\n") || !found || host == "" || path == "" {
+		return "", fmt.Errorf("%q must be a registry/repository coordinate, such as ghcr.io/lab/cnt", coordinate)
 	}
-	return endpoint, nil
+	if strings.EqualFold(host, "docker.io") && strings.Count(path, "/") != 1 {
+		return "", fmt.Errorf("%q must be docker.io/<user>/<repo>: Docker Hub repositories have two parts", coordinate)
+	}
+	return coordinate, nil
 }
 
 // Entries returns every entry the catalog offers, merged by name with the first source winning.

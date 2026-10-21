@@ -25,7 +25,7 @@ import (
 // Errors a caller distinguishes.
 var (
 	// ErrNotFrozen reports an artifact that is not a frozen environment.
-	ErrNotFrozen = errors.New("not a frozen environment")
+	ErrNotFrozen = errors.New("not a snapshot")
 	// ErrTooSmall reports a requested size the payload does not fit in.
 	ErrTooSmall = errors.New("requested size is smaller than the payload")
 )
@@ -140,7 +140,7 @@ func Unfreeze(ctx context.Context, opts UnfreezeOptions) (UnfreezeResult, error)
 		}
 	}
 
-	log.Info("Rebuilding writable overlay", "artifact", opts.Artifact, "target", opts.Target,
+	log.Info("Rebuilding writable overlay", "overlay", opts.Artifact, "target", opts.Target,
 		"payload_mb", payloadMB, "size_mb", size, "entries", entries)
 	if err := buildImage(ctx, opts, artifact, target, stage, size, entries); err != nil {
 		return UnfreezeResult{}, err

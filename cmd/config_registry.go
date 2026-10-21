@@ -3,14 +3,14 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"github.com/condatainer/condatainer/internal/config"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"os"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // knownConfigKeys maps every registered config key to whether it holds a list.

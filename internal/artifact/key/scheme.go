@@ -65,10 +65,10 @@ func Regenerate(m meta.Manifest, sources Sources) (Derived, error) {
 		return Derived{}, err
 	}
 	if IsSnapshot(m) {
-		return Derived{}, fmt.Errorf("%w: %s is a frozen environment; its identity is hashed from the packed payload, which only the artifact holds", ErrUnkeyed, m.Name)
+		return Derived{}, fmt.Errorf("%w: %s is a frozen environment; its identity is hashed from the packed payload, which only the overlay holds", ErrUnkeyed, m.Name)
 	}
 	if m.Keys.Identity.Empty() {
-		return Derived{}, fmt.Errorf("artifact records no keys")
+		return Derived{}, fmt.Errorf("overlay records no keys")
 	}
 	return derive(m, sources, Scheme(m.Keys.Identity.Scheme), Scheme(m.Keys.Equiv.Scheme))
 }

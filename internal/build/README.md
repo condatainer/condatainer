@@ -75,8 +75,8 @@ Stale detection
 - The payload key is not an input to identity or equivalence.
 - Validation runs at staging. Earlier there is nothing to validate, and later the image already exists.
 - `build.created` is stamped at staging, or taken from `SOURCE_DATE_EPOCH`.
-  - It is a version-less artifact's date tag. Builds of one artifact on several machines share a tag only when they share this time.
-  - It never enters a key, so setting it changes nothing but the tag.
+  - Builds of one artifact on several machines record the same time only when they share this value.
+  - It never enters a key, so setting it changes nothing but the recorded time.
 - Every `.def` build is keyed the same way, `os` included. Its keys cover the definition plus the upstream image it bootstrapped from.
 
 ## The upstream digest

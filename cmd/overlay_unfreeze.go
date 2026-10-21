@@ -17,15 +17,15 @@ var (
 	unfreezeSparse bool
 )
 
-const overlayUnfreezeHelp = `Rebuild a writable .img from a frozen .sqf.
+const overlayUnfreezeHelp = `Rebuild a writable .img from a snapshot.
 
 - The files come back at the paths they had, ready to install into again.
 - The result cannot be pinned, locked or published until 'overlay freeze' packs it again.
 - The .sqf is left as it is.`
 
 var overlayUnfreezeCmd = &cobra.Command{
-	Use:   "unfreeze [flags] <frozen.sqf> [overlay.img]",
-	Short: "Rebuild a writable overlay from a frozen environment",
+	Use:   "unfreeze [flags] <snapshot.sqf> [overlay.img]",
+	Short: "Rebuild a writable overlay from a snapshot",
 	Long:  overlayUnfreezeHelp,
 	Args:  cobra.RangeArgs(1, 2),
 	Example: `  condatainer overlay unfreeze env.sqf                 # env.img beside it
@@ -40,7 +40,7 @@ var overlayUnfreezeCmd = &cobra.Command{
 		}
 
 		if !utils.IsSqf(artifact) {
-			ExitWithError("%s is not a frozen environment; unfreeze takes the .sqf that freeze produced.", artifact)
+			ExitWithError("%s is not a snapshot; unfreeze takes the .sqf that freeze produced.", artifact)
 		}
 		target, err := resolveUnfreezeTarget(artifact, given)
 		if err != nil {
@@ -118,7 +118,7 @@ func reportUnfreeze(res freeze.UnfreezeResult) {
 	utils.PrintMessage("Unfroze %s → %s (%d MB payload, %d entries, in %d MB)",
 		res.From, res.Path, res.PayloadMB, res.Entries, res.SizeMB)
 	utils.PrintWarning("This is a new development line. A writable overlay has no identity: it cannot be pinned, and it cannot be published.")
-	utils.PrintWarning("A project pinning %s still resolves that artifact. Freeze this one again when it is worth keeping.", res.From)
+	utils.PrintWarning("A project pinning %s still resolves that overlay. Freeze this one again when it is worth keeping.", res.From)
 }
 
 func init() {

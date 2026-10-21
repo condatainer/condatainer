@@ -8,9 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact/key"
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/registry"
+	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -93,25 +96,85 @@ func TestCompletionScriptsRecognizeRegistryPushFZF(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := tc.process(tc.input)
-			if !strings.Contains(got, tc.marker) || !strings.Contains(got, "Select artifact") {
+			if !strings.Contains(got, tc.marker) || !strings.Contains(got, "Select overlay") {
 				t.Fatalf("processed completion lacks registry push fzf hook:\n%s", got)
 			}
 		})
 	}
 }
 
-func TestRegistryHelpersValidateInputs(t *testing.T) {
-	if _, err := requireRegistryBase(""); err == nil || !strings.Contains(err.Error(), "--registry") {
-		t.Errorf("missing registry error = %v", err)
-	}
-	if got, err := requireRegistryBase("oci://ghcr.io/lab/cnt/"); err != nil || got != "ghcr.io/lab/cnt" {
-		t.Errorf("requireRegistryBase = (%q, %v)", got, err)
-	}
+func TestParseAudience(t *testing.T) {
 	if _, err := parseAudience("private"); err == nil {
 		t.Error("parseAudience accepted an unknown value")
 	}
 	if got, err := parseAudience("RESTRICTED"); err != nil || got != registry.Restricted {
 		t.Errorf("parseAudience = (%q, %v)", got, err)
+	}
+}
+
+func TestResolveRegistryEndpoint(t *testing.T) {
+	cmd := newRegistryCommand()
+	cmd.SetContext(t.Context())
+	for _, tc := range []struct {
+		name    string
+		opts    registryOptions
+		want    string
+		wantErr string
+	}{
+		{"neither flag", registryOptions{}, "", "--registry or --source"},
+		{"both flags", registryOptions{repository: "ghcr.io/lab/cnt", source: "lab"}, "", "not both"},
+		{"a scheme and slash are trimmed", registryOptions{repository: "oci://ghcr.io/lab/cnt/"}, "ghcr.io/lab/cnt", ""},
+		{"a host alone is no repository", registryOptions{repository: "ghcr.io"}, "", "not a registry/repository"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ep, err := resolveRegistryEndpoint(cmd, &tc.opts)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || ep.repository != tc.want || ep.source != nil {
+				t.Fatalf("endpoint = %+v, error = %v; want %s", ep, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestEndpointOfSource(t *testing.T) {
+	good := &catalog.Source{Name: "lab", Desc: catalog.Descriptor{
+		Source: "https://example.invalid/recipes",
+		OCI:    catalog.OCI{Registry: "oci://registry.invalid/lab/cnt", Audience: "restricted"},
+	}}
+	noRegistry := &catalog.Source{Name: "bare", Desc: catalog.Descriptor{Source: good.Desc.Source}}
+	noCollection := &catalog.Source{Name: "anon", Desc: catalog.Descriptor{OCI: good.Desc.OCI}}
+	cat := catalog.Catalog{good, noRegistry, noCollection,
+		&catalog.Source{Name: "old", Desc: good.Desc, Stale: true}}
+
+	ep, err := endpointOfSource(t.Context(), cat, "lab")
+	if err != nil || ep.repository != "registry.invalid/lab/cnt" || ep.source != good {
+		t.Fatalf("endpoint = %+v, error = %v", ep, err)
+	}
+	// Only a push is matched to a collection, and a source that names none
+	// matches any.
+	if got := ep.pushCollection(); got != good.Desc.Source {
+		t.Errorf("pushCollection = %q, want %q", got, good.Desc.Source)
+	}
+	anon, err := endpointOfSource(t.Context(), cat, "anon")
+	if err != nil || anon.pushCollection() != "" {
+		t.Errorf("a source naming no collection: (%q, %v), want it readable and matching any", anon.pushCollection(), err)
+	}
+	if got := (registryEndpoint{repository: "ghcr.io/lab/cnt"}).pushCollection(); got != "" {
+		t.Errorf("a bare repository takes any collection, got %q", got)
+	}
+	for name, want := range map[string]string{
+		"missing": "no configured source",
+		"bare":    "no OCI registry",
+		"old":     "unavailable or stale",
+	} {
+		if _, err := endpointOfSource(t.Context(), cat, name); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("source %q: error = %v, want %q", name, err, want)
+		}
 	}
 }
 
@@ -154,9 +217,10 @@ func TestFindRegistryArtifactSeparatesManagedFromPointedAt(t *testing.T) {
 // least likely destination for a one-off build, a mirror, or a project's image.
 func TestRegistryPushDestinationRefusesToInferForAPath(t *testing.T) {
 	cmd := newRegistryCommand()
+	cmd.SetContext(t.Context())
 	opts := &registryOptions{audience: string(registry.Public)}
 
-	_, _, err := registryPushDestination(cmd, opts, registryArtifact{path: "/tmp/one-off.sqf"})
+	_, err := registryPushDestination(cmd, opts, registryArtifact{path: "/tmp/one-off.sqf"})
 	if err == nil || !strings.Contains(err.Error(), "--registry") {
 		t.Fatalf("error = %v, want a request for --registry", err)
 	}
@@ -166,27 +230,78 @@ func TestRegistryPushDestinationRefusesToInferForAPath(t *testing.T) {
 
 	// The same path with an explicit destination publishes, and never reads the
 	// artifact to find one.
-	opts.base = "ghcr.io/lab/cnt"
-	base, audience, err := registryPushDestination(cmd, opts, registryArtifact{path: "/tmp/one-off.sqf"})
-	if err != nil || base != "ghcr.io/lab/cnt" || audience != registry.Public {
-		t.Fatalf("explicit destination = (%q, %q, %v)", base, audience, err)
+	opts.repository = "ghcr.io/lab/cnt"
+	dest, err := registryPushDestination(cmd, opts, registryArtifact{path: "/tmp/one-off.sqf"})
+	if err != nil || dest.repository != "ghcr.io/lab/cnt" || dest.audience != registry.Public || dest.collection != "" {
+		t.Fatalf("explicit destination = (%+v, %v)", dest, err)
 	}
 }
 
-func TestAddressPlacementName(t *testing.T) {
-	digest := "sha256:" + strings.Repeat("a", 64)
+func TestPushAudienceComesFromTheSource(t *testing.T) {
+	push, _, err := newRegistryCommand().Find([]string{"push"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &catalog.Source{Name: "lab"}
+
+	got, err := pushAudience(push, source, "restricted")
+	if err != nil || got != registry.Restricted {
+		t.Fatalf("source audience = (%q, %v), want restricted", got, err)
+	}
+	if err := push.Flags().Set("audience", "restricted"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pushAudience(push, source, "public"); err == nil || !strings.Contains(err.Error(), "--registry") {
+		t.Errorf("--audience with a source = %v, want a refusal naming --registry", err)
+	}
+	if got, err := pushAudience(push, nil, "restricted"); err != nil || got != registry.Restricted {
+		t.Errorf("--audience with --registry = (%q, %v), want restricted", got, err)
+	}
+}
+
+func TestFrozenEnvironmentsStayOffSourcesAndOutOfLayers(t *testing.T) {
+	if err := refuseFrozen(meta.Manifest{BuildType: meta.BuildTypeSnapshot}, "env.sqf"); err == nil {
+		t.Error("a frozen environment was accepted for a source's registry")
+	}
+	if err := refuseFrozen(meta.Manifest{BuildType: meta.BuildTypeScript}, "star.sqf"); err != nil {
+		t.Errorf("a script build was refused for a source's registry: %v", err)
+	}
+
+	frozen := map[string]string{registry.AnnIdentityScheme: string(key.PayloadTreeV1)}
+	if err := requirePrefixForFrozen(frozen, ""); err == nil || !strings.Contains(err.Error(), "--prefix") {
+		t.Errorf("a frozen pull without --prefix = %v, want a request for --prefix", err)
+	}
+	if err := requirePrefixForFrozen(frozen, "./env.sqf"); err != nil {
+		t.Errorf("a frozen pull with --prefix = %v", err)
+	}
+	built := map[string]string{registry.AnnIdentityScheme: string(key.ScriptIdentityV1)}
+	if err := requirePrefixForFrozen(built, ""); err != nil {
+		t.Errorf("a script build pulled without --prefix = %v", err)
+	}
+}
+
+func TestParseRegistryAddress(t *testing.T) {
 	for _, tc := range []struct {
-		name, selector, title, want string
+		spec string
+		want registry.Address
 	}{
-		{"hello", "1.0", "hello/1.0", "hello/1.0"},
-		{"hello", "1.0", "different/1.0", "hello/1.0"},
-		{"ubuntu24/base", digest, "ubuntu24/base", "ubuntu24/base"},
-		{"hello", digest, "hello/1.0", "hello/1.0"},
-		{"hello", digest, "", ""},
+		{"star/2.7.11b", registry.Address{Name: "star/2.7.11b"}},
+		{"star--2.7.11b", registry.Address{Name: "star/2.7.11b"}},
+		{"star/2.7.11b@9f2c1ab", registry.Address{Name: "star/2.7.11b", Identity: "9f2c1ab"}},
+		{"star/2.7.11b@script-identity-v1@sha256:9F2C1AB", registry.Address{Name: "star/2.7.11b", Identity: "9f2c1ab", Scheme: "script-identity-v1"}},
+		{"star/2.7.11b:eq-e90d3b7714cf", registry.Address{Name: "star/2.7.11b", Equiv: "e90d3b7714cf"}},
 	} {
-		if got := addressPlacementName(tc.name, tc.selector, tc.title); got != tc.want {
-			t.Errorf("addressPlacementName(%q, %q, %q) = %q, want %q",
-				tc.name, tc.selector, tc.title, got, tc.want)
+		got, err := parseRegistryAddress(tc.spec, "")
+		if err != nil || got != tc.want {
+			t.Errorf("parseRegistryAddress(%q) = %+v, %v; want %+v", tc.spec, got, err, tc.want)
+		}
+	}
+	if got, _ := parseRegistryAddress("star/2.7.11b", "arm64"); got.Arch != "arm64" {
+		t.Errorf("--arch was dropped: %+v", got)
+	}
+	for _, bad := range []string{"", "  ", "star/2.7.11b:1.0", "star@", "star@zz"} {
+		if _, err := parseRegistryAddress(bad, ""); err == nil {
+			t.Errorf("parseRegistryAddress(%q) accepted a malformed address", bad)
 		}
 	}
 }
@@ -199,20 +314,24 @@ func TestRegistryPullDestination(t *testing.T) {
 		t.Skipf("no writable images directory: %v", err)
 	}
 
-	dest, err := registryPullDestination("", "hello", "1.0", "hello/1.0")
+	dest, err := registryPullDestination("", "hello/1.0", "")
 	if err != nil || dest != filepath.Join(images, "hello--1.0.sqf") {
 		t.Fatalf("published-name destination = (%q, %v)", dest, err)
 	}
-	dest, err = registryPullDestination(filepath.Join(t.TempDir(), "custom"), "hello", "1.0", "hello/1.0")
+	dest, err = registryPullDestination(filepath.Join(t.TempDir(), "custom"), "hello/1.0", "")
 	if err != nil || filepath.Base(dest) != "custom.sqf" {
 		t.Fatalf("--prefix destination = (%q, %v)", dest, err)
 	}
-	dest, err = registryPullDestination(filepath.Join(t.TempDir(), "custom.v1"), "hello", "1.0", "hello/1.0")
+	dest, err = registryPullDestination(filepath.Join(t.TempDir(), "custom.v1"), "hello/1.0", "")
 	if err != nil || filepath.Base(dest) != "custom.v1.sqf" {
 		t.Errorf("extensionless dotted prefix = (%q, %v)", dest, err)
 	}
-	if _, err := registryPullDestination("", "hello", "sha256:"+strings.Repeat("b", 64), ""); err == nil {
-		t.Error("versioned digest without a title guessed an install name")
+	dest, err = registryPullDestination("", "", "hello/1.0")
+	if err != nil || dest != filepath.Join(images, "hello--1.0.sqf") {
+		t.Fatalf("destination from the published title = (%q, %v)", dest, err)
+	}
+	if _, err := registryPullDestination("", "", ""); err == nil {
+		t.Error("a digest without a title guessed an install name")
 	}
 }
 
@@ -228,12 +347,84 @@ func TestRegistryPasswordFromStdin(t *testing.T) {
 	}
 }
 
-func TestRegistryPullRefusesABareNameBeforeNetwork(t *testing.T) {
+func TestParseRemoveTarget(t *testing.T) {
+	got, err := parseRemoveTarget("star/2.7.11b@9f2c1ab", "arm64")
+	if err != nil || got != (registry.RemoveTarget{Name: "star/2.7.11b", Identity: "9f2c1ab", Arch: "arm64"}) {
+		t.Errorf("name@identity = (%+v, %v)", got, err)
+	}
+	got, err = parseRemoveTarget("star--2.7.11b", "")
+	if err != nil || got != (registry.RemoveTarget{Name: "star/2.7.11b"}) {
+		t.Errorf("name = (%+v, %v), want every build", got, err)
+	}
+	if _, err := parseRemoveTarget("star/2.7.11b:eq-9f2c1ab4d3e8", ""); err == nil {
+		t.Error("an equivalence key was taken as a build")
+	}
+}
+
+func TestConfirmRemovalNeedsATerminalOrYes(t *testing.T) {
 	cmd := newRegistryCommand()
-	cmd.SilenceErrors = true
-	cmd.SetArgs([]string{"pull", "hello", "--registry", "registry.invalid/lab"})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "use create") {
-		t.Fatalf("bare-name pull error = %v", err)
+	cmd.SetContext(t.Context())
+	plan := registry.RemovePlan{Removes: []registry.Held{{Tags: []string{"star--1__amd64"}}}}
+
+	prev := utils.YesMode
+	t.Cleanup(func() { utils.YesMode = prev })
+
+	utils.YesMode = false
+	if ok, err := confirmRemoval(cmd, "ghcr.io/lab/cnt", plan); ok || err == nil {
+		t.Errorf("without a terminal or -y = (%v, %v), want a refusal", ok, err)
+	}
+	utils.YesMode = true
+	if ok, err := confirmRemoval(cmd, "ghcr.io/lab/cnt", plan); !ok || err != nil {
+		t.Errorf("with -y = (%v, %v), want yes", ok, err)
+	}
+}
+
+func TestSourceDeclaringMatchesTheRegistryOfASource(t *testing.T) {
+	cat := catalog.Catalog{
+		{Name: "lab", Desc: catalog.Descriptor{OCI: catalog.OCI{Registry: "oci://GHCR.io/lab/cnt/"}}},
+		{Name: "bare"},
+	}
+	if got := sourceDeclaring(cat, "ghcr.io/lab/cnt"); got != "lab" {
+		t.Errorf("source declaring ghcr.io/lab/cnt = %q, want lab", got)
+	}
+	if got := sourceDeclaring(cat, "ghcr.io/lab/project/cnt"); got != "" {
+		t.Errorf("a project's repository = %q, want none", got)
+	}
+}
+
+func TestRecipeCheckAsksTheSourceAndRefusesWhenItCannotSay(t *testing.T) {
+	lab := t.TempDir()
+	recipe := filepath.Join(lab, "recipes", "star", "2.7.11b")
+	if err := os.MkdirAll(filepath.Dir(recipe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(recipe, []byte("#!/bin/bash\n#DESC: aligner\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := catalog.Open(t.Context(), []catalog.Spec{{Name: "lab", Base: lab}}, catalog.Cache{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	has, err := recipeCheck(registryEndpoint{ctx: t.Context(), source: cat[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has("star/2.7.11b") || has("old/1") {
+		t.Errorf("star/2.7.11b = %v, old/1 = %v; want true, false", has("star/2.7.11b"), has("old/1"))
+	}
+
+	empty := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(empty, "recipes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cat, err = catalog.Open(t.Context(), []catalog.Spec{{Name: "bare", Base: empty}}, catalog.Cache{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recipeCheck(registryEndpoint{ctx: t.Context(), source: cat[0]}); err == nil || !strings.Contains(err.Error(), "no recipes") {
+		t.Errorf("a source with no recipes = %v, want a refusal", err)
+	}
+	if _, err := recipeCheck(registryEndpoint{ctx: t.Context()}); err == nil {
+		t.Error("no source was accepted")
 	}
 }

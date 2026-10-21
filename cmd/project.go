@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/condatainer/condatainer/internal/scheduler"
-	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	"sort"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image/freeze"
 	"github.com/condatainer/condatainer/internal/logging"
@@ -20,6 +19,8 @@ import (
 	"github.com/condatainer/condatainer/internal/project/publish"
 	"github.com/condatainer/condatainer/internal/project/restore"
 	"github.com/condatainer/condatainer/internal/registry"
+	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -29,14 +30,14 @@ var projectDir string
 
 var projectCmd = &cobra.Command{
 	Use:   "project",
-	Short: "Pin, restore and publish a project's artifacts",
-	Long: `Pin, restore and publish the artifacts a project's scripts depend on.
+	Short: "Pin, restore and publish a project's overlays",
+	Long: `Pin, restore and publish the overlays a project's scripts depend on.
 
 - A project is a folder holding a cnt-lock/ directory.
-- Locking pins every #DEP: in its scripts to one exact artifact.
+- Locking pins every #DEP: in its scripts to one exact overlay.
 - The same scripts then run the same way on another machine.
 
-Every artifact has two keys:
+Every overlay has two keys:
 - identity:     one exact build.
 - equivalence:  builds that differ only in ways that should not change the result.
 
@@ -133,7 +134,7 @@ func newProjectStatusCmd() *cobra.Command {
 		Short: "Show project state and unpinned declarations",
 		Long: `Show whether the current directory (or --project DIR) is a project.
 
-- Number of pinned artifacts.
+- Number of pinned overlays.
 - #DEP: declarations that have no pin yet.
 - Read-only. Use 'condatainer project lock' to update the lock.`,
 		Args:         cobra.NoArgs,
@@ -236,8 +237,8 @@ func printManualPinUsage(usage map[string][]string) {
 func newProjectPinCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pin [flags] <request> [identity]",
-		Short: "Pin one declaration to an exact artifact",
-		Long: `Pin one declaration to an exact artifact.
+		Short: "Pin one declaration to an exact overlay",
+		Long: `Pin one declaration to an exact overlay.
 
 - name/version:    pin one installed overlay.
 - a project .sqf:  record the current identity of that file.
@@ -354,7 +355,7 @@ func newProjectSelectMatchCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "set-match [flags] <identity|equivalence>",
 		Short: "Choose which installed builds this project accepts",
-		Long: `Choose how strictly installed artifacts must match the project's pins.
+		Long: `Choose how strictly installed overlays must match the project's pins.
 
 - equivalence: an equivalent build is accepted, and reported (default).
 - identity: only the pinned build is accepted.
@@ -471,10 +472,10 @@ func newProjectListCmd() *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List pins",
-		Long: `List every pin and the artifact it names.
+		Long: `List every pin and the overlay it names.
 
 - Works in a fresh clone that has restored nothing.
-- To check whether the artifacts are available, use 'condatainer project restore --dry-run'.
+- To check whether the overlays are available, use 'condatainer project restore --dry-run'.
 - A 'manual' pin is one no script declares. 'project lock' keeps it, and 'project unpin' removes it.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
@@ -614,7 +615,7 @@ func printUnpublishedNote(l *lock.Lock, pinned []*lock.Pinned) {
 	if len(project.UnpublishedFrozenEnv(l, pinned)) == 0 {
 		return
 	}
-	utils.PrintNote("A frozen environment cannot be rebuilt; run `condatainer project registry push` so another checkout can restore this project")
+	utils.PrintNote("A snapshot cannot be rebuilt; run `condatainer project registry push` so another checkout can restore this project")
 }
 
 func newProjectRegistryCmd() *cobra.Command {
@@ -624,7 +625,7 @@ func newProjectRegistryCmd() *cobra.Command {
 		Long: `Show where 'condatainer project registry push' publishes.
 
 - 'set' records the destination, and 'unset' clears it.
-- 'push' publishes to it.`,
+- 'push' publishes to it, and 'gc' removes what the lock no longer pins.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -648,7 +649,7 @@ func newProjectRegistryCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.AddCommand(newProjectRegistrySetCmd(), newProjectRegistryUnsetCmd(), newProjectRegistryPushCmd())
+	cmd.AddCommand(newProjectRegistrySetCmd(), newProjectRegistryUnsetCmd(), newProjectRegistryPushCmd(), newProjectRegistryGCCmd())
 	return cmd
 }
 
@@ -659,7 +660,7 @@ func newProjectRegistrySetCmd() *cobra.Command {
 		Short: "Set the publish destination",
 		Long: `Record where 'condatainer project registry push' publishes.
 
-- Give a repository with no tag or digest. Every artifact goes into it.
+- Give a repository with no tag or digest. Every overlay goes into it.
 - --audience sets what a push may publish: public (default) or restricted.
 - A public destination refuses an app whose recipe does not allow redistribution.
 - --audience does not control who can pull.
@@ -676,9 +677,13 @@ func newProjectRegistrySetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			destination, err := catalog.NormalizeRepository(args[0])
+			if err != nil {
+				return err
+			}
 			previous := l.OCI
 			l.OCI = lock.OCI{
-				Push:     registry.TrimBaseScheme(args[0]),
+				Push:     destination,
 				Audience: strings.ToLower(strings.TrimSpace(audience)),
 			}
 			if cmd.Flags().Changed("source") {
@@ -716,7 +721,7 @@ func newProjectRegistryUnsetCmd() *cobra.Command {
 		Long: `Clear the publish destination.
 
 - 'project registry push' cannot publish until one is set again.
-- Artifacts already published stay where they are, and a restore can still download them.`,
+- Overlays already published stay where they are, and a restore can still download them.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -753,19 +758,19 @@ func audienceOrDefault(v string) string {
 }
 
 func newProjectRegistryPushCmd() *cobra.Command {
-	var all, closure, dryRun, jsonOutput bool
+	var all, dryRun, jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "push",
-		Short: "Publish pinned artifacts and record where they landed",
-		Long: `Publish the locked artifacts to the project's registry.
+		Short: "Publish pinned overlays and record where they landed",
+		Long: `Publish the locked overlays to the project's registry.
 
 - A later restore downloads them instead of rebuilding.
 - The project must pass 'condatainer project validate', or nothing is uploaded.
-- Only artifacts that are already built are published. Run 'project restore' first for the rest.
+- Only overlays that are already built are published. Run 'project restore' first for the rest.
 - Pins that a recipe source already serves are skipped. --all uploads them too.`,
 		Example: `  condatainer project registry push --dry-run       # Show the plan, upload nothing
   condatainer project registry push                 # Publish
-  condatainer project registry push --all --closure # Include recipe-served pins and dependencies`,
+  condatainer project registry push --all           # Include pins a recipe source serves`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -792,7 +797,7 @@ func newProjectRegistryPushCmd() *cobra.Command {
 					strings.Join(invalid, "\n  "))
 			}
 
-			opts := publish.Options{All: all, Closure: closure}
+			opts := publish.Options{All: all}
 			plan, err := publish.Build(cmd.Context(), root, l, verified, opts)
 			if err != nil {
 				return err
@@ -818,9 +823,75 @@ func newProjectRegistryPushCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "Publish every pin, including ones a recipe source already serves")
-	cmd.Flags().BoolVar(&closure, "closure", false, "Also publish build dependencies")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be published, without uploading")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	return cmd
+}
+
+func newProjectRegistryGCCmd() *cobra.Command {
+	var gitHistory bool
+	cmd := &cobra.Command{
+		Use:   "gc",
+		Short: "Remove published overlays the project no longer pins",
+		Long: `Remove overlays from the project's registry that its lock does not pin.
+
+- The project must pass 'condatainer project validate', or nothing is removed.
+- An older commit of the project can no longer download an overlay removed here.`,
+		Example: `  condatainer project registry gc
+  condatainer project registry gc --git-history`,
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := projectRoot(true)
+			if err != nil {
+				return err
+			}
+			l, err := lock.Load(root)
+			if err != nil {
+				return err
+			}
+			if l.OCI.Empty() {
+				return fmt.Errorf("no registry is recorded; set one with `condatainer project registry set <registry>/<owner>/<repo>`")
+			}
+			_, problems := lock.Verify(root, l)
+			scanned, err := lock.Scan(root, lock.ScanOptions{})
+			if err != nil {
+				return err
+			}
+			if invalid := projectProblems(l, scanned, problems); len(invalid) > 0 {
+				return fmt.Errorf("the project is not valid, so nothing was removed:\n  %s", strings.Join(invalid, "\n  "))
+			}
+			repository := registry.TrimBaseScheme(l.OCI.Push)
+			cat, err := config.OpenCatalog(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("cannot read the configured sources: %w", err)
+			}
+			if name := sourceDeclaring(cat, repository); name != "" {
+				return fmt.Errorf("%s is the registry of source %s, not a project's; use `condatainer registry gc --source %s`", repository, name, name)
+			}
+
+			pinned := publish.Pinned(l, repository)
+			if gitHistory {
+				if err := publish.HistoricPinned(cmd.Context(), root, repository, pinned); err != nil {
+					return err
+				}
+			}
+			base, repo, err := registry.SplitCoordinate(repository)
+			if err != nil {
+				return err
+			}
+			backend, err := registry.BackendFor(base, repo)
+			if err != nil {
+				return err
+			}
+			plan, err := registry.PlanUnpinned(cmd.Context(), backend, pinned)
+			if err != nil {
+				return err
+			}
+			return finishRemoval(cmd, cmd.Context(), repository, backend, plan)
+		},
+	}
+	cmd.Flags().BoolVar(&gitHistory, "git-history", false, "Also keep what earlier commits on this branch pin (needs a full clone)")
 	return cmd
 }
 
@@ -917,7 +988,7 @@ func reportPush(report *publish.Report, jsonOutput bool) error {
 		utils.PrintError("  %s", failure)
 	}
 	if len(report.Failures) == 0 {
-		utils.PrintSuccess("Published %d artifact(s) to %s", len(report.Published), report.Repository)
+		utils.PrintSuccess("Published %d overlay(s) to %s", len(report.Published), report.Repository)
 	}
 	return nil
 }
@@ -938,9 +1009,9 @@ func newProjectValidateCmd() *cobra.Command {
 		Long: `Check that the lock is complete and consistent with the scripts.
 
 - Every declaration in the scripts has a pin.
-- Every pin points at a recorded artifact.
-- Every recorded artifact still matches its keys.
-- Every dependency resolves to another recorded artifact.
+- Every pin points at a recorded overlay.
+- Every recorded overlay still matches its keys.
+- Every dependency resolves to another recorded overlay.
 - Every pin is installed on this machine.
 
 - --lock-only skips the installed check, so it needs no overlays (for CI).
@@ -993,7 +1064,7 @@ func newProjectValidateCmd() *cobra.Command {
 				utils.PrintError("%s", problem)
 			}
 			if total > 0 {
-				utils.PrintHint("Run `condatainer project pin <request> <identity>` to choose an artifact for each unpinned request.")
+				utils.PrintHint("Run `condatainer project pin <request> <identity>` to choose an overlay for each unpinned request.")
 				return fmt.Errorf("project is not valid: %d problem(s)", total)
 			}
 			utils.PrintSuccess("Project is valid: %d pin(s), %d script(s)",
@@ -1192,13 +1263,12 @@ func newProjectRestoreCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "restore",
-		Short: "Make every locked artifact available on this machine",
-		Long: `Make every locked artifact available, by reusing, downloading, or rebuilding it.
+		Short: "Make every locked overlay available on this machine",
+		Long: `Make every locked overlay available, by reusing, downloading, or rebuilding it.
 
 - A named pin is installed under its name. A path pin goes to the path it declares.
-- Artifacts are downloaded from the recorded registry when one is available.
+- An overlay is downloaded only from a registry the lock records. Otherwise it is rebuilt.
 - A rebuild with scheduler directives is submitted as a job, unless --no-submit is given.
-- Build dependencies are removed at the end unless --keep-build-deps.
 - A path that already holds a different file is refused unless you pass --replace.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
@@ -1234,15 +1304,15 @@ func newProjectRestoreCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would happen, without doing it")
 	cmd.Flags().BoolVar(&noPrebuilt, "no-prebuilt", false,
-		"Build missing artifacts locally where possible instead of downloading a prebuilt")
+		"Rebuild missing overlays instead of downloading it (snapshot still downloaded)")
 	cmd.Flags().BoolVar(&keepBuildDeps, "keep-build-deps", false,
-		"Keep build dependencies instead of discarding them at the end")
+		"Keep the build dependencies of a rebuild")
 	settings.AddSwitch(cmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (rebuild locally)"))
 	cmd.Flags().BoolVar(&replace, "replace", false,
 		"Overwrite a project path holding something the lock does not name")
 	// Set by the job a submitted rebuild runs, so it produces exactly what it
 	// was sent for. Nothing a person types.
-	cmd.Flags().StringVar(&only, "only", "", "Restore one recorded artifact and its dependencies")
+	cmd.Flags().StringVar(&only, "only", "", "Restore one recorded overlay and its dependencies")
 	_ = cmd.Flags().MarkHidden("only")
 	return cmd
 }
@@ -1268,7 +1338,7 @@ func reportPlan(plan *restore.Plan, jsonOutput bool) error {
 			utils.PrintError("%s", problem)
 		}
 		if plan.Complete() {
-			utils.PrintSuccess("%d artifact(s) to acquire, %d already available.",
+			utils.PrintSuccess("%d overlay(s) to acquire, %d already available.",
 				plan.Work(), len(plan.Steps)-plan.Work())
 		}
 	}
@@ -1324,7 +1394,7 @@ func reportRestore(report *restore.Report, jsonOutput bool) error {
 		utils.PrintMessage("%s", line)
 	}
 	if report.Complete() {
-		utils.PrintSuccess("Project restored: %d artifact(s).", len(report.Results))
+		utils.PrintSuccess("Project restored: %d overlay(s).", len(report.Results))
 	}
 	return nil
 }

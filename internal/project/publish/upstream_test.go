@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/opencontainers/go-digest"
@@ -100,6 +101,14 @@ func projectRoot(t *testing.T) string {
 // index, so the fixture does not depend on the running architecture.
 func serveManifest(t *testing.T, annotations map[string]string) string {
 	t.Helper()
+	address, _ := serveCountedManifest(t, annotations)
+	return address
+}
+
+// serveCountedManifest serves one manifest under every tag and counts the reads that return a body, the requests a pull limit counts.
+func serveCountedManifest(t *testing.T, annotations map[string]string) (string, *atomic.Int32) {
+	t.Helper()
+	reads := &atomic.Int32{}
 	manifest := ocispec.Manifest{
 		MediaType:    ocispec.MediaTypeImageManifest,
 		ArtifactType: registry.ArtifactTypeOverlay,
@@ -124,10 +133,11 @@ func serveManifest(t *testing.T, annotations map[string]string) string {
 			w.Header().Set("Content-Length", itoa(len(body)))
 			return
 		}
+		reads.Add(1)
 		w.Write(body) //nolint:errcheck
 	}))
 	t.Cleanup(server.Close)
-	return strings.TrimPrefix(server.URL, "http://")
+	return strings.TrimPrefix(server.URL, "http://"), reads
 }
 
 func itoa(n int) string {
@@ -149,46 +159,39 @@ func collection(t *testing.T, endpoint string) catalog.Catalog {
 		Desc: catalog.Descriptor{
 			Schema: 1,
 			Source: collectionRepo,
-			OCI:    catalog.OCI{Registry: endpoint, Audience: string(registry.Public)},
+			OCI:    catalog.OCI{Registry: endpoint + "/cnt", Audience: string(registry.Public)},
 		},
 	}}
 }
 
-// The identity the endpoint advertises is the whole test: a lock remote is an
-// address for one exact build, so anything else must record nothing.
-func TestUpstreamRecordsOnlyAnExactIdentityMatch(t *testing.T) {
+// The build tag of the locked identity is the whole test: a lock remote is an
+// address for one exact build, and the manifest is not read to record it.
+func TestUpstreamRecordsWhereTheBuildTagResolves(t *testing.T) {
 	root := projectRoot(t)
 	artifact, manifest := vendorData(t, root, "grch38/genome/gencode49", "echo index\n")
 
 	exact := map[string]string{
 		registry.AnnTitle:          manifest.Name,
 		registry.AnnSchema:         "1",
+		registry.AnnArch:           "amd64",
 		registry.AnnIdentityScheme: manifest.Keys.Identity.Scheme,
 		registry.AnnIdentitySHA:    manifest.Keys.Identity.SHA256,
 		registry.AnnEquivScheme:    manifest.Keys.Equiv.Scheme,
 		registry.AnnEquivSHA:       manifest.Keys.Equiv.SHA256,
 	}
-	got := Upstream(context.Background(), root, []string{artifact}, collection(t, serveManifest(t, exact)))
+	address, reads := serveCountedManifest(t, exact)
+	got := Upstream(context.Background(), root, []string{artifact}, collection(t, address))
 	if len(got[artifact]) != 1 {
-		t.Fatalf("an exact identity match recorded %#v", got)
+		t.Fatalf("a resolving build tag recorded %#v", got)
 	}
-	if !strings.HasSuffix(got[artifact][0].Repository, "/grch38/genome") {
-		t.Errorf("repository = %q, want the catalog scheme's repo path", got[artifact][0].Repository)
+	if !strings.HasSuffix(got[artifact][0].Repository, "/cnt") {
+		t.Errorf("repository = %q, want the source's repository coordinate", got[artifact][0].Repository)
 	}
 	if !strings.HasPrefix(got[artifact][0].ManifestDigest, "sha256:") {
 		t.Errorf("manifest digest = %q", got[artifact][0].ManifestDigest)
 	}
-
-	// Same equivalence, different identity: a different build wearing the right
-	// label. Restore would fetch it and then reject it against the lock, so it
-	// must never be recorded as an address for this one.
-	substitute := map[string]string{}
-	for k, v := range exact {
-		substitute[k] = v
-	}
-	substitute[registry.AnnIdentitySHA] = strings.Repeat("c", 64)
-	if got := Upstream(context.Background(), root, []string{artifact}, collection(t, serveManifest(t, substitute))); len(got) != 0 {
-		t.Errorf("an equivalent-but-different build was recorded: %#v", got)
+	if reads.Load() != 0 {
+		t.Errorf("recording a remote read %d manifests, want none", reads.Load())
 	}
 }
 
@@ -208,7 +211,7 @@ func TestUpstreamIsBestEffort(t *testing.T) {
 		"a collection that published nothing this artifact came from": {{
 			Name: "other",
 			Desc: catalog.Descriptor{Schema: 1, Source: "https://github.com/somebody/else",
-				OCI: catalog.OCI{Registry: "127.0.0.1:1"}},
+				OCI: catalog.OCI{Registry: "127.0.0.1:1/cnt"}},
 		}},
 	}
 	for why, cat := range cases {

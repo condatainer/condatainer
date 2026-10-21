@@ -7,6 +7,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/project/lock"
+	"github.com/condatainer/condatainer/internal/registry"
 )
 
 // buildPlan vendors the artifacts, pins the named ones, and plans a push.
@@ -30,9 +31,9 @@ func lockWith(t *testing.T, root string, push string) *lock.Lock {
 	return l
 }
 
-func TestBuildDefaultsToSelectionsAndAddsClosureOnDemand(t *testing.T) {
+func TestBuildPublishesThePinsAlone(t *testing.T) {
 	root := projectRoot(t)
-	dep, depManifest := vendorData(t, root, "cutadapt/5.0", "echo cutadapt\n")
+	_, depManifest := vendorData(t, root, "cutadapt/5.0", "echo cutadapt\n")
 	pin, _ := vendorData(t, root, "grch38/genome/gencode49", "echo index\n", meta.Dependency{
 		Name:     depManifest.Name,
 		Type:     depManifest.Type,
@@ -44,27 +45,15 @@ func TestBuildDefaultsToSelectionsAndAddsClosureOnDemand(t *testing.T) {
 	l := lockWith(t, root, "ghcr.io/lab/p/cnt")
 	l.Pins["grch38/genome/gencode49"] = lock.PinEntry{Artifact: pin}
 
-	// Restore prunes a closure node whenever its dependent is fetched, so the
-	// build dependency is reachable only on the path a push exists to avoid.
 	plan := buildPlan(t, root, l, Options{})
 	if len(plan.Steps) != 1 || plan.Steps[0].Artifact != pin {
-		t.Fatalf("the default set is not the pins alone: %#v", plan.Steps)
+		t.Fatalf("the plan is not the pins alone: %#v", plan.Steps)
 	}
-	if !plan.Steps[0].Pinned {
-		t.Error("a pin is not marked selected, so it would lose its plain tag")
-	}
-
-	plan = buildPlan(t, root, l, Options{Closure: true})
-	if len(plan.Steps) != 2 {
-		t.Fatalf("--closure did not add the build dependency: %#v", plan.Steps)
-	}
-	for _, step := range plan.Steps {
-		if step.Artifact == dep && step.Pinned {
-			t.Error("a build dependency is marked selected, so it would take the plain name tag")
-		}
-		if step.Artifact == dep && len(step.Tags) != 1 {
-			t.Errorf("a build dependency should carry only its qualified tag, got %v", step.Tags)
-		}
+	// A pin takes the build tag, then the name tag, each ending in the architecture.
+	tags := plan.Steps[0].Tags
+	if len(tags) != 2 || registry.IsNameTag(tags[0]) || !registry.IsNameTag(tags[1]) ||
+		!strings.HasSuffix(tags[0], "__amd64") || !strings.HasSuffix(tags[1], "__amd64") {
+		t.Errorf("a pin's tags = %v, want its build tag and its name tag for amd64", tags)
 	}
 }
 
@@ -105,9 +94,9 @@ func TestBuildRefusesWhatTheEndpointWillNotTake(t *testing.T) {
 	}
 }
 
-// Two pins sharing a manifest name: neither can hold the plain tag, since
+// Two pins sharing a manifest name: neither can hold the name tag, since
 // it is a claim about which one the project uses.
-func TestAmbiguousNamesLoseThePlainTag(t *testing.T) {
+func TestAmbiguousNamesLoseTheNameTag(t *testing.T) {
 	root := projectRoot(t)
 	one, _ := vendorData(t, root, "grch38/genome/gencode49", "echo one\n")
 	two, _ := vendorData(t, root, "grch38/genome/gencode49", "echo two\n")
@@ -130,8 +119,8 @@ func TestAmbiguousNamesLoseThePlainTag(t *testing.T) {
 	}
 	for _, step := range plan.Steps {
 		for _, tag := range step.Tags {
-			if !strings.Contains(tag, "__") {
-				t.Errorf("%s kept the ambiguous plain tag %q", step.Name, tag)
+			if registry.IsNameTag(tag) {
+				t.Errorf("%s kept the ambiguous name tag %q", step.Name, tag)
 			}
 		}
 		if len(step.Tags) != 1 {
@@ -154,8 +143,9 @@ func TestTagCollisionRefuses(t *testing.T) {
 }
 
 // Every frozen environment is named meta.EnvName, so a project pinning two
-// shares a name by construction. That must plan as two qualified tags and no
-// plain one, never as a collision that refuses the whole push.
+// shares a name by construction. A frozen environment takes no name tag, so
+// that plans as two build tags and no ambiguity, never as a collision that
+// refuses the whole push.
 func TestTwoFrozenEnvironmentsPublish(t *testing.T) {
 	root := projectRoot(t)
 	one := vendorEnv(t, root, strings.Repeat("1a", 32))
@@ -170,8 +160,8 @@ func TestTwoFrozenEnvironmentsPublish(t *testing.T) {
 	if !plan.Complete() {
 		t.Fatalf("two environments refused the push: %v", plan.Problems)
 	}
-	if len(plan.Ambiguous) != 1 || plan.Ambiguous[0] != meta.EnvName {
-		t.Errorf("ambiguous = %v, want %q once", plan.Ambiguous, meta.EnvName)
+	if len(plan.Ambiguous) != 0 {
+		t.Errorf("ambiguous = %v, want none: a frozen environment has no name tag", plan.Ambiguous)
 	}
 	for _, step := range plan.Steps {
 		if step.Disposition != Upload {
@@ -180,5 +170,56 @@ func TestTwoFrozenEnvironmentsPublish(t *testing.T) {
 		if len(step.Tags) != 1 || !strings.HasPrefix(step.Tags[0], meta.EnvName+"__") {
 			t.Errorf("%s tags = %v, want one qualified tag", step.Artifact, step.Tags)
 		}
+	}
+}
+
+// A digest the lock already records is proof the destination holds the build,
+// so the manifest is not read. An unrecorded one is read and checked.
+func TestAlreadyPublishedReadsNoManifestForARecordedDigest(t *testing.T) {
+	root := projectRoot(t)
+	_, manifest := vendorData(t, root, "grch38/genome/gencode49", "echo index\n")
+	annotations := map[string]string{
+		registry.AnnTitle:          manifest.Name,
+		registry.AnnSchema:         "1",
+		registry.AnnArch:           "amd64",
+		registry.AnnIdentityScheme: manifest.Keys.Identity.Scheme,
+		registry.AnnIdentitySHA:    manifest.Keys.Identity.SHA256,
+		registry.AnnEquivScheme:    manifest.Keys.Equiv.Scheme,
+		registry.AnnEquivSHA:       manifest.Keys.Equiv.SHA256,
+	}
+	address, reads := serveCountedManifest(t, annotations)
+	repository := address + "/cnt"
+	base, repo, err := registry.SplitCoordinate(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := registry.ResolveTag(context.Background(), base, repo, "star__amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan := func(recorded []lock.Remote) *Plan {
+		return &Plan{Repository: repository, Steps: []Step{{
+			Name: manifest.Name, Identity: manifest.Keys.Identity.Digest(),
+			Disposition: Upload, Tags: []string{"star__amd64"}, Recorded: recorded,
+		}}}
+	}
+
+	known := plan([]lock.Remote{{Repository: repository, ManifestDigest: head.Digest.String()}})
+	markAlreadyPublished(context.Background(), known)
+	if known.Steps[0].Disposition != Present || known.Steps[0].Remote.ManifestDigest != head.Digest.String() {
+		t.Errorf("a recorded digest = %+v, want present at that digest", known.Steps[0])
+	}
+	if reads.Load() != 0 {
+		t.Errorf("a recorded digest read %d manifests, want none", reads.Load())
+	}
+
+	unknown := plan(nil)
+	markAlreadyPublished(context.Background(), unknown)
+	if unknown.Steps[0].Disposition != Present {
+		t.Errorf("an unrecorded build = %+v, want present after its manifest is checked", unknown.Steps[0])
+	}
+	if reads.Load() != 1 {
+		t.Errorf("an unrecorded build read %d manifests, want one", reads.Load())
 	}
 }

@@ -17,8 +17,8 @@ import (
 )
 
 var (
-	ErrNotFound  = errors.New("artifact identity not found")
-	ErrAmbiguous = errors.New("artifact identity is ambiguous")
+	ErrNotFound  = errors.New("overlay identity not found")
+	ErrAmbiguous = errors.New("overlay identity is ambiguous")
 )
 
 // Layout identifies the namespace containing a candidate.
@@ -184,15 +184,15 @@ func (r *Report) verify(path, root string, layout Layout, addressedName, prefix 
 	identity := keyRef(artifact.IdentityScheme, artifact.Identity)
 	equiv := keyRef(artifact.EquivScheme, artifact.Equiv)
 	if _, err := ParseKeyRef(FormatKeyRef(identity)); err != nil {
-		r.addIssue(path, fmt.Errorf("artifact carries no valid complete identity: %w", err))
+		r.addIssue(path, fmt.Errorf("overlay carries no valid complete identity: %w", err))
 		return
 	}
 	if _, err := ParseKeyRef(FormatKeyRef(equiv)); err != nil {
-		r.addIssue(path, fmt.Errorf("artifact carries no valid complete equivalence key: %w", err))
+		r.addIssue(path, fmt.Errorf("overlay carries no valid complete equivalence key: %w", err))
 		return
 	}
 	if artifact.Name != addressedName {
-		r.addIssue(path, fmt.Errorf("filename names %q but artifact names %q", addressedName, artifact.Name))
+		r.addIssue(path, fmt.Errorf("filename names %q but overlay names %q", addressedName, artifact.Name))
 		return
 	}
 	if prefix != "" && !strings.HasPrefix(identity.SHA256, prefix) {

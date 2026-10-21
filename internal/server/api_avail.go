@@ -1,12 +1,12 @@
 package server
 
 import (
-	"github.com/condatainer/condatainer/internal/conda"
 	"net/http"
 	"sort"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/conda"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/project"
 	"github.com/condatainer/condatainer/internal/runtime/container"

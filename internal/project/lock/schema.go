@@ -93,8 +93,7 @@ type Lock struct {
 	Pins map[string]PinEntry `json:"pins"`
 	// Remotes records where an artifact can be fetched from, keyed by the same
 	// relative artifact path pins use. It is absent until something
-	// records a location: `project pin`, and later `project registry push`, append to it. A closure-only artifact may have remotes too, which
-	// is why this is keyed by artifact rather than nested under a pin.
+	// records a location: `project pin`, and later `project registry push`, append to it.
 	Remotes map[string][]Remote `json:"remotes,omitempty"`
 }
 
@@ -177,8 +176,8 @@ type Remote struct {
 	// Repository is the complete OCI repository coordinate, with no scheme,
 	// tag, or digest.
 	Repository string `json:"repository"`
-	// ManifestDigest is the pinned platform manifest digest — not a mutable
-	// tag, and not merely the multi-platform index digest.
+	// ManifestDigest is the pinned manifest digest of the artifact's
+	// architecture — not a mutable tag.
 	ManifestDigest string `json:"manifest_digest"`
 }
 
@@ -307,20 +306,20 @@ func validateRemotes(artifact string, remotes []Remote) error {
 func validEntryPath(p string) error {
 	switch {
 	case p == "":
-		return errors.New("artifact path is empty")
+		return errors.New("overlay path is empty")
 	case strings.ContainsRune(p, '\\'):
-		return fmt.Errorf("artifact path %q is not slash-separated", p)
+		return fmt.Errorf("overlay path %q is not slash-separated", p)
 	case path.IsAbs(p), strings.HasPrefix(p, "/"):
-		return fmt.Errorf("artifact path %q is absolute", p)
+		return fmt.Errorf("overlay path %q is absolute", p)
 	case p != path.Clean(p):
-		return fmt.Errorf("artifact path %q is not clean", p)
+		return fmt.Errorf("overlay path %q is not clean", p)
 	case !strings.HasPrefix(p, ProvenanceDir+"/"):
-		return fmt.Errorf("artifact path %q is outside %s/", p, ProvenanceDir)
+		return fmt.Errorf("overlay path %q is outside %s/", p, ProvenanceDir)
 	case strings.Contains(p, "/../"), strings.HasSuffix(p, "/.."):
-		return fmt.Errorf("artifact path %q escapes the lock directory", p)
+		return fmt.Errorf("overlay path %q escapes the lock directory", p)
 	}
 	if len(strings.Split(p, "/")) != 2 {
-		return fmt.Errorf("artifact path %q is not %s/<entry>", p, ProvenanceDir)
+		return fmt.Errorf("overlay path %q is not %s/<entry>", p, ProvenanceDir)
 	}
 	return nil
 }
@@ -420,7 +419,7 @@ func isPortColon(repository string, i int) bool {
 
 // AddRemote records one fetch location for an artifact, deduplicated, in insertion order.
 //   - Order is retry priority, so an existing entry keeps its place.
-//   - `project registry push` writes through it for pinned and closure-only artifacts alike.
+//   - `project registry push` writes through it for each pinned artifact.
 func (l *Lock) AddRemote(artifact string, remote Remote) error {
 	if err := validEntryPath(artifact); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalid, err)

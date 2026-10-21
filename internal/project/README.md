@@ -18,11 +18,11 @@
 
 ## Remotes
 
-- A remote is a repository coordinate plus a platform manifest digest. Never a mutable tag.
-- Remotes are keyed by artifact, at the top of `lock.json`. A closure-only dependency can have one too.
+- A remote is a repository coordinate plus the manifest digest of the artifact's architecture. Never a mutable tag.
+- Remotes are keyed by artifact, at the top of `lock.json`. Only a pinned artifact has one.
 - A remote never lives inside an entry directory. An entry's bytes are the key preimage, and a registry location is mutable information. It must change without the artifact changing.
 - Remotes are written by machines, never typed.
-- One is recorded only when something confirmed the artifact is there: a collection's registry advertises this exact identity, or `project registry push` just put it there.
+- One is recorded only when something confirmed the artifact is there: a collection's registry holds the build tag of this exact identity, or `project registry push` just put it there.
 - A digest nobody verified is a lock entry that fails on someone else's machine.
 - A remote cannot live in the artifact. It is a digest over the pushed content, so embedding it would need the digest before the bytes exist.
 - Order is retry priority. A pin records its upstream remote before any push, so the free location is tried first.
@@ -77,6 +77,14 @@
 - It is refused at plan time as unavailable, not planned as a build that must fail.
 - `--no-prebuilt` is ignored for it. Building is impossible, so no preference is left to express.
 - Recording is one lock transaction per artifact. An interrupted push keeps everything that landed, and a rerun skips it.
+
+## Collecting a project's registry
+
+- `project registry gc` keeps what the lock pins and removes the rest. An empty pin set is refused, since it would remove the whole repository.
+- Older commits pin other digests. Reading them is `--git-history`, which is opt-in because it sees only `HEAD`'s ancestry.
+- A shallow clone is refused with `--git-history`. Its history stops short, and the run would remove what an older commit pins.
+- A snapshot cannot be rebuilt, so removing one is final for any commit that pins it.
+- A registry that a source declares is refused. It belongs to `registry gc`.
 
 ## Scanning
 

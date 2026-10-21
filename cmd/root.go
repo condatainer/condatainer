@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"github.com/condatainer/condatainer/internal/toolpath"
-
 	"context"
 	"errors"
 	"fmt"
@@ -19,6 +17,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/toolpath"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )

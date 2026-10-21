@@ -56,7 +56,7 @@ func projectRunContext(ctx context.Context, contentScript string) (*projectConte
 		projectRun.Overlays = append(projectRun.Overlays, mount.Path)
 		switch {
 		case mount.Found != "":
-			utils.PrintNote("%s is mounted from an equivalent artifact, not %s",
+			utils.PrintNote("%s is mounted from an equivalent overlay, not %s",
 				mount.Name, short(mount.Identity))
 		case mount.Live:
 			utils.PrintNote("%s resolved to %s, not pinned",

@@ -187,3 +187,27 @@ func TestReadMovesPastARefusedCredential(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUnauthorized naming both credentials", err)
 	}
 }
+
+func TestAuthClientSendsACredentialToTheHostRequestsGoTo(t *testing.T) {
+	found := credential.Found{Credential: credential.Credential{Username: "u", Secret: "s"}}
+	tests := []struct {
+		name, host, requested string
+		want                  bool
+	}{
+		{"a host is sent its own credential", "ghcr.io", "ghcr.io", true},
+		{"docker.io is reached at registry-1.docker.io", "docker.io", "registry-1.docker.io", true},
+		{"a credential goes to no other host", "docker.io", "ghcr.io", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := (&client{}).authClient(tt.host, found)
+			got, err := a.Credential(context.Background(), tt.requested)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (got.Password == "s") != tt.want {
+				t.Errorf("credential for %q = %+v, want sent = %v", tt.requested, got, tt.want)
+			}
+		})
+	}
+}

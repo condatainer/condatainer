@@ -49,7 +49,7 @@ func Apply(ctx context.Context, base, repo string, b Backend, p RemovePlan) (App
 			err := retryPolicyFrom(ctx).run(ctx, mutation{
 				verb:  verbPublish,
 				attrs: []any{"tag", m.Tag},
-				do:    func(ctx context.Context) error { return repository.Tag(ctx, m.To, m.Tag) },
+				do:    func(ctx context.Context) error { return tagManifest(ctx, repository, m.To, m.Tag) },
 			})
 			if err != nil {
 				return res, fmt.Errorf("cannot move %s: %w", FullRef(base, repo, m.Tag), classify(err))

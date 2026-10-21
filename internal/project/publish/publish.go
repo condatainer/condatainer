@@ -68,9 +68,8 @@ func markUpstreamServed(ctx context.Context, root string, plan *Plan, cat catalo
 
 // markAlreadyPublished skips an upload the destination already holds.
 //
-//   - The recorded digest is asked first: resolving is proof in one request, and it is the address restore uses.
-//   - The qualified tag is the fallback and the repair path: a lock that lost its remotes finds its artifacts again.
-//   - Tags are re-applied either way, to repair a manifest that lost its retention anchor.
+//   - The build tag is resolved, which no pull limit counts. A digest the lock already records for this destination is proof of identical content, so nothing is read.
+//   - Otherwise the manifest is read and its identity checked: a lock that lost its remotes finds its artifacts again.
 func markAlreadyPublished(ctx context.Context, plan *Plan) {
 	log := logging.FromContext(ctx)
 	base, repo, err := registry.SplitCoordinate(plan.Repository)
@@ -79,6 +78,19 @@ func markAlreadyPublished(ctx context.Context, plan *Plan) {
 	}
 	for i, step := range plan.Steps {
 		if step.Disposition != Upload || len(step.Tags) == 0 {
+			continue
+		}
+		head, err := registry.ResolveTag(ctx, base, repo, step.Tags[0])
+		if err != nil {
+			log.Debug("destination does not hold this overlay yet", "name", step.Name, "err", err)
+			continue
+		}
+		if recorded(step, plan.Repository, head.Digest.String()) {
+			plan.Steps[i].Disposition = Present
+			plan.Steps[i].Remote = &lock.Remote{
+				Repository:     strings.TrimRight(registry.TrimBaseScheme(plan.Repository), "/"),
+				ManifestDigest: head.Digest.String(),
+			}
 			continue
 		}
 		desc, annotations, err := registry.ResolveArtifact(ctx, base, repo, step.Tags[0])
@@ -101,6 +113,14 @@ func markAlreadyPublished(ctx context.Context, plan *Plan) {
 			ManifestDigest: desc.Digest.String(),
 		}
 	}
+}
+
+// recorded reports whether the lock already records digest for this step in repository.
+func recorded(step Step, repository, digest string) bool {
+	want := registry.TrimBaseScheme(repository)
+	return slices.ContainsFunc(step.Recorded, func(r lock.Remote) bool {
+		return registry.TrimBaseScheme(r.Repository) == want && r.ManifestDigest == digest
+	})
 }
 
 // Run publishes the plan and records where each artifact landed.

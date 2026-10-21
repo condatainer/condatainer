@@ -29,7 +29,7 @@ const (
 	// fixedRequests is what surrounds the layers: the token exchange, the tag
 	// probe, this preflight's own session and its cancel, the empty config blob,
 	// the manifest, and the tags.
-	fixedRequests = 12
+	fixedRequests = 9
 	// expectedRequestCeiling is where a registry was observed to stop accepting
 	// writes: GHCR refused a 41-layer push on chunk 34, about its 101st request.
 	// Not exact — one measurement of a number nobody publishes.

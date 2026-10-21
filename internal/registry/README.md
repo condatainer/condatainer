@@ -44,6 +44,7 @@ GHCR is the registry these come from.
 The request limit shapes the design.
 
 - Layers are planned by count. They are 2 GiB until the artifact passes 48 GiB, then grow to keep the count near 24.
+- A push costs about two requests per layer and nine more, and each tag is one write.
 - A registry's documented layer limit caps the growth, so a very large artifact then gets more layers.
 - Writes are spaced out.
 - A rate limit is waited out, never treated as a failure.
@@ -137,5 +138,8 @@ Storage and lookup are in `internal/credential`. What is particular to registrie
 - `gc --no-recipe` removes builds of names the source has no recipe for. The recipe list is cached, so it is refreshed first. An unreadable or empty list stops the run, since every name would look unrecipe'd.
 - `remove` and `gc` take only `--source`. A project's repository has no declaring source, so neither can empty one by accident.
 - A manifest holding a tag this package did not write is never removed, since removing it would drop that tag too.
-- On Docker Hub a manifest fetch counts as a pull and a tag resolve does not. A manifest is fetched once per digest in a run, so a lookup and its pull share one fetch. `remove` fetches only when a build holds a name or equivalence tag.
+- On Docker Hub a manifest fetch counts as a pull and a tag resolve does not. A manifest is fetched once per digest in a run, so a lookup and its pull share one fetch.
+- A tag is written from the manifest bytes the run holds. A push of a new build reads no manifest, and a tag move reads the target once.
+- A check that downloads nothing resolves the tag and reads no manifest. A pull reads it, and the keys are checked then.
+- The bytes are kept as pushed or fetched, since a tag can only be written against its own digest's exact bytes.
 

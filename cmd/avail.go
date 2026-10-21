@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -63,6 +64,7 @@ type PackageInfo struct {
 	TargetTemplate string              // raw #TARGET: pattern (e.g. "grch38/star/{star_version}/gencode{gencode_version}-{read_length}")
 	PH             map[string][]string // placeholder values (all values for templates; single-element for expanded)
 	PHNames        []string            // placeholders in target order
+	NeedsArch      string              // the architectures it builds on, when this machine is not one
 }
 
 func runAvail(cmd *cobra.Command, args []string) error {
@@ -98,7 +100,16 @@ func runAvail(cmd *cobra.Command, args []string) error {
 		if e.IsTemplate {
 			phNames = catalog.NewTemplate(e.TargetTemplate).Names()
 		}
+		var needsArch string
+		if e.BuildableOn(runtime.GOARCH) != nil {
+			names := make([]string, len(e.Arch))
+			for i, a := range e.Arch {
+				names[i] = string(a)
+			}
+			needsArch = strings.Join(names, " or ")
+		}
 		return PackageInfo{
+			NeedsArch:      needsArch,
 			Name:           name,
 			Path:           e.Path,
 			IsContainer:    strings.HasSuffix(e.Path, ".def"),
@@ -320,6 +331,9 @@ func formatTemplateLine(pkg PackageInfo, showDescription bool) string {
 	} else {
 		labelParts = append(labelParts, utils.StyleDim("template"))
 	}
+	if pkg.NeedsArch != "" {
+		labelParts = append(labelParts, utils.StyleWarning("needs "+pkg.NeedsArch))
+	}
 	if pkg.Source != "" {
 		labelParts = append(labelParts, pkg.Source)
 	}
@@ -393,6 +407,9 @@ func formatPackageLine(pkg PackageInfo, showDescription bool) string {
 	}
 	if pkg.IsContainer {
 		suffixes = append(suffixes, "container")
+	}
+	if pkg.NeedsArch != "" {
+		suffixes = append(suffixes, utils.StyleWarning("needs "+pkg.NeedsArch))
 	}
 	if pkg.Source != "" {
 		suffixes = append(suffixes, pkg.Source)

@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -100,6 +101,16 @@ func (r *resolver) visit(ctx context.Context, dep Dep, vars map[string]string, p
 	node, err := r.resolveOne(ctx, dep)
 	if err != nil {
 		return err
+	}
+	// Refused from the index, before any recipe is fetched: a build that cannot
+	// run here is not worth starting the ones before it.
+	if node.Entry != nil && node.Installed == "" {
+		if err := node.Entry.BuildableOn(runtime.GOARCH); err != nil {
+			if parent != "" {
+				err = fmt.Errorf("%w (needed by %s)", err, parent)
+			}
+			return err
+		}
 	}
 
 	r.onStack[key], r.stack = true, append(r.stack, key)

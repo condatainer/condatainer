@@ -11,6 +11,9 @@ import (
 // ErrInvalidRecipe reports a recipe that declares something its type may not.
 var ErrInvalidRecipe = errors.New("catalog: invalid recipe")
 
+// ErrUnsupportedArch reports a recipe that does not build on this machine's architecture.
+var ErrUnsupportedArch = errors.New("catalog: recipe does not build on this architecture")
+
 // IsPathDep reports whether a #DEP: value names an overlay file rather than a catalog name/version.
 //   - It is exported because it decides which grammar a dependency is read with: Normalize and ParseDep apply to names only, and a second answer elsewhere would let one string be a name in one place and a path in another.
 //   - The extensions are utils.IsOverlay's plus .sif; this package cannot import utils, so they are kept in sync by hand.
@@ -79,8 +82,8 @@ func HasComponents(name, dep string) bool {
 //   - It runs once the recipe is fetched for a build, not while indexing: one bad recipe must not take a whole collection out of a listing.
 //   - The #DEP: rules are in ValidateDeps.
 //   - The rules only a recipe has:
-//   - #ARCH: only app and data, and only native or noarch: an os is a root filesystem
-//     and always architecture-specific.
+//   - #ARCH: only app and data, and only noarch or a list of amd64 and arm64: an os is a root
+//     filesystem and always architecture-specific.
 //   - A definition declares neither #SOURCE: nor #INPUT:. Apptainer builds it from its
 //     own bootstrap, so nothing would fetch or read them.
 //   - #PH:, #TARGET: and #SOURCE: placeholders agree.
@@ -97,12 +100,12 @@ func (r *Recipe) Validate() error {
 		errs = append(errs, fmt.Errorf("%w: %s: %s", ErrInvalidRecipe, r.Name, problem))
 	}
 
-	if r.Arch != "" {
+	if len(r.Arch) > 0 {
 		switch r.Type {
 		case TypeApp, TypeData:
-			if r.Arch != ArchNative && r.Arch != ArchNoarch {
-				errs = append(errs, fmt.Errorf("%w: %s declares #ARCH:%s; the values are %s and %s",
-					ErrInvalidRecipe, r.Name, r.Arch, ArchNative, ArchNoarch))
+			if problem := archProblem(r.Arch); problem != "" {
+				errs = append(errs, fmt.Errorf("%w: %s declares #ARCH:%s; %s",
+					ErrInvalidRecipe, r.Name, joinArch(r.Arch), problem))
 			}
 		default:
 			errs = append(errs, fmt.Errorf("%w: %s is type %s and may not declare #ARCH:; a root filesystem is always architecture-specific",
@@ -181,4 +184,25 @@ func (r *Recipe) Validate() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// archProblem says why a #ARCH: list is not valid, or "".
+//   - The values are noarch alone, or amd64 and arm64 each at most once.
+func archProblem(archs []Arch) string {
+	seen := map[Arch]bool{}
+	for _, a := range archs {
+		switch a {
+		case ArchAMD64, ArchARM64, ArchNoarch:
+		default:
+			return fmt.Sprintf("%s is not an architecture; the values are noarch, or amd64 and arm64", a)
+		}
+		if seen[a] {
+			return fmt.Sprintf("%s is listed twice", a)
+		}
+		seen[a] = true
+	}
+	if seen[ArchNoarch] && len(archs) > 1 {
+		return "noarch cannot be listed with architectures"
+	}
+	return ""
 }

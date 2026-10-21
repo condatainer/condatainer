@@ -1,8 +1,10 @@
 package catalog
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -249,5 +251,46 @@ func TestResolveTemplateDep(t *testing.T) {
 	}
 	if slices.Index(got, "grch38/gtf/48") != 0 {
 		t.Errorf("Order = %v, want the dep first", got)
+	}
+}
+
+// A recipe that does not build on this machine stops the plan before anything
+// builds, naming what needed it. An installed copy needs no build.
+func TestResolveRefusesARecipeThatDoesNotBuildHere(t *testing.T) {
+	other := "amd64"
+	if runtime.GOARCH == "amd64" {
+		other = "arm64"
+	}
+	root := t.TempDir()
+	for rel, body := range map[string]string{
+		"app/1.0":  "#DESC:app\n#DEP:tool/1.0\n",
+		"tool/1.0": "#DESC:tool\n#ARCH:" + other + "\n",
+	} {
+		p := filepath.Join(root, "recipes", filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cat, err := Open(t.Context(), []Spec{{Name: "local", Base: root}}, Cache{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = cat.Resolve(t.Context(), []string{"app/1.0"}, nil)
+	if !errors.Is(err, ErrUnsupportedArch) || !strings.Contains(err.Error(), "needed by app/1.0") {
+		t.Fatalf("err = %v, want ErrUnsupportedArch naming app/1.0", err)
+	}
+
+	installed := func(name string) []string {
+		if name == "tool" {
+			return []string{"1.0"}
+		}
+		return nil
+	}
+	if _, err := cat.Resolve(t.Context(), []string{"app/1.0"}, installed); err != nil {
+		t.Errorf("an installed tool was refused: %v", err)
 	}
 }

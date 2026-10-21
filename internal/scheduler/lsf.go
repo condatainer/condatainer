@@ -80,6 +80,9 @@ func (l *LsfScheduler) JobIDVar() string { return "LSB_JOBID" }
 func (l *LsfScheduler) GetCurrentJobID() string { return os.Getenv(l.JobIDVar()) }
 func (l *LsfScheduler) JobIDEnvExpr() string    { return "${" + l.JobIDVar() + "}" }
 
+// NodeNameEnvExpr is the first host in the job's host list.
+func (l *LsfScheduler) NodeNameEnvExpr() string { return "${LSB_HOSTS%% *}" }
+
 // TmpDirVar returns the name of the LSF per-job node-local tmpdir env var.
 func (l *LsfScheduler) TmpDirVar() string { return "LSF_TMPDIR" }
 

@@ -116,3 +116,11 @@ func TestWrapperForwardsTermAndWaits(t *testing.T) {
 		t.Fatalf("done was recorded before the container exited:\n%s", got)
 	}
 }
+
+func TestHelperBodyRecordsTheNodeBeforeSettingUp(t *testing.T) {
+	body := buildHelperCommandBody("t-1", "t", "/w", "/w", "/w/state", time.Hour, nil, nil, "true", false)
+	started, port := strings.Index(body, "condatainer _server_started\n"), strings.Index(body, "_pick_port")
+	if started < 0 || started > port {
+		t.Errorf("_server_started should come before _pick_port:\n%s", body)
+	}
+}

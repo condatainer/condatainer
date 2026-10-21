@@ -71,7 +71,7 @@ func (r *HelperRun) EstimatedEnd() time.Time {
 }
 
 // StateEvent is one entry in the unified events JSONL file per helper run.
-// Type is one of "msg", "ready", or "done".
+// Type is one of "msg", "start", "ready", or "done".
 type StateEvent struct {
 	Type string    `json:"type"`
 	Ts   time.Time `json:"ts"`
@@ -80,7 +80,7 @@ type StateEvent struct {
 	Level string `json:"level,omitempty"` // "info"|"warn"|"error"
 	Text  string `json:"text,omitempty"`
 
-	// "ready" fields
+	// "start" fields are Node and JobID. "ready" fields are all of the below.
 	Port        int    `json:"port,omitempty"`
 	Node        string `json:"node,omitempty"`
 	WalltimeSec int64  `json:"walltime_secs,omitempty"`

@@ -539,6 +539,26 @@ func TestListTagsReportsAnUnreadableRegistry(t *testing.T) {
 	}
 }
 
+// A probe answers from the tag alone, so it reads no manifest.
+func TestProbeReadsNoManifest(t *testing.T) {
+	f := newFakeRegistry(t)
+	published := publishArtifact(t, f, "lab/cnt", map[string]string{AnnTitle: "probe/1"}, "probe--1__noarch")
+
+	found, err := Probe(t.Context(), f.base(), "lab/cnt", Address{Name: "probe/1", Arch: ArchNoarch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found.Desc.Digest != published.Digest || found.Annotations != nil {
+		t.Errorf("probe = %+v, want the digest %s and no annotations", found, published.Digest)
+	}
+	if f.manifestGets != 0 {
+		t.Errorf("probe read %d manifests, want none", f.manifestGets)
+	}
+	if _, err := Probe(t.Context(), f.base(), "lab/cnt", Address{Name: "absent/1", Arch: ArchNoarch}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("probe of an unpublished name = %v, want ErrNotFound", err)
+	}
+}
+
 // A lookup and the pull that follows read the manifest once between them.
 func TestAManifestIsFetchedOncePerDigest(t *testing.T) {
 	f := newFakeRegistry(t)

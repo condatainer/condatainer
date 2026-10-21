@@ -46,6 +46,8 @@ type Step struct {
 	// Remote is the location to record: what an upload will create, or where an
 	// existing copy was found.
 	Remote *lock.Remote `json:"remote,omitempty"`
+	// Recorded are the locations the lock already records for this artifact.
+	Recorded []lock.Remote `json:"-"`
 	// Reason explains a refusal.
 	Reason string `json:"reason,omitempty"`
 	// Channels are a Conda build's recorded channels, reported and never judged:
@@ -122,6 +124,7 @@ func Build(ctx context.Context, root string, l *lock.Lock, verified *lock.Verifi
 			Identity:    entry.Identity.Digest(),
 			Destination: destinations[artifact],
 			Channels:    entry.Manifest.Build.Channels,
+			Recorded:    l.Remotes[artifact],
 		}
 		plan.Steps = append(plan.Steps, planStep(step, entry, audience))
 	}

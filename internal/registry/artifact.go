@@ -33,15 +33,38 @@ func ResolveArtifact(ctx context.Context, base, repo, ref string) (ocispec.Descr
 	return desc, annotations, nil
 }
 
-// resolveManifest resolves ref to its image manifest and reads the annotations.
-func resolveManifest(ctx context.Context, repository *remote.Repository, ref string) (ocispec.Descriptor, map[string]string, error) {
+// resolveDescriptor resolves ref to its image manifest's descriptor without reading the manifest.
+//   - Resolving is a HEAD, which no pull limit counts. Reading the manifest is a GET, which one does.
+func resolveDescriptor(ctx context.Context, repository *remote.Repository, ref string) (ocispec.Descriptor, error) {
 	desc, err := repository.Resolve(ctx, ref)
 	if err != nil {
-		return ocispec.Descriptor{}, nil, err
+		return ocispec.Descriptor{}, err
 	}
 	if desc.MediaType == ocispec.MediaTypeImageIndex {
-		return desc, nil, fmt.Errorf("%w: it is an image index, and a repository holds one manifest per architecture",
+		return desc, fmt.Errorf("%w: it is an image index, and a repository holds one manifest per architecture",
 			ErrInvalidArtifact)
+	}
+	return desc, nil
+}
+
+// ResolveTag returns the descriptor of the manifest ref names in "<base>/<repo>", without reading it.
+func ResolveTag(ctx context.Context, base, repo, ref string) (ocispec.Descriptor, error) {
+	repository, err := newRepository(base, repo)
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	desc, err := resolveDescriptor(ctx, repository, ref)
+	if err != nil {
+		return desc, fmt.Errorf("cannot resolve %s: %w", FullRef(base, repo, ref), classify(err))
+	}
+	return desc, nil
+}
+
+// resolveManifest resolves ref to its image manifest and reads the annotations.
+func resolveManifest(ctx context.Context, repository *remote.Repository, ref string) (ocispec.Descriptor, map[string]string, error) {
+	desc, err := resolveDescriptor(ctx, repository, ref)
+	if err != nil {
+		return desc, nil, err
 	}
 	manifest, err := fetchManifest(ctx, repository, desc)
 	if err != nil {
@@ -51,20 +74,41 @@ func resolveManifest(ctx context.Context, repository *remote.Repository, ref str
 	return desc, manifest.Annotations, nil
 }
 
-// manifests remembers the manifests this process has read, by repository and digest.
+// manifests remembers the manifests this process has read or written, by repository and digest.
 //   - A digest names its content, so a remembered manifest never goes stale.
 //   - A lookup and the pull that follows share one fetch, which matters where each manifest fetch counts against a pull limit.
+//   - The bytes are kept as the registry holds them, since a tag can only be written with the exact bytes of its digest.
 var manifests = struct {
 	sync.Mutex
-	byDigest map[string]ocispec.Manifest
-}{byDigest: map[string]ocispec.Manifest{}}
+	byDigest map[string]rememberedManifest
+}{byDigest: map[string]rememberedManifest{}}
+
+type rememberedManifest struct {
+	raw      []byte
+	manifest ocispec.Manifest
+}
 
 // manifestCacheLimit bounds the memory of manifests.
 const manifestCacheLimit = 512
 
+func manifestKey(repository *remote.Repository, desc ocispec.Descriptor) string {
+	return repository.Reference.Registry + "/" + repository.Reference.Repository + "@" + desc.Digest.String()
+}
+
 // fetchManifest reads and decodes an image manifest, once per digest.
 func fetchManifest(ctx context.Context, repository *remote.Repository, desc ocispec.Descriptor) (ocispec.Manifest, error) {
-	key := repository.Reference.Registry + "/" + repository.Reference.Repository + "@" + desc.Digest.String()
+	remembered, err := rememberedFor(ctx, repository, desc)
+	return remembered.manifest, err
+}
+
+// manifestBytes returns the manifest exactly as the registry holds it, once per digest.
+func manifestBytes(ctx context.Context, repository *remote.Repository, desc ocispec.Descriptor) ([]byte, error) {
+	remembered, err := rememberedFor(ctx, repository, desc)
+	return remembered.raw, err
+}
+
+func rememberedFor(ctx context.Context, repository *remote.Repository, desc ocispec.Descriptor) (rememberedManifest, error) {
+	key := manifestKey(repository, desc)
 	manifests.Lock()
 	cached, ok := manifests.byDigest[key]
 	manifests.Unlock()
@@ -73,19 +117,25 @@ func fetchManifest(ctx context.Context, repository *remote.Repository, desc ocis
 	}
 	data, err := content.FetchAll(ctx, repository, desc)
 	if err != nil {
-		return ocispec.Manifest{}, fmt.Errorf("failed to fetch manifest: %w", err)
+		return rememberedManifest{}, fmt.Errorf("failed to fetch manifest: %w", err)
 	}
+	return rememberManifest(repository, desc, data)
+}
+
+// rememberManifest records a manifest this process holds the bytes of.
+func rememberManifest(repository *remote.Repository, desc ocispec.Descriptor, raw []byte) (rememberedManifest, error) {
 	var manifest ocispec.Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return ocispec.Manifest{}, fmt.Errorf("invalid image manifest: %w", err)
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return rememberedManifest{}, fmt.Errorf("invalid image manifest: %w", err)
 	}
+	remembered := rememberedManifest{raw: raw, manifest: manifest}
 	manifests.Lock()
 	if len(manifests.byDigest) >= manifestCacheLimit {
 		clear(manifests.byDigest)
 	}
-	manifests.byDigest[key] = manifest
+	manifests.byDigest[manifestKey(repository, desc)] = remembered
 	manifests.Unlock()
-	return manifest, nil
+	return remembered, nil
 }
 
 // Address names one manifest of a repository by artifact name.
@@ -104,7 +154,8 @@ type Address struct {
 
 // Found is the manifest an Address located.
 type Found struct {
-	Desc        ocispec.Descriptor
+	Desc ocispec.Descriptor
+	// Annotations are the manifest's own, empty for a [Probe].
 	Annotations map[string]string
 	Tag         string
 	Arch        string
@@ -201,6 +252,18 @@ func (a Address) verify(ann map[string]string) error {
 //   - It tries each architecture in turn and returns the first manifest found.
 //   - A miss on every architecture is ErrNotFound. [PublishedArches] says what exists instead.
 func Lookup(ctx context.Context, base, repo string, a Address) (Found, error) {
+	return lookup(ctx, base, repo, a, true)
+}
+
+// Probe resolves an address like [Lookup] without reading the manifest.
+//   - It answers whether the tag exists and which digest it holds, from the tag alone.
+//   - The tag carries the key's prefix, so the full key is not compared.
+//   - A caller that goes on to download reads the manifest then and checks the keys.
+func Probe(ctx context.Context, base, repo string, a Address) (Found, error) {
+	return lookup(ctx, base, repo, a, false)
+}
+
+func lookup(ctx context.Context, base, repo string, a Address, read bool) (Found, error) {
 	arches, err := a.arches()
 	if err != nil {
 		return Found{}, err
@@ -219,7 +282,13 @@ func Lookup(ctx context.Context, base, repo string, a Address) (Found, error) {
 			}
 			return Found{}, err
 		}
-		desc, ann, err := resolveManifest(ctx, repository, tag)
+		var desc ocispec.Descriptor
+		var ann map[string]string
+		if read {
+			desc, ann, err = resolveManifest(ctx, repository, tag)
+		} else {
+			desc, err = resolveDescriptor(ctx, repository, tag)
+		}
 		if err != nil {
 			err = fmt.Errorf("cannot resolve %s: %w", FullRef(base, repo, tag), classify(err))
 			if errors.Is(err, ErrNotFound) {
@@ -227,6 +296,9 @@ func Lookup(ctx context.Context, base, repo string, a Address) (Found, error) {
 				continue
 			}
 			return Found{}, err
+		}
+		if !read {
+			return Found{Desc: desc, Tag: tag, Arch: arch}, nil
 		}
 		if err := a.verify(ann); err != nil {
 			return Found{}, fmt.Errorf("%s: %w", FullRef(base, repo, tag), err)

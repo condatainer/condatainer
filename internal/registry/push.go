@@ -1,9 +1,11 @@
 package registry
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -339,11 +341,15 @@ func Push(ctx context.Context, artifactPath, base, repo string, tags []string, a
 	// most likely single mutation in a large push to be refused.
 	var manifestDesc ocispec.Descriptor
 	err = retryPolicyFrom(ctx).run(ctx, mutation{verb: verbPublish, attrs: []any{"target", "manifest"}, do: func(ctx context.Context) error {
+		capture := &manifestCapture{Repository: repository}
 		var packErr error
-		manifestDesc, packErr = oras.PackManifest(ctx, repository, oras.PackManifestVersion1_1, ArtifactTypeOverlay, oras.PackManifestOptions{
+		manifestDesc, packErr = oras.PackManifest(ctx, capture, oras.PackManifestVersion1_1, ArtifactTypeOverlay, oras.PackManifestOptions{
 			Layers:              layers,
 			ManifestAnnotations: annotations,
 		})
+		if packErr == nil {
+			_, packErr = rememberManifest(repository, manifestDesc, capture.raw)
+		}
 		return packErr
 	}})
 	if err != nil {
@@ -353,18 +359,47 @@ func Push(ctx context.Context, artifactPath, base, repo string, tags []string, a
 	return manifestDesc, tagAll(ctx, repository, base, repo, manifestDesc, tags)
 }
 
+// manifestCapture keeps the bytes of the manifest packed through it, so tagging it later reads nothing back.
+type manifestCapture struct {
+	*remote.Repository
+	raw []byte
+}
+
+func (c *manifestCapture) Push(ctx context.Context, expected ocispec.Descriptor, body io.Reader) error {
+	if expected.MediaType != ocispec.MediaTypeImageManifest {
+		return c.Repository.Push(ctx, expected, body)
+	}
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	c.raw = raw
+	return c.Repository.Push(ctx, expected, bytes.NewReader(raw))
+}
+
 // tagAll points every tag at desc, in order.
 func tagAll(ctx context.Context, repository *remote.Repository, base, repo string, desc ocispec.Descriptor, tags []string) error {
 	for _, tag := range tags {
 		if err := retryPolicyFrom(ctx).run(ctx, mutation{
 			verb:  verbPublish,
 			attrs: []any{"tag", tag},
-			do:    func(ctx context.Context) error { return repository.Tag(ctx, desc, tag) },
+			do:    func(ctx context.Context) error { return tagManifest(ctx, repository, desc, tag) },
 		}); err != nil {
 			return fmt.Errorf("failed to tag %s: %w", FullRef(base, repo, tag), err)
 		}
 	}
 	return nil
+}
+
+// tagManifest writes tag against the manifest's own bytes.
+//   - The bytes come from what this process already read or wrote, so a tag costs one write and no read.
+//   - A read that counts against a pull limit is spent only for a manifest this process has not seen.
+func tagManifest(ctx context.Context, repository *remote.Repository, desc ocispec.Descriptor, tag string) error {
+	raw, err := manifestBytes(ctx, repository, desc)
+	if err != nil {
+		return err
+	}
+	return repository.Manifests().PushReference(ctx, desc, bytes.NewReader(raw), tag)
 }
 
 // compressionOf reports the SquashFS compressor of an image, or "" when it

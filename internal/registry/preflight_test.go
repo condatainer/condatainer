@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -53,7 +54,7 @@ func TestPreflightReportsThePlan(t *testing.T) {
 		t.Fatalf("logged %v, want one summary", lines)
 	}
 	for _, want := range []string{
-		"Upload plan", "layer-size=2.00 GiB (floor)", "layers=1", "requests=~15", "registry=ghcr.io",
+		"Upload plan", "layer-size=2.00 GiB (floor)", "layers=1", fmt.Sprintf("requests=~%d", estimateRequests(1)), "registry=ghcr.io",
 	} {
 		if !strings.Contains(lines[0], want) {
 			t.Errorf("summary %q does not mention %q", lines[0], want)
@@ -65,13 +66,13 @@ func TestPreflightReportsThePlan(t *testing.T) {
 // is a warning about what to expect, not a refusal. An operator told a long
 // transfer will pause does not report it as a hang.
 func TestPreflightWarnsPastTheObservedCeiling(t *testing.T) {
-	// 400 GiB clamps to 9 GiB layers, 45 of them, 145 requests.
-	if _, reason := planLayerSize(400*gib, ghcrMaxLayer); reason != layerSizeClamped {
+	// 410 GiB clamps to 9 GiB layers, 46 of them, 102 requests.
+	if _, reason := planLayerSize(410*gib, ghcrMaxLayer); reason != layerSizeClamped {
 		t.Fatalf("the fixture no longer clamps; the request estimate below is wrong")
 	}
-	layers := layerCount(400*gib, 9*gib)
+	layers := layerCount(410*gib, 9*gib)
 	if got := estimateRequests(layers); got <= expectedRequestCeiling {
-		t.Errorf("a 400 GiB push plans %d requests, which would not warn", got)
+		t.Errorf("a 410 GiB push plans %d requests, which would not warn", got)
 	}
 }
 

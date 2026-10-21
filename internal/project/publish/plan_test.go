@@ -172,3 +172,54 @@ func TestTwoFrozenEnvironmentsPublish(t *testing.T) {
 		}
 	}
 }
+
+// A digest the lock already records is proof the destination holds the build,
+// so the manifest is not read. An unrecorded one is read and checked.
+func TestAlreadyPublishedReadsNoManifestForARecordedDigest(t *testing.T) {
+	root := projectRoot(t)
+	_, manifest := vendorData(t, root, "grch38/genome/gencode49", "echo index\n")
+	annotations := map[string]string{
+		registry.AnnTitle:          manifest.Name,
+		registry.AnnSchema:         "1",
+		registry.AnnArch:           "amd64",
+		registry.AnnIdentityScheme: manifest.Keys.Identity.Scheme,
+		registry.AnnIdentitySHA:    manifest.Keys.Identity.SHA256,
+		registry.AnnEquivScheme:    manifest.Keys.Equiv.Scheme,
+		registry.AnnEquivSHA:       manifest.Keys.Equiv.SHA256,
+	}
+	address, reads := serveCountedManifest(t, annotations)
+	repository := address + "/cnt"
+	base, repo, err := registry.SplitCoordinate(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := registry.ResolveTag(context.Background(), base, repo, "star__amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan := func(recorded []lock.Remote) *Plan {
+		return &Plan{Repository: repository, Steps: []Step{{
+			Name: manifest.Name, Identity: manifest.Keys.Identity.Digest(),
+			Disposition: Upload, Tags: []string{"star__amd64"}, Recorded: recorded,
+		}}}
+	}
+
+	known := plan([]lock.Remote{{Repository: repository, ManifestDigest: head.Digest.String()}})
+	markAlreadyPublished(context.Background(), known)
+	if known.Steps[0].Disposition != Present || known.Steps[0].Remote.ManifestDigest != head.Digest.String() {
+		t.Errorf("a recorded digest = %+v, want present at that digest", known.Steps[0])
+	}
+	if reads.Load() != 0 {
+		t.Errorf("a recorded digest read %d manifests, want none", reads.Load())
+	}
+
+	unknown := plan(nil)
+	markAlreadyPublished(context.Background(), unknown)
+	if unknown.Steps[0].Disposition != Present {
+		t.Errorf("an unrecorded build = %+v, want present after its manifest is checked", unknown.Steps[0])
+	}
+	if reads.Load() != 1 {
+		t.Errorf("an unrecorded build read %d manifests, want one", reads.Load())
+	}
+}

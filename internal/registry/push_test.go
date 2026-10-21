@@ -243,6 +243,11 @@ func TestPublishWritesEveryTag(t *testing.T) {
 	if len(listed) != 3 {
 		t.Errorf("tags = %v, want exactly the three written", listed)
 	}
+	// A manifest read counts against a pull limit, and a tag is written from the
+	// bytes the push already holds.
+	if f.manifestGets != 0 {
+		t.Errorf("a fresh push read %d manifests back, want none", f.manifestGets)
+	}
 }
 
 // A build already published uploads nothing. Pushing it again points whichever
@@ -268,6 +273,12 @@ func TestPublishOfAPublishedBuildUploadsNothing(t *testing.T) {
 
 	f.dropTag(tags.Name)
 	f.dropTag(tags.Equiv)
+	// A new process has read nothing: the published build is read once and both
+	// missing tags are written from that read.
+	manifests.Lock()
+	clear(manifests.byDigest)
+	manifests.Unlock()
+	f.manifestGets = 0
 	var shown PublishPlan
 	req := f.request(source)
 	req.Confirm = func(plan PublishPlan) bool { shown = plan; return true }
@@ -284,6 +295,9 @@ func TestPublishOfAPublishedBuildUploadsNothing(t *testing.T) {
 	}
 	if len(f.blobs) != blobs {
 		t.Errorf("blobs went from %d to %d: a published build was uploaded again", blobs, len(f.blobs))
+	}
+	if f.manifestGets != 1 {
+		t.Errorf("finishing the tags read %d manifests, want the published build once", f.manifestGets)
 	}
 }
 

@@ -18,10 +18,13 @@ import (
 // Covers the SIGTERM→SIGKILL grace period (~30s) and NFS write latency.
 const autoDoneBuffer = 3 * time.Minute
 
-// schedPollInterval is the minimum time between scheduler queries for pending/starting helpers.
+// watchInterval is how often the watcher reads every active helper's events file.
+const watchInterval = time.Second
+
+// schedPollInterval is the minimum time between scheduler queries for pending helpers.
 const schedPollInterval = 30 * time.Second
 
-// runningSchedPollInterval is the minimum time between scheduler queries for running helpers.
+// runningSchedPollInterval is the minimum time between scheduler queries for helpers whose job has started.
 // Used as a backstop for SIGKILL/OOM-kill/node-crash; normal exits are caught via the done-event trap.
 const runningSchedPollInterval = 5 * time.Minute
 
@@ -58,7 +61,7 @@ type helperInfo struct {
 	connect   string // helper.connect recorded at submission
 }
 
-// watcher polls NFS helper state directories every 2 seconds.
+// watcher polls NFS helper state directories every watchInterval.
 // It opens SSH tunnels when ready files appear and closes them when done files appear.
 // When a helper's walltime expires and no done file appears (e.g. SIGKILL), the watcher
 // synthesizes one so history and tunnels are cleaned up automatically.
@@ -67,6 +70,9 @@ type watcher struct {
 	offsets         map[string]int64      // per-helper message file byte offset
 	done            map[string]struct{}   // IDs that have reached a terminal state
 	lastSchedPoll   map[string]time.Time  // last scheduler query time per helper
+	schedCheckedAt  map[string]time.Time  // when the last scheduler answer was applied per helper
+	schedInflight   map[string]struct{}   // helpers with a scheduler query running
+	schedResults    chan schedResult      // answers from the query goroutines, applied on the next tick
 	lastOpenAttempt map[string]time.Time  // last proxies.Open() attempt time per helper
 	info            map[string]helperInfo // cached status+timing for active helpers
 	lastMsg         sync.Map              // string → string; last log message per helper (read by HTTP handlers)
@@ -79,6 +85,9 @@ func newWatcher(s *srv) *watcher {
 		offsets:         make(map[string]int64),
 		done:            make(map[string]struct{}),
 		lastSchedPoll:   make(map[string]time.Time),
+		schedCheckedAt:  make(map[string]time.Time),
+		schedInflight:   make(map[string]struct{}),
+		schedResults:    make(chan schedResult, 64),
 		lastOpenAttempt: make(map[string]time.Time),
 		info:            make(map[string]helperInfo),
 	}
@@ -187,7 +196,7 @@ func (w *watcher) run(ctx context.Context) {
 	w.reconcileOnStart(ctx)
 	w.restoreExisting()
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(watchInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -201,6 +210,7 @@ func (w *watcher) run(ctx context.Context) {
 
 // tick scans all known helper state directories.
 func (w *watcher) tick() {
+	w.applySchedResults()
 	baseDir := filepath.Join(config.GetUserStateDir(), "helper")
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
@@ -272,22 +282,18 @@ func (w *watcher) pollHelper(id string) {
 		}
 	}
 
-	if w.syncSchedulerStatus(id) {
-		return
-	}
+	w.requestSchedulerStatus(id, false)
 
 	// Reopen tunnel if it dropped (SSH disconnect or initial dial failure).
 	// Open() is called in a goroutine so the watcher is not blocked by the SSH dial.
 	// Backs off with consecutive failures (reopenInterval) so a persistently
 	// failing tunnel is not hammered. After a failed dial the job is usually
-	// gone, so the scheduler is asked again before dialling once more.
+	// gone, so the scheduler's answer is awaited before dialling once more.
 	if inf, ok := w.info[id]; ok && inf.status == "running" && inf.port > 0 && w.s.proxies.Get(id) == nil {
 		if last, seen := w.lastOpenAttempt[id]; !seen || time.Since(last) >= reopenInterval(w.s.proxies.Failures(id)) {
-			if w.s.proxies.LastError(id) != "" {
-				delete(w.lastSchedPoll, id)
-				if w.syncSchedulerStatus(id) {
-					return
-				}
+			if w.s.proxies.LastError(id) != "" && !w.schedCheckedAt[id].After(w.lastOpenAttempt[id]) &&
+				w.requestSchedulerStatus(id, true) {
+				return
 			}
 			w.lastOpenAttempt[id] = time.Now()
 			go w.s.proxies.Open(id, inf.name, inf.node, inf.port, inf.connect, inf.jobID)
@@ -328,23 +334,39 @@ func (w *watcher) pollHelper(id string) {
 	}
 }
 
-func (w *watcher) syncSchedulerStatus(id string) bool {
+// schedResult is the scheduler's answer about one helper's job.
+type schedResult struct {
+	id     string
+	status scheduler.JobStatus
+	err    error
+}
+
+// requestSchedulerStatus starts a scheduler query for the helper's job in the background
+// and reports whether one is running for it.
+//   - It starts none while one is running, or inside the poll interval unless force is set.
+//   - It starts none for a helper with no job, or when no scheduler is active.
+//   - The answer arrives through schedResults and is applied by the next tick, so a slow
+//     scheduler never delays the watcher's other work.
+func (w *watcher) requestSchedulerStatus(id string, force bool) bool {
 	inf, ok := w.info[id]
 	if !ok || inf.jobID == "" {
 		return false
 	}
+	if _, running := w.schedInflight[id]; running {
+		return true
+	}
 
 	var interval time.Duration
 	switch inf.status {
-	case "pending", "starting":
+	case "pending":
 		interval = schedPollInterval
-	case "running":
+	case "starting", "running":
 		interval = runningSchedPollInterval
 	default:
 		return false
 	}
 
-	if last, ok := w.lastSchedPoll[id]; ok && time.Since(last) < interval {
+	if last, ok := w.lastSchedPoll[id]; ok && !force && time.Since(last) < interval {
 		return false
 	}
 	sched := scheduler.ActiveScheduler()
@@ -352,28 +374,56 @@ func (w *watcher) syncSchedulerStatus(id string) bool {
 		return false
 	}
 	w.lastSchedPoll[id] = time.Now()
-	schedCtx, schedCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	status, err := sched.GetJobStatus(schedCtx, inf.jobID)
-	schedCancel()
-	if err != nil {
-		logging.FromContext(w.s.ctx).Debug("server: GetJobStatus failed", "jobID", inf.jobID, "err", err)
-		return false
+	w.schedInflight[id] = struct{}{}
+	jobID := inf.jobID
+	go func() {
+		ctx, cancel := context.WithTimeout(w.s.ctx, 30*time.Second)
+		defer cancel()
+		status, err := sched.GetJobStatus(ctx, jobID)
+		select {
+		case w.schedResults <- schedResult{id: id, status: status, err: err}:
+		case <-w.s.ctx.Done():
+		}
+	}()
+	return true
+}
+
+// applySchedResults applies every scheduler answer that has arrived.
+func (w *watcher) applySchedResults() {
+	for {
+		select {
+		case r := <-w.schedResults:
+			w.applySchedResult(r)
+		default:
+			return
+		}
 	}
-	switch status {
+}
+
+func (w *watcher) applySchedResult(r schedResult) {
+	delete(w.schedInflight, r.id)
+	inf, ok := w.info[r.id]
+	if !ok {
+		return
+	}
+	w.schedCheckedAt[r.id] = time.Now()
+	if r.err != nil {
+		logging.FromContext(w.s.ctx).Debug("server: GetJobStatus failed", "jobID", inf.jobID, "err", r.err)
+		return
+	}
+	switch r.status {
 	case scheduler.JobStatusRunning:
 		if inf.status == "pending" {
-			w.info[id] = helperInfo{jobID: inf.jobID, name: inf.name, status: "starting", startedAt: inf.startedAt, walltime: inf.walltime, connect: inf.connect}
-			_ = helper.UpdateHistoryRun(id, func(run *helper.HelperRun) {
+			w.info[r.id] = helperInfo{jobID: inf.jobID, name: inf.name, status: "starting", startedAt: inf.startedAt, walltime: inf.walltime, connect: inf.connect}
+			_ = helper.UpdateHistoryRun(r.id, func(run *helper.HelperRun) {
 				run.Status = "starting"
 			})
 			invalidateHistoryCache()
 		}
 	case scheduler.JobStatusDone, scheduler.JobStatusFailed:
-		w.synthesizeDone(id)
-		w.closeDone(id, 0, time.Now())
-		return true
+		w.synthesizeDone(r.id)
+		w.closeDone(r.id, 0, time.Now())
 	}
-	return false
 }
 
 // closeDone closes the tunnel and marks history done/failed for the given helper.
@@ -396,6 +446,8 @@ func (w *watcher) closeDone(id string, exitCode int, endedAt time.Time) {
 	w.done[id] = struct{}{}
 	delete(w.offsets, id)
 	delete(w.lastSchedPoll, id)
+	delete(w.schedCheckedAt, id)
+	delete(w.schedInflight, id)
 	delete(w.lastOpenAttempt, id)
 	delete(w.info, id)
 	w.lastMsg.Delete(id)

@@ -133,6 +133,9 @@ func (p *PbsScheduler) GetCurrentJobID() string { return os.Getenv(p.JobIDVar())
 // JobIDEnvExpr strips the server suffix (e.g. "123.server" → "123") present on some PBS clusters.
 func (p *PbsScheduler) JobIDEnvExpr() string { return "${" + p.JobIDVar() + "%%.*}" }
 
+// NodeNameEnvExpr is the first host of the job's node file.
+func (p *PbsScheduler) NodeNameEnvExpr() string { return `$(head -n 1 "$PBS_NODEFILE" 2>/dev/null)` }
+
 // TmpDirVar returns the name of the PBS per-job node-local tmpdir env var.
 func (p *PbsScheduler) TmpDirVar() string { return "PBS_TMPDIR" }
 
@@ -456,6 +459,9 @@ func (p *PbsScheduler) parseSingleResource(res string, rs *ResourceSpec) error {
 // CreateScriptWithSpec generates a PBS batch script
 func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) (string, error) {
 	specs := jobSpec.Specs
+	if len(specs.Control.ExcludedNodes()) > 0 {
+		return "", fmt.Errorf("%w: PBS has no directive for it; clear scheduler.exclude_nodes and --exclude-nodes to submit", ErrExcludeNodesUnsupported)
+	}
 
 	// Create output directory if specified (scripts still live in outputDir)
 	if outputDir != "" {

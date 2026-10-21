@@ -164,11 +164,11 @@ func TestTagsFor(t *testing.T) {
 			[]string{"star__a31f902c12ab__noarch", "star__eq-e90d3b7714cf__noarch", "star__noarch"}},
 		{"a Conda build takes no equivalence tag", meta.BuildTypeConda, "arm64", TagRequest{Name: true, Equiv: true},
 			[]string{"star__a31f902c12ab__arm64", "star__arm64"}},
-		{"a frozen environment takes no equivalence tag", meta.BuildTypeSnapshot, "amd64", TagRequest{Name: true, Equiv: true},
-			[]string{"star__a31f902c12ab__amd64", "star__amd64"}},
-		{"a project closure entry takes only the build tag", meta.BuildTypeScript, "amd64", TagRequest{},
+		{"a frozen environment takes only the build tag", meta.BuildTypeSnapshot, "amd64", TagRequest{Name: true, Equiv: true},
 			[]string{"star__a31f902c12ab__amd64"}},
-		{"a project pin adds the name tag", meta.BuildTypeScript, "amd64", TagRequest{Name: true},
+		{"no request takes only the build tag", meta.BuildTypeScript, "amd64", TagRequest{},
+			[]string{"star__a31f902c12ab__amd64"}},
+		{"a name request adds the name tag", meta.BuildTypeScript, "amd64", TagRequest{Name: true},
 			[]string{"star__a31f902c12ab__amd64", "star__amd64"}},
 	}
 	for _, tt := range tests {

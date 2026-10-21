@@ -192,6 +192,7 @@ func (t Tags) List() []string {
 // TagsFor spells the tags a push of m writes.
 //   - Every tag is spelled before anything is uploaded, so a name that does not fit fails first.
 //   - Only a script or def build takes an equivalence tag. A Conda build has no prebuilt to match, and a frozen environment's equivalence key is its identity.
+//   - A frozen environment takes no name tag. Every one is called env, so only its build tag addresses it.
 func TagsFor(m meta.Manifest, req TagRequest) (Tags, error) {
 	arch := m.Platform.Arch
 	build, err := BuildTag(m.Name, m.Keys.Identity, arch)
@@ -204,7 +205,7 @@ func TagsFor(m meta.Manifest, req TagRequest) (Tags, error) {
 			return Tags{}, err
 		}
 	}
-	if req.Name {
+	if req.Name && m.BuildType != meta.BuildTypeSnapshot {
 		if tags.Name, err = NameTag(m.Name, arch); err != nil {
 			return Tags{}, err
 		}

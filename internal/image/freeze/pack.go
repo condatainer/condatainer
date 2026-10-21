@@ -132,7 +132,7 @@ func Pack(ctx context.Context, opts PackOptions, entries []Entry, tr Translation
 	}
 
 	script := packScript(packSources, target, args, opts, mksquashfsBin)
-	log.Info("Packing frozen environment",
+	log.Info("Packing snapshot",
 		"source", opts.Image, "target", opts.Target, "route", route,
 		"roots", strings.Join(sources, " "), "deletions", tr.Deletions())
 

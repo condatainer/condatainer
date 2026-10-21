@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact/key"
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/registry"
@@ -253,6 +255,27 @@ func TestPushAudienceComesFromTheSource(t *testing.T) {
 	}
 	if got, err := pushAudience(push, nil, "restricted"); err != nil || got != registry.Restricted {
 		t.Errorf("--audience with --registry = (%q, %v), want restricted", got, err)
+	}
+}
+
+func TestFrozenEnvironmentsStayOffSourcesAndOutOfLayers(t *testing.T) {
+	if err := refuseFrozen(meta.Manifest{BuildType: meta.BuildTypeSnapshot}, "env.sqf"); err == nil {
+		t.Error("a frozen environment was accepted for a source's registry")
+	}
+	if err := refuseFrozen(meta.Manifest{BuildType: meta.BuildTypeScript}, "star.sqf"); err != nil {
+		t.Errorf("a script build was refused for a source's registry: %v", err)
+	}
+
+	frozen := map[string]string{registry.AnnIdentityScheme: string(key.PayloadTreeV1)}
+	if err := requirePrefixForFrozen(frozen, ""); err == nil || !strings.Contains(err.Error(), "--prefix") {
+		t.Errorf("a frozen pull without --prefix = %v, want a request for --prefix", err)
+	}
+	if err := requirePrefixForFrozen(frozen, "./env.sqf"); err != nil {
+		t.Errorf("a frozen pull with --prefix = %v", err)
+	}
+	built := map[string]string{registry.AnnIdentityScheme: string(key.ScriptIdentityV1)}
+	if err := requirePrefixForFrozen(built, ""); err != nil {
+		t.Errorf("a script build pulled without --prefix = %v", err)
 	}
 }
 

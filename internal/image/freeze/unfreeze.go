@@ -25,7 +25,7 @@ import (
 // Errors a caller distinguishes.
 var (
 	// ErrNotFrozen reports an artifact that is not a frozen environment.
-	ErrNotFrozen = errors.New("not a frozen environment")
+	ErrNotFrozen = errors.New("not a snapshot")
 	// ErrTooSmall reports a requested size the payload does not fit in.
 	ErrTooSmall = errors.New("requested size is smaller than the payload")
 )

@@ -94,6 +94,9 @@ func (s *SlurmScheduler) JobIDVar() string { return "SLURM_JOB_ID" }
 func (s *SlurmScheduler) GetCurrentJobID() string { return os.Getenv(s.JobIDVar()) }
 func (s *SlurmScheduler) JobIDEnvExpr() string    { return "${" + s.JobIDVar() + "}" }
 
+// NodeNameEnvExpr is the name the node is registered under.
+func (s *SlurmScheduler) NodeNameEnvExpr() string { return "${SLURMD_NODENAME}" }
+
 // TmpDirVar returns the name of the SLURM per-job node-local tmpdir env var.
 func (s *SlurmScheduler) TmpDirVar() string { return "SLURM_TMPDIR" }
 

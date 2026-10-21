@@ -430,6 +430,10 @@ type Scheduler interface {
 	// Derived from JobIDVar() for most schedulers; PBS strips the server suffix.
 	JobIDEnvExpr() string
 
+	// NodeNameEnvExpr returns a shell expression that expands, inside a submitted job, to the
+	// name the scheduler gives the node the job runs on. It may expand to nothing.
+	NodeNameEnvExpr() string
+
 	// TmpDirVar returns the name of the scheduler-assigned per-job node-local tmpdir
 	// environment variable (e.g. "SLURM_TMPDIR", "PBS_TMPDIR"). Returns "" if this
 	// scheduler does not expose a per-job tmpdir variable.

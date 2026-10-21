@@ -77,6 +77,11 @@ func (h *HTCondorScheduler) JobIDVar() string { return "_CONDOR_JOB_ID" }
 func (h *HTCondorScheduler) GetCurrentJobID() string { return os.Getenv(h.JobIDVar()) }
 func (h *HTCondorScheduler) JobIDEnvExpr() string    { return "${" + h.JobIDVar() + "}" }
 
+// NodeNameEnvExpr is the Machine attribute of the slot the job runs in.
+func (h *HTCondorScheduler) NodeNameEnvExpr() string {
+	return `$(sed -n 's/^Machine = "\(.*\)"/\1/p' "$_CONDOR_MACHINE_AD" 2>/dev/null)`
+}
+
 // TmpDirVar returns the name of the HTCondor per-job node-local tmpdir env var.
 func (h *HTCondorScheduler) TmpDirVar() string { return "_CONDOR_SCRATCH_DIR" }
 

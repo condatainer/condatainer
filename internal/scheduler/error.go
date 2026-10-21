@@ -35,6 +35,9 @@ var (
 	// ErrExecUnsupported indicates the scheduler has no way to run a command inside an existing job from outside it
 	ErrExecUnsupported = errors.New("scheduler cannot run a command inside a job")
 
+	// ErrExcludeNodesUnsupported indicates the scheduler has no way to keep a job off named nodes
+	ErrExcludeNodesUnsupported = errors.New("scheduler cannot exclude nodes")
+
 	// ErrInvalidMemoryFormat indicates memory format is invalid
 	ErrInvalidMemoryFormat = errors.New("invalid memory format")
 )

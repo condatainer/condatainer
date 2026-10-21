@@ -117,6 +117,7 @@ func PrintHelperUsage(scriptName string, params []HelperParam, spec *scheduler.R
 	fmt.Println("  -w, --cwd <path>  Change working directory (e.g. -w .)")
 	fmt.Println("  -A, --account     Billing/allocation account")
 	fmt.Println("  -p, --partition   Partition/queue")
+	fmt.Println("      --exclude-nodes <a,b>  Nodes the job must not run on (empty for none)")
 	fmt.Println("      --new         Skip reuse prompt, force new instance")
 	if len(params) > 0 {
 		fmt.Println("\nHelper-specific flags:")

@@ -51,6 +51,8 @@ type RunOptions struct {
 	Partition string
 	// Account to submit under (empty falls back to scheduler.Account(); ignored when headless)
 	Account string
+	// ExcludeNodes the job must not run on. Nil falls back to scheduler.exclude_nodes; an empty list clears it. Ignored when headless.
+	ExcludeNodes []string
 	// Behaviour
 	ForceNew bool
 	// ExtraBinds is the resolved list of extra bind-mount specs ("src:dest") from
@@ -638,7 +640,7 @@ func newHelperID(name string) string {
 // account/partition fall back to scheduler.Account()/.Partition when empty —
 // there is no script-header tier for either (unlike ncpus/mem/time/gpu), since a script
 // author has no way to know a user's cluster account.
-func buildHelperScriptSpecs(name, cwd, account, partition string, spec *scheduler.ResourceSpec) *scheduler.ScriptSpecs {
+func buildHelperScriptSpecs(name, cwd, account, partition string, excludeNodes []string, spec *scheduler.ResourceSpec) *scheduler.ScriptSpecs {
 	if account == "" {
 		account = scheduler.Account()
 	}
@@ -648,12 +650,13 @@ func buildHelperScriptSpecs(name, cwd, account, partition string, spec *schedule
 	ss := &scheduler.ScriptSpecs{
 		Spec: spec,
 		Control: scheduler.RuntimeConfig{
-			JobName:   "cnt-" + name,
-			WorkDir:   cwd,
-			Stdout:    "/dev/null",
-			Stderr:    "/dev/null",
-			Account:   account,
-			Partition: partition,
+			JobName:      "cnt-" + name,
+			WorkDir:      cwd,
+			Stdout:       "/dev/null",
+			Stderr:       "/dev/null",
+			Account:      account,
+			Partition:    partition,
+			ExcludeNodes: excludeNodes,
 		},
 		HasDirectives: spec != nil,
 	}
@@ -669,7 +672,7 @@ func buildHelperScriptSpecs(name, cwd, account, partition string, spec *schedule
 //   - Script, logs and state files sit together, and the state dir is permanent.
 //   - Headless (sched == nil) writes job.sh directly.
 //   - Otherwise it delegates to sched.CreateScriptWithSpec with the state dir as output dir.
-func generateWrapper(id, name, cwd, scriptDir, stateDir, account, partition string, walltime time.Duration,
+func generateWrapper(id, name, cwd, scriptDir, stateDir, account, partition string, excludeNodes []string, walltime time.Duration,
 	params map[string]string, spec *scheduler.ResourceSpec, sched scheduler.Scheduler,
 	containerCmd string) (string, error) {
 
@@ -698,7 +701,7 @@ func generateWrapper(id, name, cwd, scriptDir, stateDir, account, partition stri
 	jobSpec := &scheduler.JobSpec{
 		Name:       "cnt-" + name,
 		Command:    body,
-		Specs:      buildHelperScriptSpecs(name, cwd, account, partition, spec),
+		Specs:      buildHelperScriptSpecs(name, cwd, account, partition, excludeNodes, spec),
 		KeepScript: true,
 	}
 

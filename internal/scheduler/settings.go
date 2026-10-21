@@ -1,9 +1,12 @@
 package scheduler
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,6 +59,12 @@ var (
 		settings.Default("2h"),
 		settings.Help("Time limit for a job that has no scheduler directives of its own."),
 		settings.Suggest("1h", "2h", "4h", "8h"))
+
+	keyExcludeNodes = settings.List("scheduler.exclude_nodes",
+		settings.Order(9), settings.MergeLists(),
+		settings.Split(splitNodeNames),
+		settings.Validate(validateNodeName),
+		settings.Help("Nodes jobs must not run on, as the scheduler names them. Every layer's list is merged. PBS refuses it."))
 
 	keyProxyPerJob = settings.Bool("scheduler.proxy_perjob",
 		settings.Order(10),
@@ -146,6 +155,41 @@ func Enabled() bool {
 
 // Account is the account a job is submitted under when none is given, "" for the scheduler's default.
 func Account() string { return keyAccount.Get() }
+
+// ExcludeNodes is the nodes every submitted job is kept off, in the scheduler's own names.
+func ExcludeNodes() []string { return keyExcludeNodes.Get() }
+
+// splitNodeNames splits the text of an environment variable on commas.
+func splitNodeNames(text string) []string {
+	var out []string
+	for _, n := range strings.Split(text, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// nodeNamePattern is a host name: letters, digits, dots, dashes and underscores. The
+// name is written into a job script, so nothing the shell or a submit file reads is allowed.
+var nodeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+func validateNodeName(name string) error {
+	if !nodeNamePattern.MatchString(name) {
+		return fmt.Errorf("%q is not a node name", name)
+	}
+	return nil
+}
+
+// ValidateNodeNames returns an error for the first name that is not a plain host name.
+func ValidateNodeNames(names []string) error {
+	for _, n := range names {
+		if err := validateNodeName(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // Partition is the partition a job is submitted to when none is given, "" for the scheduler's default.
 func Partition() string { return keyPartition.Get() }

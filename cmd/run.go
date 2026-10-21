@@ -29,26 +29,27 @@ var (
 	runWritableImg bool
 	// runBaseImage holds the resolved default root once ensureRootBaseImage has
 	// run; "" until then, and always "" if the run's own overlays supply a root.
-	runBaseImage   string
-	runEnvSettings []string
-	runBindPaths   []string
-	runFakeroot    bool
-	runStdout      string
-	runStderr      string
-	runAfterOK     string
-	runAfterNotOK  string
-	runAfterAny    string
-	runCPU         int
-	runMem         string
-	runTime        string
-	runGPU         string
-	runAccount     string
-	runPartition   string
-	runDryRun      bool
-	runArray       string
-	runArrayLimit  int
-	runName        string
-	runProjectDir  string
+	runBaseImage    string
+	runEnvSettings  []string
+	runBindPaths    []string
+	runFakeroot     bool
+	runStdout       string
+	runStderr       string
+	runAfterOK      string
+	runAfterNotOK   string
+	runAfterAny     string
+	runCPU          int
+	runMem          string
+	runTime         string
+	runGPU          string
+	runAccount      string
+	runPartition    string
+	runExcludeNodes []string
+	runDryRun       bool
+	runArray        string
+	runArrayLimit   int
+	runName         string
+	runProjectDir   string
 )
 
 // errRunAborted signals a handled stop (message already printed); caller returns nil.
@@ -58,7 +59,7 @@ var errRunAborted = errors.New("run aborted")
 var runJobFlagNames = map[string]bool{
 	"output": true, "error": true,
 	"afterok": true, "afternotok": true, "afterany": true,
-	"cpu": true, "mem": true, "time": true, "gpu": true, "account": true, "partition": true,
+	"cpu": true, "mem": true, "time": true, "gpu": true, "account": true, "partition": true, "exclude-nodes": true,
 	"dry-run": true, "name": true, "array": true, "array-limit": true,
 	"no-submit": true,
 }
@@ -109,6 +110,7 @@ func init() {
 	runCmd.Flags().StringVarP(&runGPU, "gpu", "g", "", "Override GPUs per node (e.g. 1, a100:2, a100)")
 	runCmd.Flags().StringVarP(&runAccount, "account", "A", "", "Override billing/allocation account")
 	runCmd.Flags().StringVarP(&runPartition, "partition", "p", "", "Override partition/queue")
+	runCmd.Flags().StringSliceVar(&runExcludeNodes, "exclude-nodes", nil, "Override the nodes the job must not run on (comma-separated; empty for none)")
 	runCmd.Flags().BoolVar(&runDryRun, "dry-run", false, "Show what would happen, without doing it")
 	settings.AddSwitch(runCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run locally)"))
 	runCmd.Flags().StringVarP(&runName, "name", "n", "", "Override job name")
@@ -213,6 +215,13 @@ func runScript(cmd *cobra.Command, args []string) error {
 			scriptSpecs.Control.Partition = runPartition
 		} else if scriptSpecs.Control.Partition == "" {
 			scriptSpecs.Control.Partition = scheduler.Partition()
+		}
+		// CLI --exclude-nodes > script directive > scheduler.exclude_nodes.
+		if cmd.Flags().Changed("exclude-nodes") {
+			if err := scheduler.ValidateNodeNames(runExcludeNodes); err != nil {
+				return err
+			}
+			scriptSpecs.Control.ExcludeNodes = append([]string{}, runExcludeNodes...)
 		}
 		setDefaultWorkDir(scriptSpecs)
 	}
@@ -861,6 +870,9 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 		}
 		if specs.Control.Partition != "" {
 			fmt.Printf("  Partition:  %s\n", specs.Control.Partition)
+		}
+		if nodes := specs.Control.ExcludedNodes(); len(nodes) > 0 {
+			fmt.Printf("  Excluded:   %s\n", strings.Join(nodes, ","))
 		}
 		defaultOut := filepath.Join(submitDir(), scriptBase+"_<timestamp>.out")
 		if specs.Control.Stdout != "" {

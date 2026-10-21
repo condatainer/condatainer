@@ -2,6 +2,7 @@ package publish
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -67,10 +68,10 @@ func TestBuildDefaultsToSelectionsAndAddsClosureOnDemand(t *testing.T) {
 	}
 	for _, step := range plan.Steps {
 		if step.Artifact == dep && step.Pinned {
-			t.Error("a build dependency is marked selected, so it would take the plain name tag")
+			t.Error("a build dependency is marked as a pin")
 		}
-		if step.Artifact == dep && len(step.Tags) != 1 {
-			t.Errorf("a build dependency should carry only its qualified tag, got %v", step.Tags)
+		if step.Artifact == dep && (len(step.Tags) != 2 || !registry.IsNameTag(step.Tags[1])) {
+			t.Errorf("a build dependency should carry its build tag and its name tag, got %v", step.Tags)
 		}
 	}
 }
@@ -161,8 +162,9 @@ func TestTagCollisionRefuses(t *testing.T) {
 }
 
 // Every frozen environment is named meta.EnvName, so a project pinning two
-// shares a name by construction. That must plan as two qualified tags and no
-// plain one, never as a collision that refuses the whole push.
+// shares a name by construction. A frozen environment takes no name tag, so
+// that plans as two build tags and no ambiguity, never as a collision that
+// refuses the whole push.
 func TestTwoFrozenEnvironmentsPublish(t *testing.T) {
 	root := projectRoot(t)
 	one := vendorEnv(t, root, strings.Repeat("1a", 32))
@@ -177,8 +179,8 @@ func TestTwoFrozenEnvironmentsPublish(t *testing.T) {
 	if !plan.Complete() {
 		t.Fatalf("two environments refused the push: %v", plan.Problems)
 	}
-	if len(plan.Ambiguous) != 1 || plan.Ambiguous[0] != meta.EnvName {
-		t.Errorf("ambiguous = %v, want %q once", plan.Ambiguous, meta.EnvName)
+	if len(plan.Ambiguous) != 0 {
+		t.Errorf("ambiguous = %v, want none: a frozen environment has no name tag", plan.Ambiguous)
 	}
 	for _, step := range plan.Steps {
 		if step.Disposition != Upload {
@@ -186,6 +188,42 @@ func TestTwoFrozenEnvironmentsPublish(t *testing.T) {
 		}
 		if len(step.Tags) != 1 || !strings.HasPrefix(step.Tags[0], meta.EnvName+"__") {
 			t.Errorf("%s tags = %v, want one qualified tag", step.Artifact, step.Tags)
+		}
+	}
+}
+
+// A pin keeps the name tag over a build dependency of the same name; the dependency is addressed by its build tag.
+func TestAPinKeepsTheNameTagOverADependency(t *testing.T) {
+	root := projectRoot(t)
+	pinTool, _ := vendorData(t, root, "cutadapt/5.0", "echo pinned\n")
+	dep, depManifest := vendorData(t, root, "cutadapt/5.0", "echo as a dependency\n")
+	user, _ := vendorData(t, root, "grch38/genome/gencode49", "echo index\n", meta.Dependency{
+		Name:     depManifest.Name,
+		Type:     depManifest.Type,
+		Identity: depManifest.Keys.Identity,
+		Equiv:    depManifest.Keys.Equiv,
+		Role:     "data",
+	})
+
+	l := lockWith(t, root, "ghcr.io/lab/p/cnt")
+	l.Pins["cutadapt/5.0"] = lock.PinEntry{Artifact: pinTool}
+	l.Pins["grch38/genome/gencode49"] = lock.PinEntry{Artifact: user}
+
+	plan := buildPlan(t, root, l, Options{Closure: true})
+	if len(plan.Ambiguous) != 0 {
+		t.Errorf("ambiguous = %v, want none: one pin and one dependency share the name", plan.Ambiguous)
+	}
+	for _, step := range plan.Steps {
+		named := slices.ContainsFunc(step.Tags, registry.IsNameTag)
+		switch step.Artifact {
+		case pinTool:
+			if !named {
+				t.Errorf("the pin lost its name tag: %v", step.Tags)
+			}
+		case dep:
+			if named {
+				t.Errorf("the dependency took the name tag the pin holds: %v", step.Tags)
+			}
 		}
 	}
 }

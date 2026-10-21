@@ -21,6 +21,7 @@ func init() {
 	rootCmd.AddCommand(serverReadyCmd)
 	rootCmd.AddCommand(serverMessageCmd)
 	rootCmd.AddCommand(serverDoneCmd)
+	rootCmd.AddCommand(serverStartedCmd)
 	rootCmd.AddCommand(pickPortCmd)
 	rootCmd.AddCommand(helperHoldCmd)
 	rootCmd.AddCommand(helperStateDirCmd)
@@ -174,6 +175,43 @@ var serverMessageCmd = &cobra.Command{
 func init() {
 	serverMessageCmd.Flags().StringVar(&serverMessageID, "id", "", "Helper run ID (defaults to $CNT_HELPER_ID)")
 	serverMessageCmd.Flags().StringVar(&serverMessageLevel, "level", "info", "Message level: info|warn|error")
+}
+
+// ── _server_started ────────────────────────────────────────────────────────
+
+var (
+	serverStartedID   string
+	serverStartedNode string
+)
+
+var serverStartedCmd = &cobra.Command{
+	Use:    "_server_started",
+	Hidden: true,
+	Short:  "Record the node a helper job started on (called from the wrapper script)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+		id := serverStartedID
+		if id == "" {
+			id = os.Getenv("CNT_HELPER_ID")
+		}
+		if id == "" {
+			return fmt.Errorf("--id or $CNT_HELPER_ID is required")
+		}
+		node := serverStartedNode
+		if node == "" {
+			node, _ = os.Hostname()
+		}
+		return helper.AppendEvent(id, helper.StateEvent{
+			Type:  "start",
+			Node:  node,
+			JobID: os.Getenv("CNT_HELPER_JOB_ID"),
+		})
+	},
+}
+
+func init() {
+	serverStartedCmd.Flags().StringVar(&serverStartedID, "id", "", "Helper run ID (defaults to $CNT_HELPER_ID)")
+	serverStartedCmd.Flags().StringVar(&serverStartedNode, "node", "", "Node name (defaults to the host name)")
 }
 
 // ── _server_done ───────────────────────────────────────────────────────────

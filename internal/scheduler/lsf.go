@@ -80,6 +80,9 @@ func (l *LsfScheduler) JobIDVar() string { return "LSB_JOBID" }
 func (l *LsfScheduler) GetCurrentJobID() string { return os.Getenv(l.JobIDVar()) }
 func (l *LsfScheduler) JobIDEnvExpr() string    { return "${" + l.JobIDVar() + "}" }
 
+// NodeNameEnvExpr is the first host in the job's host list.
+func (l *LsfScheduler) NodeNameEnvExpr() string { return "${LSB_HOSTS%% *}" }
+
 // TmpDirVar returns the name of the LSF per-job node-local tmpdir env var.
 func (l *LsfScheduler) TmpDirVar() string { return "LSF_TMPDIR" }
 
@@ -530,8 +533,21 @@ func (l *LsfScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	// Skip any -M flags when enforcement is active: a computed -M will be emitted in the
 	// resource section below, so preserving the original would produce a duplicate.
 	skipExistingM := specs.Spec != nil && lsfMemoryEnforcement() != lsfMemEnforcementNone
+	// A script's own -m is a host list that cannot be merged with an excluded-node list, so
+	// the job's list replaces it and scheduler.exclude_nodes yields to it.
+	scriptHasHosts := false
+	for _, flag := range specs.RemainingFlags {
+		scriptHasHosts = scriptHasHosts || flagMatches(flag, "-m")
+	}
+	excluded := specs.Control.ExcludedNodes()
+	if specs.Control.ExcludeNodes == nil && scriptHasHosts {
+		excluded = nil
+	}
 	for _, flag := range lsfFullEnv(specs.RemainingFlags) {
 		if skipExistingM && flagMatches(flag, "-M") {
+			continue
+		}
+		if len(excluded) > 0 && flagMatches(flag, "-m") {
 			continue
 		}
 		fmt.Fprintf(writer, "#BSUB %s\n", flag)
@@ -577,6 +593,9 @@ func (l *LsfScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	}
 	if specs.Control.Account != "" {
 		fmt.Fprintf(writer, "#BSUB -P %s\n", specs.Control.Account)
+	}
+	if len(excluded) > 0 {
+		fmt.Fprintf(writer, "#BSUB -m \"all ~%s\"\n", strings.Join(excluded, " ~"))
 	}
 
 	// Resource directives — only when Spec is available

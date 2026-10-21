@@ -104,3 +104,23 @@ func TestParsePostScriptHelperFlagsWait(t *testing.T) {
 		t.Fatal("--wait=1 should be rejected: the flag takes no value")
 	}
 }
+
+func TestParsePostScriptHelperFlagsExcludeNodes(t *testing.T) {
+	flags, _, err := parsePostScriptHelperFlags([]string{"--exclude-nodes", "a, b.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !flags.excludeSet || len(flags.exclude) != 2 || flags.exclude[0] != "a" || flags.exclude[1] != "b.example" {
+		t.Fatalf("exclude flag = (%v, %#v), want (true, [a b.example])", flags.excludeSet, flags.exclude)
+	}
+	flags, _, err = parsePostScriptHelperFlags([]string{"--exclude-nodes="})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !flags.excludeSet || flags.exclude == nil || len(flags.exclude) != 0 {
+		t.Fatalf("empty exclude flag = (%v, %#v), want (true, empty non-nil)", flags.excludeSet, flags.exclude)
+	}
+	if _, _, err := parsePostScriptHelperFlags([]string{"--exclude-nodes", "a;b"}); err == nil {
+		t.Fatal("a name with shell syntax should be refused")
+	}
+}

@@ -94,6 +94,9 @@ func (s *SlurmScheduler) JobIDVar() string { return "SLURM_JOB_ID" }
 func (s *SlurmScheduler) GetCurrentJobID() string { return os.Getenv(s.JobIDVar()) }
 func (s *SlurmScheduler) JobIDEnvExpr() string    { return "${" + s.JobIDVar() + "}" }
 
+// NodeNameEnvExpr is the name the node is registered under.
+func (s *SlurmScheduler) NodeNameEnvExpr() string { return "${SLURMD_NODENAME}" }
+
 // TmpDirVar returns the name of the SLURM per-job node-local tmpdir env var.
 func (s *SlurmScheduler) TmpDirVar() string { return "SLURM_TMPDIR" }
 
@@ -193,6 +196,9 @@ func (s *SlurmScheduler) parseRuntimeConfig(directives []string) (RuntimeConfig,
 			rc.Partition, _ = flagValue(flag, "--partition", "-p")
 		case flagMatches(flag, "--account", "-A"):
 			rc.Account, _ = flagValue(flag, "--account", "-A")
+		case flagMatches(flag, "--exclude", "-x"):
+			v, _ := flagValue(flag, "--exclude", "-x")
+			rc.ExcludeNodes = splitSlurmNodeList(v)
 		case flagMatches(flag, "--mail-user"):
 			rc.MailUser, _ = flagValue(flag, "--mail-user")
 		case flagMatches(flag, "--mail-type"):
@@ -602,6 +608,9 @@ func (s *SlurmScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string
 	}
 	if ctrl.Account != "" {
 		fmt.Fprintf(writer, "#SBATCH --account=%s\n", ctrl.Account)
+	}
+	if nodes := ctrl.ExcludedNodes(); len(nodes) > 0 {
+		fmt.Fprintf(writer, "#SBATCH --exclude=%s\n", strings.Join(nodes, ","))
 	}
 
 	// Write ResourceSpec directives (only if not in passthrough mode)
@@ -1199,4 +1208,31 @@ func TryParseSlurmScript(scriptPath string) (*ScriptSpecs, error) {
 		directiveRe: regexp.MustCompile(`^\s*#SBATCH\s+(.+)$`),
 	}
 	return parser.ReadScriptSpecs(scriptPath)
+}
+
+// splitSlurmNodeList splits a node list on the commas outside brackets, so "n[1,3],m" is two entries.
+func splitSlurmNodeList(list string) []string {
+	out := []string{}
+	depth, start := 0, 0
+	for i, r := range list {
+		switch r {
+		case '[':
+			depth++
+		case ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, list[start:i])
+				start = i + 1
+			}
+		}
+	}
+	out = append(out, list[start:])
+	kept := out[:0]
+	for _, n := range out {
+		if n = strings.TrimSpace(n); n != "" {
+			kept = append(kept, n)
+		}
+	}
+	return kept
 }

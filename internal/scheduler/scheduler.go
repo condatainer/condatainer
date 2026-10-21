@@ -178,6 +178,18 @@ type RuntimeConfig struct {
 	MailUser     string // Target email/user for notifications (empty = submitting user)
 	Partition    string // Partition/queue to submit to (cleared on cross-scheduler translation)
 	Account      string // Billing/allocation account to submit under (cleared on cross-scheduler translation)
+	// ExcludeNodes is the nodes the job must not run on (cleared on cross-scheduler translation).
+	// Nil means unset, so scheduler.exclude_nodes applies. A non-nil empty list clears it.
+	ExcludeNodes []string
+}
+
+// ExcludedNodes returns the nodes the job is kept off: the job's own list when set, else
+// scheduler.exclude_nodes.
+func (rc *RuntimeConfig) ExcludedNodes() []string {
+	if rc.ExcludeNodes != nil {
+		return rc.ExcludeNodes
+	}
+	return ExcludeNodes()
 }
 
 // ClusterInfo holds cluster configuration information
@@ -417,6 +429,10 @@ type Scheduler interface {
 	// helper wrapper to set CNT_HELPER_JOB_ID scheduler-specifically.
 	// Derived from JobIDVar() for most schedulers; PBS strips the server suffix.
 	JobIDEnvExpr() string
+
+	// NodeNameEnvExpr returns a shell expression that expands, inside a submitted job, to the
+	// name the scheduler gives the node the job runs on. It may expand to nothing.
+	NodeNameEnvExpr() string
 
 	// TmpDirVar returns the name of the scheduler-assigned per-job node-local tmpdir
 	// environment variable (e.g. "SLURM_TMPDIR", "PBS_TMPDIR"). Returns "" if this
@@ -798,6 +814,8 @@ func ReadScriptSpecsFromPath(scriptPath string) (*ScriptSpecs, error) {
 		// Clear Account: the original account name is scheduler-specific
 		// and cannot be translated to the host scheduler's account names.
 		parsed.Specs.Control.Account = ""
+		// Clear ExcludeNodes: node names are cluster-specific too.
+		parsed.Specs.Control.ExcludeNodes = nil
 	}
 
 	return parsed.Specs, nil

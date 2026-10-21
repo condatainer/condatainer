@@ -43,6 +43,8 @@ type postScriptHelperFlags struct {
 	account      string
 	partitionSet bool
 	partition    string
+	excludeSet   bool
+	exclude      []string
 	newSet       bool
 	noProjectSet bool
 	waitSet      bool
@@ -66,6 +68,7 @@ var helperCmd = &cobra.Command{
 - --wait stays attached until the app is ready.
 - Each helper has its own flags: condatainer helper <name> -h
 - Scheduler options (cpus, mem, time, gpu, account, partition) can be set per run or saved as defaults.
+- --exclude-nodes keeps the job off the named nodes for one run. The default list is the scheduler.exclude_nodes config key.
 - It cannot run inside a container or a scheduler job.`,
 	Example: `  condatainer helper                     # Show running apps
   condatainer helper code-server         # Start code-server
@@ -216,6 +219,17 @@ func parsePostScriptHelperFlags(args []string) (postScriptHelperFlags, []string,
 				}
 				flags.partitionSet = true
 				flags.partition = v
+			case "--exclude-nodes":
+				v, err := valueFor(name, &i, val, hasVal)
+				if err != nil {
+					return flags, nil, err
+				}
+				names := splitNodeFlag(v)
+				if err := scheduler.ValidateNodeNames(names); err != nil {
+					return flags, nil, fmt.Errorf("flag %s: %w", name, err)
+				}
+				flags.excludeSet = true
+				flags.exclude = names
 			case "--new":
 				if hasVal {
 					return flags, nil, fmt.Errorf("flag %s does not take a value", name)
@@ -496,7 +510,7 @@ func runHelper(cmd *cobra.Command, args []string) error {
 	startedWithArgs := postFlags.cpusSet || postFlags.memSet ||
 		postFlags.timeSet || postFlags.gpuSet ||
 		postFlags.envSet || postFlags.overlaySet || postFlags.cwdSet ||
-		postFlags.accountSet || postFlags.partitionSet ||
+		postFlags.accountSet || postFlags.partitionSet || postFlags.excludeSet ||
 		postFlags.newSet || postFlags.noProjectSet || len(scriptArgs) > 0
 
 	// Find script in all search paths.
@@ -563,18 +577,24 @@ func runHelper(cmd *cobra.Command, args []string) error {
 		envImg = ""
 	}
 
+	var excludeNodes []string
+	if postFlags.excludeSet {
+		excludeNodes = append([]string{}, postFlags.exclude...)
+	}
+
 	opts := helper.RunOptions{
-		ScriptPath: scriptPath,
-		ScriptName: scriptName,
-		Resources:  overrides,
-		EnvImg:     envImg,
-		Overlays:   postFlags.overlays,
-		CWD:        cwd,
-		Account:    postFlags.account,
-		Partition:  postFlags.partition,
-		ForceNew:   postFlags.newSet,
-		NoProject:  postFlags.noProjectSet,
-		FlagArgs:   scriptArgs,
+		ScriptPath:   scriptPath,
+		ScriptName:   scriptName,
+		Resources:    overrides,
+		EnvImg:       envImg,
+		Overlays:     postFlags.overlays,
+		CWD:          cwd,
+		Account:      postFlags.account,
+		Partition:    postFlags.partition,
+		ForceNew:     postFlags.newSet,
+		ExcludeNodes: excludeNodes,
+		NoProject:    postFlags.noProjectSet,
+		FlagArgs:     scriptArgs,
 	}
 
 	ctx := cmd.Context()
@@ -1023,4 +1043,15 @@ func stopHelperRun(ctx context.Context, r *helper.HelperRun) error {
 		utils.PrintDebug("stop %s: %v", r.ID, err)
 	}
 	return helper.UpdateHistoryStatus(r.ID, "done", time.Now())
+}
+
+// splitNodeFlag splits a comma-separated --exclude-nodes value. An empty value is an empty, non-nil list.
+func splitNodeFlag(v string) []string {
+	names := []string{}
+	for _, n := range strings.Split(v, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
 }

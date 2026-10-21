@@ -39,6 +39,16 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - They are cleared on cross-scheduler translation for the same reason.
 - HTCondor has no account. Its `accounting_group` is a fairshare group, so it fills the partition and the account stays unset.
 
+## Excluded nodes
+
+- Each scheduler's script writer adds `scheduler.exclude_nodes`, so run, build, restore and helper jobs all get it.
+- Priority is the config list, then the script's own directive, then `--exclude-nodes`. Each replaces the one before, and an empty `--exclude-nodes` clears it.
+  - A script's directive is read for SLURM `--exclude` and LSF `-m`. An LSF `-m` cannot be merged with a list, so it stands over the config list.
+- Config layers merge, so a site's list and a user's both apply.
+- A translated script does not carry the list. Node names mean nothing on another cluster.
+- Names are plain host names, as the scheduler prints them. SLURM refuses a short name when the node is registered by its full name.
+- PBS has no directive for it, so a PBS submit with any list set is refused.
+
 ## LSF memory
 
 - `rusage[mem=X]` is a per-slot scheduling reservation, and it is the memory source when parsing.

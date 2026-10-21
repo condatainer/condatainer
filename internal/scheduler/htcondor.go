@@ -489,6 +489,13 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 	if specs.Control.Partition != "" {
 		fmt.Fprintf(subWriter, "accounting_group = %s\n", specs.Control.Partition)
 	}
+	if nodes := specs.Control.ExcludedNodes(); len(nodes) > 0 {
+		clauses := make([]string, len(nodes))
+		for i, n := range nodes {
+			clauses[i] = fmt.Sprintf("(Machine != %q)", n)
+		}
+		fmt.Fprintf(subWriter, "requirements = %s\n", strings.Join(clauses, " && "))
+	}
 
 	// Output/error/log
 	if jobSpec.Array != nil {

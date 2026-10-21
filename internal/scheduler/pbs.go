@@ -456,6 +456,9 @@ func (p *PbsScheduler) parseSingleResource(res string, rs *ResourceSpec) error {
 // CreateScriptWithSpec generates a PBS batch script
 func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) (string, error) {
 	specs := jobSpec.Specs
+	if len(specs.Control.ExcludedNodes()) > 0 {
+		return "", fmt.Errorf("%w: PBS has no directive for it; clear scheduler.exclude_nodes and --exclude-nodes to submit", ErrExcludeNodesUnsupported)
+	}
 
 	// Create output directory if specified (scripts still live in outputDir)
 	if outputDir != "" {

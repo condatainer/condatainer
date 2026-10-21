@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
-	"github.com/condatainer/condatainer/internal/utils"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // withLibexecTier points CNT_LIBEXEC at a fresh directory, so a test decides

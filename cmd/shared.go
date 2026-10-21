@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"github.com/condatainer/condatainer/internal/scheduler"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,14 +10,13 @@ import (
 	"sort"
 	"strings"
 
-	"fmt"
-
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )

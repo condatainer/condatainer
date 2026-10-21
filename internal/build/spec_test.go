@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +18,7 @@ import (
 	"github.com/condatainer/condatainer/internal/conda"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 func TestSourceSpecBuildTypeIsDerived(t *testing.T) {

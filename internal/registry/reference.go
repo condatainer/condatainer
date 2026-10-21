@@ -130,6 +130,41 @@ func spell(name, qualifier, arch string) (string, error) {
 // or equivalence tag has two.
 func IsNameTag(tag string) bool { return strings.Count(tag, tagSeparator) == 1 }
 
+// tagKind is what a tag's spelling says it is.
+type tagKind int
+
+const (
+	kindOther tagKind = iota
+	kindName
+	kindBuild
+	kindEquiv
+)
+
+// parsedTag is a tag split into the parts its spelling carries.
+type parsedTag struct {
+	Kind tagKind
+	// Encoded is the encoded name, Qualifier the hex key, Arch the architecture.
+	Encoded, Qualifier, Arch string
+}
+
+// parseTag reads a tag's spelling. Any tag this package does not write is kindOther.
+func parseTag(tag string) parsedTag {
+	parts := strings.Split(tag, tagSeparator)
+	switch {
+	case len(parts) == 2 && parts[0] != "" && ValidArch(parts[1]):
+		return parsedTag{Kind: kindName, Encoded: parts[0], Arch: parts[1]}
+	case len(parts) == 3 && parts[0] != "" && ValidArch(parts[2]):
+		q := parts[1]
+		if hex, ok := strings.CutPrefix(q, equivMarker); ok && len(hex) == keyChars && isHex(hex) {
+			return parsedTag{Kind: kindEquiv, Encoded: parts[0], Qualifier: hex, Arch: parts[2]}
+		}
+		if len(q) == keyChars && isHex(q) {
+			return parsedTag{Kind: kindBuild, Encoded: parts[0], Qualifier: q, Arch: parts[2]}
+		}
+	}
+	return parsedTag{}
+}
+
 // TagRequest says which tags a push writes besides the build tag.
 type TagRequest struct {
 	// Name also writes the name tag.

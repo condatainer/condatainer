@@ -13,6 +13,7 @@ import (
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/registry"
+	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -343,5 +344,87 @@ func TestRegistryPasswordFromStdin(t *testing.T) {
 	}
 	if _, err := registryPassword(cmd, &registryOptions{passwordStdin: true, password: "also"}); err == nil {
 		t.Error("registryPassword accepted two password sources")
+	}
+}
+
+func TestParseRemoveTarget(t *testing.T) {
+	got, err := parseRemoveTarget("star/2.7.11b@9f2c1ab", "arm64")
+	if err != nil || got != (registry.RemoveTarget{Name: "star/2.7.11b", Identity: "9f2c1ab", Arch: "arm64"}) {
+		t.Errorf("name@identity = (%+v, %v)", got, err)
+	}
+	got, err = parseRemoveTarget("star--2.7.11b", "")
+	if err != nil || got != (registry.RemoveTarget{Name: "star/2.7.11b"}) {
+		t.Errorf("name = (%+v, %v), want every build", got, err)
+	}
+	if _, err := parseRemoveTarget("star/2.7.11b:eq-9f2c1ab4d3e8", ""); err == nil {
+		t.Error("an equivalence key was taken as a build")
+	}
+}
+
+func TestConfirmRemovalNeedsATerminalOrYes(t *testing.T) {
+	cmd := newRegistryCommand()
+	cmd.SetContext(t.Context())
+	plan := registry.RemovePlan{Removes: []registry.Held{{Tags: []string{"star--1__amd64"}}}}
+
+	prev := utils.YesMode
+	t.Cleanup(func() { utils.YesMode = prev })
+
+	utils.YesMode = false
+	if ok, err := confirmRemoval(cmd, "ghcr.io/lab/cnt", plan); ok || err == nil {
+		t.Errorf("without a terminal or -y = (%v, %v), want a refusal", ok, err)
+	}
+	utils.YesMode = true
+	if ok, err := confirmRemoval(cmd, "ghcr.io/lab/cnt", plan); !ok || err != nil {
+		t.Errorf("with -y = (%v, %v), want yes", ok, err)
+	}
+}
+
+func TestSourceDeclaringMatchesTheRegistryOfASource(t *testing.T) {
+	cat := catalog.Catalog{
+		{Name: "lab", Desc: catalog.Descriptor{OCI: catalog.OCI{Registry: "oci://GHCR.io/lab/cnt/"}}},
+		{Name: "bare"},
+	}
+	if got := sourceDeclaring(cat, "ghcr.io/lab/cnt"); got != "lab" {
+		t.Errorf("source declaring ghcr.io/lab/cnt = %q, want lab", got)
+	}
+	if got := sourceDeclaring(cat, "ghcr.io/lab/project/cnt"); got != "" {
+		t.Errorf("a project's repository = %q, want none", got)
+	}
+}
+
+func TestRecipeCheckAsksTheSourceAndRefusesWhenItCannotSay(t *testing.T) {
+	lab := t.TempDir()
+	recipe := filepath.Join(lab, "recipes", "star", "2.7.11b")
+	if err := os.MkdirAll(filepath.Dir(recipe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(recipe, []byte("#!/bin/bash\n#DESC: aligner\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := catalog.Open(t.Context(), []catalog.Spec{{Name: "lab", Base: lab}}, catalog.Cache{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	has, err := recipeCheck(registryEndpoint{ctx: t.Context(), source: cat[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has("star/2.7.11b") || has("old/1") {
+		t.Errorf("star/2.7.11b = %v, old/1 = %v; want true, false", has("star/2.7.11b"), has("old/1"))
+	}
+
+	empty := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(empty, "recipes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cat, err = catalog.Open(t.Context(), []catalog.Spec{{Name: "bare", Base: empty}}, catalog.Cache{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recipeCheck(registryEndpoint{ctx: t.Context(), source: cat[0]}); err == nil || !strings.Contains(err.Error(), "no recipes") {
+		t.Errorf("a source with no recipes = %v, want a refusal", err)
+	}
+	if _, err := recipeCheck(registryEndpoint{ctx: t.Context()}); err == nil {
+		t.Error("no source was accepted")
 	}
 }

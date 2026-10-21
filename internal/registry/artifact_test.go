@@ -44,6 +44,12 @@ type fakeRegistry struct {
 	refuseAnonymous bool
 	// acceptUser is the one username /token hands a token to.
 	acceptUser string
+	// deleteStatus, when set, is the answer to every manifest delete.
+	deleteStatus int
+	// refusePut, when set, is a reference whose manifest write is refused.
+	refusePut string
+	// manifestGets counts manifest reads that return a body, the requests a pull limit counts.
+	manifestGets int
 }
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
@@ -94,6 +100,10 @@ func (f *fakeRegistry) serve(w http.ResponseWriter, r *http.Request) {
 		f.accept(w, r, path)
 		return
 	}
+	if r.Method == http.MethodDelete {
+		f.remove(w, path)
+		return
+	}
 
 	if repo, ok := strings.CutSuffix(path, "/tags/list"); ok {
 		tags, known := f.tags[repo]
@@ -129,7 +139,41 @@ func (f *fakeRegistry) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	if r.Method == http.MethodGet {
+		f.manifestGets++
+	}
 	f.write(w, r, desc.MediaType, desc.Digest.String(), f.blobs[desc.Digest])
+}
+
+// remove deletes a manifest by digest, with every tag on it. A delete by tag is
+// refused, as a registry without tag deletion does.
+func (f *fakeRegistry) remove(w http.ResponseWriter, path string) {
+	if f.deleteStatus != 0 {
+		w.WriteHeader(f.deleteStatus)
+		return
+	}
+	repo, ref, ok := cutLast(path, "/manifests/")
+	if !ok || !strings.HasPrefix(ref, digestPrefix) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	desc, found := f.content[repo+"/"+ref]
+	if !found {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	var kept []string
+	for _, tag := range f.tags[repo] {
+		if f.content[repo+"/"+tag].Digest == desc.Digest {
+			delete(f.content, repo+"/"+tag)
+		} else {
+			kept = append(kept, tag)
+		}
+	}
+	f.tags[repo] = kept
+	delete(f.content, repo+"/"+ref)
+	w.Header().Set("Docker-Content-Digest", desc.Digest.String())
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // accept handles the write half of the distribution API: a blob upload session
@@ -160,6 +204,10 @@ func (f *fakeRegistry) accept(w http.ResponseWriter, r *http.Request, path strin
 	}
 
 	if repo, ref, ok := cutLast(path, "/manifests/"); ok {
+		if ref == f.refusePut {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -488,5 +536,27 @@ func TestListTagsReportsAnUnreadableRegistry(t *testing.T) {
 
 	if _, err := ListTags(context.Background(), f.base(), "cellranger"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("err = %v, want ErrUnauthorized", err)
+	}
+}
+
+// A lookup and the pull that follows read the manifest once between them.
+func TestAManifestIsFetchedOncePerDigest(t *testing.T) {
+	f := newFakeRegistry(t)
+	desc := publishArtifact(t, f, "lab/cnt", map[string]string{AnnTitle: "once/1"}, "once--1__noarch")
+
+	repository, err := newRepository(f.base(), "lab/cnt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err := fetchManifest(t.Context(), repository, desc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := ResolveArtifact(t.Context(), f.base(), "lab/cnt", "once--1__noarch"); err != nil {
+		t.Fatal(err)
+	}
+	if f.manifestGets != 1 {
+		t.Errorf("manifest reads = %d, want 1 for one digest", f.manifestGets)
 	}
 }

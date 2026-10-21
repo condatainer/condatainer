@@ -37,6 +37,7 @@ type registryOptions struct {
 	password      string
 	passwordStdin bool
 	layer         string
+	noRecipe      bool
 }
 
 var registryCmd = newRegistryCommand()
@@ -295,8 +296,97 @@ GITHUB_TOKEN is not affected.`,
 		},
 	}
 
-	cmd.AddCommand(push, pull, tags, resolve, login, logout, list)
+	cmd.AddCommand(push, pull, tags, resolve, newRegistryRemoveCommand(opts), newRegistryGCCommand(opts), login, logout, list)
 	return cmd
+}
+
+func newRegistryRemoveCommand(opts *registryOptions) *cobra.Command {
+	remove := &cobra.Command{
+		Use:   "remove [flags] <name|name@identity>",
+		Short: "Remove published overlays from a source's registry",
+		Long: `Remove published overlays from a source's registry.
+
+- name@identity removes one build on every architecture. A name alone removes all builds.
+- If the build was the one its name installs, the name moves to the newest other build.
+- A project that pins a removed build can no longer download it.`,
+		Example: `  condatainer registry remove star/2.7.11b@9f2c1ab --source lab
+  condatainer registry remove star/2.7.11b --source lab --arch arm64`,
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target, err := parseRemoveTarget(args[0], opts.arch)
+			if err != nil {
+				return err
+			}
+			return runRemoval(cmd, opts, func(ep registryEndpoint, base, repo string, b registry.Backend) (registry.RemovePlan, error) {
+				return registry.PlanRemove(ep.ctx, base, repo, b, target)
+			})
+		},
+	}
+	addSourceOnlyFlag(remove, opts)
+	remove.Flags().StringVar(&opts.arch, "arch", "", "Only this machine architecture: amd64, arm64 or noarch")
+	return remove
+}
+
+func newRegistryGCCommand(opts *registryOptions) *cobra.Command {
+	gc := &cobra.Command{
+		Use:   "gc [flags] [name]",
+		Short: "Remove builds no name installs from a source's registry",
+		Long: `Remove builds that no name installs from a source's registry.
+
+- A build stays while its name installs it, or while it is the newest built from its recipe.
+- A name limits the run to that name.
+- A project that pins a removed build can no longer download it.`,
+		Example: `  condatainer registry gc --source lab
+  condatainer registry gc star/2.7.11b --source lab`,
+		Args:         cobra.MaximumNArgs(1),
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := catalog.Normalize(firstArg(args))
+			if opts.noRecipe {
+				// The recipe index is cached, and a stale one would call a new recipe missing.
+				if err := config.RefreshCatalogCache(); err != nil {
+					return err
+				}
+			}
+			return runRemoval(cmd, opts, func(ep registryEndpoint, _, _ string, b registry.Backend) (registry.RemovePlan, error) {
+				var hasRecipe func(string) bool
+				if opts.noRecipe {
+					var err error
+					if hasRecipe, err = recipeCheck(ep); err != nil {
+						return registry.RemovePlan{}, err
+					}
+				}
+				return registry.PlanGC(ep.ctx, b, name, hasRecipe)
+			})
+		},
+	}
+	addSourceOnlyFlag(gc, opts)
+	gc.Flags().BoolVar(&opts.noRecipe, "no-recipe", false, "Also remove builds of names the source has no recipe for")
+	return gc
+}
+
+// recipeCheck reports whether the source has a recipe for a name.
+// It refuses when the source cannot say, since every name would look missing.
+func recipeCheck(ep registryEndpoint) (func(string) bool, error) {
+	source := ep.source
+	if source == nil {
+		return nil, fmt.Errorf("--no-recipe needs a source")
+	}
+	entries, err := source.Entries(ep.ctx)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("cannot read the recipes of source %s, so none can be called missing: %w", source.Name, err)
+	case source.Stale:
+		return nil, fmt.Errorf("source %s could not be refreshed, so its recipes may be out of date", source.Name)
+	case len(entries) == 0:
+		return nil, fmt.Errorf("source %s lists no recipes, so every build would be removed", source.Name)
+	}
+	only := catalog.Catalog{source}
+	return func(name string) bool {
+		_, found, _ := only.Lookup(ep.ctx, name)
+		return found
+	}, nil
 }
 
 // firstArg is the one optional argument, or empty.
@@ -326,6 +416,13 @@ func registryPushCompletion(cmd *cobra.Command, args []string, toComplete string
 func addEndpointFlags(cmd *cobra.Command, opts *registryOptions) {
 	cmd.Flags().StringVar(&opts.repository, "registry", "", "Registry repository to use, such as ghcr.io/my-lab/cnt")
 	cmd.Flags().StringVarP(&opts.source, "source", "s", "", "Use the registry of this recipe source")
+}
+
+// addSourceOnlyFlag registers the one way to name the registry to remove from.
+// A project's repository is reached with its own command, so --registry is not offered.
+func addSourceOnlyFlag(cmd *cobra.Command, opts *registryOptions) {
+	cmd.Flags().StringVarP(&opts.source, "source", "s", "", "Recipe source whose registry to remove from")
+	_ = cmd.MarkFlagRequired("source")
 }
 
 // registryEndpoint is the repository a command works on.
@@ -396,6 +493,16 @@ func endpointFromSource(ctx context.Context, source *catalog.Source) (registryEn
 		ctx:        registry.WithSource(ctx, source.Base),
 		source:     source,
 	}, nil
+}
+
+// sourceDeclaring names the configured source whose OCI registry is repository, or "".
+func sourceDeclaring(cat catalog.Catalog, repository string) string {
+	for _, source := range cat {
+		if strings.EqualFold(registry.TrimBaseScheme(source.Desc.OCI.Registry), repository) {
+			return source.Name
+		}
+	}
+	return ""
 }
 
 // pushDestination is where a push goes and under what policy.
@@ -588,6 +695,18 @@ func parseRegistryAddress(spec, arch string) (registry.Address, error) {
 	return registry.Address{Name: catalog.Normalize(spec), Arch: arch}, nil
 }
 
+// parseRemoveTarget reads "name" or "name@identity".
+func parseRemoveTarget(spec, arch string) (registry.RemoveTarget, error) {
+	addr, err := parseRegistryAddress(spec, arch)
+	if err != nil {
+		return registry.RemoveTarget{}, err
+	}
+	if addr.Equiv != "" {
+		return registry.RemoveTarget{}, fmt.Errorf("%q is not a build; give a name or name@identity", spec)
+	}
+	return registry.RemoveTarget{Name: addr.Name, Identity: addr.Identity, Arch: arch}, nil
+}
+
 // resolveRegistryArtifact locates the manifest an address or --digest names.
 //   - A miss on this machine's architecture says which architectures are published instead.
 func resolveRegistryArtifact(cmd *cobra.Command, opts *registryOptions, spec string) (resolvedRegistryArtifact, registryEndpoint, error) {
@@ -678,6 +797,53 @@ func registryPullDestination(prefix, name, title string) (string, error) {
 		return "", fmt.Errorf("no writable images directory: %w", err)
 	}
 	return filepath.Join(dir, strings.ReplaceAll(name, "/", "--")+pullExt), nil
+}
+
+// runRemoval plans, shows, asks and applies a removal against a source's registry.
+func runRemoval(cmd *cobra.Command, opts *registryOptions, plan func(registryEndpoint, string, string, registry.Backend) (registry.RemovePlan, error)) error {
+	opts.repository = ""
+	ep, err := resolveRegistryEndpoint(cmd, opts)
+	if err != nil {
+		return err
+	}
+	base, repo, err := registry.SplitCoordinate(ep.repository)
+	if err != nil {
+		return err
+	}
+	backend, err := registry.BackendFor(base, repo)
+	if err != nil {
+		return err
+	}
+	p, err := plan(ep, base, repo, backend)
+	if err != nil {
+		return err
+	}
+	return finishRemoval(cmd, ep.ctx, ep.repository, backend, p)
+}
+
+// finishRemoval shows a plan, asks, and carries it out.
+func finishRemoval(cmd *cobra.Command, ctx context.Context, repository string, backend registry.Backend, p registry.RemovePlan) error {
+	base, repo, err := registry.SplitCoordinate(repository)
+	if err != nil {
+		return err
+	}
+	if len(p.Removes) == 0 {
+		reportKept(p)
+		utils.PrintMessage("Nothing to remove from %s", repository)
+		return nil
+	}
+	ok, err := confirmRemoval(cmd, repository, p)
+	if err != nil || !ok {
+		return err
+	}
+	res, err := registry.Apply(ctx, base, repo, backend, p)
+	if len(res.Removed) > 0 {
+		reportDone(cmd, "removed", fmt.Sprintf("%d manifest(s) from %s", len(res.Removed), repository))
+	}
+	if len(res.Skipped) > 0 {
+		utils.PrintWarning("Kept %d manifest(s) that changed after the list was made.", len(res.Skipped))
+	}
+	return err
 }
 
 // registryUsername is --username, or one typed on the terminal when it is
@@ -780,6 +946,51 @@ func confirmPush(cmd *cobra.Command, plan registry.PublishPlan) bool {
 		return utils.Confirm(cmd.Context(), cmd.ErrOrStderr(), "Push anyway? [y/N]: ")
 	}
 	return utils.ConfirmDefaultYes(cmd.Context(), cmd.ErrOrStderr(), "Push? [Y/n]: ")
+}
+
+// confirmRemoval lists what a removal does and asks. -y answers yes; without a terminal there is nobody to ask.
+func confirmRemoval(cmd *cobra.Command, repository string, p registry.RemovePlan) (bool, error) {
+	if !utils.ShouldAnswerYes() && !utils.IsInteractiveShell() {
+		return false, fmt.Errorf("removing asks first, and there is no terminal here; run it in a terminal or pass -y")
+	}
+	utils.PrintMessage("Removing from %s", repository)
+	if len(p.Moves) > 0 {
+		utils.PrintMessage("Move %d tag(s)", len(p.Moves))
+		for _, m := range p.Moves {
+			utils.PrintMessage("  %s", m.Tag)
+			utils.PrintMessage("    from %s", m.FromBuild)
+			utils.PrintMessage("    to   %s", m.ToBuild)
+		}
+	}
+	moved := map[string]bool{}
+	for _, m := range p.Moves {
+		moved[m.Tag] = true
+	}
+	utils.PrintMessage("Remove %d manifest(s)", len(p.Removes))
+	for _, h := range p.Removes {
+		if len(h.Tags) == 0 {
+			utils.PrintMessage("  untagged %s", h.Desc.Digest)
+			continue
+		}
+		var tags []string
+		for _, tag := range h.Tags {
+			if !moved[tag] {
+				tags = append(tags, tag)
+			}
+		}
+		utils.PrintMessage("  %s", strings.Join(tags, ", "))
+	}
+	reportKept(p)
+	if utils.ShouldAnswerYes() {
+		return true, nil
+	}
+	return utils.Confirm(cmd.Context(), cmd.ErrOrStderr(), "Remove? [y/N]: "), nil
+}
+
+func reportKept(p registry.RemovePlan) {
+	if len(p.Kept) > 0 {
+		utils.PrintWarning("Kept %d manifest(s) that hold tags this tool did not write.", len(p.Kept))
+	}
 }
 
 // registryCredentials lists the logins and the registry tokens stored with

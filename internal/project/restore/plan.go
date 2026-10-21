@@ -511,7 +511,7 @@ func (p *Plan) classify(step Step, keys meta.Keys, hostArch string, opts Options
 		// anywhere.
 		step.Action = ActionUnavailable
 		problems = append(problems, fmt.Sprintf(
-			"%s is a frozen environment and cannot be rebuilt; it is only obtainable from a registry, so publish it with `condatainer project registry push` from a checkout that has it",
+			"%s is a snapshot and cannot be rebuilt; it is only obtainable from a registry, so publish it with `condatainer project registry push` from a checkout that has it",
 			step.Name))
 	default:
 		step.Action = ActionBuild

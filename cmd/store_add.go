@@ -44,7 +44,7 @@ func newStoreAddCmd() *cobra.Command {
 			// Filed here it would land under an empty identity, and every project's
 			// would land under the same name.
 			if artifact.Format == meta.BuildTypeSnapshot {
-				return fmt.Errorf("%s is a frozen environment: it belongs to its project and is addressed by path, so it is never filed in the store", source)
+				return fmt.Errorf("%s is a snapshot: it belongs to its project and is addressed by path, so it is never filed in the store", source)
 			}
 
 			// A named layer scopes the search for an existing copy to that layer.

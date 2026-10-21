@@ -614,7 +614,7 @@ func printUnpublishedNote(l *lock.Lock, pinned []*lock.Pinned) {
 	if len(project.UnpublishedFrozenEnv(l, pinned)) == 0 {
 		return
 	}
-	utils.PrintNote("A frozen environment cannot be rebuilt; run `condatainer project registry push` so another checkout can restore this project")
+	utils.PrintNote("A snapshot cannot be rebuilt; run `condatainer project registry push` so another checkout can restore this project")
 }
 
 func newProjectRegistryCmd() *cobra.Command {

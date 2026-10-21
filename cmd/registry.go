@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
@@ -67,6 +68,7 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 - Give a path, or the name and version of an installed overlay.
 - Without --source or --registry, an installed overlay goes to its recipe source's registry.
 - A new build of a name becomes the one that name installs. The older build stays.
+- A snapshot is never published to a source's registry.
 
 Registry audience, public (default) or restricted, says who can download from the registry.
 - A public registry refuses overlays that may not be redistributed.
@@ -85,6 +87,9 @@ Registry audience, public (default) or restricted, says who can download from th
 			}
 			dest, err := registryPushDestination(cmd, opts, artifact)
 			if err != nil {
+				return err
+			}
+			if err := refuseFrozenForSource(artifact.path, dest); err != nil {
 				return err
 			}
 			_, err = registry.Publish(dest.ctx, registry.PublishRequest{
@@ -112,7 +117,8 @@ Registry audience, public (default) or restricted, says who can download from th
 		Long: `Install a published overlay, using the copy for this machine's architecture.
 
 - A name installs the current build of that name, such as star/2.7.11b.
-- name@identity installs one particular build.`,
+- name@identity installs one particular build.
+- A snapshot must be pulled with --prefix.`,
 		Example: `  condatainer registry pull star/2.7.11b --registry ghcr.io/my-lab/cnt
   condatainer registry pull star/2.7.11b@9f2c1ab --source lab
   condatainer registry pull star/2.7.11b --source lab -p ./overlays/star.sqf`,
@@ -397,7 +403,37 @@ type pushDestination struct {
 	repository string
 	audience   registry.Audience
 	collection string
+	fromSource bool
 	ctx        context.Context
+}
+
+// refuseFrozenForSource refuses a frozen environment bound for a source's registry.
+// A frozen environment belongs to its project, so a source never holds one.
+func refuseFrozenForSource(path string, dest pushDestination) error {
+	if !dest.fromSource {
+		return nil
+	}
+	manifest, err := meta.ReadManifest(path)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	return refuseFrozen(manifest, path)
+}
+
+func refuseFrozen(m meta.Manifest, path string) error {
+	if m.BuildType == meta.BuildTypeSnapshot {
+		return fmt.Errorf("%s is a snapshot: it belongs to its project, so it is never published to a source's registry", path)
+	}
+	return nil
+}
+
+// requirePrefixForFrozen refuses a frozen environment pulled without --prefix.
+// Its project addresses it by path, so it is never filed under a name.
+func requirePrefixForFrozen(annotations map[string]string, prefix string) error {
+	if prefix == "" && annotations[registry.AnnIdentityScheme] == string(key.PayloadTreeV1) {
+		return fmt.Errorf("a snapshot must be pulled with --prefix")
+	}
+	return nil
 }
 
 // registryPushDestination resolves the publishing repository and its policy.
@@ -419,7 +455,7 @@ func registryPushDestination(cmd *cobra.Command, opts *registryOptions, artifact
 		if err != nil {
 			return pushDestination{}, err
 		}
-		return pushDestination{repository: ep.repository, audience: parsed, collection: ep.pushCollection(), ctx: ep.ctx}, nil
+		return pushDestination{repository: ep.repository, audience: parsed, collection: ep.pushCollection(), fromSource: ep.source != nil, ctx: ep.ctx}, nil
 	}
 	if !artifact.managed {
 		return pushDestination{}, fmt.Errorf("cannot infer registry for %s: only an installed name/version infers its destination; use --registry or --source", artifact.path)
@@ -451,7 +487,7 @@ func registryPushDestination(cmd *cobra.Command, opts *registryOptions, artifact
 	if err != nil {
 		return pushDestination{}, err
 	}
-	return pushDestination{repository: ep.repository, audience: parsed, collection: ep.pushCollection(), ctx: ep.ctx}, nil
+	return pushDestination{repository: ep.repository, audience: parsed, collection: ep.pushCollection(), fromSource: ep.source != nil, ctx: ep.ctx}, nil
 }
 
 // pushAudience parses the audience a push is checked against.
@@ -599,6 +635,9 @@ func resolveRegistryArtifact(cmd *cobra.Command, opts *registryOptions, spec str
 func runRegistryPull(cmd *cobra.Command, opts *registryOptions, spec string) error {
 	resolved, ep, err := resolveRegistryArtifact(cmd, opts, spec)
 	if err != nil {
+		return err
+	}
+	if err := requirePrefixForFrozen(resolved.annotations, opts.prefix); err != nil {
 		return err
 	}
 	dest, err := registryPullDestination(opts.prefix, resolved.name, resolved.annotations[registry.AnnTitle])

@@ -131,7 +131,7 @@ func runE(cmd *cobra.Command, args []string) error {
 					if snapshot := helper.FindEnvSnapshot(pwd); snapshot != "" {
 						snapshotName := filepath.Base(snapshot)
 						announceAutoload = func() {
-							utils.PrintNote("Autoload read-only environment overlay %s", snapshotName)
+							utils.PrintNote("Autoload snapshot %s", snapshotName)
 						}
 						overlays = append(overlays, snapshot)
 					}

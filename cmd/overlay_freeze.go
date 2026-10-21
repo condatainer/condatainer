@@ -24,7 +24,7 @@ var (
 	freezeKeep        bool
 )
 
-const overlayFreezeHelp = `Pack a writable overlay into an immutable .sqf snapshot.
+const overlayFreezeHelp = `Pack a writable overlay into an immutable snapshot.
 
 - The environment is kept exactly as it is, not rebuilt.
 - The snapshot has no recipe behind it, so back it up or push it.
@@ -41,7 +41,7 @@ Per-user overlays:
 
 var overlayFreezeCmd = &cobra.Command{
 	Use:   "freeze [flags] <overlay.img> [output.sqf]",
-	Short: "Pack a writable overlay into an immutable one",
+	Short: "Pack a writable overlay into an immutable snapshot",
 	Long:  overlayFreezeHelp,
 	Args:  cobra.RangeArgs(1, 2),
 	Example: `  condatainer overlay freeze env.img                     # env.sqf beside it, env.img removed
@@ -196,7 +196,7 @@ func resolveFreezeTarget(source, dest string) (string, error) {
 		return "", fmt.Errorf("%s does not exist; create it or choose another destination", filepath.Dir(abs))
 	}
 	if dir := imagesDirContaining(abs); dir != "" {
-		return "", fmt.Errorf("%s is inside the images directory %s; a frozen environment belongs to its project and is addressed by path, so it is never filed by name", abs, dir)
+		return "", fmt.Errorf("%s is inside the images directory %s; a snapshot belongs to its project and is addressed by path, so it is never filed by name", abs, dir)
 	}
 	return abs, nil
 }

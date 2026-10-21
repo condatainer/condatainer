@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
@@ -50,8 +51,26 @@ func resolveManifest(ctx context.Context, repository *remote.Repository, ref str
 	return desc, manifest.Annotations, nil
 }
 
-// fetchManifest reads and decodes an image manifest.
+// manifests remembers the manifests this process has read, by repository and digest.
+//   - A digest names its content, so a remembered manifest never goes stale.
+//   - A lookup and the pull that follows share one fetch, which matters where each manifest fetch counts against a pull limit.
+var manifests = struct {
+	sync.Mutex
+	byDigest map[string]ocispec.Manifest
+}{byDigest: map[string]ocispec.Manifest{}}
+
+// manifestCacheLimit bounds the memory of manifests.
+const manifestCacheLimit = 512
+
+// fetchManifest reads and decodes an image manifest, once per digest.
 func fetchManifest(ctx context.Context, repository *remote.Repository, desc ocispec.Descriptor) (ocispec.Manifest, error) {
+	key := repository.Reference.Registry + "/" + repository.Reference.Repository + "@" + desc.Digest.String()
+	manifests.Lock()
+	cached, ok := manifests.byDigest[key]
+	manifests.Unlock()
+	if ok {
+		return cached, nil
+	}
 	data, err := content.FetchAll(ctx, repository, desc)
 	if err != nil {
 		return ocispec.Manifest{}, fmt.Errorf("failed to fetch manifest: %w", err)
@@ -60,6 +79,12 @@ func fetchManifest(ctx context.Context, repository *remote.Repository, desc ocis
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return ocispec.Manifest{}, fmt.Errorf("invalid image manifest: %w", err)
 	}
+	manifests.Lock()
+	if len(manifests.byDigest) >= manifestCacheLimit {
+		clear(manifests.byDigest)
+	}
+	manifests.byDigest[key] = manifest
+	manifests.Unlock()
 	return manifest, nil
 }
 

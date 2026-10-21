@@ -60,6 +60,16 @@ var (
 	ErrInvalidArtifact = errors.New("published overlay is not coherent")
 )
 
+// Why a removal was refused, as distinct from a transport failure.
+var (
+	// ErrNoRemoval reports a registry that answers a delete with "unsupported".
+	// The owner removes in the registry's own console.
+	ErrNoRemoval = errors.New("registry does not support removing overlays")
+	// ErrLastVersion reports a GHCR package whose last tagged version cannot be
+	// removed. Only deleting the package does, and that also drops its settings.
+	ErrLastVersion = errors.New("registry will not remove the last tagged version of a package")
+)
+
 // categories is every verdict classify can reach, used to recognize an error it
 // has already seen. Keep it complete: a category missing here is one that gets
 // classified twice and reported twice.

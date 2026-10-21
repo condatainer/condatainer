@@ -78,6 +78,14 @@
 - `--no-prebuilt` is ignored for it. Building is impossible, so no preference is left to express.
 - Recording is one lock transaction per artifact. An interrupted push keeps everything that landed, and a rerun skips it.
 
+## Collecting a project's registry
+
+- `project registry gc` keeps what the lock pins and removes the rest. An empty pin set is refused, since it would remove the whole repository.
+- Older commits pin other digests. Reading them is `--git-history`, which is opt-in because it sees only `HEAD`'s ancestry.
+- A shallow clone is refused with `--git-history`. Its history stops short, and the run would remove what an older commit pins.
+- A snapshot cannot be rebuilt, so removing one is final for any commit that pins it.
+- A registry that a source declares is refused. It belongs to `registry gc`.
+
 ## Scanning
 
 - A declaration counts wherever it is written. The scanner and `run` share one tokenizer, so they cannot disagree about a script.

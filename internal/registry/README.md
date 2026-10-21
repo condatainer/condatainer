@@ -43,7 +43,8 @@ GHCR is the registry these come from.
 
 The request limit shapes the design.
 
-- Layers are planned by count, not by size. A bigger artifact gets bigger layers, not more of them.
+- Layers are planned by count. They are 2 GiB until the artifact passes 48 GiB, then grow to keep the count near 24.
+- A registry's documented layer limit caps the growth, so a very large artifact then gets more layers.
 - Writes are spaced out.
 - A rate limit is waited out, never treated as a failure.
 
@@ -123,3 +124,17 @@ Storage and lookup are in `internal/credential`. What is particular to registrie
   - The keys already prove an artifact can stand in for a recipe.
 - A source declares its own audience. `--audience` applies to `--registry` only, so a flag never loosens a source's.
 - A project repository is reached with `--registry`. No collection is checked there.
+
+## Removal
+
+- A delete by digest drops every tag on the manifest, and GHCR has no single-tag delete.
+- GHCR refuses the standard delete calls, so its packages are managed through GitHub's REST API. Every other host uses the standard calls.
+- The `ghcr.io` credential is sent to `api.github.com` and to no other host.
+- GHCR refuses to remove the last tagged version of a package. Deleting a package also drops its visibility and repository link, so no command does it.
+- Tags move off a manifest before the manifest is removed. A name or equivalence tag never points at nothing.
+- The registry is read again after the answer. A push writes the build tag before the others, and a user can take a while to answer, so a fresh upload briefly looks unserved.
+- `gc --no-recipe` removes builds of names the source has no recipe for. The recipe list is cached, so it is refreshed first. An unreadable or empty list stops the run, since every name would look unrecipe'd.
+- `remove` and `gc` take only `--source`. A project's repository has no declaring source, so neither can empty one by accident.
+- A manifest holding a tag this package did not write is never removed, since removing it would drop that tag too.
+- On Docker Hub a manifest fetch counts as a pull and a tag resolve does not. A manifest is fetched once per digest in a run, so a lookup and its pull share one fetch. `remove` fetches only when a build holds a name or equivalence tag.
+

@@ -16,6 +16,18 @@
 - It is the same directory an image carries at `/.cnt/provenance/`, read by the same code. Two readers could drift into a lock that verifies against an image that does not.
 - `.helper-history/` is the one gitignored exception. It is machine-local recency, and a checkout restamps mtimes.
 
+## Architectures
+
+- A pin holds one artifact per architecture: `amd64`, `arm64`, or the one `noarch`.
+- An artifact's identity includes its build history, and history differs per architecture. So each architecture has its own identity and its own entry.
+- `noarch` describes the overlay itself, not its history. A `noarch` overlay is portable, but one built over an architecture-bound tool still has one identity per architecture.
+- Nothing infers `noarch`. A recipe declares it.
+- `archs` is declared, not derived. A lock of `noarch` pins gives nothing to derive it from.
+- `project lock` writes the host's artifacts and keeps the others.
+- Restore and `exec` read only the host's artifact, then `noarch`. They never rebuild from another architecture's recipe.
+- A `noarch` pin whose rebuild needs another architecture's tool is fetched from the registry. `--no-prebuilt` is refused for it.
+- Validate expects every covered architecture for every pin, except where the recipe's `#ARCH:` list leaves it out.
+
 ## Remotes
 
 - A remote is a repository coordinate plus the manifest digest of the artifact's architecture. Never a mutable tag.

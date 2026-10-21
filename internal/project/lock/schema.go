@@ -13,11 +13,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 )
 
@@ -61,6 +64,9 @@ var (
 	ErrSchema = errors.New("unsupported lock schema")
 	// ErrInvalid reports a structurally invalid lock.
 	ErrInvalid = errors.New("invalid lock")
+	// ErrArchConflict reports an overlay that would share a vendored entry with
+	// the same overlay built for another architecture.
+	ErrArchConflict = errors.New("overlay is built for another architecture")
 )
 
 // Lock is cnt-lock/lock.json.
@@ -86,8 +92,12 @@ type Lock struct {
 	// Match is which key a local copy must agree with for this project. Absent
 	// means equivalence.
 	Match Match `json:"match,omitempty"`
-	// Pins maps a canonical request to the artifact directory that
-	// satisfies it. The value is an object rather than a bare path so
+	// Archs are the architectures the lock covers, sorted. Declared rather than
+	// derived: a lock holding only noarch pins, or one locked on a single
+	// machine so far, gives nothing to derive it from.
+	Archs []string `json:"archs,omitempty"`
+	// Pins maps a canonical request to the artifact directories that
+	// satisfy it. The value is an object rather than a bare path so
 	// pin-specific policy can be added without copying artifact facts
 	// into the mapping.
 	Pins map[string]PinEntry `json:"pins"`
@@ -151,11 +161,12 @@ type OCI struct {
 // Empty reports that no destination has been recorded.
 func (o OCI) Empty() bool { return strings.TrimSpace(o.Push) == "" }
 
-// PinEntry is which artifact satisfies one request.
+// PinEntry is which artifacts satisfy one request.
 type PinEntry struct {
-	// Artifact is the slash-separated path of the vendored artifact directory,
-	// relative to the lock directory.
-	Artifact string `json:"artifact"`
+	// Artifacts maps an architecture (amd64 or arm64) to the slash-separated
+	// path of the vendored artifact directory built for it, relative to the lock
+	// directory. A portable artifact is the one entry under noarch.
+	Artifacts map[string]string `json:"artifacts"`
 	// Manual marks a pin the project recorded rather than one derived from a
 	// #DEP:. Pins are otherwise a projection of the scan, and Reconcile deletes
 	// every key the scan no longer produces; a manual one is removed only when
@@ -168,6 +179,43 @@ type PinEntry struct {
 	// no-op.
 	Manual bool `json:"manual,omitempty"`
 }
+
+// For is the artifact that answers this pin on arch: the one built for arch,
+// else the noarch one.
+func (p PinEntry) For(arch string) (string, bool) {
+	if artifact, ok := p.Artifacts[arch]; ok {
+		return artifact, true
+	}
+	artifact, ok := p.Artifacts[meta.ArchNone]
+	return artifact, ok
+}
+
+// Paths are the pin's artifact paths, sorted by architecture.
+func (p PinEntry) Paths() []string {
+	out := make([]string, 0, len(p.Artifacts))
+	for _, arch := range slices.Sorted(maps.Keys(p.Artifacts)) {
+		out = append(out, p.Artifacts[arch])
+	}
+	return out
+}
+
+// with returns the pin holding artifact for arch. A noarch artifact replaces
+// every architecture's, and an architecture's artifact replaces a noarch one.
+func (p PinEntry) with(arch, artifact string) PinEntry {
+	out := PinEntry{Manual: p.Manual, Artifacts: map[string]string{arch: artifact}}
+	if arch == meta.ArchNone {
+		return out
+	}
+	for other, path := range p.Artifacts {
+		if other != meta.ArchNone && other != arch {
+			out.Artifacts[other] = path
+		}
+	}
+	return out
+}
+
+// pinArchs are the keys of PinEntry.Artifacts.
+var pinArchs = []string{"amd64", "arm64", meta.ArchNone}
 
 // Remote is one exact place an artifact can be fetched from. It is a location,
 // never artifact metadata: nothing here is compared against the payload, which
@@ -227,6 +275,10 @@ func (l *Lock) Marshal() ([]byte, error) {
 	out := *l
 	out.SchemaVersion = SchemaVersion
 	out.Source = strings.TrimSpace(out.Source)
+	out.Archs = slices.Sorted(slices.Values(out.Archs))
+	if len(out.Archs) == 0 {
+		out.Archs = nil
+	}
 	if len(out.Remotes) == 0 {
 		out.Remotes = nil
 	}
@@ -252,6 +304,9 @@ func (l *Lock) Validate() error {
 	}
 	if err := l.OCI.validate(); err != nil {
 		return fmt.Errorf("%w: oci: %v", ErrInvalid, err)
+	}
+	if err := validArchs(l.Archs); err != nil {
+		return fmt.Errorf("%w: archs: %v", ErrInvalid, err)
 	}
 	for request, pin := range l.Pins {
 		if strings.TrimSpace(request) == "" {
@@ -280,7 +335,44 @@ func validatePin(request string, pin PinEntry) error {
 			return err
 		}
 	}
-	return validEntryPath(pin.Artifact)
+	if len(pin.Artifacts) == 0 {
+		return errors.New("pin names no artifact")
+	}
+	if _, portable := pin.Artifacts[meta.ArchNone]; portable && len(pin.Artifacts) > 1 {
+		return errors.New("a noarch artifact stands alone")
+	}
+	for arch, artifact := range pin.Artifacts {
+		if !slices.Contains(pinArchs, arch) {
+			return fmt.Errorf("architecture %q is not amd64, arm64 or noarch", arch)
+		}
+		if err := validEntryPath(artifact); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validArchs requires the covered architectures to be real ones, each once.
+func validArchs(archs []string) error {
+	seen := map[string]bool{}
+	for _, arch := range archs {
+		if arch == meta.ArchNone || !slices.Contains(pinArchs, arch) {
+			return fmt.Errorf("%q is not amd64 or arm64", arch)
+		}
+		if seen[arch] {
+			return fmt.Errorf("%q is listed twice", arch)
+		}
+		seen[arch] = true
+	}
+	return nil
+}
+
+// AddArch records that the lock covers arch.
+func (l *Lock) AddArch(arch string) {
+	if !slices.Contains(l.Archs, arch) {
+		l.Archs = append(l.Archs, arch)
+		sort.Strings(l.Archs)
+	}
 }
 
 // validateRemotes checks one artifact's fetch locations.
@@ -450,13 +542,15 @@ func (l *Lock) Requests() []string {
 	return out
 }
 
-// PinnedArtifacts is the set of artifact paths the pins point at directly: the roots of reachability, not reachability itself.
+// PinnedArtifacts is the set of artifact paths the pins point at directly, whatever the architecture: the roots of reachability, not reachability itself.
 //   - Manifest edges pull in the rest, so pruning against this set alone would delete the closure.
 //   - Remotes are not roots.
 func (l *Lock) PinnedArtifacts() map[string]bool {
 	out := make(map[string]bool, len(l.Pins))
 	for _, pin := range l.Pins {
-		out[pin.Artifact] = true
+		for _, artifact := range pin.Paths() {
+			out[artifact] = true
+		}
 	}
 	return out
 }

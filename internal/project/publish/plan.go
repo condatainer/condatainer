@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/registry"
@@ -110,8 +111,14 @@ func Build(ctx context.Context, root string, l *lock.Lock, verified *lock.Verifi
 	}
 
 	plan := &Plan{Repository: destination, Audience: string(audience), Source: l.Source}
-	pinned := l.PinnedArtifacts()
-	destinations := projectPaths(l)
+	// Only this machine's artifacts are pushed: the others are another
+	// machine's to push, and a noarch one belongs to whichever pushes first.
+	selection := verified.Select(l, meta.NativeArch())
+	pinned := map[string]bool{}
+	for _, artifact := range selection.Artifacts {
+		pinned[artifact] = true
+	}
+	destinations := projectPaths(selection)
 
 	for _, artifact := range sortedArtifacts(verified) {
 		entry := verified.Entries[artifact]
@@ -212,11 +219,11 @@ func dropAmbiguousPlainTags(plan *Plan) []string {
 // projectPaths maps each artifact a `path:` pin points at to where the
 // project keeps it. Such an artifact is never in an images root — the project
 // owns the file — so a push has to read it from where the project mounts it.
-func projectPaths(l *lock.Lock) map[string]string {
+func projectPaths(selection lock.Selection) map[string]string {
 	out := map[string]string{}
-	for request, pin := range l.Pins {
+	for request, artifact := range selection.Artifacts {
 		if destination, ok := strings.CutPrefix(request, lock.PathPrefix); ok {
-			out[pin.Artifact] = destination
+			out[artifact] = destination
 		}
 	}
 	return out

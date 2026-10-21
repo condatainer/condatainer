@@ -11,9 +11,9 @@ const digestA = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef01234567
 func TestMarshalIsDeterministicAndSorted(t *testing.T) {
 	build := func() *Lock {
 		l := New()
-		l.Pins["star/2.7.11b"] = PinEntry{Artifact: "provenance/star--2.7.11b@a31f902c12ab"}
-		l.Pins["cutadapt/5.0"] = PinEntry{Artifact: "provenance/cutadapt--5.0@41b5204f99c1"}
-		l.Pins["grch38/genome/gencode49"] = PinEntry{Artifact: "provenance/grch38--genome--gencode49@8ce02116f302"}
+		l.Pins["star/2.7.11b"] = pinOf("provenance/star--2.7.11b@a31f902c12ab")
+		l.Pins["cutadapt/5.0"] = pinOf("provenance/cutadapt--5.0@41b5204f99c1")
+		l.Pins["grch38/genome/gencode49"] = pinOf("provenance/grch38--genome--gencode49@8ce02116f302")
 		return l
 	}
 
@@ -51,7 +51,7 @@ func TestMarshalIsDeterministicAndSorted(t *testing.T) {
 
 func TestRoundTripPreservesRemotes(t *testing.T) {
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: "provenance/star--2.7.11b@a31f902c12ab"}
+	l.Pins["star/2.7.11b"] = pinOf("provenance/star--2.7.11b@a31f902c12ab")
 	if err := l.AddRemote("provenance/star--2.7.11b@a31f902c12ab", Remote{Repository: "ghcr.io/example/star", ManifestDigest: digestA}); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestEntryPathsAreConstrained(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.why, func(t *testing.T) {
 			l := New()
-			l.Pins["star/2.7.11b"] = PinEntry{Artifact: tt.path}
+			l.Pins["star/2.7.11b"] = pinOf(tt.path)
 			if _, err := l.Marshal(); !errors.Is(err, ErrInvalid) {
 				t.Fatalf("accepted %q: %v", tt.path, err)
 			}
@@ -178,8 +178,8 @@ func TestUnmarshalRejectsDuplicateRemotes(t *testing.T) {
 // is only the root set. Pruning against it alone would delete the closure.
 func TestPinnedArtifactsIsRootsOnly(t *testing.T) {
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: "provenance/star--2.7.11b@a31f902c12ab"}
-	l.Pins["also/star"] = PinEntry{Artifact: "provenance/star--2.7.11b@a31f902c12ab"}
+	l.Pins["star/2.7.11b"] = pinOf("provenance/star--2.7.11b@a31f902c12ab")
+	l.Pins["also/star"] = pinOf("provenance/star--2.7.11b@a31f902c12ab")
 	if got := l.PinnedArtifacts(); len(got) != 1 || !got["provenance/star--2.7.11b@a31f902c12ab"] {
 		t.Fatalf("PinnedArtifacts = %#v", got)
 	}
@@ -279,5 +279,42 @@ func TestMatchIsValidatedAndOmittedWhenDefault(t *testing.T) {
 	l.Match = "exact"
 	if _, err := l.Marshal(); !errors.Is(err, ErrInvalid) {
 		t.Errorf("an unknown match was accepted: %v", err)
+	}
+}
+
+func TestPinAndArchsNameRealArchitectures(t *testing.T) {
+	const path = "provenance/star--2.7.11b@a31f902c12ab"
+	tests := []struct {
+		why   string
+		pin   map[string]string
+		archs []string
+	}{
+		{"unknown pin architecture", map[string]string{"s390x": path}, nil},
+		{"noarch with another", map[string]string{"noarch": path, "amd64": path}, nil},
+		{"no artifact", map[string]string{}, nil},
+		{"noarch as a covered architecture", map[string]string{"amd64": path}, []string{"noarch"}},
+		{"duplicate covered architecture", map[string]string{"amd64": path}, []string{"amd64", "amd64"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.why, func(t *testing.T) {
+			l := New()
+			l.Archs = tt.archs
+			l.Pins["star/2.7.11b"] = PinEntry{Artifacts: tt.pin}
+			if _, err := l.Marshal(); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestMarshalSortsTheCoveredArchitectures(t *testing.T) {
+	l := New()
+	l.Archs = []string{"arm64", "amd64"}
+	data, err := l.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"archs": [`+"\n"+`    "amd64",`) {
+		t.Errorf("archs are not sorted:\n%s", data)
 	}
 }

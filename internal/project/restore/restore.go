@@ -131,7 +131,7 @@ func Run(ctx context.Context, root string, l *lock.Lock, opts Options) (*Report,
 	}
 
 	verified, problems := lock.Verify(root, l)
-	if len(problems) > 0 {
+	if problems = lock.WithoutGaps(problems); len(problems) > 0 {
 		// Compute already verified, so this cannot normally differ. It is read
 		// again because the sources are needed, and a checkout that changed in
 		// between must not be built from.
@@ -155,7 +155,7 @@ func Run(ctx context.Context, root string, l *lock.Lock, opts Options) (*Report,
 	// same map once its own step has run — reorderBaseFirst (plan.go) is what
 	// guarantees that has already happened by the time anything else needs it.
 	available := map[string]string{}
-	baseArtifact := l.Pins[lock.BaseKey].Artifact
+	baseArtifact := plan.Base
 	// Which artifacts cannot be attempted, mapped to the artifact that failed
 	// beneath them. Blockage propagates, so a chain reports one cause.
 	stopped := map[string]string{}

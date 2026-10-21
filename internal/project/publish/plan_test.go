@@ -43,7 +43,7 @@ func TestBuildPublishesThePinsAlone(t *testing.T) {
 	})
 
 	l := lockWith(t, root, "ghcr.io/lab/p/cnt")
-	l.Pins["grch38/genome/gencode49"] = lock.PinEntry{Artifact: pin}
+	l.Pins["grch38/genome/gencode49"] = pinOf(pin)
 
 	plan := buildPlan(t, root, l, Options{})
 	if len(plan.Steps) != 1 || plan.Steps[0].Artifact != pin {
@@ -52,8 +52,8 @@ func TestBuildPublishesThePinsAlone(t *testing.T) {
 	// A pin takes the build tag, then the name tag, each ending in the architecture.
 	tags := plan.Steps[0].Tags
 	if len(tags) != 2 || registry.IsNameTag(tags[0]) || !registry.IsNameTag(tags[1]) ||
-		!strings.HasSuffix(tags[0], "__amd64") || !strings.HasSuffix(tags[1], "__amd64") {
-		t.Errorf("a pin's tags = %v, want its build tag and its name tag for amd64", tags)
+		!strings.HasSuffix(tags[0], "__"+meta.NativeArch()) || !strings.HasSuffix(tags[1], "__"+meta.NativeArch()) {
+		t.Errorf("a pin's tags = %v, want its build tag and its name tag for %s", tags, meta.NativeArch())
 	}
 }
 
@@ -76,7 +76,7 @@ func TestBuildRefusesWhatTheEndpointWillNotTake(t *testing.T) {
 	app := vendorApp(t, root, "star/2.7.11b", "echo star\n")
 
 	l := lockWith(t, root, "ghcr.io/lab/p/cnt")
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: app}
+	l.Pins["star/2.7.11b"] = pinOf(app)
 
 	plan := buildPlan(t, root, l, Options{})
 	if len(plan.Steps) != 1 || plan.Steps[0].Disposition != Refused {
@@ -105,8 +105,8 @@ func TestAmbiguousNamesLoseTheNameTag(t *testing.T) {
 	}
 
 	l := lockWith(t, root, "ghcr.io/lab/p/cnt")
-	l.Pins["grch38/genome/gencode49"] = lock.PinEntry{Artifact: one}
-	l.Pins["path:overlays/gencode49.sqf"] = lock.PinEntry{Artifact: two}
+	l.Pins["grch38/genome/gencode49"] = pinOf(one)
+	l.Pins["path:overlays/gencode49.sqf"] = pinOf(two)
 
 	// Build resolves it, not Refine: the collision check runs right after, and
 	// a shared plain tag left in place would refuse the whole push offline.
@@ -153,8 +153,8 @@ func TestTwoFrozenEnvironmentsPublish(t *testing.T) {
 
 	l := lockWith(t, root, "ghcr.io/lab/p/cnt")
 	l.OCI.Audience = "restricted" // A snapshot never reaches a public endpoint.
-	l.Pins["path:overlays/analysis.sqf"] = lock.PinEntry{Artifact: one, Manual: true}
-	l.Pins["path:overlays/dev.sqf"] = lock.PinEntry{Artifact: two, Manual: true}
+	l.Pins["path:overlays/analysis.sqf"] = manualPinOf(one)
+	l.Pins["path:overlays/dev.sqf"] = manualPinOf(two)
 
 	plan := buildPlan(t, root, l, Options{})
 	if !plan.Complete() {
@@ -221,5 +221,26 @@ func TestAlreadyPublishedReadsNoManifestForARecordedDigest(t *testing.T) {
 	}
 	if reads.Load() != 1 {
 		t.Errorf("an unrecorded build read %d manifests, want one", reads.Load())
+	}
+}
+
+// Only this machine's artifact is published; another architecture's is
+// another machine's to push.
+func TestBuildPublishesOnlyThisMachinesArtifact(t *testing.T) {
+	root := projectRoot(t)
+	own, _ := vendorData(t, root, "grch38/genome/gencode49", "echo own\n")
+	other := "arm64"
+	if meta.NativeArch() == "arm64" {
+		other = "amd64"
+	}
+	foreign, _ := vendorDataFor(t, root, "grch38/genome/gencode49", "echo foreign\n", other)
+
+	l := lockWith(t, root, "ghcr.io/lab/p/cnt")
+	l.Archs = []string{"amd64", "arm64"}
+	l.Pins["grch38/genome/gencode49"] = lock.PinEntry{Artifacts: map[string]string{meta.NativeArch(): own, other: foreign}}
+
+	plan := buildPlan(t, root, l, Options{})
+	if len(plan.Steps) != 1 || plan.Steps[0].Artifact != own {
+		t.Fatalf("steps = %#v, want only %s", plan.Steps, own)
 	}
 }

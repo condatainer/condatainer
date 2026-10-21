@@ -33,6 +33,8 @@ type Pinned struct {
 	Request string
 	// Artifact is the vendored directory, relative to the lock directory.
 	Artifact string
+	// Arch is the architecture the artifact was built for, or noarch.
+	Arch string
 	// Path is the image the records came out of. Recorded nowhere: it is
 	// machine-local, and reported only so a user can see what was read.
 	Path     string
@@ -84,7 +86,7 @@ func Pin(root, request, target string, opts PinOptions) (*Pinned, error) {
 	}
 	metaDir := filepath.Join(staging, meta.DirName)
 
-	vendored, err := vendorClosure(root, metaDir, candidate)
+	vendored, arch, err := vendorClosure(root, metaDir, candidate)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +95,7 @@ func Pin(root, request, target string, opts PinOptions) (*Pinned, error) {
 	return &Pinned{
 		Request:  request,
 		Artifact: EntryPath(capsule.EntryName(candidate.Name, candidate.Identity.Digest())),
+		Arch:     arch,
 		Path:     candidate.Path,
 		Name:     candidate.Name,
 		Identity: candidate.Identity,
@@ -274,54 +277,56 @@ func requestName(request string) (string, error) {
 // vendorClosure writes the pinned artifact and every entry of its embedded capsule into cnt-lock/provenance/.
 //   - The capsule is copied, never re-derived, so there is no catalog access and no network.
 //   - Entry names come from `capsule.EntryName`, the same as an image's own provenance.
-func vendorClosure(root, metaDir string, candidate store.Candidate) ([]string, error) {
-	var vendored []string
-
+func vendorClosure(root, metaDir string, candidate store.Candidate) (vendored []string, arch string, err error) {
 	manifest, err := readStagedManifest(metaDir)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if manifest.Name != candidate.Name {
-		return nil, fmt.Errorf("%w: %s records the name %s", ErrInvalid, candidate.Path, manifest.Name)
+		return nil, "", fmt.Errorf("%w: %s records the name %s", ErrInvalid, candidate.Path, manifest.Name)
 	}
 	if manifest.Keys.Identity != candidate.Identity {
-		return nil, fmt.Errorf("%w: %s records an identity its sources do not derive", ErrInvalid, candidate.Path)
+		return nil, "", fmt.Errorf("%w: %s records an identity its sources do not derive", ErrInvalid, candidate.Path)
+	}
+	arch = manifest.Platform.Arch
+	if !slices.Contains(pinArchs, arch) {
+		return nil, "", fmt.Errorf("%w: %s records the architecture %q", ErrInvalid, candidate.Path, arch)
 	}
 	// A pin is only as good as its provenance: an artifact built over an
 	// unrecorded dependency cannot be rebuilt from the checkout, whatever its
 	// own sources say.
 	if manifest.ProvenanceComplete != nil && !*manifest.ProvenanceComplete {
-		return nil, fmt.Errorf("%w: %s was built over a dependency that carried no records",
+		return nil, "", fmt.Errorf("%w: %s was built over a dependency that carried no records",
 			ErrInvalid, candidate.Name)
 	}
 
 	files, err := stagedFiles(metaDir, capsule.FileNames(manifest))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	relative, err := StageEntry(root, capsule.EntryName(manifest.Name, manifest.Keys.Identity.Digest()), files)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	vendored = append(vendored, relative)
 
 	capsuleDir := filepath.Join(metaDir, capsule.DirName)
 	entries, err := capsule.Entries(capsuleDir)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	for _, entry := range entries {
 		body, err := stagedFiles(filepath.Join(capsuleDir, entry.Dir), entry.Files)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		relative, err := StageEntry(root, entry.Dir, body)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		vendored = append(vendored, relative)
 	}
-	return vendored, nil
+	return vendored, arch, nil
 }
 
 func readStagedManifest(metaDir string) (meta.Manifest, error) {
@@ -361,14 +366,29 @@ func stagedFiles(dir string, names []string) (map[string][]byte, error) {
 // closure first. Publication is last, so a lock is never left pointing at
 // something that does not validate.
 func Apply(root string, l *Lock, pinned *Pinned) error {
-	previous, had := l.Pins[pinned.Request]
-	entry := PinEntry{Artifact: pinned.Artifact, Manual: pinned.Manual}
+	previous := l.Pins[pinned.Request]
+	// The other architectures' artifacts stay only while they are the same
+	// artifact name: a re-pin to another one leaves them answering a different
+	// request.
+	if !sameName(root, previous, pinned.Name) {
+		previous.Artifacts = nil
+	}
+	entry := previous.with(pinned.Arch, pinned.Artifact)
 	// Re-pinning never turns a manual pin back into a sweepable one: the artifact
 	// changed, not the reason it is in the lock.
-	if had && previous.Manual {
-		entry.Manual = true
-	}
+	entry.Manual = pinned.Manual || previous.Manual
 	return applyEntry(root, l, pinned.Request, entry)
+}
+
+// sameName reports whether every artifact the pin holds is an artifact called name.
+func sameName(root string, pin PinEntry, name string) bool {
+	for _, artifact := range pin.Paths() {
+		entry, err := ReadEntry(root, artifact)
+		if err != nil || entry.Manifest.Name != name {
+			return false
+		}
+	}
+	return true
 }
 
 // applyEntry writes one entry at key, verifying the whole closure before
@@ -391,6 +411,7 @@ func applyEntry(root string, l *Lock, key string, entry PinEntry) error {
 		return fmt.Errorf("%w: pinning %s leaves the project invalid:\n  %s",
 			ErrInvalid, key, joinProblems(problems))
 	}
+	l.AddArch(meta.NativeArch())
 	return Publish(root, l)
 }
 
@@ -406,7 +427,13 @@ func pinBase(root string, l *Lock, distro string, manual bool, opts PinOptions) 
 	if err != nil {
 		return nil, err
 	}
-	if err := applyEntry(root, l, BaseKey, PinEntry{Artifact: pinned.Artifact, Manual: manual}); err != nil {
+	previous := l.Pins[BaseKey]
+	if !sameName(root, previous, pinned.Name) {
+		previous.Artifacts = nil
+	}
+	entry := previous.with(pinned.Arch, pinned.Artifact)
+	entry.Manual = manual
+	if err := applyEntry(root, l, BaseKey, entry); err != nil {
 		return nil, err
 	}
 	pinned.Request, pinned.Manual = BaseKey, manual
@@ -437,9 +464,12 @@ func AutoDistro(root string, l *Lock, distro string, opts PinOptions) (*Pinned, 
 	return pinBase(root, l, distro, false, opts)
 }
 
-// dropPrunable removes the problems Publish resolves by pruning.
+// dropPrunable removes the problems that do not stop a pin being written: an
+// entry Publish prunes, and a pin another architecture has yet to answer.
 func dropPrunable(problems []Problem) []Problem {
-	return slices.DeleteFunc(slices.Clone(problems), func(p Problem) bool { return p.Reason == reasonUnreachable })
+	return slices.DeleteFunc(slices.Clone(problems), func(p Problem) bool {
+		return p.Reason == reasonUnreachable || p.Gap
+	})
 }
 
 func joinProblems(problems []Problem) string {
@@ -508,6 +538,7 @@ func Reconcile(root string, l *Lock, result *ScanResult) (needPin []Request) {
 	}
 
 	verified, _ := Verify(root, l)
+	host := meta.NativeArch()
 	for _, request := range result.Requests {
 		// An unpinnable request is not needPin: there is nowhere for restore
 		// to put an answer, and the scanner has already reported it.
@@ -519,8 +550,19 @@ func Reconcile(root string, l *Lock, result *ScanResult) (needPin []Request) {
 			needPin = append(needPin, request)
 			continue
 		}
-		if _, valid := verified.Entries[pin.Artifact]; !valid {
+		// A key that no longer verifies is dropped; the pin goes with its last one.
+		for arch, artifact := range pin.Artifacts {
+			if _, valid := verified.Entries[artifact]; !valid {
+				delete(pin.Artifacts, arch)
+			}
+		}
+		if len(pin.Artifacts) == 0 {
 			delete(l.Pins, key)
+			needPin = append(needPin, request)
+			continue
+		}
+		l.Pins[key] = pin
+		if _, answered := pin.For(host); !answered && !verified.excludes(pin, host) {
 			needPin = append(needPin, request)
 		}
 	}

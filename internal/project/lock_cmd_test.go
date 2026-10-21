@@ -54,7 +54,7 @@ func TestUnpinnedHelperOverlays(t *testing.T) {
 		t.Fatalf("unpinned = %v, want [rstudio-server/4.4.3]", unpinned)
 	}
 
-	l.Pins["rstudio-server/4.4.3"] = lock.PinEntry{Artifact: "provenance/ghost@000000000000"}
+	l.Pins["rstudio-server/4.4.3"] = pinOf("provenance/ghost@000000000000")
 	unpinned, err = UnpinnedHelperOverlays(root, l)
 	if err != nil {
 		t.Fatal(err)
@@ -94,10 +94,10 @@ func TestManualPinUsage(t *testing.T) {
 	}
 
 	l := lock.New()
-	l.Pins["build-essential"] = lock.PinEntry{Artifact: "provenance/a@000000000000", Manual: true}
-	l.Pins["unrelated/1.0"] = lock.PinEntry{Artifact: "provenance/b@000000000000", Manual: true}
+	l.Pins["build-essential"] = manualPinOf("provenance/a@000000000000")
+	l.Pins["unrelated/1.0"] = manualPinOf("provenance/b@000000000000")
 	// A #DEP:-derived (non-manual) pin never appears here at all.
-	l.Pins["scripted/1.0"] = lock.PinEntry{Artifact: "provenance/c@000000000000"}
+	l.Pins["scripted/1.0"] = pinOf("provenance/c@000000000000")
 
 	usage, err := ManualPinUsage(root, l)
 	if err != nil {

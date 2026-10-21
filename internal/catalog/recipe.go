@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -18,6 +19,7 @@ type Entry struct {
 	Description    string              `json:"description,omitempty"`
 	URL            string              `json:"url,omitempty"`
 	Deps           []string            `json:"deps,omitempty"` // #DEP: order, as written
+	Arch           []Arch              `json:"arch,omitempty"` // #ARCH: values as written; empty means any architecture
 	IsTemplate     bool                `json:"is_template,omitempty"`
 	TargetTemplate string              `json:"target_template,omitempty"`
 	PH             map[string][]string `json:"ph,omitempty"` // value order is load-bearing, key order is not
@@ -30,7 +32,6 @@ type Recipe struct {
 	Sources    []SourceURL // #SOURCE: declarations, in order
 	Inputs     []string    // #INPUT: prompts, in order
 	Directives []string    // #SBATCH / #PBS / #BSUB, verbatim
-	Arch       Arch        // #ARCH:; empty means the default, ArchNative
 	// License is #LICENSE: as written — an SPDX expression, kept verbatim and
 	// never parsed. Deriving redistribution permission from a licence
 	// expression is a judgement a tool gets wrong in the permissive direction,
@@ -82,16 +83,47 @@ func (r *Recipe) Script() []byte {
 	return r.Text
 }
 
-// Arch is what a recipe asserts about where its payload may run. Nothing can
-// work this out by inspection — only the author knows whether a build produced
-// machine code, a tool-specific binary dump, or bytes that mean the same
-// everywhere — so the default is strict and portability must be declared.
+// Arch is one value of #ARCH:.
+//   - amd64 and arm64 name an architecture the recipe may be built on.
+//   - noarch declares the result portable. Nothing can work that out by inspection — only the author knows whether a build produced machine code, a tool-specific binary dump, or bytes that mean the same everywhere — so portability must be declared.
 type Arch string
 
 const (
-	ArchNative Arch = "native" // the default: runs only where it was built
-	ArchNoarch Arch = "noarch" // runs anywhere
+	ArchAMD64  Arch = "amd64"
+	ArchARM64  Arch = "arm64"
+	ArchNoarch Arch = "noarch"
 )
+
+// Noarch reports whether the recipe declares its result portable.
+func (e *Entry) Noarch() bool { return slices.Contains(e.Arch, ArchNoarch) }
+
+// BuildableOn reports whether the recipe may be built on arch.
+//   - A recipe with no #ARCH: builds anywhere, and so does a noarch one.
+//   - A list names the architectures it builds on.
+func (e *Entry) BuildableOn(arch string) error {
+	if len(e.Arch) == 0 || e.Noarch() || slices.Contains(e.Arch, Arch(arch)) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s builds on %s only; this machine is %s",
+		ErrUnsupportedArch, e.Name, joinArch(e.Arch), arch)
+}
+
+func joinArch(archs []Arch) string {
+	names := make([]string, len(archs))
+	for i, a := range archs {
+		names[i] = string(a)
+	}
+	return strings.Join(names, " and ")
+}
+
+// parseArch reads a #ARCH: value as a list separated by spaces or commas.
+func parseArch(value string) []Arch {
+	var out []Arch
+	for _, field := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool { return r == ' ' || r == ',' || r == '\t' }) {
+		out = append(out, Arch(field))
+	}
+	return out
+}
 
 // EnvVar is one #ENV: contribution. Segments keep {prefix} intact, since the
 // mount path is not known until the artifact is loaded.
@@ -151,8 +183,8 @@ func ParseRecipe(path string, r io.Reader) (*Recipe, error) {
 			declared = strings.ToLower(value)
 			rec.DeclaredType = declared
 		case "#ARCH":
-			if rec.Arch == "" {
-				rec.Arch = Arch(strings.ToLower(value))
+			if rec.Arch == nil {
+				rec.Arch = parseArch(value)
 			}
 		case "#DESC":
 			rec.Description = firstOf(rec.Description, value)

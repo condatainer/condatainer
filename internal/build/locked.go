@@ -207,7 +207,7 @@ func (b *BuildObject) lockRecipeSource(manifest meta.Manifest, sources map[strin
 	b.spec.Image.License = runnable.License
 	b.spec.Image.Redistribute = runnable.Redistributable()
 	b.spec.Image.Env = envFromRecipe(runnable.Env)
-	b.spec.Image.Arch = runnable.Arch
+	b.spec.Image.Noarch = runnable.Noarch()
 	b.embedSource(file)
 
 	b.inputPrompts, b.recipeInputs = runnable.Prompts(), len(runnable.Inputs)

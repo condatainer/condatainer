@@ -839,7 +839,7 @@ func TestArchReachesTheRecordedPlatform(t *testing.T) {
 	}{
 		{"portable", "#DESC:jars\n#ARCH:noarch\necho build\n", meta.ArchNone},
 		{"default is strict", "#DESC:compiled\necho build\n", meta.NativeArch()},
-		{"explicit native", "#DESC:compiled\n#ARCH:native\necho build\n", meta.NativeArch()},
+		{"a list with this machine", "#DESC:compiled\n#ARCH:" + meta.NativeArch() + "\necho build\n", meta.NativeArch()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -859,6 +859,19 @@ func TestArchReachesTheRecordedPlatform(t *testing.T) {
 				t.Errorf("os = %q", got)
 			}
 		})
+	}
+}
+
+// A recipe that lists other architectures does not build here, and says so before it starts.
+func TestArchListRefusesAnotherMachine(t *testing.T) {
+	other := "amd64"
+	if meta.NativeArch() == "amd64" {
+		other = "arm64"
+	}
+	setTestSource(t, writeRecipe(t, "picard/3.1", "#DESC:compiled\n#ARCH:"+other+"\necho build\n"))
+	_, err := NewBuildObject(context.Background(), "picard/3.1", false, t.TempDir(), false)
+	if !errors.Is(err, catalog.ErrUnsupportedArch) {
+		t.Fatalf("err = %v, want ErrUnsupportedArch", err)
 	}
 }
 

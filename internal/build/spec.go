@@ -34,9 +34,9 @@ type ImageSpec struct {
 	// intact, substituted when the image is loaded.
 	Prefix string
 	Env    []meta.EnvVar
-	// Arch is the recipe's #ARCH: assertion. Empty means the default: the
-	// artifact runs only where it was built.
-	Arch catalog.Arch
+	// Noarch is the recipe's #ARCH: noarch declaration. Without it the artifact
+	// runs only where it was built.
+	Noarch bool
 	// License is the recipe's #LICENSE:, verbatim. Redistribute is its
 	// #REDISTRIBUTE: answer, nil when it did not answer. Both are recorded and
 	// read at push time; neither enters a key preimage.
@@ -254,7 +254,7 @@ func (s Spec) Manifest() meta.Manifest {
 // that declared #ARCH:noarch is portable — nothing infers portability, because
 // getting it wrong does not crash, it silently returns wrong answers.
 func (s Spec) platform() meta.Platform {
-	if s.Image.Arch == catalog.ArchNoarch {
+	if s.Image.Noarch {
 		return meta.Platform{OS: "linux", Arch: meta.ArchNone}
 	}
 	return meta.NativePlatform()

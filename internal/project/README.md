@@ -19,7 +19,7 @@
 ## Remotes
 
 - A remote is a repository coordinate plus the manifest digest of the artifact's architecture. Never a mutable tag.
-- Remotes are keyed by artifact, at the top of `lock.json`. A closure-only dependency can have one too.
+- Remotes are keyed by artifact, at the top of `lock.json`. Only a pinned artifact has one.
 - A remote never lives inside an entry directory. An entry's bytes are the key preimage, and a registry location is mutable information. It must change without the artifact changing.
 - Remotes are written by machines, never typed.
 - One is recorded only when something confirmed the artifact is there: a collection's registry advertises this exact identity, or `project registry push` just put it there.

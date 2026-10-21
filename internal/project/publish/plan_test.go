@@ -2,7 +2,6 @@ package publish
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"testing"
 
@@ -32,9 +31,9 @@ func lockWith(t *testing.T, root string, push string) *lock.Lock {
 	return l
 }
 
-func TestBuildDefaultsToSelectionsAndAddsClosureOnDemand(t *testing.T) {
+func TestBuildPublishesThePinsAlone(t *testing.T) {
 	root := projectRoot(t)
-	dep, depManifest := vendorData(t, root, "cutadapt/5.0", "echo cutadapt\n")
+	_, depManifest := vendorData(t, root, "cutadapt/5.0", "echo cutadapt\n")
 	pin, _ := vendorData(t, root, "grch38/genome/gencode49", "echo index\n", meta.Dependency{
 		Name:     depManifest.Name,
 		Type:     depManifest.Type,
@@ -46,33 +45,15 @@ func TestBuildDefaultsToSelectionsAndAddsClosureOnDemand(t *testing.T) {
 	l := lockWith(t, root, "ghcr.io/lab/p/cnt")
 	l.Pins["grch38/genome/gencode49"] = lock.PinEntry{Artifact: pin}
 
-	// Restore prunes a closure node whenever its dependent is fetched, so the
-	// build dependency is reachable only on the path a push exists to avoid.
 	plan := buildPlan(t, root, l, Options{})
 	if len(plan.Steps) != 1 || plan.Steps[0].Artifact != pin {
-		t.Fatalf("the default set is not the pins alone: %#v", plan.Steps)
-	}
-	if !plan.Steps[0].Pinned {
-		t.Error("a pin is not marked selected, so it would lose its name tag")
+		t.Fatalf("the plan is not the pins alone: %#v", plan.Steps)
 	}
 	// A pin takes the build tag, then the name tag, each ending in the architecture.
 	tags := plan.Steps[0].Tags
 	if len(tags) != 2 || registry.IsNameTag(tags[0]) || !registry.IsNameTag(tags[1]) ||
 		!strings.HasSuffix(tags[0], "__amd64") || !strings.HasSuffix(tags[1], "__amd64") {
 		t.Errorf("a pin's tags = %v, want its build tag and its name tag for amd64", tags)
-	}
-
-	plan = buildPlan(t, root, l, Options{Closure: true})
-	if len(plan.Steps) != 2 {
-		t.Fatalf("--closure did not add the build dependency: %#v", plan.Steps)
-	}
-	for _, step := range plan.Steps {
-		if step.Artifact == dep && step.Pinned {
-			t.Error("a build dependency is marked as a pin")
-		}
-		if step.Artifact == dep && (len(step.Tags) != 2 || !registry.IsNameTag(step.Tags[1])) {
-			t.Errorf("a build dependency should carry its build tag and its name tag, got %v", step.Tags)
-		}
 	}
 }
 
@@ -188,42 +169,6 @@ func TestTwoFrozenEnvironmentsPublish(t *testing.T) {
 		}
 		if len(step.Tags) != 1 || !strings.HasPrefix(step.Tags[0], meta.EnvName+"__") {
 			t.Errorf("%s tags = %v, want one qualified tag", step.Artifact, step.Tags)
-		}
-	}
-}
-
-// A pin keeps the name tag over a build dependency of the same name; the dependency is addressed by its build tag.
-func TestAPinKeepsTheNameTagOverADependency(t *testing.T) {
-	root := projectRoot(t)
-	pinTool, _ := vendorData(t, root, "cutadapt/5.0", "echo pinned\n")
-	dep, depManifest := vendorData(t, root, "cutadapt/5.0", "echo as a dependency\n")
-	user, _ := vendorData(t, root, "grch38/genome/gencode49", "echo index\n", meta.Dependency{
-		Name:     depManifest.Name,
-		Type:     depManifest.Type,
-		Identity: depManifest.Keys.Identity,
-		Equiv:    depManifest.Keys.Equiv,
-		Role:     "data",
-	})
-
-	l := lockWith(t, root, "ghcr.io/lab/p/cnt")
-	l.Pins["cutadapt/5.0"] = lock.PinEntry{Artifact: pinTool}
-	l.Pins["grch38/genome/gencode49"] = lock.PinEntry{Artifact: user}
-
-	plan := buildPlan(t, root, l, Options{Closure: true})
-	if len(plan.Ambiguous) != 0 {
-		t.Errorf("ambiguous = %v, want none: one pin and one dependency share the name", plan.Ambiguous)
-	}
-	for _, step := range plan.Steps {
-		named := slices.ContainsFunc(step.Tags, registry.IsNameTag)
-		switch step.Artifact {
-		case pinTool:
-			if !named {
-				t.Errorf("the pin lost its name tag: %v", step.Tags)
-			}
-		case dep:
-			if named {
-				t.Errorf("the dependency took the name tag the pin holds: %v", step.Tags)
-			}
 		}
 	}
 }

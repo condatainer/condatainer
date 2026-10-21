@@ -32,12 +32,9 @@ const (
 // Step is one artifact's place in a push.
 type Step struct {
 	// Artifact is the vendored directory, relative to the lock directory.
-	Artifact string `json:"artifact"`
-	Name     string `json:"name"`
-	Identity string `json:"identity"`
-	// Pinned reports that a pin points at this artifact rather than only
-	// a dependency edge. It decides the plain name tag.
-	Pinned      bool        `json:"pinned"`
+	Artifact    string      `json:"artifact"`
+	Name        string      `json:"name"`
+	Identity    string      `json:"identity"`
 	Disposition Disposition `json:"disposition"`
 	// Path is the local artifact to upload, empty for anything not uploaded.
 	Path string `json:"path,omitempty"`
@@ -93,10 +90,6 @@ type Options struct {
 	// a paper's artifacts outliving the lab's recipe repository — where holding
 	// a second copy is exactly the point.
 	All bool
-	// Closure adds every vendored build dependency. Restore prunes a closure
-	// node whenever its dependent is adopted or fetched, so these are reachable
-	// only on the rebuild path, which is the path a push exists to avoid.
-	Closure bool
 }
 
 // Build computes what a push would do, without contacting anything.
@@ -120,15 +113,13 @@ func Build(ctx context.Context, root string, l *lock.Lock, verified *lock.Verifi
 
 	for _, artifact := range sortedArtifacts(verified) {
 		entry := verified.Entries[artifact]
-		isPinned := pinned[artifact]
-		if !isPinned && !opts.Closure {
+		if !pinned[artifact] {
 			continue
 		}
 		step := Step{
 			Artifact:    artifact,
 			Name:        entry.Manifest.Name,
 			Identity:    entry.Identity.Digest(),
-			Pinned:      isPinned,
 			Destination: destinations[artifact],
 			Channels:    entry.Manifest.Build.Channels,
 		}
@@ -185,9 +176,8 @@ func checkTagCollisions(plan *Plan) error {
 
 // dropAmbiguousPlainTags removes the name tag where two artifacts in one set share a manifest name.
 //   - A name tag holds one build, so two artifacts cannot both have it.
-//   - A single pin keeps it over build dependencies of the same name; two pins, or no pin, leave it on neither.
-//   - Build tags still identify each.
-//   - It reports each name two pins share, once.
+//   - Both lose it, and build tags still identify each.
+//   - It reports each such name, once.
 //   - Only artifacts that carry a name tag take part; a frozen environment has none.
 func dropAmbiguousPlainTags(plan *Plan) []string {
 	byName := map[string][]int{}
@@ -202,16 +192,7 @@ func dropAmbiguousPlainTags(plan *Plan) []string {
 		if len(sharing) < 2 {
 			continue
 		}
-		var pins []int
 		for _, i := range sharing {
-			if plan.Steps[i].Pinned {
-				pins = append(pins, i)
-			}
-		}
-		for _, i := range sharing {
-			if len(pins) == 1 && i == pins[0] {
-				continue
-			}
 			var kept []string
 			for _, tag := range plan.Steps[i].Tags {
 				if !registry.IsNameTag(tag) {
@@ -220,9 +201,7 @@ func dropAmbiguousPlainTags(plan *Plan) []string {
 			}
 			plan.Steps[i].Tags = kept
 		}
-		if len(pins) > 1 {
-			dropped = append(dropped, name)
-		}
+		dropped = append(dropped, name)
 	}
 	return dropped
 }

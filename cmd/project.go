@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/condatainer/condatainer/internal/scheduler"
-	"github.com/condatainer/condatainer/internal/settings"
 	"os"
 	"sort"
 	"strings"
@@ -21,6 +19,8 @@ import (
 	"github.com/condatainer/condatainer/internal/project/publish"
 	"github.com/condatainer/condatainer/internal/project/restore"
 	"github.com/condatainer/condatainer/internal/registry"
+	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -758,7 +758,7 @@ func audienceOrDefault(v string) string {
 }
 
 func newProjectRegistryPushCmd() *cobra.Command {
-	var all, closure, dryRun, jsonOutput bool
+	var all, dryRun, jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "push",
 		Short: "Publish pinned overlays and record where they landed",
@@ -770,7 +770,7 @@ func newProjectRegistryPushCmd() *cobra.Command {
 - Pins that a recipe source already serves are skipped. --all uploads them too.`,
 		Example: `  condatainer project registry push --dry-run       # Show the plan, upload nothing
   condatainer project registry push                 # Publish
-  condatainer project registry push --all --closure # Include recipe-served pins and dependencies`,
+  condatainer project registry push --all           # Include pins a recipe source serves`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -797,7 +797,7 @@ func newProjectRegistryPushCmd() *cobra.Command {
 					strings.Join(invalid, "\n  "))
 			}
 
-			opts := publish.Options{All: all, Closure: closure}
+			opts := publish.Options{All: all}
 			plan, err := publish.Build(cmd.Context(), root, l, verified, opts)
 			if err != nil {
 				return err
@@ -823,7 +823,6 @@ func newProjectRegistryPushCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "Publish every pin, including ones a recipe source already serves")
-	cmd.Flags().BoolVar(&closure, "closure", false, "Also publish build dependencies")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be published, without uploading")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
 	return cmd
@@ -1268,9 +1267,8 @@ func newProjectRestoreCmd() *cobra.Command {
 		Long: `Make every locked overlay available, by reusing, downloading, or rebuilding it.
 
 - A named pin is installed under its name. A path pin goes to the path it declares.
-- Overlays are downloaded from the recorded registry when one is available.
+- An overlay is downloaded only from a registry the lock records. Otherwise it is rebuilt.
 - A rebuild with scheduler directives is submitted as a job, unless --no-submit is given.
-- Build dependencies are removed at the end unless --keep-build-deps.
 - A path that already holds a different file is refused unless you pass --replace.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
@@ -1306,9 +1304,9 @@ func newProjectRestoreCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would happen, without doing it")
 	cmd.Flags().BoolVar(&noPrebuilt, "no-prebuilt", false,
-		"Build missing overlays locally where possible instead of downloading a prebuilt")
+		"Rebuild missing overlays instead of downloading it (snapshot still downloaded)")
 	cmd.Flags().BoolVar(&keepBuildDeps, "keep-build-deps", false,
-		"Keep build dependencies instead of discarding them at the end")
+		"Keep the build dependencies of a rebuild")
 	settings.AddSwitch(cmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (rebuild locally)"))
 	cmd.Flags().BoolVar(&replace, "replace", false,
 		"Overwrite a project path holding something the lock does not name")

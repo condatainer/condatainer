@@ -25,12 +25,31 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 
 ## Normalized variables
 
-- Recipes and scripts read `$NCPUS`, `$MEM` and `$MEM_GB` on every scheduler, so they never learn a scheduler's own names.
-- LSF and HTCondor lack enough native variables, so the values are exported in the generated batch script.
-- SLURM and PBS have them, so they are computed when entering a container.
-- `NTASKS_PER_NODE` is absent when the layout is free, not defaulted.
+- Recipes and scripts read `$NCPU`, `$MEM` and `$MEM_GB` on every scheduler, so they never learn a scheduler's own names.
+  - `NCPU` is the CPUs of one rank, not threads. `MEM` is the memory of one rank, in MB.
+  - `NNODE`, `NRANK` and `NRANK_PER_NODE` give the layout.
+  - `NCPUS` is not used: PBS sets it to the CPUs of the first chunk, so one name would mean two things.
+- Every job script exports the variables, written by one helper for all four schedulers.
+  - Each is exported under its short name and as `CNT_<name>`. `OMP_NUM_THREADS` has no copy.
+  - A job with no parsed spec, in passthrough, exports nothing.
+- `CurrentJobResources` reads the `CNT_` copies first, so a user's own `NCPU` cannot change what is read. Only then does it ask the active scheduler.
+  - The exports describe the job as submitted. A job that a script inside it submits by hand inherits them.
+  - An `srun` or `mpiexec` step inherits them too, and a step with another shape reads the job's values.
+  - A rank on another node gets its environment from `mpiexec`. It may have none of them and falls back to the scheduler's own variables.
+- Each scheduler's reader stays correct on its own, since a job submitted without CondaTainer exports nothing.
+  - SLURM reads per-task variables.
+  - LSF has no node count or tasks per node, so its reader gives the slot count only.
+  - PBS has no per-rank variable. `NCPUS` is the first chunk's `ncpus`, which counts every rank on the node, and `OMP_NUM_THREADS` is that chunk's `ompthreads`, else its `ncpus`.
+    - The reader takes `NCPUS`. It is right for one rank per chunk, such as an interactive allocation.
+    - A shell opened with `ssh` on a node of an MPI job is not supported, and nothing is derived from `$PBS_NODEFILE`.
+- `NRANK_PER_NODE` is absent when the layout is free, not defaulted.
 - When tasks do not divide evenly across nodes, tasks per node rounds up. The script then enforces the layout the memory figure assumed.
-- `MEM` is memory per task.
+- A build is one rank, so its `NCPU` is all the CPUs it was given.
+
+## PBS time
+
+- A PBS time is `[[HH:]MM:]SS`, so a bare number is seconds and `1:30` is a minute and a half.
+- LSF `-W` takes minutes and `HH:MM`, so the two have separate parsers.
 
 ## Partition and account
 

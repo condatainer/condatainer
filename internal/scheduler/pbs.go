@@ -726,6 +726,10 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 
 	fmt.Fprintln(writer, "")
 
+	if specs.Spec != nil {
+		writeResourceExports(writer, specs.Spec)
+	}
+
 	// Array job: extract input line, set ARRAY_ARGS, and redirect output
 	if jobSpec.Array != nil {
 		writeArrayBlock(writer, "$PBS_ARRAY_INDEX",
@@ -1142,7 +1146,9 @@ func (s *PbsScheduler) GetJobResources() *ResourceSpec {
 	if v := getEnvInt("PBS_NUM_NODES"); v != nil {
 		res.Nodes = *v
 	}
-	// NCPUS: cpus per task (= OMP_NUM_THREADS = ompthreads per select chunk).
+	// NCPUS is the ncpus of the first select chunk, which counts every rank on the node.
+	// It is the CPUs of one rank for a job with one rank per chunk, such as an interactive allocation.
+	// A script CondaTainer generated exports the CPUs of one rank as NCPU, which CurrentJobResources reads first.
 	// https://help.altair.com/2024.1.0/PBS%20Professional/PBSUserGuide2024.1.pdf#page=119
 	if v := getEnvInt("NCPUS"); v != nil {
 		res.CpusPerTask = *v

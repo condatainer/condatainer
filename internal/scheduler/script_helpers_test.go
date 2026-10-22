@@ -44,11 +44,11 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerNodeMB: 32768,
 			},
 			wantVars: map[string]string{
-				"NNODES":          "1",
-				"NTASKS":          "1",
-				"NCPUS":           "8",
+				"NNODE":           "1",
+				"NRANK":           "1",
+				"NCPU":            "8",
 				"OMP_NUM_THREADS": "8",
-				"NTASKS_PER_NODE": "1",
+				"NRANK_PER_NODE":  "1",
 				"MEM":             "32768", // 32768 / 1 task
 				"MEM_GB":          "32",
 			},
@@ -63,11 +63,11 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerCpuMB:  4096,
 			},
 			wantVars: map[string]string{
-				"NNODES":          "2",
-				"NTASKS":          "16",
-				"NCPUS":           "1",
+				"NNODE":           "2",
+				"NRANK":           "16",
+				"NCPU":            "1",
 				"OMP_NUM_THREADS": "1",
-				"NTASKS_PER_NODE": "8",
+				"NRANK_PER_NODE":  "8",
 				"MEM":             "4096", // 4096 * 1 CPU/task
 				"MEM_GB":          "4",
 			},
@@ -82,11 +82,11 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerNodeMB: 65536,
 			},
 			wantVars: map[string]string{
-				"NNODES":          "2",
-				"NTASKS":          "8",
-				"NCPUS":           "4",
+				"NNODE":           "2",
+				"NRANK":           "8",
+				"NCPU":            "4",
 				"OMP_NUM_THREADS": "4",
-				"NTASKS_PER_NODE": "4",
+				"NRANK_PER_NODE":  "4",
 				"MEM":             "16384", // 65536 / 4 tasks/node
 				"MEM_GB":          "16",
 			},
@@ -101,9 +101,9 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerCpuMB:  8192,
 			},
 			wantVars: map[string]string{
-				"NNODES":          "2",
-				"NTASKS":          "7",
-				"NCPUS":           "1",
+				"NNODE":           "2",
+				"NRANK":           "7",
+				"NCPU":            "1",
 				"OMP_NUM_THREADS": "1",
 				"MEM":             "8192", // 8192 * 1 CPU/task
 				"MEM_GB":          "8",
@@ -119,9 +119,9 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerCpuMB:  8192,
 			},
 			wantVars: map[string]string{
-				"NNODES":          "1", // Defaults to 1
-				"NTASKS":          "7",
-				"NCPUS":           "1",
+				"NNODE":           "1", // Defaults to 1
+				"NRANK":           "7",
+				"NCPU":            "1",
 				"OMP_NUM_THREADS": "1",
 				"MEM":             "8192", // 8192 * 1 CPU/task
 				"MEM_GB":          "8",
@@ -137,11 +137,11 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerCpuMB:  2048,
 			},
 			wantVars: map[string]string{
-				"NNODES":          "1", // Defaults to 1
-				"NTASKS":          "1",
-				"NCPUS":           "16",
+				"NNODE":           "1", // Defaults to 1
+				"NRANK":           "1",
+				"NCPU":            "16",
 				"OMP_NUM_THREADS": "16",
-				"NTASKS_PER_NODE": "1",
+				"NRANK_PER_NODE":  "1",
 				"MEM":             "32768", // 2048 * 16 CPUs/task
 				"MEM_GB":          "32",
 			},
@@ -155,20 +155,20 @@ func TestResourceEnvVars(t *testing.T) {
 				CpusPerTask:  2,
 			},
 			wantVars: map[string]string{
-				"NNODES":          "2",
-				"NTASKS":          "8",
-				"NCPUS":           "2",
+				"NNODE":           "2",
+				"NRANK":           "8",
+				"NCPU":            "2",
 				"OMP_NUM_THREADS": "2",
-				"NTASKS_PER_NODE": "4",
+				"NRANK_PER_NODE":  "4",
 			},
 		},
 		{
 			name: "Minimal defaults: nil ResourceSpec",
 			rs:   nil,
 			wantVars: map[string]string{
-				"NNODES":          "1",
-				"NTASKS":          "1",
-				"NCPUS":           "1",
+				"NNODE":           "1",
+				"NRANK":           "1",
+				"NCPU":            "1",
 				"OMP_NUM_THREADS": "1",
 			},
 		},
@@ -180,11 +180,11 @@ func TestResourceEnvVars(t *testing.T) {
 				CpusPerTask:  2,
 			},
 			wantVars: map[string]string{
-				"NNODES":          "2",
-				"NTASKS":          "8", // 2 * 4
-				"NCPUS":           "2",
+				"NNODE":           "2",
+				"NRANK":           "8", // 2 * 4
+				"NCPU":            "2",
 				"OMP_NUM_THREADS": "2",
-				"NTASKS_PER_NODE": "4",
+				"NRANK_PER_NODE":  "4",
 			},
 		},
 	}
@@ -202,15 +202,33 @@ func TestResourceEnvVars(t *testing.T) {
 				}
 			}
 
-			// Check expected variables exist with correct values
+			// Check expected variables exist with correct values, and that each has a CNT_ copy
+			// with the same value. OMP_NUM_THREADS is the one name without a copy.
 			for key, wantVal := range tt.wantVars {
-				gotVal, exists := gotMap[key]
-				if !exists {
-					t.Errorf("Expected variable %s not found in output", key)
-					continue
+				names := []string{key, "CNT_" + key}
+				if key == "OMP_NUM_THREADS" {
+					names = names[:1]
 				}
-				if gotVal != wantVal {
-					t.Errorf("Variable %s = %q; want %q", key, gotVal, wantVal)
+				for _, name := range names {
+					gotVal, exists := gotMap[name]
+					if !exists {
+						t.Errorf("Expected variable %s not found in output", name)
+						continue
+					}
+					if gotVal != wantVal {
+						t.Errorf("Variable %s = %q; want %q", name, gotVal, wantVal)
+					}
+				}
+			}
+
+			// Variables the spec cannot fill are left out, not defaulted.
+			for _, key := range []string{"NRANK_PER_NODE", "MEM", "MEM_GB"} {
+				if _, want := tt.wantVars[key]; !want {
+					for _, name := range []string{key, "CNT_" + key} {
+						if v, exists := gotMap[name]; exists {
+							t.Errorf("Variable %s = %q is set; want it absent", name, v)
+						}
+					}
 				}
 			}
 

@@ -1560,7 +1560,7 @@ func TestLsfGetJobResources(t *testing.T) {
 		}
 	})
 
-	// Pure MPI: LSB_DJOB_NUMPROC = total tasks; no NCPUS injected.
+	// Pure MPI: LSB_DJOB_NUMPROC = total tasks.
 	t.Run("pure MPI via LSB_DJOB_NUMPROC", func(t *testing.T) {
 		clearJobEnvVars(t)
 		t.Setenv("LSB_JOBID", "99999")
@@ -1579,53 +1579,6 @@ func TestLsfGetJobResources(t *testing.T) {
 		}
 		if res.Gpu == nil || res.Gpu.Count != 1 {
 			t.Errorf("Gpu.Count = %v; want 1", res.Gpu)
-		}
-	})
-
-	// Hybrid: injected NCPUS splits the total slot count correctly.
-	t.Run("hybrid MPI+OpenMP via injected NCPUS", func(t *testing.T) {
-		clearJobEnvVars(t)
-		t.Setenv("LSB_JOBID", "99999")
-		t.Setenv("LSB_DJOB_NUMPROC", "32") // 8 tasks × 4 threads
-		t.Setenv("NCPUS", "4")
-
-		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.Ntasks != 8 {
-			t.Errorf("Ntasks = %d; want 8 (32 slots / 4 cpus-per-task)", res.Ntasks)
-		}
-		if res.CpusPerTask != 4 {
-			t.Errorf("CpusPerTask = %d; want 4", res.CpusPerTask)
-		}
-	})
-
-	// Full geometry from injected env vars wins over LSF native vars.
-	t.Run("full geometry from injected env vars", func(t *testing.T) {
-		clearJobEnvVars(t)
-		t.Setenv("LSB_JOBID", "99999")
-		t.Setenv("LSB_DJOB_NUMPROC", "64") // ignored when NTASKS is already set
-		t.Setenv("NNODES", "4")
-		t.Setenv("NTASKS", "16")
-		t.Setenv("NTASKS_PER_NODE", "4")
-		t.Setenv("NCPUS", "2")
-
-		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.Nodes != 4 {
-			t.Errorf("Nodes = %d; want 4", res.Nodes)
-		}
-		if res.Ntasks != 16 {
-			t.Errorf("Ntasks = %d; want 16", res.Ntasks)
-		}
-		if res.TasksPerNode != 4 {
-			t.Errorf("TasksPerNode = %d; want 4", res.TasksPerNode)
-		}
-		if res.CpusPerTask != 2 {
-			t.Errorf("CpusPerTask = %d; want 2", res.CpusPerTask)
 		}
 	})
 

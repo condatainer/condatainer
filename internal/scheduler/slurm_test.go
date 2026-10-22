@@ -844,8 +844,11 @@ func clearJobEnvVars(t *testing.T) {
 		"_CONDOR_JOB_AD", "_CONDOR_REQUEST_CPUS", "_CONDOR_REQUEST_MEMORY",
 		"CUDA_VISIBLE_DEVICES",
 		// Normalized env vars injected by ResourceEnvVars (may be present on an HPC node).
-		"NNODES", "NTASKS", "NTASKS_PER_NODE", "NCPUS",
-		"MEM_PER_CPU", "MEM_PER_CPU_MB", "MEM", "MEM_GB",
+		"NNODE", "NRANK", "NRANK_PER_NODE", "NCPU", "MEM", "MEM_GB",
+		"CNT_NNODE", "CNT_NRANK", "CNT_NRANK_PER_NODE", "CNT_NCPU", "CNT_MEM", "CNT_MEM_GB",
+		"MEM_PER_CPU", "MEM_PER_CPU_MB", "OMP_NUM_THREADS",
+		// MPI library variables.
+		"OMPI_COMM_WORLD_SIZE", "OMPI_COMM_WORLD_LOCAL_SIZE", "PMI_SIZE", "MV2_COMM_WORLD_SIZE", "MPI_LOCALNRANKS",
 	} {
 		os.Unsetenv(key)
 		t.Setenv(key, "")

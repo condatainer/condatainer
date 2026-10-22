@@ -194,8 +194,8 @@ type Target struct {
 const ScratchPath = "/cnt_tmp"
 
 // buildEnv is the environment a script recipe runs with: the image from Spec,
-// the machine from Options. NCPUS, MEM and MEM_GB are appended unprefixed — the
-// exception to CNT_, so a recipe copied from a cluster's docs still works.
+// the machine from Options. The resource variables are appended under their short
+// names and as CNT_ copies. NCPU is the CPUs of the whole build, since a build is one process.
 func buildEnv(spec Spec, opts Options) []string {
 	effRS := EffectiveResourceSpec(opts.ScriptSpecs)
 	cpus := effRS.CpusPerTask

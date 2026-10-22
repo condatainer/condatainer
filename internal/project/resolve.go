@@ -245,7 +245,7 @@ func Resolve(ctx context.Context, root string, l *lock.Lock, requests []lock.Req
 		return nil, err
 	}
 	verified, problems := lock.Verify(root, l)
-	if len(problems) > 0 {
+	if problems = lock.WithoutGaps(problems); len(problems) > 0 {
 		resolution := &Resolution{Root: root}
 		for _, problem := range problems {
 			resolution.Unresolved = append(resolution.Unresolved,
@@ -261,6 +261,7 @@ func Resolve(ctx context.Context, root string, l *lock.Lock, requests []lock.Req
 	match = match.Normalize()
 	resolve, resolveAt := opts.resolver(), opts.pathResolver()
 	resolution := &Resolution{Root: root}
+	host := meta.NativeArch()
 
 	for _, request := range requests {
 		// An unpinnable declaration is mounted as written: there is nowhere for
@@ -287,7 +288,13 @@ func Resolve(ctx context.Context, root string, l *lock.Lock, requests []lock.Req
 				Reason: "declared but not pinned; run `condatainer project pin` to pin it"})
 			continue
 		}
-		entry, ok := verified.Entries[pin.Artifact]
+		artifact, ok := pin.For(host)
+		if !ok {
+			resolution.Unresolved = append(resolution.Unresolved, Unresolved{Request: request.Key,
+				Reason: fmt.Sprintf("the pin has no %s artifact; run `condatainer project lock` on this machine", host)})
+			continue
+		}
+		entry, ok := verified.Entries[artifact]
 		if !ok {
 			resolution.Unresolved = append(resolution.Unresolved, Unresolved{Request: request.Key,
 				Reason: "the pinned overlay is not vendored"})

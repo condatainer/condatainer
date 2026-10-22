@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/project/lock"
 )
@@ -139,7 +140,12 @@ func (s *Standing) SelectedDistro() string {
 		return ""
 	}
 	verified, _ := lock.Verify(s.Root, s.Lock)
-	entry, ok := verified.Entries[pin.Artifact]
+	// Every architecture's artifact has the same name.
+	artifact, ok := pin.For(meta.NativeArch())
+	if !ok {
+		artifact = pin.Paths()[0]
+	}
+	entry, ok := verified.Entries[artifact]
 	if !ok {
 		return ""
 	}

@@ -24,7 +24,7 @@ func TestRunAdoptsWithoutBuilding(t *testing.T) {
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 
 	report, err := Run(context.Background(), root, l, Options{lookup: installed("star/2.7.11b")})
 	if err != nil {
@@ -52,7 +52,7 @@ func TestRunReportsAnEquivalentAdoption(t *testing.T) {
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 
 	report, err := Run(context.Background(), root, l, Options{lookup: substitute("star/2.7.11b")})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestRunReportsAnEquivalentAdoption(t *testing.T) {
 func TestRunStopsOnAPlanningProblem(t *testing.T) {
 	root := projectRoot(t)
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: "provenance/missing--1.0@abc123456789"}
+	l.Pins["star/2.7.11b"] = pinOf("provenance/missing--1.0@abc123456789")
 
 	report, err := Run(context.Background(), root, l, Options{lookup: nothingInstalled})
 	if !errors.Is(err, ErrIncomplete) {
@@ -93,7 +93,7 @@ func TestRunFailsAFetchRatherThanRebuildingSilently(t *testing.T) {
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	digest := "sha256:" + strings.Repeat("a", 64)
 	// A loopback host so resolution fails locally: this asserts what a fetch does
 	// when no location serves the artifact, not what any real registry answers.
@@ -120,7 +120,7 @@ func TestRunHonoursCancellation(t *testing.T) {
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -240,7 +240,7 @@ func TestAnswersMakeAnInteractiveRebuildPlannable(t *testing.T) {
 	appPath := vendor(t, root, app, recipe)
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 
 	if plan := Compute(root, l, Options{lookup: nothingInstalled}); plan.Complete() {
 		t.Fatal("an interactive rebuild was planned with no answers")
@@ -288,7 +288,7 @@ func TestRebuildUsesTheVendoredSources(t *testing.T) {
 
 func mustLock(artifactPath string) *lock.Lock {
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: artifactPath}
+	l.Pins["star/2.7.11b"] = pinOf(artifactPath)
 	return l
 }
 
@@ -390,7 +390,7 @@ func TestRunBlocksADependentRatherThanFailingIt(t *testing.T) {
 	indexPath := vendor(t, root, index, "echo index\n")
 
 	l := lock.New()
-	l.Pins["grch38/star-index"] = lock.PinEntry{Artifact: indexPath}
+	l.Pins["grch38/star-index"] = pinOf(indexPath)
 	// The dependency is a fetch this build cannot perform, which is the one
 	// acquisition failure reachable without running a real build.
 	digest := "sha256:" + strings.Repeat("a", 64)
@@ -477,7 +477,7 @@ func TestTransientStagingIsNamedForTheArtifact(t *testing.T) {
 
 	entry, problems := func() (*lock.Entry, []lock.Problem) {
 		l := lock.New()
-		l.Pins["samtools/1.21"] = lock.PinEntry{Artifact: depPath}
+		l.Pins["samtools/1.21"] = pinOf(depPath)
 		verified, problems := lock.Verify(root, l)
 		return verified.Entries[depPath], problems
 	}()

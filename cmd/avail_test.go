@@ -44,3 +44,18 @@ func TestFormatListDescriptionUsesSecondLine(t *testing.T) {
 		t.Fatalf("formatListDescription = %q, want %q", got, want)
 	}
 }
+
+// A recipe this machine cannot build is listed with the architectures it needs.
+func TestAvailMarksARecipeThisMachineCannotBuild(t *testing.T) {
+	plain := formatPackageLine(PackageInfo{Name: "cellranger/9.0.1", NeedsArch: "amd64"}, false)
+	if !strings.Contains(plain, "needs amd64") {
+		t.Errorf("plain line = %q, want it to say the recipe needs amd64", plain)
+	}
+	template := formatTemplateLine(PackageInfo{Name: "cellranger", IsTemplate: true, NeedsArch: "amd64"}, false)
+	if !strings.Contains(template, "needs amd64") {
+		t.Errorf("template line = %q, want it to say the recipe needs amd64", template)
+	}
+	if got := formatPackageLine(PackageInfo{Name: "hello/1.0"}, false); strings.Contains(got, "needs") {
+		t.Errorf("a buildable recipe was marked: %q", got)
+	}
+}

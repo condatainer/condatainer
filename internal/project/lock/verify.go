@@ -1,15 +1,19 @@
 package lock
 
 import (
+	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // MaxSourceBytes bounds any file read out of a lock. A vendored source is a
@@ -26,6 +30,9 @@ type Entry struct {
 	// taken on trust from the manifest.
 	Identity meta.KeyRef
 	Equiv    meta.KeyRef
+	// Archs are the #ARCH: values of the vendored recipe, empty for an entry with
+	// no recipe or one that declares none.
+	Archs []catalog.Arch
 }
 
 // Verified is a checkout's artifact closure, keyed by relative artifact path.
@@ -49,6 +56,9 @@ type Problem struct {
 	// Request is the pin key, empty when the problem is not about one.
 	Request string
 	Reason  string
+	// Gap marks a pin that lacks an architecture's artifact. Pinning on that
+	// architecture resolves it, so it never stops a pin being written.
+	Gap bool
 }
 
 func (p Problem) String() string {
@@ -83,45 +93,41 @@ func Verify(root string, l *Lock) (*Verified, []Problem) {
 		}
 	}
 
-	// Pins must point at something that verified.
+	// Pins must point at something that verified, built for the architecture
+	// they are keyed under.
 	for _, request := range l.Requests() {
-		artifact := l.Pins[request].Artifact
-		entry, ok := out.Entries[artifact]
-		if !ok {
-			problems = append(problems, Problem{Request: request, Artifact: artifact,
-				Reason: "pin points at a missing or invalid overlay directory"})
-			continue
-		}
-		if reason := satisfies(request, entry.Manifest.Name); reason != "" {
-			problems = append(problems, Problem{Request: request, Artifact: artifact, Reason: reason})
+		for _, arch := range slices.Sorted(maps.Keys(l.Pins[request].Artifacts)) {
+			artifact := l.Pins[request].Artifacts[arch]
+			entry, ok := out.Entries[artifact]
+			if !ok {
+				problems = append(problems, Problem{Request: request, Artifact: artifact,
+					Reason: "pin points at a missing or invalid overlay directory"})
+				continue
+			}
+			if reason := satisfies(request, entry.Manifest.Name); reason != "" {
+				problems = append(problems, Problem{Request: request, Artifact: artifact, Reason: reason})
+			}
+			if recorded := entry.Manifest.Platform.Arch; recorded != arch {
+				problems = append(problems, Problem{Request: request, Artifact: artifact,
+					Reason: fmt.Sprintf("pinned for %s but built for %s", arch, recorded)})
+			}
 		}
 	}
 	out.Roots = sortedKeys(l.PinnedArtifacts())
 
 	// Walk dependency edges from the roots. Reachability is the closure, not the
 	// pin set: pruning against the roots alone would delete the closure.
-	out.Reachable = map[string]bool{}
-	var walk func(artifact string, trail []string)
-	walk = func(artifact string, trail []string) {
-		if out.Reachable[artifact] {
-			return
-		}
-		out.Reachable[artifact] = true
-		entry, ok := out.Entries[artifact]
-		if !ok {
-			return
-		}
-		for _, dep := range entry.Manifest.Dependencies {
-			child, reason := resolveEdge(out.Entries, dep)
-			if reason != "" {
-				problems = append(problems, Problem{Artifact: artifact, Reason: reason})
-				continue
+	var edgeProblems []Problem
+	out.Reachable, edgeProblems = reach(out.Entries, out.Roots)
+	problems = append(problems, edgeProblems...)
+
+	// Every architecture the lock covers needs an answer for every pin.
+	for _, arch := range l.Archs {
+		for _, gap := range out.Select(l, arch).Gaps {
+			if !gap.Excluded {
+				problems = append(problems, Problem{Request: gap.Request, Gap: true, Reason: gap.Reason})
 			}
-			walk(child, append(trail, artifact))
 		}
-	}
-	for _, artifact := range out.Roots {
-		walk(artifact, nil)
 	}
 
 	for _, relative := range present {
@@ -141,6 +147,141 @@ func Verify(root string, l *Lock) (*Verified, []Problem) {
 
 	sort.Slice(problems, func(i, j int) bool { return problems[i].String() < problems[j].String() })
 	return out, problems
+}
+
+// WithoutGaps drops the problems about another architecture's missing artifact.
+// A caller working for one machine asks Select about that machine instead.
+func WithoutGaps(problems []Problem) []Problem {
+	return slices.DeleteFunc(slices.Clone(problems), func(p Problem) bool { return p.Gap })
+}
+
+// reach walks dependency edges from roots and returns every entry they reach,
+// with the problem each edge that cannot be followed raises.
+func reach(entries map[string]*Entry, roots []string) (map[string]bool, []Problem) {
+	reachable := map[string]bool{}
+	var problems []Problem
+	var walk func(artifact string)
+	walk = func(artifact string) {
+		if reachable[artifact] {
+			return
+		}
+		reachable[artifact] = true
+		entry, ok := entries[artifact]
+		if !ok {
+			return
+		}
+		for _, dep := range entry.Manifest.Dependencies {
+			child, reason := resolveEdge(entries, dep)
+			if reason != "" {
+				problems = append(problems, Problem{Artifact: artifact, Reason: reason})
+				continue
+			}
+			walk(child)
+		}
+	}
+	for _, artifact := range roots {
+		walk(artifact)
+	}
+	return reachable, problems
+}
+
+// Gap is a pin with no artifact for an architecture.
+type Gap struct {
+	Request string
+	// Excluded reports that the pin's recipe does not build on the architecture,
+	// so nothing is missing that pinning there could supply.
+	Excluded bool
+	Reason   string
+}
+
+func (g Gap) String() string {
+	if g.Request == "" {
+		return g.Reason
+	}
+	return g.Request + ": " + g.Reason
+}
+
+// Selection is the artifact each request resolves to on one architecture.
+type Selection struct {
+	Arch string
+	// Artifacts maps a request to its artifact path.
+	Artifacts map[string]string
+	// Gaps are the requests with no artifact, sorted. A lock that does not cover
+	// the architecture at all reports one gap for the whole lock.
+	Gaps []Gap
+}
+
+// Select resolves every pin for arch: the artifact built for it, else the noarch one.
+func (v *Verified) Select(l *Lock, arch string) Selection {
+	selection := Selection{Arch: arch, Artifacts: map[string]string{}}
+	var missing []string
+	for _, request := range l.Requests() {
+		if artifact, ok := l.Pins[request].For(arch); ok {
+			selection.Artifacts[request] = artifact
+			continue
+		}
+		missing = append(missing, request)
+	}
+	covered := slices.Contains(l.Archs, arch)
+	for _, request := range missing {
+		if v.excludes(l.Pins[request], arch) {
+			allowed, _ := v.recipeArchs(l.Pins[request])
+			selection.Gaps = append(selection.Gaps, Gap{Request: request, Excluded: true,
+				Reason: fmt.Sprintf("builds on %s only; this machine is %s", joinArchs(allowed), arch)})
+			continue
+		}
+		if !covered {
+			continue
+		}
+		selection.Gaps = append(selection.Gaps, Gap{Request: request,
+			Reason: fmt.Sprintf("has no %s artifact; run `condatainer project lock` on an %s machine", arch, arch)})
+	}
+	if !covered && len(selection.Gaps) < len(missing) {
+		selection.Gaps = append(selection.Gaps, Gap{Reason: fmt.Sprintf(
+			"this lock does not cover %s; run `condatainer project lock` on an %s machine to add it", arch, arch)})
+	}
+	return selection
+}
+
+// recipeArchs reports the #ARCH: list of a pin's vendored recipe, and whether it has one.
+func (v *Verified) recipeArchs(pin PinEntry) ([]catalog.Arch, bool) {
+	for _, artifact := range pin.Paths() {
+		if entry, ok := v.Entries[artifact]; ok && len(entry.Archs) > 0 {
+			return entry.Archs, true
+		}
+	}
+	return nil, false
+}
+
+// excludes reports that the pin's recipe lists architectures and not arch.
+func (v *Verified) excludes(pin PinEntry, arch string) bool {
+	allowed, listed := v.recipeArchs(pin)
+	return listed && !slices.Contains(allowed, catalog.Arch(arch))
+}
+
+func joinArchs(archs []catalog.Arch) string {
+	out := make([]string, len(archs))
+	for i, arch := range archs {
+		out[i] = string(arch)
+	}
+	return strings.Join(out, " ")
+}
+
+// Scope narrows a verification to what one selection reaches: its roots and
+// their closure. Entries stay whole, so an artifact of another architecture is
+// present but not reachable.
+func (v *Verified) Scope(selection Selection) *Verified {
+	roots := sortedKeys(setOf(maps.Values(selection.Artifacts)))
+	reachable, _ := reach(v.Entries, roots)
+	return &Verified{Entries: v.Entries, Roots: roots, Reachable: reachable}
+}
+
+func setOf(values func(yield func(string) bool)) map[string]bool {
+	out := map[string]bool{}
+	for value := range values {
+		out[value] = true
+	}
+	return out
 }
 
 // resolveEdge finds the entry a dependency edge points at, by name and complete
@@ -199,7 +340,21 @@ func readEntry(lockDir, relative string) (*Entry, []Problem) {
 	}
 
 	return &Entry{Path: relative, Manifest: record.Manifest,
-		Identity: record.Derived.Identity.Ref, Equiv: record.Derived.Equiv.Ref}, nil
+		Identity: record.Derived.Identity.Ref, Equiv: record.Derived.Equiv.Ref,
+		Archs: recipeArchs(record.Sources)}, nil
+}
+
+// recipeArchs reads #ARCH: out of the vendored recipe, if the entry has one.
+func recipeArchs(sources map[string][]byte) []catalog.Arch {
+	text, ok := sources[meta.RecipeFileName]
+	if !ok {
+		return nil
+	}
+	recipe, err := catalog.ParseRecipe(meta.RecipeFileName, bytes.NewReader(text))
+	if err != nil {
+		return nil
+	}
+	return recipe.Arch
 }
 
 // Sources reads one verified entry's vendored build inputs, keyed as

@@ -15,7 +15,7 @@ func TestPublishWritesTheLockAtomically(t *testing.T) {
 	appPath := vendor(t, root, app, appFiles)
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	if err := Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestPublishWritesTheLockAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Pins["star/2.7.11b"].Artifact != appPath {
+	if loaded.Pins["star/2.7.11b"].Paths()[0] != appPath {
 		t.Fatalf("loaded = %#v", loaded.Pins)
 	}
 	leftovers, err := os.ReadDir(Dir(root))
@@ -50,7 +50,7 @@ func TestPruneKeepsTheClosureAndRemovesOrphans(t *testing.T) {
 	orphanPath := vendor(t, root, orphan, orphanFiles)
 
 	l := New()
-	l.Pins["index/1.0"] = PinEntry{Artifact: dataPath}
+	l.Pins["index/1.0"] = pinOf(dataPath)
 	if err := Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestPruneLeavesUnreadableEntriesAlone(t *testing.T) {
 	}
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	if err := Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -98,13 +98,13 @@ func TestPublishRefusesAnInvalidLockAndChangesNothing(t *testing.T) {
 	appPath := vendor(t, root, app, appFiles)
 
 	good := New()
-	good.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	good.Pins["star/2.7.11b"] = pinOf(appPath)
 	if err := Publish(root, good); err != nil {
 		t.Fatal(err)
 	}
 
 	bad := New()
-	bad.Pins["star/2.7.11b"] = PinEntry{Artifact: "/etc/passwd"}
+	bad.Pins["star/2.7.11b"] = pinOf("/etc/passwd")
 	if err := Publish(root, bad); err == nil {
 		t.Fatal("Publish accepted an absolute artifact path")
 	}
@@ -113,7 +113,7 @@ func TestPublishRefusesAnInvalidLockAndChangesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Pins["star/2.7.11b"].Artifact != appPath {
+	if loaded.Pins["star/2.7.11b"].Paths()[0] != appPath {
 		t.Fatalf("a failed publish replaced the authoritative lock: %#v", loaded.Pins)
 	}
 	if _, err := os.Stat(filepath.Join(Dir(root), appPath)); err != nil {
@@ -157,7 +157,7 @@ func TestStagingDirectoriesAreInvisible(t *testing.T) {
 	}
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	if _, problems := Verify(root, l); len(problems) != 0 {
 		t.Fatalf("an abandoned staging directory was read as an artifact:\n%s", problemText(problems))
 	}
@@ -172,7 +172,7 @@ func TestPublishDropsRemotesForUnreachableArtifacts(t *testing.T) {
 	l := New()
 	app, appFiles := recipeArtifact(t, "star/2.7.11b", "echo star\n")
 	kept := vendor(t, root, app, appFiles)
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: kept}
+	l.Pins["star/2.7.11b"] = pinOf(kept)
 
 	digest := "sha256:" + strings.Repeat("a", 64)
 	if err := l.AddRemote(kept, Remote{Repository: "ghcr.io/lab/p", ManifestDigest: digest}); err != nil {
@@ -212,7 +212,7 @@ func TestPublishKeepsRemotesItStillReaches(t *testing.T) {
 	l := New()
 	app, appFiles := recipeArtifact(t, "star/2.7.11b", "echo star\n")
 	kept := vendor(t, root, app, appFiles)
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: kept}
+	l.Pins["star/2.7.11b"] = pinOf(kept)
 	if err := Publish(root, l); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}

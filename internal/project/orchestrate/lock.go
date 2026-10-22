@@ -10,6 +10,7 @@ package orchestrate
 import (
 	"context"
 
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/project"
@@ -41,6 +42,9 @@ type LockResult struct {
 	// pinned, and which helpers are recorded using each manual pin.
 	UnpinnedHelperOverlays []string
 	ManualPinUsage         map[string][]string
+	// NotBuiltHere are the pins whose recipe does not build on this machine's
+	// architecture, so nothing was pinned for it.
+	NotBuiltHere []string
 }
 
 // Lock creates or updates root's lock from its #DEP: declarations: scan,
@@ -54,6 +58,7 @@ func Lock(ctx context.Context, root string, opts LockOptions) (*LockResult, erro
 	if err != nil {
 		return nil, err
 	}
+	current.AddArch(meta.NativeArch())
 	unpinned := lock.Reconcile(root, current, scanned)
 	if err := lock.Publish(root, current); err != nil {
 		return nil, err
@@ -96,10 +101,19 @@ func Lock(ctx context.Context, root string, opts LockOptions) (*LockResult, erro
 		return nil, err
 	}
 
+	var notBuiltHere []string
+	verified, _ := lock.Verify(root, current)
+	for _, gap := range verified.Select(current, meta.NativeArch()).Gaps {
+		if gap.Excluded {
+			notBuiltHere = append(notBuiltHere, gap.String())
+		}
+	}
+
 	return &LockResult{
 		Root: root, Current: current, Pinned: pinned, Failed: failed, Scanned: scanned,
 		Upstream: upstream, UnpublishedFrozenEnv: unpublished,
 		UnpinnedHelperOverlays: unpinnedOverlays, ManualPinUsage: usage,
+		NotBuiltHere: notBuiltHere,
 	}, nil
 }
 

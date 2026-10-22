@@ -145,8 +145,8 @@ func TestProjectValidateSucceedsOnACompleteProject(t *testing.T) {
 	base := vendorArtifact(t, root, "ubuntu24/base", "echo base\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: artifact}
-	l.Pins[lock.BaseKey] = lock.PinEntry{Artifact: base}
+	l.Pins["star/2.7.11b"] = pinOf(artifact)
+	l.Pins[lock.BaseKey] = pinOf(base)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -166,8 +166,8 @@ func TestProjectValidateFailsWhenAPinIsNotInstalled(t *testing.T) {
 	base := vendorArtifact(t, root, "ubuntu24/base", "echo base\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: artifact}
-	l.Pins[lock.BaseKey] = lock.PinEntry{Artifact: base}
+	l.Pins["star/2.7.11b"] = pinOf(artifact)
+	l.Pins[lock.BaseKey] = pinOf(base)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestProjectValidateFailsOnAnUnpinnableDeclaration(t *testing.T) {
 	artifact := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: artifact}
+	l.Pins["star/2.7.11b"] = pinOf(artifact)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestProjectPushRefusesWhatValidateRefuses(t *testing.T) {
 	artifact := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: artifact}
+	l.Pins["star/2.7.11b"] = pinOf(artifact)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestProjectValidateFailsOnAnInertDeclaration(t *testing.T) {
 	artifact := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: artifact}
+	l.Pins["star/2.7.11b"] = pinOf(artifact)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestProjectLockDropsAStaleSelection(t *testing.T) {
 	root := newProject(t)
 	artifact := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: artifact}
+	l.Pins["star/2.7.11b"] = pinOf(artifact)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -313,8 +313,8 @@ func TestProjectFlagSelectsTheNamedRoot(t *testing.T) {
 	artifact := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
 	base := vendorArtifact(t, root, "ubuntu24/base", "echo base\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: artifact}
-	l.Pins[lock.BaseKey] = lock.PinEntry{Artifact: base}
+	l.Pins["star/2.7.11b"] = pinOf(artifact)
+	l.Pins[lock.BaseKey] = pinOf(base)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestProjectRestoreDryRunAcquiresNothing(t *testing.T) {
 	writeScript(t, root, "run.sh", "#DEP: star/2.7.11b\nrun\n")
 	relative := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: relative}
+	l.Pins["star/2.7.11b"] = pinOf(relative)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +370,7 @@ func TestProjectSelectMatchIsWhatRestoreUses(t *testing.T) {
 	writeScript(t, root, "run.sh", "#DEP: star/2.7.11b\nrun\n")
 	relative := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: relative}
+	l.Pins["star/2.7.11b"] = pinOf(relative)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +401,7 @@ func TestProjectRestoreDryRunJSONListsTheSteps(t *testing.T) {
 	writeScript(t, root, "run.sh", "#DEP: star/2.7.11b\nrun\n")
 	relative := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: relative}
+	l.Pins["star/2.7.11b"] = pinOf(relative)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +429,7 @@ func TestProjectRestoreFailsOnAnInvalidLock(t *testing.T) {
 	root := newProject(t)
 	writeScript(t, root, "run.sh", "#DEP: star/2.7.11b\nrun\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: "provenance/star--2.7.11b@000000000000"}
+	l.Pins["star/2.7.11b"] = pinOf("provenance/star--2.7.11b@000000000000")
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +514,7 @@ func TestProjectUnpinRemovesAManualPinAndItsProvenance(t *testing.T) {
 	root := newProject(t)
 	artifact := vendorArtifact(t, root, "ubuntu24/build-essential", "echo apt\n")
 	l := lock.New()
-	l.Pins["ubuntu24/build-essential"] = lock.PinEntry{Artifact: artifact, Manual: true}
+	l.Pins["ubuntu24/build-essential"] = manualPinOf(artifact)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +545,7 @@ func TestProjectUnpinRefusesADeclaredPin(t *testing.T) {
 	writeScript(t, root, "run.sh", "#DEP: star/2.7.11b\nrun\n")
 	artifact := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: artifact}
+	l.Pins["star/2.7.11b"] = pinOf(artifact)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -580,8 +580,8 @@ func TestProjectListShowsEveryPinAndMarksTheManualOne(t *testing.T) {
 	declared := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
 	manual := vendorArtifact(t, root, "ubuntu24/build-essential", "echo apt\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: declared}
-	l.Pins["ubuntu24/build-essential"] = lock.PinEntry{Artifact: manual, Manual: true}
+	l.Pins["star/2.7.11b"] = pinOf(declared)
+	l.Pins["ubuntu24/build-essential"] = manualPinOf(manual)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +613,7 @@ func TestProjectListJSONReportsTheManualFlag(t *testing.T) {
 	root := newProject(t)
 	artifact := vendorArtifact(t, root, "ubuntu24/build-essential", "echo apt\n")
 	l := lock.New()
-	l.Pins["ubuntu24/build-essential"] = lock.PinEntry{Artifact: artifact, Manual: true}
+	l.Pins["ubuntu24/build-essential"] = manualPinOf(artifact)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -648,7 +648,7 @@ func TestProjectListReportsAnUnreadableArtifact(t *testing.T) {
 	root := newProject(t)
 	artifact := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: artifact, Manual: true}
+	l.Pins["star/2.7.11b"] = manualPinOf(artifact)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -671,7 +671,7 @@ func TestProjectListNamesWhatAPathPinHolds(t *testing.T) {
 	root := newProject(t)
 	artifact := vendorArtifact(t, root, "combined/1.0", "echo combined\n")
 	l := lock.New()
-	l.Pins["path:overlays/combined.sqf"] = lock.PinEntry{Artifact: artifact, Manual: true}
+	l.Pins["path:overlays/combined.sqf"] = manualPinOf(artifact)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}

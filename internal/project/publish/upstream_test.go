@@ -29,12 +29,18 @@ const collectionRepo = "https://github.com/lab/recipes"
 // public-endpoint skip does not fire on every fixture.
 func vendorData(t *testing.T, root, name, recipe string, deps ...meta.Dependency) (string, meta.Manifest) {
 	t.Helper()
+	return vendorDataFor(t, root, name, recipe, meta.NativeArch(), deps...)
+}
+
+// vendorDataFor is vendorData built for one architecture.
+func vendorDataFor(t *testing.T, root, name, recipe, arch string, deps ...meta.Dependency) (string, meta.Manifest) {
+	t.Helper()
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
 		Type:          catalog.TypeData,
 		BuildType:     "script",
-		Platform:      meta.Platform{OS: "linux", Arch: "amd64"},
+		Platform:      meta.Platform{OS: "linux", Arch: arch},
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
 		Dependencies:  deps,
 		Build:         meta.Build{Source: collectionRepo},
@@ -66,7 +72,7 @@ func vendorApp(t *testing.T, root, name, recipe string) string {
 		Name:          name,
 		Type:          catalog.TypeApp,
 		BuildType:     "script",
-		Platform:      meta.Platform{OS: "linux", Arch: "amd64"},
+		Platform:      meta.Platform{OS: "linux", Arch: meta.NativeArch()},
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
 		Build:         meta.Build{Source: collectionRepo},
 	}
@@ -252,7 +258,7 @@ func vendorEnv(t *testing.T, root, identity string) string {
 		Name:          meta.EnvName,
 		Type:          catalog.TypeEnv,
 		BuildType:     meta.BuildTypeSnapshot,
-		Platform:      meta.Platform{OS: "linux", Arch: "amd64"},
+		Platform:      meta.Platform{OS: "linux", Arch: meta.NativeArch()},
 		Keys:          meta.Keys{Identity: ref, Equiv: ref},
 	}
 	body, err := json.MarshalIndent(manifest, "", "  ")

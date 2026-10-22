@@ -117,6 +117,8 @@ func (s Step) verdict() compare.Verdict {
 type Plan struct {
 	Root  string `json:"root"`
 	Match Match  `json:"match"`
+	// Base is the artifact path of the project's root pin, empty when it has none.
+	Base string `json:"-"`
 	// Steps are ordered so every step's DependsOn precede it.
 	Steps    []Step   `json:"steps"`
 	Problems []string `json:"problems,omitempty"`
@@ -236,7 +238,7 @@ func Compute(root string, l *lock.Lock, opts Options) *Plan {
 	plan := &Plan{Root: root, Match: match}
 
 	verified, problems := lock.Verify(root, l)
-	if len(problems) > 0 {
+	if problems = lock.WithoutGaps(problems); len(problems) > 0 {
 		for _, problem := range problems {
 			plan.Problems = append(plan.Problems, problem.String())
 		}
@@ -247,13 +249,21 @@ func Compute(root string, l *lock.Lock, opts Options) *Plan {
 	if hostArch == "" {
 		hostArch = meta.NativeArch()
 	}
+	// Only this machine's artifacts are planned; another architecture's stay
+	// vendored and unreached.
+	selection := verified.Select(l, hostArch)
+	for _, gap := range selection.Gaps {
+		plan.Problems = append(plan.Problems, gap.String())
+	}
+	verified = verified.Scope(selection)
+	plan.Base = selection.Artifacts[lock.BaseKey]
 	resolve, resolveAt, resolveInput := opts.resolver(), opts.pathResolver(), opts.inputResolver()
 
 	// How each artifact is depended on, which decides what may stand in for it
 	// when it is only a build dependency.
 	edges := inboundEdges(verified)
 
-	named, destinations, conflicts := split(l)
+	named, destinations, conflicts := split(selection)
 	plan.Problems = append(plan.Problems, conflicts...)
 
 	order, cycle := topological(verified)
@@ -328,7 +338,8 @@ func Compute(root string, l *lock.Lock, opts Options) *Plan {
 		pending[artifact] = append(pending[artifact], reasons...)
 	}
 
-	baseArtifact := l.Pins[lock.BaseKey].Artifact
+	baseArtifact := plan.Base
+	refuseForeignBuilds(steps, pending, hostArch)
 	kept, reported := prune(steps, pending)
 	yieldSharedNames(kept, opts)
 	if opts.Only != "" {
@@ -452,11 +463,11 @@ func problemsFor(steps []Step, problems map[string][]string) []string {
 //
 //   - A named pin is satisfied by a copy in any images root; a project path must exist at one exact location.
 //   - An artifact asked for both ways has two destinations and no way to choose, so it is a lock to fix.
-func split(l *lock.Lock) (named map[string][]string, destinations map[string]map[string][]string, problems []string) {
+func split(selection lock.Selection) (named map[string][]string, destinations map[string]map[string][]string, problems []string) {
 	named = map[string][]string{}
 	destinations = map[string]map[string][]string{}
-	for _, request := range l.Requests() {
-		artifact := l.Pins[request].Artifact
+	for _, request := range sortedKeys(selection.Artifacts) {
+		artifact := selection.Artifacts[request]
 		destination, isPath := strings.CutPrefix(request, lock.PathPrefix)
 		if !isPath {
 			named[artifact] = append(named[artifact], request)
@@ -496,7 +507,8 @@ func (p *Plan) classify(step Step, keys meta.Keys, hostArch string, opts Options
 
 	// Only a miss has to be acquired, so only a miss has to run here.
 	var problems []string
-	if reason := runsOn(step.Arch, hostArch); reason != "" {
+	// A build dependency is judged through what builds over it.
+	if reason := runsOn(step.Arch, hostArch); reason != "" && step.Direct {
 		problems = append(problems, fmt.Sprintf("%s: %s", step.Name, reason))
 	}
 	switch {
@@ -521,6 +533,39 @@ func (p *Plan) classify(step Step, keys meta.Keys, hostArch string, opts Options
 		}
 	}
 	return step, problems
+}
+
+// refuseForeignBuilds reports a pin whose rebuild needs a tool built for another architecture.
+//   - A rebuild runs its closure, so it works only where every artifact in it that is missing runs.
+//   - A registry copy is the other way to get such a pin, and --no-prebuilt cannot be honoured for it.
+//   - steps are dependency-first.
+func refuseForeignBuilds(steps []Step, pending map[string][]string, hostArch string) {
+	foreign := map[string]string{} // artifact -> the missing artifact it cannot run without
+	for _, step := range steps {
+		if step.Action == ActionAdopt {
+			continue
+		}
+		culprit := ""
+		if runsOn(step.Arch, hostArch) != "" {
+			culprit = fmt.Sprintf("%s, which runs on %s only", step.Name, step.Arch)
+		}
+		if step.Action == ActionBuild {
+			for _, dependency := range step.DependsOn {
+				if culprit == "" {
+					culprit = foreign[dependency]
+				}
+			}
+		}
+		if culprit == "" {
+			continue
+		}
+		foreign[step.Artifact] = culprit
+		if step.Direct && step.Action == ActionBuild && runsOn(step.Arch, hostArch) == "" {
+			pending[step.Artifact] = append(pending[step.Artifact], fmt.Sprintf(
+				"%s cannot be rebuilt on %s: it builds over %s; a registry copy is the way to get it",
+				step.Name, hostArch, culprit))
+		}
+	}
 }
 
 // prune drops closure-only steps nothing needs, and returns the problems the surviving steps carry.

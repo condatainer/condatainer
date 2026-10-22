@@ -46,8 +46,11 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - When tasks do not divide evenly across nodes, tasks per node rounds up. The script then enforces the layout the memory figure assumed.
 - A build is one rank, so its `NCPU` is all the CPUs it was given.
 
-## PBS time
+## PBS select and time
 
+- A select with several `+` chunks is accepted only when it is consistent. Otherwise it is rejected: no spec is built, and `run` refuses to submit the script.
+  - CPUs per rank are the same in every chunk, and `ncpus` divides by `mpiprocs`.
+  - Memory is the same per CPU in every chunk, or the same per node in every chunk, or absent from all of them. Memory in some chunks only is rejected.
 - A PBS time is `[[HH:]MM:]SS`, so a bare number is seconds and `1:30` is a minute and a half.
 - LSF `-W` takes minutes and `HH:MM`, so the two have separate parsers.
 

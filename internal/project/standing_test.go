@@ -56,7 +56,7 @@ func TestStandingResolveNamesLeavesAnUnpinnedNameEmpty(t *testing.T) {
 func TestStandingResolveNamesRefusesAMissingArtifact(t *testing.T) {
 	root := projectRoot(t)
 	l := lock.New()
-	l.Pins["ubuntu24/build-essential"] = lock.PinEntry{Artifact: "provenance/ghost@000000000000"}
+	l.Pins["ubuntu24/build-essential"] = pinOf("provenance/ghost@000000000000")
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestStandingBaseEmptyWithNoBasePin(t *testing.T) {
 func TestStandingBaseRefusesAnUnresolvedBase(t *testing.T) {
 	root := projectRoot(t)
 	l := lock.New()
-	l.Pins[lock.BaseKey] = lock.PinEntry{Artifact: "provenance/ghost@000000000000"}
+	l.Pins[lock.BaseKey] = pinOf("provenance/ghost@000000000000")
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}

@@ -1,11 +1,13 @@
 package lock
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -131,6 +133,30 @@ func pruneRemotes(l *Lock, verified *Verified) {
 	}
 }
 
+// checkSameArch refuses to share one entry between two architectures. The
+// entry name is name plus identity and its manifest records the build's
+// architecture, so a second architecture would write other bytes to the same
+// directory.
+func checkSameArch(final, relative string, files map[string][]byte) error {
+	var have, want struct {
+		Platform struct {
+			Arch string `json:"arch"`
+		} `json:"platform"`
+	}
+	existing, err := readBounded(filepath.Join(final, meta.FileName))
+	if err != nil {
+		return nil
+	}
+	if json.Unmarshal(existing, &have) != nil || json.Unmarshal(files[meta.FileName], &want) != nil {
+		return nil
+	}
+	if have.Platform.Arch == want.Platform.Arch {
+		return nil
+	}
+	return fmt.Errorf("%w: %s exists for %s and this overlay was built for %s; declare the recipe #ARCH: noarch if its result is portable",
+		ErrArchConflict, relative, have.Platform.Arch, want.Platform.Arch)
+}
+
 // StageEntry copies a prepared artifact directory into cnt-lock/provenance/ under
 // its final name, atomically: it is built as a sibling and renamed into place. An
 // existing entry is left as it is, since one (name, identity) has one set of records.
@@ -144,7 +170,7 @@ func StageEntry(root, entryName string, files map[string][]byte) (string, error)
 	}
 	final := filepath.Join(Dir(root), relative)
 	if _, err := os.Stat(final); err == nil {
-		return relative, nil
+		return relative, checkSameArch(final, relative, files)
 	}
 	if err := utils.MkdirAllShared(ProvenancePath(root)); err != nil {
 		return "", err

@@ -90,7 +90,8 @@ func vendorOnly(t *testing.T, root string, image fakeImage) ([]string, error) {
 	if err := os.CopyFS(staging, os.DirFS(image.dir)); err != nil {
 		t.Fatal(err)
 	}
-	return vendorClosure(root, filepath.Join(staging, meta.DirName), storeCandidate(image.manifest))
+	vendored, _, err := vendorClosure(root, filepath.Join(staging, meta.DirName), storeCandidate(image.manifest))
+	return vendored, err
 }
 
 func TestVendorClosureCapturesTheArtifactAndItsCapsule(t *testing.T) {
@@ -109,7 +110,7 @@ func TestVendorClosureCapturesTheArtifactAndItsCapsule(t *testing.T) {
 	}
 
 	l := New()
-	l.Pins["index/1.0"] = PinEntry{Artifact: EntryPath(capsule.EntryName(data.Name, data.Keys.Identity.Digest()))}
+	l.Pins["index/1.0"] = pinOf(EntryPath(capsule.EntryName(data.Name, data.Keys.Identity.Digest())))
 	if _, problems := Verify(root, l); len(problems) != 0 {
 		t.Fatalf("a freshly vendored closure does not verify:\n%s", problemText(problems))
 	}
@@ -200,7 +201,7 @@ func TestApplyRestoresTheLockWhenVerificationFails(t *testing.T) {
 	appPath := vendor(t, root, app, appFiles)
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	if err := Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +217,7 @@ func TestApplyRestoresTheLockWhenVerificationFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded.Pins) != 1 || loaded.Pins["star/2.7.11b"].Artifact != appPath {
+	if len(loaded.Pins) != 1 || loaded.Pins["star/2.7.11b"].Paths()[0] != appPath {
 		t.Fatalf("a failed Apply changed the published lock: %#v", loaded.Pins)
 	}
 }
@@ -227,14 +228,14 @@ func TestApplyPublishesAValidPin(t *testing.T) {
 	appPath := vendor(t, root, app, appFiles)
 
 	l := New()
-	if err := Apply(root, l, &Pinned{Request: "star/2.7.11b", Artifact: appPath}); err != nil {
+	if err := Apply(root, l, &Pinned{Request: "star/2.7.11b", Name: app.Name, Arch: meta.NativeArch(), Artifact: appPath}); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Pins["star/2.7.11b"].Artifact != appPath {
+	if loaded.Pins["star/2.7.11b"].Paths()[0] != appPath {
 		t.Fatalf("loaded = %#v", loaded.Pins)
 	}
 }
@@ -247,8 +248,8 @@ func TestReconcileDropsStaleAndReportsWhatNeedsPinning(t *testing.T) {
 	appPath := vendor(t, root, app, appFiles)
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
-	l.Pins["gone/1.0"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
+	l.Pins["gone/1.0"] = pinOf(appPath)
 
 	write(t, root, "run.sh", "#DEP: star/2.7.11b\n#DEP: cutadapt/5.0\n#DEP: env.img\nrun\n")
 	result := scan(t, root)
@@ -277,7 +278,7 @@ func TestReconcileDropsAnInvalidPin(t *testing.T) {
 	}
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	write(t, root, "run.sh", "#DEP: star/2.7.11b\nrun\n")
 
 	needPin := Reconcile(root, l, scan(t, root))
@@ -336,12 +337,12 @@ func TestPinRefusesUnpinnableRequests(t *testing.T) {
 // meaning exactly that.
 func TestMatchPinPrefersTheLiteralKeyWhenBothArePinned(t *testing.T) {
 	l := New()
-	l.Pins[PathPrefix+"xxx.sqf"] = PinEntry{Artifact: "provenance/root--1@abc"}
-	l.Pins[PathPrefix+"steps1/xxx.sqf"] = PinEntry{Artifact: "provenance/nested--1@def"}
+	l.Pins[PathPrefix+"xxx.sqf"] = pinOf("provenance/root--1@abc")
+	l.Pins[PathPrefix+"steps1/xxx.sqf"] = pinOf("provenance/nested--1@def")
 	request := Request{Key: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "xxx.sqf", Scripts: []string{"steps1/run.sh"}}
 
 	key, entry, ok := MatchPin(l, request)
-	if !ok || key != PathPrefix+"xxx.sqf" || entry.Artifact != "provenance/root--1@abc" {
+	if !ok || key != PathPrefix+"xxx.sqf" || entry.Paths()[0] != "provenance/root--1@abc" {
 		t.Errorf("MatchPin = (%q, %#v, %v), want the literal key preferred", key, entry, ok)
 	}
 }
@@ -351,11 +352,11 @@ func TestMatchPinPrefersTheLiteralKeyWhenBothArePinned(t *testing.T) {
 // pinFirstCandidate share.
 func TestMatchPinFallsBackToADeclaringScriptsDirectory(t *testing.T) {
 	l := New()
-	l.Pins[PathPrefix+"steps1/xxx.sqf"] = PinEntry{Artifact: "provenance/tool--1@abc"}
+	l.Pins[PathPrefix+"steps1/xxx.sqf"] = pinOf("provenance/tool--1@abc")
 	request := Request{Key: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "xxx.sqf", Scripts: []string{"steps1/run.sh"}}
 
 	key, entry, ok := MatchPin(l, request)
-	if !ok || key != PathPrefix+"steps1/xxx.sqf" || entry.Artifact != "provenance/tool--1@abc" {
+	if !ok || key != PathPrefix+"steps1/xxx.sqf" || entry.Paths()[0] != "provenance/tool--1@abc" {
 		t.Errorf("MatchPin = (%q, %#v, %v), want the fallback candidate", key, entry, ok)
 	}
 }
@@ -374,7 +375,7 @@ func TestMatchPinFalseWhenNothingAnswers(t *testing.T) {
 // ordinary single-key lookup.
 func TestMatchPinHasOneCandidateForAName(t *testing.T) {
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: "provenance/star--2.7.11b@abc"}
+	l.Pins["star/2.7.11b"] = pinOf("provenance/star--2.7.11b@abc")
 	request := Request{Key: "star/2.7.11b", Kind: KindName}
 
 	key, _, ok := MatchPin(l, request)
@@ -390,9 +391,9 @@ func TestMatchPinHasOneCandidateForAName(t *testing.T) {
 // reporting unpinned.
 func TestMatchPinLooseNameMatchesExistingSatisfyingPin(t *testing.T) {
 	l := New()
-	l.Pins["openjdk/17.0.15"] = PinEntry{Artifact: "provenance/openjdk--17.0.15@abc"}
-	l.Pins["openjdk/17.0.18"] = PinEntry{Artifact: "provenance/openjdk--17.0.18@def"}
-	l.Pins["openjdk/16.0.2"] = PinEntry{Artifact: "provenance/openjdk--16.0.2@ghi"}
+	l.Pins["openjdk/17.0.15"] = pinOf("provenance/openjdk--17.0.15@abc")
+	l.Pins["openjdk/17.0.18"] = pinOf("provenance/openjdk--17.0.18@def")
+	l.Pins["openjdk/16.0.2"] = pinOf("provenance/openjdk--16.0.2@ghi")
 	dep, err := catalog.ParseDep("openjdk/17")
 	if err != nil {
 		t.Fatal(err)
@@ -400,7 +401,7 @@ func TestMatchPinLooseNameMatchesExistingSatisfyingPin(t *testing.T) {
 	request := Request{Key: "openjdk/17", Kind: KindName, Dep: dep}
 
 	key, entry, ok := MatchPin(l, request)
-	if !ok || key != "openjdk/17.0.18" || entry.Artifact != "provenance/openjdk--17.0.18@def" {
+	if !ok || key != "openjdk/17.0.18" || entry.Paths()[0] != "provenance/openjdk--17.0.18@def" {
 		t.Errorf("MatchPin = (%q, %#v, %v), want the newest satisfying pin openjdk/17.0.18", key, entry, ok)
 	}
 }
@@ -409,7 +410,7 @@ func TestMatchPinLooseNameMatchesExistingSatisfyingPin(t *testing.T) {
 // from a same-named pin at a different, non-admitted version.
 func TestMatchPinExactNameDoesNotMatchADifferentVersion(t *testing.T) {
 	l := New()
-	l.Pins["star/2.7.10"] = PinEntry{Artifact: "provenance/star--2.7.10@abc"}
+	l.Pins["star/2.7.10"] = pinOf("provenance/star--2.7.10@abc")
 	dep, err := catalog.ParseDep("star/2.7.11b")
 	if err != nil {
 		t.Fatal(err)
@@ -493,16 +494,16 @@ func TestApplyEntryRepinsAtANewIdentity(t *testing.T) {
 	oldManifest, oldFiles := recipeArtifact(t, "ubuntu24/base", "echo old\n")
 	oldPath := vendor(t, root, oldManifest, oldFiles)
 	l := New()
-	l.Pins[BaseKey] = PinEntry{Artifact: oldPath, Manual: true}
+	l.Pins[BaseKey] = manualPinOf(oldPath)
 
 	newManifest, newFiles := recipeArtifact(t, "ubuntu24/base", "echo new\n")
 	newPath := vendor(t, root, newManifest, newFiles)
-	if err := applyEntry(root, l, BaseKey, PinEntry{Artifact: newPath, Manual: true}); err != nil {
+	if err := applyEntry(root, l, BaseKey, manualPinOf(newPath)); err != nil {
 		t.Fatalf("re-pin refused: %v", err)
 	}
 
-	if l.Pins[BaseKey].Artifact != newPath {
-		t.Errorf("pin = %s, want %s", l.Pins[BaseKey].Artifact, newPath)
+	if l.Pins[BaseKey].Paths()[0] != newPath {
+		t.Errorf("pin = %s, want %s", l.Pins[BaseKey].Paths()[0], newPath)
 	}
 	if _, err := os.Stat(filepath.Join(Dir(root), oldPath)); !os.IsNotExist(err) {
 		t.Errorf("the replaced entry survived: %v", err)

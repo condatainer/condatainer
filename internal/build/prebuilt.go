@@ -96,7 +96,7 @@ func (b *BuildObject) findPrebuilt(ctx context.Context) (prebuiltCandidate, bool
 		return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot use prebuilt %s: source registry: %w", b.spec.Image.Name, err)
 	}
 	arch := meta.NativeArch()
-	if b.spec.Image.Arch == catalog.ArchNoarch {
+	if b.spec.Image.Noarch {
 		arch = registry.ArchNoarch
 	}
 

@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image/freeze"
@@ -106,6 +109,8 @@ func newProjectLockCmd() *cobra.Command {
 
 - Creates cnt-lock/ if the project has none.
 - Pins every declaration, and drops pins that nothing declares any more.
+- Pins this machine's architecture (amd64 or arm64) and keeps the others. Run it on each architecture to cover it.
+- Reports a recipe that does not build on this machine's architecture, and pins nothing for it.
 - Skips cnt-lock/, overlays/ and dot directories, and does not follow symlinks.
 - Fails if a declared overlay is not installed.
 - Other installed builds of the same name are listed. Pick one with 'condatainer project pin'.`,
@@ -522,9 +527,9 @@ func newProjectListCmd() *cobra.Command {
 					row += "  " + utils.StyleWarning("unreadable")
 				case pin.Manual:
 					manual++
-					row += "  " + short(pin.Identity) + "  " + utils.StyleWarning("manual")
+					row += "  " + short(pin.Identity) + "  " + archList(pin) + "  " + utils.StyleWarning("manual")
 				default:
-					row += "  " + short(pin.Identity)
+					row += "  " + short(pin.Identity) + "  " + archList(pin)
 				}
 				fmt.Println(row)
 				if pin.Problem != "" {
@@ -541,6 +546,20 @@ func newProjectListCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
 	return cmd
+}
+
+// archList names the architectures a pin has an artifact for.
+func archList(pin pinReport) string {
+	return strings.Join(slices.Sorted(maps.Keys(pin.Artifacts)), ",")
+}
+
+// pinTarget is the artifact a pin has for this machine, for a line that shows
+// where a request went.
+func pinTarget(pin lock.PinEntry) string {
+	if artifact, ok := pin.For(meta.NativeArch()); ok {
+		return artifact
+	}
+	return utils.StyleWarning("no " + meta.NativeArch() + " artifact")
 }
 
 // pinLabel is the pin key, and the artifact name after it when the key does not
@@ -563,9 +582,11 @@ func pinLabel(pin pinReport) string {
 // the vendored records rather than from the key, which addresses an artifact
 // without describing it.
 type pinReport struct {
-	Request  string `json:"request"`
-	Artifact string `json:"artifact"`
-	Name     string `json:"name,omitempty"`
+	Request string `json:"request"`
+	// Artifacts maps each architecture the pin covers to its vendored directory.
+	Artifacts map[string]string `json:"artifacts"`
+	Name      string            `json:"name,omitempty"`
+	// Identity is this machine's artifact, else the first architecture's.
 	Identity string `json:"identity,omitempty"`
 	Manual   bool   `json:"manual,omitempty"`
 	// Problem is why the artifact could not be read, empty when it verified.
@@ -576,11 +597,18 @@ func pinReports(l *lock.Lock, verified *lock.Verified) []pinReport {
 	out := make([]pinReport, 0, len(l.Pins))
 	for _, request := range l.Requests() {
 		pin := l.Pins[request]
-		report := pinReport{Request: request, Artifact: pin.Artifact, Manual: pin.Manual}
-		if entry, ok := verified.Entries[pin.Artifact]; ok {
+		report := pinReport{Request: request, Artifacts: pin.Artifacts, Manual: pin.Manual}
+		shown, ok := pin.For(meta.NativeArch())
+		if !ok {
+			shown = pin.Paths()[0]
+		}
+		if entry, ok := verified.Entries[shown]; ok {
 			report.Name, report.Identity = entry.Manifest.Name, entry.Identity.Digest()
-		} else {
-			report.Problem = pin.Artifact + " is missing or does not verify"
+		}
+		for _, artifact := range pin.Paths() {
+			if _, ok := verified.Entries[artifact]; !ok {
+				report.Problem = artifact + " is missing or does not verify"
+			}
 		}
 		out = append(out, report)
 	}
@@ -782,7 +810,7 @@ func newProjectRegistryPushCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			verified, problems := lock.Verify(root, l)
+			verified, problems := verifyLock(root, l)
 			scanned, err := lock.Scan(root, lock.ScanOptions{})
 			if err != nil {
 				return err
@@ -853,7 +881,7 @@ func newProjectRegistryGCCmd() *cobra.Command {
 			if l.OCI.Empty() {
 				return fmt.Errorf("no registry is recorded; set one with `condatainer project registry set <registry>/<owner>/<repo>`")
 			}
-			_, problems := lock.Verify(root, l)
+			_, problems := verifyLock(root, l)
 			scanned, err := lock.Scan(root, lock.ScanOptions{})
 			if err != nil {
 				return err
@@ -893,6 +921,18 @@ func newProjectRegistryGCCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&gitHistory, "git-history", false, "Also keep what earlier commits on this branch pin (needs a full clone)")
 	return cmd
+}
+
+// verifyLock is the lock's own problems, plus the one a machine outside the
+// lock's architectures adds: the pins have no artifact for it yet.
+func verifyLock(root string, l *lock.Lock) (*lock.Verified, []lock.Problem) {
+	verified, problems := lock.Verify(root, l)
+	for _, gap := range verified.Select(l, meta.NativeArch()).Gaps {
+		if gap.Request == "" {
+			problems = append(problems, lock.Problem{Gap: true, Reason: gap.Reason})
+		}
+	}
+	return verified, problems
 }
 
 // projectProblems is everything `project validate` reports, as lines: a lock
@@ -1010,6 +1050,7 @@ func newProjectValidateCmd() *cobra.Command {
 
 - Every declaration in the scripts has a pin.
 - Every pin points at a recorded overlay.
+- Every pin has an overlay for each architecture the lock covers, unless its recipe does not build there.
 - Every recorded overlay still matches its keys.
 - Every dependency resolves to another recorded overlay.
 - Every pin is installed on this machine.
@@ -1033,7 +1074,7 @@ func newProjectValidateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, problems := lock.Verify(root, current)
+			_, problems := verifyLock(root, current)
 			needPin := requestsNeedingPin(current, scanned)
 
 			// An installed check is only meaningful over a lock that verifies.
@@ -1172,13 +1213,13 @@ func reportLockState(result *orchestrate.LockResult, jsonOutput bool) error {
 		}{Root: root, Findings: scanned.Findings,
 			UnpinnedHelperOverlays: result.UnpinnedHelperOverlays, ManualPinUsage: result.ManualPinUsage}
 		if pin, ok := l.Pins[lock.BaseKey]; ok {
-			report.Base = pin.Artifact
+			report.Base, _ = pin.For(meta.NativeArch())
 		}
 		for _, request := range scanned.Requests {
 			entry := requestReport{Request: request.Key, Kind: string(request.Kind),
 				Scripts: request.Scripts, Pinnable: request.Kind.Pinnable()}
 			if pin, ok := l.Pins[request.Key]; ok {
-				entry.Artifact = pin.Artifact
+				entry.Artifact, _ = pin.For(meta.NativeArch())
 			}
 			report.Requests = append(report.Requests, entry)
 		}
@@ -1190,12 +1231,12 @@ func reportLockState(result *orchestrate.LockResult, jsonOutput bool) error {
 	}
 
 	if pin, ok := l.Pins[lock.BaseKey]; ok {
-		utils.PrintMessage("  %s → %s", utils.StyleName("base"), pin.Artifact)
+		utils.PrintMessage("  %s → %s", utils.StyleName("base"), pinTarget(pin))
 	}
 	for _, request := range scanned.Requests {
 		switch pin, ok := l.Pins[request.Key]; {
 		case ok:
-			utils.PrintMessage("  %s → %s", utils.StyleName(request.Key), pin.Artifact)
+			utils.PrintMessage("  %s → %s", utils.StyleName(request.Key), pinTarget(pin))
 		case !request.Kind.Pinnable():
 			utils.PrintMessage("  %s → %s", utils.StyleName(request.Key), utils.StyleWarning("cannot be pinned"))
 		}
@@ -1215,6 +1256,9 @@ func reportLockState(result *orchestrate.LockResult, jsonOutput bool) error {
 	}
 	for _, finding := range scanned.Findings {
 		utils.PrintWarning("%s:%d: %s", finding.Script, finding.Line, finding.Reason)
+	}
+	for _, reason := range result.NotBuiltHere {
+		utils.PrintWarning("%s", reason)
 	}
 	printUnpublishedNote(l, pinned)
 	printUnpinnedHelperOverlays(result.UnpinnedHelperOverlays)
@@ -1304,7 +1348,7 @@ func newProjectRestoreCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would happen, without doing it")
 	cmd.Flags().BoolVar(&noPrebuilt, "no-prebuilt", false,
-		"Rebuild missing overlays instead of downloading it (snapshot still downloaded)")
+		"Rebuild missing overlays instead of downloading it (snapshot still downloaded; refused for one whose tools run on another architecture)")
 	cmd.Flags().BoolVar(&keepBuildDeps, "keep-build-deps", false,
 		"Keep the build dependencies of a rebuild")
 	settings.AddSwitch(cmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (rebuild locally)"))

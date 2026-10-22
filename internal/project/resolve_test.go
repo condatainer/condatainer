@@ -28,12 +28,18 @@ func projectRoot(t *testing.T) string {
 
 func vendor(t *testing.T, root, name, recipe string) (string, meta.Manifest) {
 	t.Helper()
+	return vendorFor(t, root, name, recipe, meta.NativeArch())
+}
+
+// vendorFor is vendor built for one architecture.
+func vendorFor(t *testing.T, root, name, recipe, arch string) (string, meta.Manifest) {
+	t.Helper()
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
 		Type:          catalog.TypeApp,
 		BuildType:     "script",
-		Platform:      meta.NativePlatform(),
+		Platform:      meta.Platform{OS: "linux", Arch: arch},
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
 	}
 	derived, err := key.Generate(manifest, key.Sources{meta.RecipeFileName: []byte(recipe)})
@@ -74,7 +80,7 @@ func TestResolveMountsALockedName(t *testing.T) {
 	root := projectRoot(t)
 	relative, _ := vendor(t, root, "star/2.7.11b", "echo star\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: relative}
+	l.Pins["star/2.7.11b"] = pinOf(relative)
 	requests := []lock.Request{{Key: "star/2.7.11b", Kind: lock.KindName}}
 
 	got, err := Resolve(context.Background(), root, l, requests, ResolveOptions{lookup: present("star/2.7.11b", "/images/star.sqf")})
@@ -92,13 +98,34 @@ func TestResolveMountsALockedName(t *testing.T) {
 	}
 }
 
+// A pin another architecture alone answers is unresolved here, and says what to run.
+func TestResolveReportsAPinWithNoArtifactForThisMachine(t *testing.T) {
+	root := projectRoot(t)
+	other := "arm64"
+	if meta.NativeArch() == "arm64" {
+		other = "amd64"
+	}
+	relative, _ := vendorFor(t, root, "star/2.7.11b", "echo star\n", other)
+	l := lock.New()
+	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifacts: map[string]string{other: relative}}
+	requests := []lock.Request{{Key: "star/2.7.11b", Kind: lock.KindName}}
+
+	got, err := Resolve(context.Background(), root, l, requests, ResolveOptions{lookup: present("star/2.7.11b", "/images/star.sqf")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Unresolved) != 1 || !strings.Contains(got.Unresolved[0].Reason, "project lock") {
+		t.Fatalf("unresolved = %#v, want one that says to run `project lock`", got.Unresolved)
+	}
+}
+
 // Inside a project an unsatisfiable declaration is always an error. Falling back
 // to whatever answers to the name is the failure a lock exists to prevent.
 func TestResolveRefusesRatherThanFallingBackToTheName(t *testing.T) {
 	root := projectRoot(t)
 	relative, _ := vendor(t, root, "star/2.7.11b", "echo star\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: relative}
+	l.Pins["star/2.7.11b"] = pinOf(relative)
 	requests := []lock.Request{{Key: "star/2.7.11b", Kind: lock.KindName}}
 
 	got, err := Resolve(context.Background(), root, l, requests, ResolveOptions{lookup: absent})
@@ -199,7 +226,7 @@ func TestResolveAnchorsAPathSelectionOnTheProjectRoot(t *testing.T) {
 	root := projectRoot(t)
 	relative, _ := vendor(t, root, "tool/1.0", "echo tool\n")
 	l := lock.New()
-	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = lock.PinEntry{Artifact: relative}
+	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = pinOf(relative)
 	requests := []lock.Request{{
 		Key: lock.PathPrefix + "overlays/tool.sqf", Kind: lock.KindPath, Path: "overlays/tool.sqf",
 	}}
@@ -230,7 +257,7 @@ func TestResolveMountsAPathPinnedUnderAFallbackKey(t *testing.T) {
 	root := projectRoot(t)
 	relative, _ := vendor(t, root, "tool/1.0", "echo tool\n")
 	l := lock.New()
-	l.Pins[lock.PathPrefix+"steps1/xxx.sqf"] = lock.PinEntry{Artifact: relative}
+	l.Pins[lock.PathPrefix+"steps1/xxx.sqf"] = pinOf(relative)
 	requests := []lock.Request{{
 		Key: lock.PathPrefix + "xxx.sqf", Kind: lock.KindPath, Path: "xxx.sqf",
 		Scripts: []string{"steps1/run.sh"},
@@ -306,7 +333,7 @@ func TestResolveReturnsAbsolutePaths(t *testing.T) {
 func TestResolveReportsAnInvalidLock(t *testing.T) {
 	root := projectRoot(t)
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: "provenance/star--2.7.11b@000000000000"}
+	l.Pins["star/2.7.11b"] = pinOf("provenance/star--2.7.11b@000000000000")
 	requests := []lock.Request{{Key: "star/2.7.11b", Kind: lock.KindName}}
 
 	got, err := Resolve(context.Background(), root, l, requests, ResolveOptions{lookup: absent})
@@ -323,7 +350,7 @@ func TestResolveReportsASubstitution(t *testing.T) {
 	root := projectRoot(t)
 	relative, manifest := vendor(t, root, "star/2.7.11b", "echo star\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: relative}
+	l.Pins["star/2.7.11b"] = pinOf(relative)
 	requests := []lock.Request{{Key: "star/2.7.11b", Kind: lock.KindName}}
 
 	other := meta.KeyRef{Scheme: manifest.Keys.Identity.Scheme, SHA256: strings.Repeat("e", 64)}
@@ -415,7 +442,7 @@ func TestResolveUsesTheLocksMatchMode(t *testing.T) {
 	root := projectRoot(t)
 	relative, _ := vendor(t, root, "star/2.7.11b", "echo star\n")
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: relative}
+	l.Pins["star/2.7.11b"] = pinOf(relative)
 	l.Match = lock.MatchIdentity
 	requests := []lock.Request{{Key: "star/2.7.11b", Kind: lock.KindName}}
 

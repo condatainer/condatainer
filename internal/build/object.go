@@ -979,7 +979,7 @@ func (b *BuildObject) captureLocalSourceSpec(isDef bool) {
 	b.spec.Image.Redistribute = recipe.Redistributable()
 	b.spec.Image.Prefix = meta.Prefix(b.spec.Image.Name, b.spec.Image.Type)
 	b.spec.Image.Env = envFromRecipe(recipe.Env)
-	b.spec.Image.Arch = recipe.Arch
+	b.spec.Image.Noarch = recipe.Noarch()
 }
 
 // FromExternalSource creates a BuildObject from an external build script or def file: the `-f <script>.sh` / `.def` path.
@@ -1201,6 +1201,9 @@ func resolveBuildSource(ctx context.Context, base *BuildObject, tmpDir string) (
 	if err := recipe.Validate(); err != nil {
 		return false, false, err
 	}
+	if err := recipe.BuildableOn(meta.NativeArch()); err != nil {
+		return false, false, err
+	}
 
 	if isContainer {
 		base.asDefinitionBuild()
@@ -1224,7 +1227,7 @@ func resolveBuildSource(ctx context.Context, base *BuildObject, tmpDir string) (
 	base.spec.Dependencies = recipe.Deps
 	base.spec.Image.Prefix = meta.Prefix(base.spec.Image.Name, recipe.Type)
 	base.spec.Image.Env = envFromRecipe(recipe.Env)
-	base.spec.Image.Arch = recipe.Arch
+	base.spec.Image.Noarch = recipe.Noarch()
 	// recipe.Text is the template, tokens intact — what the image embeds and what
 	// a rebuild starts from. The expansion went to the workspace file above and
 	// is never recorded; the variant is recorded as its selected values.

@@ -8,7 +8,7 @@ import (
 const testEntry = "build-essential--1.0@abc123456789"
 
 func manualPin() PinEntry {
-	return PinEntry{Artifact: EntryPath(testEntry), Manual: true}
+	return manualPinOf(EntryPath(testEntry))
 }
 
 // A manual pin is the one entry a rescan may not sweep: nothing in the checkout
@@ -30,7 +30,7 @@ func TestReconcileKeepsAManualPin(t *testing.T) {
 // pin. Without this the flag would have made every pin permanent.
 func TestReconcileStillSweepsADeclaredPin(t *testing.T) {
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: EntryPath("star--2.7.11b@abc123456789")}
+	l.Pins["star/2.7.11b"] = pinOf(EntryPath("star--2.7.11b@abc123456789"))
 
 	Reconcile(t.TempDir(), l, &ScanResult{})
 
@@ -59,7 +59,7 @@ func TestManualSurvivesARoundTrip(t *testing.T) {
 // Absent for an ordinary pin, so an existing lock gains no noise from the field.
 func TestManualIsOmittedWhenFalse(t *testing.T) {
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: EntryPath("star--2.7.11b@abc123456789")}
+	l.Pins["star/2.7.11b"] = pinOf(EntryPath("star--2.7.11b@abc123456789"))
 
 	data, err := l.Marshal()
 	if err != nil {

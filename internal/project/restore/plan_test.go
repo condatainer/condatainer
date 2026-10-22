@@ -96,7 +96,7 @@ func TestComputeRefusesToRebuildAFrozenEnvironment(t *testing.T) {
 	artifact := frozenEnv(t, root)
 
 	l := lock.New()
-	l.Pins[lock.PathPrefix+"overlays/env.sqf"] = lock.PinEntry{Artifact: artifact}
+	l.Pins[lock.PathPrefix+"overlays/env.sqf"] = pinOf(artifact)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled})
 	if plan.Complete() {
@@ -174,7 +174,7 @@ func TestComputeAdoptsWhatIsAlreadyPresent(t *testing.T) {
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 
 	plan := Compute(root, l, Options{lookup: installed("star/2.7.11b")})
 	if !plan.Complete() {
@@ -199,7 +199,7 @@ func TestComputeChoosesFetchOrBuild(t *testing.T) {
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	digest := "sha256:" + strings.Repeat("a", 64)
 	if err := l.AddRemote(appPath, lock.Remote{Repository: "ghcr.io/x/star", ManifestDigest: digest}); err != nil {
 		t.Fatal(err)
@@ -225,7 +225,7 @@ func TestComputeBuildsWhenNoOriginIsRecorded(t *testing.T) {
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 
 	if got := steps(Compute(root, l, Options{lookup: nothingInstalled}))["star/2.7.11b"].Action; got != ActionBuild {
 		t.Fatalf("action = %q, want build", got)
@@ -241,7 +241,7 @@ func TestComputeOrdersDependenciesFirst(t *testing.T) {
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
-	l.Pins["index/1.0"] = lock.PinEntry{Artifact: dataPath}
+	l.Pins["index/1.0"] = pinOf(dataPath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled})
 	if !plan.Complete() {
@@ -270,7 +270,7 @@ func TestComputeMixesAdoptionAndRebuild(t *testing.T) {
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
-	l.Pins["index/1.0"] = lock.PinEntry{Artifact: dataPath}
+	l.Pins["index/1.0"] = pinOf(dataPath)
 
 	plan := Compute(root, l, Options{lookup: installed("zlib/1.3")})
 	byName := steps(plan)
@@ -285,58 +285,116 @@ func TestComputeMixesAdoptionAndRebuild(t *testing.T) {
 	}
 }
 
-// A locked artifact is arch-bound unless its recipe declared noarch.
-func TestComputeRejectsAForeignArchitecture(t *testing.T) {
-	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
-	appPath := vendor(t, root, app, "echo star\n")
-
-	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
-
-	plan := Compute(root, l, Options{HostArch: "s390x", lookup: nothingInstalled})
-	if plan.Complete() {
-		t.Fatal("planned an acquisition for a foreign architecture")
-	}
-	if !strings.Contains(strings.Join(plan.Problems, "\n"), "this host is s390x") {
-		t.Fatalf("problems = %v", plan.Problems)
-	}
-}
-
-// noarch runs anywhere, so a foreign host is fine.
-func TestComputeAllowsNoarchAnywhere(t *testing.T) {
-	root := projectRoot(t)
-	app := artifact(t, "refdata/1.0", "echo data\n")
-	app.Platform.Arch = meta.ArchNone
-	derived, err := key.Generate(app, key.Sources{meta.RecipeFileName: []byte("echo data\n")})
+// archArtifact is artifact built for one architecture. The recipe differs per
+// architecture, as a real build's identity does.
+func archArtifact(t *testing.T, name, arch string, deps ...meta.Dependency) (meta.Manifest, string) {
+	t.Helper()
+	recipe := "echo " + name + " " + arch + "\n"
+	manifest := artifact(t, name, recipe, deps...)
+	manifest.Platform.Arch = arch
+	derived, err := key.Generate(manifest, key.Sources{meta.RecipeFileName: []byte(recipe)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	app.Keys = derived.Keys()
-	appPath := vendor(t, root, app, "echo data\n")
+	manifest.Keys = derived.Keys()
+	return manifest, recipe
+}
+
+func archPin(artifacts map[string]string) lock.PinEntry {
+	return lock.PinEntry{Artifacts: artifacts}
+}
+
+// Each architecture's artifact is planned on its own machine and the other's is not reached.
+func TestComputePlansOnlyThisMachinesArtifact(t *testing.T) {
+	root := projectRoot(t)
+	amd, amdRecipe := archArtifact(t, "star/2.7.11b", "amd64")
+	arm, armRecipe := archArtifact(t, "star/2.7.11b", "arm64")
+	amdPath, armPath := vendor(t, root, amd, amdRecipe), vendor(t, root, arm, armRecipe)
 
 	l := lock.New()
-	l.Pins["refdata/1.0"] = lock.PinEntry{Artifact: appPath}
+	l.Archs = []string{"amd64", "arm64"}
+	l.Pins["star/2.7.11b"] = archPin(map[string]string{"amd64": amdPath, "arm64": armPath})
 
-	plan := Compute(root, l, Options{HostArch: "s390x", lookup: nothingInstalled})
-	if !plan.Complete() {
-		t.Fatalf("noarch was rejected: %v", plan.Problems)
+	for host, want := range map[string]string{"amd64": amdPath, "arm64": armPath} {
+		plan := Compute(root, l, Options{HostArch: host, lookup: nothingInstalled})
+		if !plan.Complete() || len(plan.Steps) != 1 || plan.Steps[0].Artifact != want {
+			t.Errorf("%s: steps = %#v, problems = %v, want only %s", host, plan.Steps, plan.Problems, want)
+		}
 	}
 }
 
-// An already-present artifact is adopted whatever its architecture: the file is
-// here and verified, so there is nothing to materialize.
-func TestComputeDoesNotCheckArchForAnAdoption(t *testing.T) {
+// A pin with no artifact for the host is named, and a lock that does not cover
+// the host is one message for the whole lock.
+func TestComputeRefusesAHostWithNoArtifact(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
-	appPath := vendor(t, root, app, "echo star\n")
+	amd, recipe := archArtifact(t, "star/2.7.11b", "amd64")
+	amdPath := vendor(t, root, amd, recipe)
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = archPin(map[string]string{"amd64": amdPath})
+	sam, samRecipe := archArtifact(t, "samtools/1.21", "amd64")
+	l.Pins["samtools/1.21"] = archPin(map[string]string{"amd64": vendor(t, root, sam, samRecipe)})
 
-	plan := Compute(root, l, Options{HostArch: "s390x", lookup: installed("star/2.7.11b")})
-	if !plan.Complete() {
-		t.Fatalf("an adoption was blocked on architecture: %v", plan.Problems)
+	l.Archs = []string{"amd64"}
+	plan := Compute(root, l, Options{HostArch: "arm64", lookup: nothingInstalled})
+	if got := strings.Join(plan.Problems, "\n"); len(plan.Problems) != 1 || !strings.Contains(got, "does not cover arm64") {
+		t.Errorf("uncovered host: problems = %v, want the lock named as not covering arm64", plan.Problems)
+	}
+
+	l.Archs = []string{"amd64", "arm64"}
+	plan = Compute(root, l, Options{HostArch: "arm64", lookup: nothingInstalled})
+	if got := strings.Join(plan.Problems, "\n"); !strings.Contains(got, "star/2.7.11b: has no arm64 artifact") {
+		t.Errorf("covered host: problems = %v, want the pin named", plan.Problems)
+	}
+}
+
+// A noarch pin serves every host, with its own key.
+func TestComputeTakesANoarchPinOnAnyHost(t *testing.T) {
+	root := projectRoot(t)
+	data, recipe := archArtifact(t, "refdata/1.0", meta.ArchNone)
+	dataPath := vendor(t, root, data, recipe)
+
+	l := lock.New()
+	l.Archs = []string{"amd64", "arm64"}
+	l.Pins["refdata/1.0"] = archPin(map[string]string{meta.ArchNone: dataPath})
+
+	for _, host := range []string{"amd64", "arm64"} {
+		if plan := Compute(root, l, Options{HostArch: host, lookup: nothingInstalled}); !plan.Complete() {
+			t.Errorf("%s: noarch was rejected: %v", host, plan.Problems)
+		}
+	}
+}
+
+// A noarch artifact built over an architecture-bound tool is rebuilt only where
+// that tool runs. Elsewhere it comes from its registry copy, and --no-prebuilt
+// cannot be honoured.
+func TestComputeRefusesToRebuildOverAForeignTool(t *testing.T) {
+	root := projectRoot(t)
+	tool, toolRecipe := archArtifact(t, "samtools/1.21", "amd64")
+	vendor(t, root, tool, toolRecipe)
+	data, recipe := archArtifact(t, "faidx/1.0", meta.ArchNone, edge(tool))
+	dataPath := vendor(t, root, data, recipe)
+
+	l := lock.New()
+	l.Archs = []string{"amd64", "arm64"}
+	l.Pins["faidx/1.0"] = archPin(map[string]string{meta.ArchNone: dataPath})
+
+	plan := Compute(root, l, Options{HostArch: "arm64", lookup: nothingInstalled})
+	if got := strings.Join(plan.Problems, "\n"); plan.Complete() || !strings.Contains(got, "faidx/1.0 cannot be rebuilt on arm64") {
+		t.Fatalf("problems = %v, want the pin named", plan.Problems)
+	}
+	if plan := Compute(root, l, Options{HostArch: "amd64", lookup: nothingInstalled}); !plan.Complete() {
+		t.Errorf("amd64 runs the tool, yet: %v", plan.Problems)
+	}
+
+	l.Remotes = map[string][]lock.Remote{dataPath: {{Repository: "ghcr.io/x/y", ManifestDigest: "sha256:" + strings.Repeat("d", 64)}}}
+	plan = Compute(root, l, Options{HostArch: "arm64", lookup: nothingInstalled})
+	if !plan.Complete() || plan.Steps[0].Action != ActionFetch {
+		t.Errorf("the registry copy was not used: steps = %#v, problems = %v", plan.Steps, plan.Problems)
+	}
+	plan = Compute(root, l, Options{HostArch: "arm64", lookup: nothingInstalled, SkipPrebuilt: true})
+	if plan.Complete() {
+		t.Error("--no-prebuilt was honoured across architectures")
 	}
 }
 
@@ -354,7 +412,7 @@ func TestComputeReportsInteractiveRebuilds(t *testing.T) {
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 
 	if plan := Compute(root, l, Options{lookup: nothingInstalled}); plan.Complete() {
 		t.Fatal("an interactive rebuild was planned without comment")
@@ -370,7 +428,7 @@ func TestComputeReportsInteractiveRebuilds(t *testing.T) {
 func TestComputeStopsOnAnInvalidLock(t *testing.T) {
 	root := projectRoot(t)
 	l := lock.New()
-	l.Pins["ghost/1.0"] = lock.PinEntry{Artifact: lock.EntryPath("ghost--1.0@aaaaaaaaaaaa")}
+	l.Pins["ghost/1.0"] = pinOf(lock.EntryPath("ghost--1.0@aaaaaaaaaaaa"))
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled})
 	if plan.Complete() || len(plan.Steps) != 0 {
@@ -389,8 +447,8 @@ func TestComputePlansADiamondOnce(t *testing.T) {
 	rightPath := vendor(t, root, right, "echo other\n")
 
 	l := lock.New()
-	l.Pins["index/1.0"] = lock.PinEntry{Artifact: leftPath}
-	l.Pins["other/1.0"] = lock.PinEntry{Artifact: rightPath}
+	l.Pins["index/1.0"] = pinOf(leftPath)
+	l.Pins["other/1.0"] = pinOf(rightPath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled})
 	if !plan.Complete() {
@@ -414,8 +472,8 @@ func TestComputeGivesEachDirectStepOneRequest(t *testing.T) {
 	otherPath := vendor(t, root, other, "echo cutadapt\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
-	l.Pins["cutadapt/5.0"] = lock.PinEntry{Artifact: otherPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
+	l.Pins["cutadapt/5.0"] = pinOf(otherPath)
 
 	plan := Compute(root, l, Options{lookup: installed("star/2.7.11b", "cutadapt/5.0")})
 	if !plan.Complete() {
@@ -439,7 +497,7 @@ func TestComputeAdoptsAnEquivalentSubstituteByDefault(t *testing.T) {
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 
 	plan := Compute(root, l, Options{lookup: substitute("star/2.7.11b")})
 	if !plan.Complete() {
@@ -470,7 +528,7 @@ func TestComputeRefusesASubstituteUnderMatchIdentity(t *testing.T) {
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 
 	plan := Compute(root, l, Options{Match: MatchIdentity, lookup: substitute("star/2.7.11b")})
 	if !plan.Complete() {
@@ -495,7 +553,7 @@ func TestComputeLeavesFoundEmptyForAnExactHit(t *testing.T) {
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
-	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 
 	for _, match := range []Match{MatchEquivalence, MatchIdentity} {
 		plan := Compute(root, l, Options{Match: match, lookup: installed("star/2.7.11b")})
@@ -515,7 +573,7 @@ func TestComputePlansAPathSelectionAtItsProjectDestination(t *testing.T) {
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
-	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = lock.PinEntry{Artifact: appPath}
+	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = pinOf(appPath)
 
 	// installed() would answer for this artifact if the store were consulted.
 	plan := Compute(root, l, Options{lookup: installed("tool/1.0")})
@@ -541,7 +599,7 @@ func TestComputeAdoptsAnExistingProjectPath(t *testing.T) {
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
-	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = lock.PinEntry{Artifact: appPath}
+	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = pinOf(appPath)
 
 	at := filepath.Join(root, "overlays", "tool.sqf")
 	plan := Compute(root, l, Options{lookup: nothingInstalled, lookupAt: presentAt(at, app)})
@@ -565,7 +623,7 @@ func TestComputeRefusesToOverwriteAProjectPath(t *testing.T) {
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
-	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = lock.PinEntry{Artifact: appPath}
+	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = pinOf(appPath)
 
 	at := filepath.Join(root, "overlays", "tool.sqf")
 	if err := os.MkdirAll(filepath.Dir(at), 0o755); err != nil {
@@ -600,7 +658,7 @@ func TestComputeReportsNoReplacementWhenAdopting(t *testing.T) {
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
-	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = lock.PinEntry{Artifact: appPath}
+	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = pinOf(appPath)
 
 	at := filepath.Join(root, "overlays", "tool.sqf")
 	plan := Compute(root, l, Options{lookup: nothingInstalled, lookupAt: presentAt(at, app)})
@@ -616,8 +674,8 @@ func TestComputePlansEachProjectDestinationSeparately(t *testing.T) {
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
-	l.Pins[lock.PathPrefix+"a/tool.sqf"] = lock.PinEntry{Artifact: appPath}
-	l.Pins[lock.PathPrefix+"b/tool.sqf"] = lock.PinEntry{Artifact: appPath}
+	l.Pins[lock.PathPrefix+"a/tool.sqf"] = pinOf(appPath)
+	l.Pins[lock.PathPrefix+"b/tool.sqf"] = pinOf(appPath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled})
 	if len(plan.Steps) != 2 {
@@ -635,8 +693,8 @@ func TestComputeRefusesAnArtifactSelectedBothWays(t *testing.T) {
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
-	l.Pins["tool/1.0"] = lock.PinEntry{Artifact: appPath}
-	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = lock.PinEntry{Artifact: appPath}
+	l.Pins["tool/1.0"] = pinOf(appPath)
+	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = pinOf(appPath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled})
 	if plan.Complete() {
@@ -657,7 +715,7 @@ func TestComputeKeepsAPathRootsChildrenStoreBound(t *testing.T) {
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
-	l.Pins[lock.PathPrefix+"overlays/index.sqf"] = lock.PinEntry{Artifact: dataPath}
+	l.Pins[lock.PathPrefix+"overlays/index.sqf"] = pinOf(dataPath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled})
 	if !plan.Complete() {
@@ -702,7 +760,7 @@ func TestComputeSkipsAClosureInputNothingNeeds(t *testing.T) {
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
-	l.Pins["index/1.0"] = lock.PinEntry{Artifact: dataPath}
+	l.Pins["index/1.0"] = pinOf(dataPath)
 
 	plan := Compute(root, l, Options{lookup: installed("index/1.0")})
 	if !plan.Complete() {
@@ -725,7 +783,7 @@ func TestComputeKeepsAClosureInputABuildNeeds(t *testing.T) {
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
-	l.Pins["index/1.0"] = lock.PinEntry{Artifact: dataPath}
+	l.Pins["index/1.0"] = pinOf(dataPath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled})
 	if len(plan.Steps) != 2 {
@@ -747,7 +805,7 @@ func TestComputeIgnoresProblemsFromAPrunedInput(t *testing.T) {
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
-	l.Pins["index/1.0"] = lock.PinEntry{Artifact: dataPath}
+	l.Pins["index/1.0"] = pinOf(dataPath)
 
 	plan := Compute(root, l, Options{lookup: installed("index/1.0")})
 	if !plan.Complete() {
@@ -765,7 +823,7 @@ func TestComputeDoesNotMaterializeInputsForAFetch(t *testing.T) {
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
-	l.Pins["index/1.0"] = lock.PinEntry{Artifact: dataPath}
+	l.Pins["index/1.0"] = pinOf(dataPath)
 	digest := "sha256:" + strings.Repeat("b", 64)
 	if err := l.AddRemote(dataPath, lock.Remote{Repository: "ghcr.io/x/index", ManifestDigest: digest}); err != nil {
 		t.Fatal(err)
@@ -787,7 +845,7 @@ func TestComputeResolvesABuildInputByItsEdgeRole(t *testing.T) {
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
-	l.Pins["grch38/index"] = lock.PinEntry{Artifact: dataPath}
+	l.Pins["grch38/index"] = pinOf(dataPath)
 
 	var asked meta.Dependency
 	plan := Compute(root, l, Options{
@@ -824,8 +882,8 @@ func TestComputeResolvesASelectionByItsOwnKeys(t *testing.T) {
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
-	l.Pins["grch38/index"] = lock.PinEntry{Artifact: dataPath}
-	l.Pins["samtools/1.21"] = lock.PinEntry{Artifact: depPath}
+	l.Pins["grch38/index"] = pinOf(dataPath)
+	l.Pins["samtools/1.21"] = pinOf(depPath)
 
 	plan := Compute(root, l, Options{
 		lookup: installed("samtools/1.21"),
@@ -856,8 +914,8 @@ func TestInboundEdgesKeepsTheStrictestRole(t *testing.T) {
 	vendor(t, root, strict, "echo strict\n")
 
 	l := lock.New()
-	l.Pins["grch38/star-gencode49"] = lock.PinEntry{Artifact: lock.EntryPath(entryName(loose))}
-	l.Pins["star/2.7.11b/index"] = lock.PinEntry{Artifact: lock.EntryPath(entryName(strict))}
+	l.Pins["grch38/star-gencode49"] = pinOf(lock.EntryPath(entryName(loose)))
+	l.Pins["star/2.7.11b/index"] = pinOf(lock.EntryPath(entryName(strict)))
 
 	verified, problems := lock.Verify(root, l)
 	if len(problems) > 0 {
@@ -892,8 +950,8 @@ func TestComputePutsTheBaseStepFirst(t *testing.T) {
 	basePath := vendor(t, root, base, "echo base\n")
 
 	l := lock.New()
-	l.Pins["aaa/1.0"] = lock.PinEntry{Artifact: appPath}
-	l.Pins[lock.BaseKey] = lock.PinEntry{Artifact: basePath}
+	l.Pins["aaa/1.0"] = pinOf(appPath)
+	l.Pins[lock.BaseKey] = pinOf(basePath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled})
 	if !plan.Complete() {
@@ -915,8 +973,8 @@ func TestComputeKeepsTheBaseUnderOnly(t *testing.T) {
 	basePath := vendor(t, root, base, "echo base\n")
 
 	l := lock.New()
-	l.Pins["aaa/1.0"] = lock.PinEntry{Artifact: appPath}
-	l.Pins[lock.BaseKey] = lock.PinEntry{Artifact: basePath}
+	l.Pins["aaa/1.0"] = pinOf(appPath)
+	l.Pins[lock.BaseKey] = pinOf(basePath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled, Only: appPath})
 	if !plan.Complete() {
@@ -939,8 +997,8 @@ func TestComputeRestrictsToOneArtifactAndItsClosure(t *testing.T) {
 	otherPath := vendor(t, root, other, "echo samtools\n")
 
 	l := lock.New()
-	l.Pins["index/1.0"] = lock.PinEntry{Artifact: wantedPath}
-	l.Pins["samtools/1.23.1"] = lock.PinEntry{Artifact: otherPath}
+	l.Pins["index/1.0"] = pinOf(wantedPath)
+	l.Pins["samtools/1.23.1"] = pinOf(otherPath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled, Only: wantedPath})
 	if !plan.Complete() {
@@ -968,8 +1026,8 @@ func TestComputeKeepsDirectnessUnderOnly(t *testing.T) {
 	wantedPath := vendor(t, root, wanted, "echo index\n")
 
 	l := lock.New()
-	l.Pins["index/1.0"] = lock.PinEntry{Artifact: wantedPath}
-	l.Pins["zlib/1.3"] = lock.PinEntry{Artifact: depPath}
+	l.Pins["index/1.0"] = pinOf(wantedPath)
+	l.Pins["zlib/1.3"] = pinOf(depPath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled, Only: wantedPath})
 	if got := steps(plan)["zlib/1.3"]; !got.Direct {
@@ -983,7 +1041,7 @@ func TestComputeRefusesAnOnlyItDoesNotCover(t *testing.T) {
 	wantedPath := vendor(t, root, wanted, "echo index\n")
 
 	l := lock.New()
-	l.Pins["index/1.0"] = lock.PinEntry{Artifact: wantedPath}
+	l.Pins["index/1.0"] = pinOf(wantedPath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled, Only: "provenance/absent"})
 	if plan.Complete() {
@@ -1004,8 +1062,8 @@ func TestComputeDropsProblemsFromOutsideOnly(t *testing.T) {
 	interactivePath := vendor(t, root, interactive, "echo genome\n")
 
 	l := lock.New()
-	l.Pins["index/1.0"] = lock.PinEntry{Artifact: wantedPath}
-	l.Pins["genome/1.0"] = lock.PinEntry{Artifact: interactivePath}
+	l.Pins["index/1.0"] = pinOf(wantedPath)
+	l.Pins["genome/1.0"] = pinOf(interactivePath)
 
 	if plan := Compute(root, l, Options{lookup: nothingInstalled}); plan.Complete() {
 		t.Fatal("the interactive rebuild was expected to be a problem")
@@ -1041,8 +1099,8 @@ func TestComputeGivesTheFlatNameToTheSelectionNotTheBuildDependency(t *testing.T
 	selectedPath := vendor(t, root, selected, "echo selected\n")
 
 	l := lock.New()
-	l.Pins["grch38/genome"] = lock.PinEntry{Artifact: genomePath}
-	l.Pins["samtools/1.23.1"] = lock.PinEntry{Artifact: selectedPath}
+	l.Pins["grch38/genome"] = pinOf(genomePath)
+	l.Pins["samtools/1.23.1"] = pinOf(selectedPath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled, KeepBuildDeps: true})
 	if !plan.Complete() {
@@ -1070,7 +1128,7 @@ func TestComputeLeavesAnUncontestedBuildDependencyFlat(t *testing.T) {
 	genomePath := vendor(t, root, genome, "echo genome\n")
 
 	l := lock.New()
-	l.Pins["grch38/genome"] = lock.PinEntry{Artifact: genomePath}
+	l.Pins["grch38/genome"] = pinOf(genomePath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled, KeepBuildDeps: true})
 	if got := stepsFor(plan, depPath); len(got) != 1 || got[0].StoreOnly {
@@ -1089,8 +1147,8 @@ func TestComputeLeavesADiscardedBuildDependencyUnmarked(t *testing.T) {
 	selectedPath := vendor(t, root, selected, "echo selected\n")
 
 	l := lock.New()
-	l.Pins["grch38/genome"] = lock.PinEntry{Artifact: genomePath}
-	l.Pins["samtools/1.23.1"] = lock.PinEntry{Artifact: selectedPath}
+	l.Pins["grch38/genome"] = pinOf(genomePath)
+	l.Pins["samtools/1.23.1"] = pinOf(selectedPath)
 
 	plan := Compute(root, l, Options{lookup: nothingInstalled})
 	if got := stepsFor(plan, olderPath); len(got) != 1 || got[0].StoreOnly {

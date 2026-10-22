@@ -161,7 +161,7 @@ func TestProjectBaseImageRefusesAnUnresolvedBase(t *testing.T) {
 	root := newProject(t)
 	base := vendorArtifact(t, root, "ubuntu24/base", "echo base\n")
 	l := lock.New()
-	l.Pins[lock.BaseKey] = lock.PinEntry{Artifact: base}
+	l.Pins[lock.BaseKey] = pinOf(base)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestProjectSelectedDistroReadsTheBasePinsName(t *testing.T) {
 	root := newProject(t)
 	base := vendorArtifact(t, root, "rocky9/base", "echo base\n")
 	l := lock.New()
-	l.Pins[lock.BaseKey] = lock.PinEntry{Artifact: base}
+	l.Pins[lock.BaseKey] = pinOf(base)
 	if err := lock.Publish(root, l); err != nil {
 		t.Fatal(err)
 	}

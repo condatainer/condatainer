@@ -29,7 +29,7 @@ func recipeArtifact(t *testing.T, name, recipe string, deps ...meta.Dependency) 
 		Name:          name,
 		Type:          typ,
 		BuildType:     "script",
-		Platform:      meta.Platform{OS: "linux", Arch: "amd64"},
+		Platform:      meta.Platform{OS: "linux", Arch: meta.NativeArch()},
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
 		Dependencies:  deps,
 	}
@@ -91,7 +91,7 @@ func TestVerifyAcceptsACompleteClosure(t *testing.T) {
 	appPath := vendor(t, root, app, appFiles)
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 
 	verified, problems := Verify(root, l)
 	if len(problems) != 0 {
@@ -116,7 +116,7 @@ func TestVerifyRejectsAMissingRecipe(t *testing.T) {
 	}
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	if _, problems := Verify(root, l); len(problems) == 0 {
 		t.Fatal("a vendored artifact with no recipe verified")
 	}
@@ -135,7 +135,7 @@ func TestVerifyRejectsAnUnvendoredDependency(t *testing.T) {
 	}
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	_, problems := Verify(root, l)
 	if !strings.Contains(problemText(problems), "is not vendored") {
 		t.Fatalf("problems:\n%s", problemText(problems))
@@ -151,7 +151,7 @@ func TestVerifyRejectsAnUnrecordedEdge(t *testing.T) {
 	appPath := vendor(t, root, app, appFiles)
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	_, problems := Verify(root, l)
 	if !strings.Contains(problemText(problems), "no complete keys") {
 		t.Fatalf("problems:\n%s", problemText(problems))
@@ -170,7 +170,7 @@ func TestVerifyRejectsARenamedDirectory(t *testing.T) {
 	}
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: moved}
+	l.Pins["star/2.7.11b"] = pinOf(moved)
 	_, problems := Verify(root, l)
 	if !strings.Contains(problemText(problems), "directory name does not match") {
 		t.Fatalf("problems:\n%s", problemText(problems))
@@ -188,7 +188,7 @@ func TestVerifyRejectsAnEditedRecipe(t *testing.T) {
 	}
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	_, problems := Verify(root, l)
 	if !strings.Contains(problemText(problems), "do not regenerate") {
 		t.Fatalf("problems:\n%s", problemText(problems))
@@ -204,7 +204,7 @@ func TestVerifyRefusesAConstrainedPinKey(t *testing.T) {
 	appPath := vendor(t, root, app, appFiles)
 
 	l := New()
-	l.Pins["star/2.7.11b>=2.7.0"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b>=2.7.0"] = pinOf(appPath)
 	_, problems := Verify(root, l)
 	if len(problems) == 0 {
 		t.Fatal("a constrained pin key was accepted")
@@ -222,7 +222,7 @@ func TestVerifyReportsUnreachableEntries(t *testing.T) {
 	vendor(t, root, orphan, orphanFiles)
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	_, problems := Verify(root, l)
 	if !strings.Contains(problemText(problems), "not reachable") {
 		t.Fatalf("problems:\n%s", problemText(problems))
@@ -240,8 +240,8 @@ func TestVerifyHandlesADiamond(t *testing.T) {
 	rightPath := vendor(t, root, right, rightFiles)
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: leftPath}
-	l.Pins["cutadapt/5.0"] = PinEntry{Artifact: rightPath}
+	l.Pins["star/2.7.11b"] = pinOf(leftPath)
+	l.Pins["cutadapt/5.0"] = pinOf(rightPath)
 
 	verified, problems := Verify(root, l)
 	if len(problems) != 0 {
@@ -258,7 +258,7 @@ func TestVerifyRejectsAnOriginForAnAbsentArtifact(t *testing.T) {
 	appPath := vendor(t, root, app, appFiles)
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	if err := l.AddRemote("provenance/ghost--1.0@aaaaaaaaaaaa", Remote{Repository: "ghcr.io/x/y", ManifestDigest: digestA}); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestVerifyNeedsNoPayload(t *testing.T) {
 	appPath := vendor(t, root, app, appFiles)
 
 	l := New()
-	l.Pins["star/2.7.11b"] = PinEntry{Artifact: appPath}
+	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	t.Setenv("CNT_ROOT", filepath.Join(root, "nonexistent"))
 	t.Setenv("SCRATCH", filepath.Join(root, "nonexistent"))
 	if _, problems := Verify(root, l); len(problems) != 0 {

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -65,6 +66,36 @@ func parsePbsChunk(chunkStr string) (pbsChunkSpec, error) {
 		}
 	}
 	return chunk, nil
+}
+
+// parsePbsWalltime parses a PBS time, [[HH:]MM:]SS[.ms].
+//   - The last field is seconds: "90" is 90 seconds and "1:30" is 1 minute 30 seconds.
+//   - Fields are non-negative integers. A fraction on the seconds is dropped.
+func parsePbsWalltime(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if i := strings.IndexByte(value, '.'); i >= 0 {
+		frac := value[i+1:]
+		if frac == "" || strings.Trim(frac, "0123456789") != "" {
+			return 0, fmt.Errorf("invalid fraction %q", frac)
+		}
+		value = value[:i]
+	}
+	fields := strings.Split(value, ":")
+	if len(fields) > 3 {
+		return 0, fmt.Errorf("expected [[HH:]MM:]SS")
+	}
+	var seconds int64
+	for _, f := range fields {
+		if f == "" || strings.Trim(f, "0123456789") != "" {
+			return 0, fmt.Errorf("invalid field %q", f)
+		}
+		n, err := strconv.ParseInt(f, 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		seconds = seconds*60 + n
+	}
+	return time.Duration(seconds) * time.Second, nil
 }
 
 // PbsScheduler implements the Scheduler interface for PBS
@@ -435,7 +466,7 @@ func (p *PbsScheduler) parseSingleResource(res string, rs *ResourceSpec) error {
 
 	switch key {
 	case "walltime":
-		dur, err := utils.ParseHMSTime(value)
+		dur, err := parsePbsWalltime(value)
 		if err != nil {
 			return fmt.Errorf("invalid walltime value %q: %w", value, err)
 		}
@@ -999,7 +1030,7 @@ func (p *PbsScheduler) getQueueLimits(nodeInfo map[string]ResourceLimits, gpuInf
 
 		switch key {
 		case "resources_max.walltime", "max_walltime":
-			if duration, err := utils.ParseHMSTime(value); err == nil && duration > 0 {
+			if duration, err := parsePbsWalltime(value); err == nil && duration > 0 {
 				limit.MaxTime = duration
 			}
 		case "resources_max.mem", "max_mem":

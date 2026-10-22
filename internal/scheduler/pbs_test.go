@@ -906,6 +906,65 @@ func TestPbsMultiChunkParsing(t *testing.T) {
 	}
 }
 
+func TestParsePbsWalltime(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    time.Duration
+		wantErr bool
+	}{
+		{in: "90", want: 90 * time.Second},
+		{in: "1:30", want: 90 * time.Second},
+		{in: "1:00:30", want: time.Hour + 30*time.Second},
+		{in: "01:30:00", want: 90 * time.Minute},
+		{in: "100:00:00", want: 100 * time.Hour},
+		{in: "0:90", want: 90 * time.Second},
+		{in: "00:00:00", want: 0},
+		{in: " 2:00:00 ", want: 2 * time.Hour},
+		{in: "0:0:90.5", want: 90 * time.Second},
+		{in: "", wantErr: true},
+		{in: "abc", wantErr: true},
+		{in: "-5", wantErr: true},
+		{in: "1::2", wantErr: true},
+		{in: "1:2:3:4", wantErr: true},
+		{in: "10.", wantErr: true},
+	}
+	for _, tt := range tests {
+		got, err := parsePbsWalltime(tt.in)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("parsePbsWalltime(%q) error = %v; wantErr %v", tt.in, err, tt.wantErr)
+			continue
+		}
+		if err == nil && got != tt.want {
+			t.Errorf("parsePbsWalltime(%q) = %v; want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
+// A script's walltime is read as PBS reads it: the last field is seconds.
+func TestPbsScriptWalltime(t *testing.T) {
+	for _, tt := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"90", 90 * time.Second},
+		{"1:30", 90 * time.Second},
+		{"01:30:00", 90 * time.Minute},
+	} {
+		scriptPath := filepath.Join(t.TempDir(), "job.sh")
+		body := "#!/bin/bash\n#PBS -l select=1:ncpus=1\n#PBS -l walltime=" + tt.value + "\n"
+		if err := os.WriteFile(scriptPath, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		specs, err := newTestPbsScheduler().ReadScriptSpecs(scriptPath)
+		if err != nil {
+			t.Fatalf("walltime=%s: %v", tt.value, err)
+		}
+		if specs.Spec == nil || specs.Spec.Time != tt.want {
+			t.Errorf("walltime=%s: Time = %+v; want %v", tt.value, specs.Spec, tt.want)
+		}
+	}
+}
+
 func TestPbsGetJobResources(t *testing.T) {
 	sched := &PbsScheduler{}
 

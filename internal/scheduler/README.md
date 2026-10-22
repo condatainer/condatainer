@@ -51,6 +51,9 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - A select with several `+` chunks is accepted only when it is consistent. Otherwise it is rejected: no spec is built, and `run` refuses to submit the script.
   - CPUs per rank are the same in every chunk, and `ncpus` divides by `mpiprocs`.
   - Memory is the same per CPU in every chunk, or the same per node in every chunk, or absent from all of them. Memory in some chunks only is rejected.
+- `ompthreads` is the CPUs per rank, written in every chunk with more than one rank.
+  - A read value that differs has no field in the spec, so the script is passthrough.
+  - A script that wants other thread counts sets `OMP_NUM_THREADS` in its body.
 - A PBS time is `[[HH:]MM:]SS`, so a bare number is seconds and `1:30` is a minute and a half.
 - LSF `-W` takes minutes and `HH:MM`, so the two have separate parsers.
 

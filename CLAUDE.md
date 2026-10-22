@@ -32,6 +32,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - `registry/`: OCI transport. Publish, resolve, verify, pull, login.
 - `runtime/`: `apptainer/` wrapper, `container/` setup, `exec/`, `proxy/` for compute nodes.
 - `scheduler/`: SLURM, PBS, LSF, HTCondor. Detection, directives, translation.
+- `shell/`: the setup in a user's rc files: `PATH`, completion and the `mm` hook, as a marked block.
 - `server/`: dashboard HTTP server. `store/`: immutable overflow store, addressed by name plus key.
 - `toolpath/`: finds a runnable path for a host tool. `utils/`: console output, files, downloads, duration, memory and version parsing. Imports no other condatainer package.
 

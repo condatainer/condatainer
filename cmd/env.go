@@ -8,9 +8,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// reactivateShell is the --shell override for `condatainer env reactivate`;
-// empty means detect from $SHELL.
-var reactivateShell string
+// reactivateShell and hookShell are the --shell overrides for `condatainer env
+// reactivate` and `condatainer env hook`; empty means detect the calling shell.
+var (
+	reactivateShell string
+	hookShell       string
+)
 
 var envCmd = &cobra.Command{
 	Use:   "env",
@@ -20,7 +23,8 @@ var envCmd = &cobra.Command{
 - These commands run only inside a CondaTainer container.
 - Enter a writable container first:
     condatainer exec -w -o env.img bash
-    condatainer e env.img`,
+    condatainer e env.img
+- Inside it, mm is a shortcut for these commands. 'condatainer shell init' sets it up for bash, zsh and fish.`,
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
@@ -61,6 +65,14 @@ func init() {
 	reactivateCmd.Flags().StringVar(&reactivateShell, "shell", "",
 		"bash, zsh, or fish; default: detected from $SHELL")
 	envCmd.AddCommand(reactivateCmd)
+
+	hookCmd := envStructuredCommand("hook",
+		"Print the mm shell function and its completion",
+		cobra.NoArgs, runEnvHook)
+	hookCmd.Hidden = true
+	hookCmd.Flags().StringVar(&hookShell, "shell", "",
+		"bash, zsh, or fish; default: detected from the calling shell")
+	envCmd.AddCommand(hookCmd)
 }
 
 // withRmAlias lets a remove command also be typed as rm.
@@ -221,12 +233,22 @@ func runEnvPinRemove(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runEnvHook prints the mm function and its completion, or nothing outside a container with an environment mounted.
+func runEnvHook(cmd *cobra.Command, _ []string) error {
+	shell, err := resolveShell(hookShell)
+	if err != nil {
+		return err
+	}
+	fmt.Fprint(cmd.OutOrStdout(), condapkg.MMHook(shell))
+	return nil
+}
+
 func runEnvReactivate(cmd *cobra.Command, _ []string) error {
 	env, err := condapkg.ResolveEnvironment(false)
 	if err != nil {
 		return err
 	}
-	shell, err := resolveReactivateShell()
+	shell, err := resolveShell(reactivateShell)
 	if err != nil {
 		return err
 	}
@@ -234,12 +256,12 @@ func runEnvReactivate(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// resolveReactivateShell honors an explicit --shell, else detects the calling shell as completionCmd does: the parent process via /proc, falling back to $SHELL.
+// resolveShell honors an explicit --shell value, else detects the calling shell as completionCmd does: the parent process via /proc, falling back to $SHELL.
 //   - The parent is what runs the eval, which $SHELL alone may not name.
 //   - It defaults to bash rather than failing: a wrong line is a no-op for zsh and only a problem for fish.
-func resolveReactivateShell() (condapkg.Shell, error) {
-	if reactivateShell != "" {
-		return parseReactivateShell(reactivateShell)
+func resolveShell(flag string) (condapkg.Shell, error) {
+	if flag != "" {
+		return parseReactivateShell(flag)
 	}
 	if detected, err := detectCompletionShell(); err == nil {
 		return condapkg.Shell(detected), nil

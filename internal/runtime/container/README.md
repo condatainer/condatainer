@@ -74,7 +74,8 @@ Root selection has already run, so ordering never decides which overlay becomes 
 - The command is wrapped in one `bash -c` to source them, since Apptainer's `--env` is a static list.
 - Only activation is replayed. There is no deactivate.
   - A run mounts, executes once and exits, so there is nothing to switch away from or restore.
-- `mm` is a bash function, a shortcut for `condatainer env`.
+- `mm` is a bash function in the run wrapper, exported with `export -f`, so a bash started under it has `mm` with no rc setup.
+  - zsh, fish and a shell that a tool starts through `sh` do not import an exported function. Their `mm` comes from the rc setup.
 - `conda-meta/state.json` and `etc/conda/envvars/*.json` also set environment variables. They are left unread on purpose.
   - They are rare. Not all os overlays have the json parser.
 

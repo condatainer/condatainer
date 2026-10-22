@@ -15,10 +15,10 @@ import (
 //   - Job scripts replace HOME the same way (scheduler.JobHome).
 //   - The data search paths and build.logs_dir follow the new HOME; build.logs_dir unless it is configured.
 func ApplyHomeOverride() {
-	if HomeOverride() == "" {
+	dir, err := HomeOverrideDir()
+	if dir == "" && err == nil {
 		return
 	}
-	dir, err := resolveHomeOverride(HomeOverride())
 	if err == nil {
 		err = utils.MkdirAllShared(dir)
 	}
@@ -29,6 +29,15 @@ func ApplyHomeOverride() {
 	utils.ReplaceHome(dir)
 	scheduler.JobHome = dir
 	GlobalDataPaths = DataPaths{} // search paths are rebuilt against the new HOME
+}
+
+// HomeOverrideDir returns the absolute home_override directory, or "" when it is not set.
+// An unset $VAR in the value is an error.
+func HomeOverrideDir() (string, error) {
+	if HomeOverride() == "" {
+		return "", nil
+	}
+	return resolveHomeOverride(HomeOverride())
 }
 
 // resolveHomeOverride expands the environment in raw and makes it absolute.

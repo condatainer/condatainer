@@ -26,10 +26,13 @@ type pbsChunkSpec struct {
 	ompthreads int
 	memMB      int64
 	ngpus      int
+	// extra is the key=value parts outside the spec, in order and joined by ":".
+	extra string
 }
 
 // parsePbsChunk parses a single PBS select chunk string (e.g. "2:ncpus=4:mpiprocs=2:mem=8gb").
-// The leading node count is optional; all key=value pairs are parsed and unknown keys ignored.
+// The leading node count is optional. A key other than ncpus, mpiprocs, ompthreads, mem and ngpus
+// is kept as written in extra. A part that is not key=value is an error.
 func parsePbsChunk(chunkStr string) (pbsChunkSpec, error) {
 	chunk := pbsChunkSpec{count: 1, ncpus: 1, mpiprocs: 1}
 	parts := strings.Split(chunkStr, ":")
@@ -71,6 +74,14 @@ func parsePbsChunk(chunkStr string) (pbsChunkSpec, error) {
 				return chunk, fmt.Errorf("invalid ngpus value %q: %w", part, err)
 			}
 			chunk.ngpus = v
+		default:
+			if key, value, ok := strings.Cut(part, "="); !ok || key == "" || value == "" {
+				return chunk, fmt.Errorf("invalid select resource %q; using passthrough", part)
+			}
+			if chunk.extra != "" {
+				chunk.extra += ":"
+			}
+			chunk.extra += part
 		}
 	}
 	return chunk, nil
@@ -422,6 +433,9 @@ func (p *PbsScheduler) parseResourceList(resourceStr string, rs *ResourceSpec) e
 					if err := checkOmpThreads(chunk, firstCpusPerTask); err != nil {
 						return err
 					}
+					if chunk.extra != chunks[0].extra {
+						return fmt.Errorf("select resources differ across + chunks (%q vs %q)", chunk.extra, chunks[0].extra)
+					}
 					perCpuUniform = perCpuUniform && memPerCpu(chunk) == firstMemPerCpuMB
 					perNodeUniform = perNodeUniform && chunk.memMB == chunks[0].memMB
 				}
@@ -444,6 +458,7 @@ func (p *PbsScheduler) parseResourceList(resourceStr string, rs *ResourceSpec) e
 					rs.TasksPerNode = 0
 				}
 				rs.CpusPerTask = firstCpusPerTask
+				rs.SelectExtra = chunks[0].extra
 				if perCpuUniform {
 					rs.MemPerCpuMB = firstMemPerCpuMB
 					rs.MemPerNodeMB = 0 // clear default so MemPerCpuMB takes effect
@@ -466,6 +481,7 @@ func (p *PbsScheduler) parseResourceList(resourceStr string, rs *ResourceSpec) e
 					return err
 				}
 				rs.MemPerNodeMB = chunks[0].memMB
+				rs.SelectExtra = chunks[0].extra
 				if chunks[0].ngpus > 0 {
 					rs.Gpu = &GpuSpec{Type: "gpu", Count: chunks[0].ngpus}
 				}
@@ -649,8 +665,8 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 					memPerFullMB = rs.MemPerNodeMB
 					memPerRemMB = rs.MemPerNodeMB
 				}
-				chunk1 := pbsSelectChunkBody(nFullNodes, cpuPerTask*tasksPerNodeCeil, tasksPerNodeCeil, memPerFullMB)
-				chunk2 := pbsSelectChunkBody(remainderNodes, cpuPerTask*remainderTasks, remainderTasks, memPerRemMB)
+				chunk1 := pbsSelectChunkBody(nFullNodes, cpuPerTask*tasksPerNodeCeil, tasksPerNodeCeil, memPerFullMB, rs.SelectExtra)
+				chunk2 := pbsSelectChunkBody(remainderNodes, cpuPerTask*remainderTasks, remainderTasks, memPerRemMB, rs.SelectExtra)
 				fmt.Fprintf(writer, "#PBS -l select=%s+%s\n", chunk1, chunk2)
 			} else {
 				// Uniform distribution: single-chunk select=.
@@ -664,7 +680,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 				} else if rs.MemPerNodeMB > 0 {
 					memMB = rs.MemPerNodeMB
 				}
-				// Generate resource specification: select=N:ncpus=M[:mpiprocs=P:ompthreads=C][:mem=Xmb][:ngpus=G]
+				// Generate resource specification: select=N:ncpus=M[:mpiprocs=P:ompthreads=C][:mem=Xmb][:ngpus=G][:extra]
 				selectParts := []string{fmt.Sprintf("select=%d", nodes)}
 				if rs.CpusPerTask > 0 || tasksPerNode > 1 {
 					selectParts = append(selectParts, fmt.Sprintf("ncpus=%d", cpuPerTask*tasksPerNode))
@@ -677,6 +693,9 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 				}
 				if rs.Gpu != nil && rs.Gpu.Count > 0 {
 					selectParts = append(selectParts, fmt.Sprintf("ngpus=%d", rs.Gpu.Count))
+				}
+				if rs.SelectExtra != "" {
+					selectParts = append(selectParts, rs.SelectExtra)
 				}
 				fmt.Fprintf(writer, "#PBS -l %s\n", strings.Join(selectParts, ":"))
 			}
@@ -717,6 +736,9 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 				}
 				if rs.Gpu != nil && rs.Gpu.Count > 0 {
 					selectParts = append(selectParts, fmt.Sprintf("ngpus=%d", rs.Gpu.Count))
+				}
+				if rs.SelectExtra != "" {
+					selectParts = append(selectParts, rs.SelectExtra)
 				}
 				fmt.Fprintf(writer, "#PBS -l %s\n", strings.Join(selectParts, ":"))
 			}
@@ -804,8 +826,8 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 }
 
 // pbsSelectChunkBody builds the body of a single PBS select chunk (without the "select=" prefix).
-// Format: N[:ncpus=M][:mpiprocs=P:ompthreads=M/P][:mem=Xmb]
-func pbsSelectChunkBody(count, ncpus, mpiprocs int, memMB int64) string {
+// Format: N[:ncpus=M][:mpiprocs=P:ompthreads=M/P][:mem=Xmb][:extra]
+func pbsSelectChunkBody(count, ncpus, mpiprocs int, memMB int64, extra string) string {
 	parts := []string{strconv.Itoa(count)}
 	if ncpus > 0 {
 		parts = append(parts, fmt.Sprintf("ncpus=%d", ncpus))
@@ -815,6 +837,9 @@ func pbsSelectChunkBody(count, ncpus, mpiprocs int, memMB int64) string {
 	}
 	if memMB > 0 {
 		parts = append(parts, fmt.Sprintf("mem=%dmb", memMB))
+	}
+	if extra != "" {
+		parts = append(parts, extra)
 	}
 	return strings.Join(parts, ":")
 }

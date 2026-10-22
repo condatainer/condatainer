@@ -33,14 +33,14 @@ func (d Dep) NameVersion() string {
 	return d.Name + "/" + d.Version
 }
 
-// Normalize folds the spellings of one module into name/version form, converting =, @ and -- to / and trimming space.
+// Normalize folds the spellings of one module into name/version form, converting = and -- to / and trimming space.
 //   - Constraint suffixes survive.
+//   - A trailing @<identity> survives: @ separates a name from an identity, never a version.
 //   - Exported because it decides what a name is: index keys use this form, so a second implementation elsewhere would make one string resolve two ways.
 func Normalize(nameVersion string) string {
 	nv, op, min := splitConstraint(strings.TrimSpace(nameVersion))
 	nv = strings.ReplaceAll(nv, "--", "/")
 	nv = strings.ReplaceAll(nv, "=", "/")
-	nv = strings.ReplaceAll(nv, "@", "/")
 	return nv + op + min
 }
 

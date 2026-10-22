@@ -31,7 +31,7 @@ func TestLookup(t *testing.T) {
 	}
 
 	// Spellings of one name are the same name.
-	for _, spelling := range []string{"cellranger=9.0.1", "cellranger@9.0.1", " cellranger/9.0.1 "} {
+	for _, spelling := range []string{"cellranger=9.0.1", "cellranger--9.0.1", " cellranger/9.0.1 "} {
 		if _, ok, _ := cat.Lookup(t.Context(), spelling); !ok {
 			t.Errorf("Lookup(%q) not found", spelling)
 		}

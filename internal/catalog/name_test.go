@@ -6,11 +6,11 @@ func TestNormalize(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"samtools/1.2", "samtools/1.2"},
 		{"samtools=1.2", "samtools/1.2"},
-		{"samtools@1.2", "samtools/1.2"},
 		{"samtools--1.2", "samtools/1.2"},
-		{"  samtools@1.2  ", "samtools/1.2"},
+		{"  samtools=1.2  ", "samtools/1.2"},
 		{"samtools", "samtools"},
-		{"samtools@1.21>=1.16", "samtools/1.21>=1.16"},
+		{"samtools=1.21>=1.16", "samtools/1.21>=1.16"},
+		{"star/2.7.11b@9f2c1ab4d3e8", "star/2.7.11b@9f2c1ab4d3e8"},
 		{"grch38/star/2.7.11b/gencode47-101", "grch38/star/2.7.11b/gencode47-101"},
 		{"", ""},
 	}

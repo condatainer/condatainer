@@ -595,7 +595,7 @@ func scriptTarget(file string) string {
 // the script's or definition's #TARGET:, else the basename itself. The first two leave the
 // prefix a plain path, except directly in an images directory, where the
 // filename is the address and has to be the name's. The basename is spelled as
-// the name it reads as (my--env, my=1 and my@1 are name/version spellings), and
+// the name it reads as (my--env and my=1 are name/version spellings), and
 // note says so when that differs from what was typed.
 func resolvePrefix(prefix, name, file string) (resolved, note string, err error) {
 	if name == "" {

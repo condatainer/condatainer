@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -968,5 +969,89 @@ func TestHTCondorSubmitRefusesDependencies(t *testing.T) {
 	}
 	if id, err := sched.Submit(t.Context(), "job.sub", nil); err != nil || id != "7" {
 		t.Fatalf("Submit without dependencies = %q, %v; want 7", id, err)
+	}
+}
+
+// A job ad as HTCondor writes it: one "Attribute = value" per line.
+func writeJobAd(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), ".job.ad")
+	ad := "Cmd = \"/tmp/job.sh\"\nClusterId = 42\nProcId = 3\nRequestCpus = 4\n"
+	if err := os.WriteFile(path, []byte(ad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestHTCondorCurrentJobID(t *testing.T) {
+	h := newTestHTCondorScheduler()
+
+	t.Run("outside a job", func(t *testing.T) {
+		t.Setenv("_CONDOR_JOB_AD", "")
+		if got := h.GetCurrentJobID(); got != "" {
+			t.Errorf("GetCurrentJobID = %q; want empty", got)
+		}
+	})
+
+	// Submit returns the cluster ID, so that is the ID a running job compares against.
+	t.Run("cluster ID from the job ad", func(t *testing.T) {
+		t.Setenv("_CONDOR_JOB_AD", writeJobAd(t))
+		if got := h.GetCurrentJobID(); got != "42" {
+			t.Errorf("GetCurrentJobID = %q; want 42", got)
+		}
+	})
+
+	t.Run("attribute missing", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".job.ad")
+		if err := os.WriteFile(path, []byte("RequestCpus = 4\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("_CONDOR_JOB_AD", path)
+		if got := h.GetCurrentJobID(); got != "" {
+			t.Errorf("GetCurrentJobID = %q; want empty", got)
+		}
+	})
+}
+
+// The expressions the wrapper script runs give the IDs HTCondor wrote in the job ad.
+func TestHTCondorJobIDExpressions(t *testing.T) {
+	t.Setenv("_CONDOR_JOB_AD", writeJobAd(t))
+	for _, tt := range []struct{ name, expr, want string }{
+		{"cluster", newTestHTCondorScheduler().JobIDEnvExpr(), "42"},
+		{"label", jobAdLabelExpr, "42.3"},
+		{"process", jobAdExpr("ProcId"), "3"},
+	} {
+		out, err := exec.Command("bash", "-c", `echo "`+tt.expr+`"`).Output()
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if got := strings.TrimSpace(string(out)); got != tt.want {
+			t.Errorf("%s expression = %q; want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+// HTCondor sets no job ID variable, so the wrapper never refers to one.
+func TestHTCondorWrapperJobID(t *testing.T) {
+	dir := t.TempDir()
+	jobSpec := &JobSpec{
+		Name:     "idtest",
+		Command:  "echo hi",
+		Specs:    &ScriptSpecs{Spec: &ResourceSpec{CpusPerTask: 1}, RemainingFlags: []string{}},
+		Metadata: map[string]string{},
+		Array:    &ArraySpec{InputFile: "args.txt", Count: 2},
+	}
+	if _, err := newTestHTCondorScheduler().CreateScriptWithSpec(jobSpec, dir); err != nil {
+		t.Fatalf("CreateScriptWithSpec: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "idtest.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "_CONDOR_CLUSTER_ID") || strings.Contains(string(body), "_CONDOR_PROC_ID") {
+		t.Errorf("wrapper refers to an unset variable\n%s", body)
+	}
+	if !strings.Contains(string(body), "ClusterId") || !strings.Contains(string(body), "ProcId") {
+		t.Errorf("wrapper does not read the job ad\n%s", body)
 	}
 }

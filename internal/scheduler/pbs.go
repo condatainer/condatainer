@@ -369,9 +369,9 @@ func (p *PbsScheduler) parseResourceList(resourceStr string, rs *ResourceSpec) e
 
 			if len(chunks) > 1 {
 				// Multi-chunk select= ("+" groups for heterogeneous jobs).
-				// Validate that CpusPerTask and MemPerCpuMB are uniform across all chunks.
-				// If so, aggregate node counts and fully populate ResourceSpec (no passthrough).
-				// If not, return a plain error to trigger passthrough.
+				// CpusPerTask must be uniform across all chunks. Memory must be uniform either per CPU
+				// or per node, the two forms ResourceSpec holds. If so, aggregate node counts and fully
+				// populate ResourceSpec (no passthrough). If not, return a plain error to trigger passthrough.
 				for _, chunk := range chunks {
 					if chunk.ngpus > 0 {
 						return fmt.Errorf("ngpus= inside multi-chunk (+) select is not supported; use passthrough")
@@ -382,10 +382,15 @@ func (p *PbsScheduler) parseResourceList(resourceStr string, rs *ResourceSpec) e
 					return fmt.Errorf("ncpus=%d not divisible by mpiprocs=%d in first chunk", chunks[0].ncpus, firstMPI)
 				}
 				firstCpusPerTask := chunks[0].ncpus / firstMPI
-				firstMemPerCpuMB := int64(0)
-				if chunks[0].memMB > 0 && chunks[0].ncpus > 0 {
-					firstMemPerCpuMB = chunks[0].memMB / int64(chunks[0].ncpus)
+				memPerCpu := func(c pbsChunkSpec) int64 {
+					if c.memMB > 0 && c.ncpus > 0 {
+						return c.memMB / int64(c.ncpus)
+					}
+					return 0
 				}
+				firstMemPerCpuMB := memPerCpu(chunks[0])
+				perCpuUniform := true
+				perNodeUniform := chunks[0].memMB > 0
 				for _, chunk := range chunks[1:] {
 					nMPI := max(chunk.mpiprocs, 1)
 					if chunk.ncpus%nMPI != 0 {
@@ -394,15 +399,13 @@ func (p *PbsScheduler) parseResourceList(resourceStr string, rs *ResourceSpec) e
 					if chunk.ncpus/nMPI != firstCpusPerTask {
 						return fmt.Errorf("non-uniform CpusPerTask across + chunks (%d vs %d)", chunk.ncpus/nMPI, firstCpusPerTask)
 					}
-					chunkMemPerCpuMB := int64(0)
-					if chunk.memMB > 0 && chunk.ncpus > 0 {
-						chunkMemPerCpuMB = chunk.memMB / int64(chunk.ncpus)
-					}
-					if chunkMemPerCpuMB != firstMemPerCpuMB {
-						return fmt.Errorf("non-uniform MemPerCpu across + chunks (%d vs %d MB/cpu)", chunkMemPerCpuMB, firstMemPerCpuMB)
-					}
+					perCpuUniform = perCpuUniform && memPerCpu(chunk) == firstMemPerCpuMB
+					perNodeUniform = perNodeUniform && chunk.memMB == chunks[0].memMB
 				}
-				// CpusPerTask and MemPerCpuMB are uniform: aggregate and populate ResourceSpec.
+				if !perCpuUniform && !perNodeUniform {
+					return fmt.Errorf("memory across + chunks is neither the same per CPU nor the same per node")
+				}
+				// CpusPerTask and memory are uniform: aggregate and populate ResourceSpec.
 				totalNodes, totalTasks := 0, 0
 				for _, chunk := range chunks {
 					totalNodes += chunk.count
@@ -418,8 +421,13 @@ func (p *PbsScheduler) parseResourceList(resourceStr string, rs *ResourceSpec) e
 					rs.TasksPerNode = 0
 				}
 				rs.CpusPerTask = firstCpusPerTask
-				rs.MemPerCpuMB = firstMemPerCpuMB
-				rs.MemPerNodeMB = 0 // clear default so MemPerCpuMB takes effect
+				if perCpuUniform {
+					rs.MemPerCpuMB = firstMemPerCpuMB
+					rs.MemPerNodeMB = 0 // clear default so MemPerCpuMB takes effect
+				} else {
+					rs.MemPerCpuMB = 0
+					rs.MemPerNodeMB = chunks[0].memMB
+				}
 				return nil
 			} else {
 				// Single-chunk select=: fully populate ResourceSpec.

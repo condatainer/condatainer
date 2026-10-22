@@ -1277,3 +1277,92 @@ func TestPbsNonUniformMpiScriptGen(t *testing.T) {
 		})
 	}
 }
+
+// Memory across the chunks of a select is read as the same per CPU, else the same per node, else passthrough.
+func TestPbsMultiChunkMemory(t *testing.T) {
+	tests := []struct {
+		name            string
+		selectBody      string
+		wantPassthrough bool
+		wantNodes       int
+		wantCpusPerTask int
+		wantPerCpuMB    int64
+		wantPerNodeMB   int64
+	}{
+		{name: "same per node, different per CPU", selectBody: "3:ncpus=8:mpiprocs=4:mem=16384mb+1:ncpus=4:mpiprocs=2:mem=16384mb", wantNodes: 4, wantCpusPerTask: 2, wantPerNodeMB: 16384},
+		{name: "same per CPU, different per node", selectBody: "3:ncpus=8:mpiprocs=4:mem=16384mb+1:ncpus=4:mpiprocs=2:mem=8192mb", wantNodes: 4, wantCpusPerTask: 2, wantPerCpuMB: 2048},
+		{name: "identical chunks", selectBody: "2:ncpus=8:mpiprocs=2:mem=16gb+2:ncpus=8:mpiprocs=2:mem=16gb", wantNodes: 4, wantCpusPerTask: 4, wantPerCpuMB: 2048},
+		{name: "no memory", selectBody: "3:ncpus=8:mpiprocs=4+1:ncpus=4:mpiprocs=2", wantNodes: 4, wantCpusPerTask: 2},
+		{name: "different both ways", selectBody: "2:ncpus=8:mpiprocs=2:mem=16gb+2:ncpus=8:mpiprocs=2:mem=32gb", wantPassthrough: true},
+		{name: "memory in one chunk only", selectBody: "3:ncpus=8:mpiprocs=4:mem=16384mb+1:ncpus=4:mpiprocs=2", wantPassthrough: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptPath := filepath.Join(t.TempDir(), "job.sh")
+			body := "#!/bin/bash\n#PBS -l select=" + tt.selectBody + "\n"
+			if err := os.WriteFile(scriptPath, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			specs, err := newTestPbsScheduler().ReadScriptSpecs(scriptPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantPassthrough {
+				if specs.Spec != nil {
+					t.Fatalf("Spec = %+v; want passthrough", specs.Spec)
+				}
+				return
+			}
+			got := specs.Spec
+			if got == nil {
+				t.Fatal("passthrough; want a parsed spec")
+			}
+			if got.Nodes != tt.wantNodes || got.CpusPerTask != tt.wantCpusPerTask ||
+				got.MemPerCpuMB != tt.wantPerCpuMB || got.MemPerNodeMB != tt.wantPerNodeMB {
+				t.Errorf("Nodes = %d, CpusPerTask = %d, MemPerCpuMB = %d, MemPerNodeMB = %d; want %d, %d, %d, %d",
+					got.Nodes, got.CpusPerTask, got.MemPerCpuMB, got.MemPerNodeMB,
+					tt.wantNodes, tt.wantCpusPerTask, tt.wantPerCpuMB, tt.wantPerNodeMB)
+			}
+		})
+	}
+}
+
+// Every select the writer produces for an uneven layout reads back to the same spec.
+func TestPbsUnevenSelectRoundTrip(t *testing.T) {
+	for _, mem := range []struct {
+		name string
+		rs   ResourceSpec
+	}{
+		{"per node", ResourceSpec{MemPerNodeMB: 16384}},
+		{"per CPU", ResourceSpec{MemPerCpuMB: 2048}},
+		{"no memory", ResourceSpec{}},
+	} {
+		t.Run(mem.name, func(t *testing.T) {
+			rs := mem.rs
+			rs.Nodes, rs.Ntasks, rs.CpusPerTask = 4, 14, 2
+			jobSpec := &JobSpec{
+				Name:     "uneven",
+				Command:  "mpirun ./app",
+				Specs:    &ScriptSpecs{Spec: &rs, RemainingFlags: []string{}},
+				Metadata: map[string]string{},
+			}
+			pbs := newTestPbsScheduler()
+			scriptPath, err := pbs.CreateScriptWithSpec(jobSpec, t.TempDir())
+			if err != nil {
+				t.Fatalf("CreateScriptWithSpec: %v", err)
+			}
+			specs, err := pbs.ReadScriptSpecs(scriptPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := specs.Spec
+			if got == nil {
+				t.Fatal("the generated select reads as passthrough")
+			}
+			if got.Nodes != rs.Nodes || got.Ntasks != rs.Ntasks || got.CpusPerTask != rs.CpusPerTask ||
+				got.MemPerCpuMB != rs.MemPerCpuMB || got.MemPerNodeMB != rs.MemPerNodeMB {
+				t.Errorf("read back %+v; wrote %+v", got, rs)
+			}
+		})
+	}
+}

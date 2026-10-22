@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1405,6 +1406,60 @@ func TestPbsOmpThreads(t *testing.T) {
 				t.Fatal("passthrough; want a parsed spec")
 			}
 			out, err := pbs.CreateScriptWithSpec(&JobSpec{Name: "omp", Command: "true", Specs: specs, Metadata: map[string]string{}}, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "#PBS -l " + tt.wantWritten + "\n"; !strings.Contains(string(data), want) {
+				t.Errorf("script lacks %q:\n%s", want, data)
+			}
+		})
+	}
+}
+
+// A select resource outside the spec is kept as written in every chunk. Chunks that differ in them, or a part that is not key=value, make the script passthrough.
+func TestPbsSelectExtra(t *testing.T) {
+	tests := []struct {
+		name            string
+		selectBody      string
+		wantPassthrough bool
+		wantWritten     string
+	}{
+		{name: "gpu id", selectBody: "4:ncpus=1:ngpus=1:gpu_id=gpu0", wantWritten: "select=4:ncpus=1:ngpus=1:gpu_id=gpu0"},
+		{name: "several, in order", selectBody: "1:ncpus=4:host=node1:green=true", wantWritten: "select=1:ncpus=4:host=node1:green=true"},
+		{name: "with ranks", selectBody: "2:ncpus=8:mpiprocs=4:gpu_id=gpu0", wantWritten: "select=2:ncpus=8:mpiprocs=4:ompthreads=2:gpu_id=gpu0"},
+		{name: "same in every chunk", selectBody: "3:ncpus=8:mpiprocs=4:host=a+1:ncpus=4:mpiprocs=2:host=a", wantWritten: "select=3:ncpus=8:mpiprocs=4:ompthreads=2:host=a+1:ncpus=4:mpiprocs=2:ompthreads=2:host=a"},
+		{name: "differs across chunks", selectBody: "1:ncpus=4:host=a+1:ncpus=4:host=b", wantPassthrough: true},
+		{name: "in one chunk only", selectBody: "1:ncpus=4:host=a+1:ncpus=4", wantPassthrough: true},
+		{name: "not key=value", selectBody: "1:ncpus=4:green", wantPassthrough: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptPath := filepath.Join(t.TempDir(), "job.sh")
+			if err := os.WriteFile(scriptPath, []byte("#!/bin/bash\n#PBS -l select="+tt.selectBody+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			pbs := newTestPbsScheduler()
+			specs, err := pbs.ReadScriptSpecs(scriptPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantPassthrough {
+				if specs.Spec != nil {
+					t.Fatalf("Spec = %+v; want passthrough", specs.Spec)
+				}
+				if want := "-l select=" + tt.selectBody; !slices.Contains(specs.RemainingFlags, want) {
+					t.Errorf("RemainingFlags = %q; want it to hold %q", specs.RemainingFlags, want)
+				}
+				return
+			}
+			if specs.Spec == nil {
+				t.Fatal("passthrough; want a parsed spec")
+			}
+			out, err := pbs.CreateScriptWithSpec(&JobSpec{Name: "extra", Command: "true", Specs: specs, Metadata: map[string]string{}}, t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}

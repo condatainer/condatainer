@@ -5,19 +5,168 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/shell"
+	"github.com/condatainer/condatainer/internal/utils"
 )
+
+var (
+	shellName  string
+	shellAlias string
+)
+
+var shellCmd = &cobra.Command{
+	Use:          "shell",
+	Short:        "Set up condatainer in the shell",
+	Long:         "Set up condatainer in the shell: PATH, tab completion, and the mm command for Conda environments.",
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	},
+}
+
+var shellInitCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Write condatainer's setup into the shell's rc file",
+	Long: `Write condatainer's setup into the shell's rc file.
+
+- It puts condatainer on PATH, loads tab completion, and defines mm inside a container.
+- With home_override set, the rc file under the replacement home is set up too.
+- It is refused inside a container. Run it on the host.`,
+	Example: `  condatainer shell init
+  condatainer shell init --shell zsh --alias cnt`,
+	Args:         cobra.NoArgs,
+	SilenceUsage: true,
+	RunE:         runShellInit,
+}
+
+var shellRemoveCmd = &cobra.Command{
+	Use:   "remove",
+	Short: "Remove condatainer's setup from the shell's rc file",
+	Long: `Remove condatainer's setup from the shell's rc file.
+
+- With home_override set, the rc file under the replacement home is cleaned too.
+- It is refused inside a container. Run it on the host.`,
+	Args:         cobra.NoArgs,
+	SilenceUsage: true,
+	RunE:         runShellRemove,
+}
+
+func init() {
+	rootCmd.AddCommand(shellCmd)
+	shellCmd.AddCommand(shellInitCmd, shellRemoveCmd, newCompletionCmd(false))
+	rootCmd.AddCommand(newCompletionCmd(true))
+
+	shellInitCmd.Flags().StringVar(&shellName, "shell", "",
+		"bash, zsh, or fish; default: the current shell. Bash is always set up too")
+	shellRemoveCmd.Flags().StringVar(&shellName, "shell", "",
+		"bash, zsh, or fish; default: all of them")
+	shellInitCmd.Flags().StringVar(&shellAlias, "alias", "", "Define a short alias (e.g. cnt) and complete it too")
+}
+
+// setupShell resolves --shell, else the shell running the command.
+func setupShell() (shell.Shell, error) {
+	name := shellName
+	if name == "" {
+		detected, err := detectCompletionShell()
+		if err != nil {
+			return "", fmt.Errorf("%w; specify it with --shell bash|zsh|fish", err)
+		}
+		name = detected
+	}
+	return shell.Parse(name)
+}
+
+// loadHomeOverride reads the config layers, which hold home_override.
+func loadHomeOverride() {
+	if exe, err := os.Executable(); err == nil {
+		config.LoadDefaults(exe)
+	}
+	if err := config.LoadLayers(); err != nil {
+		utils.PrintDebug("Error reading config file: %v", err)
+	}
+}
+
+func runShellInit(cmd *cobra.Command, _ []string) error {
+	sh, err := setupShell()
+	if err != nil {
+		return err
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("cannot find the condatainer binary: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	loadHomeOverride()
+	res, err := shell.Init(shell.Options{Shell: sh, Alias: shellAlias, Exe: exe})
+	printShellResult(res)
+	return err
+}
+
+func runShellRemove(cmd *cobra.Command, _ []string) error {
+	all := shellName == ""
+	shells := shell.All
+	if !all {
+		sh, err := shell.Parse(shellName)
+		if err != nil {
+			return err
+		}
+		shells = []shell.Shell{sh}
+	}
+	loadHomeOverride()
+	res, err := shell.Remove(shells)
+	if all {
+		res = withoutAbsent(res)
+		if err == nil && len(res.Changes) == 0 {
+			utils.PrintMessage("No setup found in any shell's rc file")
+		}
+	}
+	printShellResult(res)
+	return err
+}
+
+// withoutAbsent drops the files that held no setup, so removing from every shell lists only what changed.
+func withoutAbsent(res shell.Result) shell.Result {
+	kept := res.Changes[:0:0]
+	for _, c := range res.Changes {
+		if c.Action != shell.Absent {
+			kept = append(kept, c)
+		}
+	}
+	res.Changes = kept
+	return res
+}
+
+func printShellResult(res shell.Result) {
+	for _, c := range res.Changes {
+		switch c.Action {
+		case shell.Created:
+			utils.PrintMessage("Created %s", c.Path)
+		case shell.Appended:
+			utils.PrintMessage("Added the setup to %s", c.Path)
+		case shell.Updated:
+			utils.PrintMessage("Updated the setup in %s", c.Path)
+		case shell.Unchanged:
+			utils.PrintMessage("The setup in %s is up to date", c.Path)
+		case shell.Removed:
+			utils.PrintMessage("Removed the setup from %s", c.Path)
+		case shell.Absent:
+			utils.PrintMessage("No setup in %s", c.Path)
+		}
+	}
+	for _, w := range res.Warnings {
+		utils.PrintWarning("%s", w)
+	}
+}
 
 // completionAlias is an extra command name to register completion for (--alias).
 var completionAlias string
-
-// aliasNamePattern restricts --alias to a plain shell word: the value is
-// interpolated into the generated script, so spaces or quotes would silently
-// produce a broken completion file.
-var aliasNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // shellFromPath maps an executable path to a supported shell name, matching on
 // the base name so a path like /home/zsh-fan/bin/foo does not match.
@@ -54,78 +203,81 @@ func detectCompletionShell() (string, error) {
 	return "", fmt.Errorf("could not detect the current shell")
 }
 
-var completionCmd = &cobra.Command{
-	Use:   "completion [flags] [bash|zsh|fish]",
-	Short: "Generate shell completion script",
-	Long: `Generate a shell completion script for condatainer.
+// newCompletionCmd builds the completion command. The top-level one is hidden and runs the same code as `shell completion`.
+func newCompletionCmd(hidden bool) *cobra.Command {
+	cmd := &cobra.Command{
+		Hidden: hidden,
+		Use:    "completion [flags] [bash|zsh|fish]",
+		Short:  "Generate shell completion script",
+		Long: `Generate a shell completion script for condatainer.
 
 - Without a shell argument, the current shell is detected.
-- --alias defines a shorter name, e.g. --alias cnt lets you type 'cnt avail'.
-- An alias takes effect only when the script is sourced from your shell rc file.`,
-	Example: `  Bash:
+- An alias takes effect only when the script is loaded from your shell rc file.
+- 'condatainer shell init' writes the lines that load it.`,
+		Example: `  Bash:
   # Current session
-  source <(condatainer completion bash)
+  source <(condatainer shell completion bash)
 
   Zsh:
   # Current session
-  source <(condatainer completion zsh)
+  source <(condatainer shell completion zsh)
   # All sessions (install once)
-  condatainer completion zsh > "${fpath[1]}/_condatainer"
+  condatainer shell completion zsh > "${fpath[1]}/_condatainer"
 
   Fish:
   # Current session
-  condatainer completion fish | source
+  condatainer shell completion fish | source
   # All sessions (install once)
-  condatainer completion fish > ~/.config/fish/completions/condatainer.fish`,
-	ValidArgs: []string{"bash", "zsh", "fish"},
-	Args:      cobra.MatchAll(cobra.MaximumNArgs(1), cobra.OnlyValidArgs),
-	Run: func(cmd *cobra.Command, args []string) {
-		var shell string
-		if len(args) > 0 {
-			shell = args[0]
-		} else {
-			detected, err := detectCompletionShell()
-			if err != nil {
-				ExitWithError("%v.\nSpecify it explicitly: `condatainer completion bash|zsh|fish`", err)
-			}
-			shell = detected
-		}
-
-		if completionAlias != "" && !aliasNamePattern.MatchString(completionAlias) {
-			ExitWithError("Invalid --alias %q: use letters, digits, '-' or '_' only.", completionAlias)
-		}
-		name := cmd.Root().Name()
-
-		switch shell {
-		case "bash":
-			// Generate to buffer so we can post-process
-			var buf bytes.Buffer
-			if err := cmd.Root().GenBashCompletionV2(&buf, true); err != nil {
-				_ = cmd.Root().GenBashCompletion(&buf)
-			}
-			// Post-process to handle -- and add overlay fzf support
-			script := postProcessBashCompletion(buf.String())
-			os.Stdout.WriteString(script + bashAliasBinding(name, completionAlias))
-		case "zsh":
-			// Generate to buffer so we can post-process
-			var buf bytes.Buffer
-			cmd.Root().GenZshCompletion(&buf)
-			script := postProcessZshCompletion(buf.String())
-			os.Stdout.WriteString(script + zshAliasBinding(name, completionAlias))
-		case "fish":
-			// Generate to buffer so we can post-process
-			var buf bytes.Buffer
-			cmd.Root().GenFishCompletion(&buf, true)
-			script := postProcessFishCompletion(buf.String())
-			os.Stdout.WriteString(script + fishAliasBinding(script, name, completionAlias))
-		}
-	},
+  condatainer shell completion fish > ~/.config/fish/completions/condatainer.fish`,
+		ValidArgs: []string{"bash", "zsh", "fish"},
+		Args:      cobra.MatchAll(cobra.MaximumNArgs(1), cobra.OnlyValidArgs),
+		Run:       runCompletion,
+	}
+	cmd.Flags().StringVar(&completionAlias, "alias", "",
+		"Define a short alias (e.g. cnt) and complete it too")
+	return cmd
 }
 
-func init() {
-	rootCmd.AddCommand(completionCmd)
-	completionCmd.Flags().StringVar(&completionAlias, "alias", "",
-		"Define a short alias (e.g. cnt) and complete it too")
+func runCompletion(cmd *cobra.Command, args []string) {
+	var name string
+	if len(args) > 0 {
+		name = args[0]
+	} else {
+		detected, err := detectCompletionShell()
+		if err != nil {
+			ExitWithError("%v.\nSpecify it explicitly: `condatainer shell completion bash|zsh|fish`", err)
+		}
+		name = detected
+	}
+
+	if completionAlias != "" && !shell.ValidAlias(completionAlias) {
+		ExitWithError("Invalid --alias %q: use letters, digits, '-' or '_' only.", completionAlias)
+	}
+	bin := cmd.Root().Name()
+
+	switch name {
+	case "bash":
+		// Generate to buffer so we can post-process
+		var buf bytes.Buffer
+		if err := cmd.Root().GenBashCompletionV2(&buf, true); err != nil {
+			_ = cmd.Root().GenBashCompletion(&buf)
+		}
+		// Post-process to handle -- and add overlay fzf support
+		script := postProcessBashCompletion(buf.String())
+		os.Stdout.WriteString(script + bashAliasBinding(bin, completionAlias))
+	case "zsh":
+		// Generate to buffer so we can post-process
+		var buf bytes.Buffer
+		cmd.Root().GenZshCompletion(&buf)
+		script := postProcessZshCompletion(buf.String())
+		os.Stdout.WriteString(script + zshAliasBinding(bin, completionAlias))
+	case "fish":
+		// Generate to buffer so we can post-process
+		var buf bytes.Buffer
+		cmd.Root().GenFishCompletion(&buf, true)
+		script := postProcessFishCompletion(buf.String())
+		os.Stdout.WriteString(script + fishAliasBinding(script, bin, completionAlias))
+	}
 }
 
 // bashAliasBinding defines the alias and binds it to the generated completion

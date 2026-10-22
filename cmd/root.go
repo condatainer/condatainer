@@ -70,6 +70,13 @@ var rootCmd = &cobra.Command{
 			return
 		}
 
+		// The shell setup commands run from a shell's rc file, before any
+		// configuration exists, and read none of the host build state.
+		if strings.HasPrefix(cmd.CommandPath(), "condatainer shell") {
+			initializeLightweightCommand(cmd)
+			return
+		}
+
 		exe, err := os.Executable()
 		if err != nil {
 			ExitWithError("Failed to determine executable path: %v", err)

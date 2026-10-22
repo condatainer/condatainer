@@ -3,6 +3,8 @@ package container
 import (
 	"fmt"
 	"strings"
+
+	"github.com/condatainer/condatainer/internal/conda"
 )
 
 // ActivationMode selects which activate.d scripts ActivationScript sources.
@@ -48,21 +50,14 @@ func ActivationScript(overlays []string, envMounted bool, mode ActivationMode) s
 	return b.String()
 }
 
-// MMHelperScript returns a bash snippet defining and exporting an mm shell function, or "" when no environment is mounted.
-//   - It runs `condatainer env "$@"` and, after install, update or remove, re-sources activate.d and deactivate.d through `condatainer env reactivate --shell bash`.
-//   - The shell is hardcoded: mm only runs in bash. export -f survives exec into bash, not into zsh or fish.
+// MMHelperScript returns a bash snippet defining and exporting the mm shell function, or "" when no environment is mounted.
+//   - The function is the one `condatainer env hook` prints, without its completion.
+//   - The shell is bash: export -f survives exec into bash, not into zsh or fish.
 func MMHelperScript(envMounted bool) string {
 	if !envMounted {
 		return ""
 	}
-	return `mm() {
-    condatainer env "$@" || return
-    case "$1" in
-        install|update|remove) eval "$(condatainer env reactivate --shell bash)" ;;
-    esac
-}
-export -f mm
-`
+	return conda.MMFunction(conda.ShellBash) + "export -f mm\n"
 }
 
 func writeActivateBlock(b *strings.Builder, prefix string) {

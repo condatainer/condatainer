@@ -24,6 +24,13 @@
   - Fish also changes which hooks are considered. Conda uses `.fish` for fish and `.sh` for everything else.
   - A bash-only hook is skipped under fish instead of being fed to fish's parser as invalid syntax.
 
+## Shell hook
+
+- `mm` is a function. Only a function changes the environment of the shell that called it.
+- `env hook` is the one `env` command that succeeds outside a container.
+  - It runs at the start of every shell, so a login on the host prints nothing and exits 0.
+- zsh binds the completion only when `compdef` exists. A `.zshrc` that runs `compinit` after the block would otherwise fail on every start.
+
 ## Reading a paired image
 
 - The host-side reads take exactly the path they are given. They never decide whether a pairing applies.

@@ -231,8 +231,7 @@ Registry audience, public (default) or restricted, says who can download from th
 	logout := &cobra.Command{
 		Use:   "logout [flags] <host>[/<owner>/<repo>]",
 		Short: "Remove stored registry credentials",
-		Long: `Remove the credential saved under exactly this host or repository.
-GITHUB_TOKEN is not affected.`,
+		Long: `Remove the credential saved under exactly this host or repository.`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

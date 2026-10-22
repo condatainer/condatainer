@@ -354,9 +354,11 @@ func TestBuildEnvFromSpec(t *testing.T) {
 	if env["IN_CONDATAINER"] != "1" {
 		t.Errorf("IN_CONDATAINER = %q", env["IN_CONDATAINER"])
 	}
-	// The scheduler-normalized names are the documented exception to CNT_.
-	if _, ok := env["NCPUS"]; !ok {
-		t.Error("NCPUS missing; resource vars are part of the contract")
+	// The resource variables come under a short name and a CNT_ copy.
+	for _, name := range []string{"NCPU", "CNT_NCPU"} {
+		if _, ok := env[name]; !ok {
+			t.Errorf("%s missing; resource vars are part of the contract", name)
+		}
 	}
 }
 

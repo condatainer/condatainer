@@ -677,6 +677,10 @@ func (s *SlurmScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string
 
 	fmt.Fprintln(writer, "")
 
+	if specs.Spec != nil {
+		writeResourceExports(writer, specs.Spec)
+	}
+
 	// Array job: extract input line, set ARRAY_ARGS, and redirect output
 	if jobSpec.Array != nil {
 		writeArrayBlock(writer, "$SLURM_ARRAY_TASK_ID",

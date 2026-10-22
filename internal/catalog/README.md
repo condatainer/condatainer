@@ -13,7 +13,7 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - A name no source provides is not an error. It is the normal path for a conda package.
 - The node comes back with a nil entry and its constraint intact, for the caller's fallback.
 - Nothing pre-solves conda. Micromamba solves against the whole environment, and a second opinion computed beforehand could only agree or be wrong.
-- The scheduler is absent too. Recipes read normalized `$NCPUS` and `$MEM`, which the scheduler package produces.
+- The scheduler is absent too. Recipes read normalized `$NCPU` and `$MEM`, which the scheduler package produces.
 - `build` and the commands import both `catalog` and `scheduler`. `catalog` and `scheduler` never import each other.
 
 ## Resolving a raw name

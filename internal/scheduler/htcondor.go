@@ -428,12 +428,9 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 		htcRS.MemPerNodeMB = specs.Spec.MemPerNodeMB
 	}
 
-	// Export resource env vars: the nested "condatainer run <bash_script>" cannot
-	// re-read HTCondor specs (they live in the .sub file, not the bash script).
-	for _, kv := range ResourceEnvVars(htcRS) {
-		fmt.Fprintf(shWriter, "export %s\n", kv)
-	}
-	fmt.Fprintln(shWriter, "")
+	// The nested "condatainer run <bash_script>" cannot re-read HTCondor specs (they live in the
+	// .sub file, not the bash script), so the script exports them.
+	writeResourceExports(shWriter, htcRS)
 
 	// Array job: ARRAY_ARGS is set by HTCondor via the environment directive in the submit file
 	if jobSpec.Array != nil {

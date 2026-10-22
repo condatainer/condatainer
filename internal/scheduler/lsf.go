@@ -720,16 +720,9 @@ func (l *LsfScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 
 	fmt.Fprintln(writer, "")
 
-	// Export normalized resource env vars: LSF's native env vars (LSB_DJOB_NUMPROC, etc.)
-	// don't directly provide the job geometry. Export NCPUS, NNODES, etc. so that:
-	// 1. User scripts can access them directly (e.g., `salmon -p $NCPUS`)
-	// 2. GetJobResources() can read them back reliably
-	// 3. Nested "condatainer run" inherits correct resource context
+	// LSF's native variables do not give the job geometry, so the script exports it.
 	if specs.Spec != nil {
-		for _, kv := range ResourceEnvVars(specs.Spec) {
-			fmt.Fprintf(writer, "export %s\n", kv)
-		}
-		fmt.Fprintln(writer, "")
+		writeResourceExports(writer, specs.Spec)
 	}
 
 	// Array job: extract input line, set ARRAY_ARGS, and redirect output
@@ -1249,36 +1242,24 @@ func formatLsfTime(d time.Duration) string {
 }
 
 // GetJobResources reads the allocated resources from LSF environment variables.
-//   - LSF exposes no node count or tasks per node, so geometry comes from the NNODES, NTASKS_PER_NODE, NCPUS and NTASKS variables the generated script injects.
-//   - LSB_DJOB_NUMPROC or LSB_MAX_NUM_PROCESSORS is the total slot count. It stands in for Ntasks when NTASKS is absent, split by CpusPerTask.
+//   - LSF exposes no node count or tasks per node. The MPI library's variables give the task counts when it set them.
+//   - LSB_DJOB_NUMPROC or LSB_MAX_NUM_PROCESSORS is the total slot count. Each slot counts as one task.
 //   - LSB_MAX_MEM_RUSAGE is per-slot memory in KB and becomes MemPerCpuMB.
+//   - A job CondaTainer submitted also exports its geometry, which CurrentJobResources reads first.
 func (s *LsfScheduler) GetJobResources() *ResourceSpec {
 	if _, ok := os.LookupEnv("LSB_JOBID"); !ok {
 		return nil
 	}
 	res := &ResourceSpec{}
 
-	// 1. Geometry from normalized env vars or MPI library vars (most reliable sources).
-	if v := getEnvInt("NNODES"); v != nil {
-		res.Nodes = *v
-	}
-	// TasksPerNode: prefer MPI local size (actual tasks on this node)
 	if mpiLocal := getMpiLocalSize(); mpiLocal != nil {
 		res.TasksPerNode = *mpiLocal
-	} else if v := getEnvInt("NTASKS_PER_NODE"); v != nil {
-		res.TasksPerNode = *v
 	}
-	if v := getEnvInt("NCPUS"); v != nil {
-		res.CpusPerTask = *v
-	}
-	// Prefer MPI library vars (global) over our normalized NTASKS var
 	if mpiSize := getMpiCommSize(); mpiSize != nil {
 		res.Ntasks = *mpiSize
-	} else if v := getEnvInt("NTASKS"); v != nil {
-		res.Ntasks = *v
 	}
 
-	// 2. Total slots from LSF native vars; used only when NTASKS was not injected.
+	// Total slots from LSF native vars, used when the MPI library gave no task count.
 	if res.Ntasks == 0 {
 		var totalSlots int
 		if v := getEnvInt("LSB_DJOB_NUMPROC"); v != nil {
@@ -1287,20 +1268,12 @@ func (s *LsfScheduler) GetJobResources() *ResourceSpec {
 			totalSlots = *v
 		}
 		if totalSlots > 0 {
-			if res.CpusPerTask > 1 {
-				// Hybrid: total slots = Ntasks × CpusPerTask.
-				res.Ntasks = totalSlots / res.CpusPerTask
-			} else {
-				// Pure MPI or unknown: treat each slot as one task.
-				res.Ntasks = totalSlots
-				if res.CpusPerTask == 0 {
-					res.CpusPerTask = 1
-				}
-			}
+			res.Ntasks = totalSlots
+			res.CpusPerTask = 1
 		}
 	}
 
-	// 3. Memory: LSB_MAX_MEM_RUSAGE is per-slot (per-task) in KB → MemPerCpuMB.
+	// Memory: LSB_MAX_MEM_RUSAGE is per-slot (per-task) in KB → MemPerCpuMB.
 	if memKB := getEnvInt64("LSB_MAX_MEM_RUSAGE"); memKB != nil {
 		if mb := *memKB / 1024; mb > 0 {
 			res.MemPerCpuMB = mb

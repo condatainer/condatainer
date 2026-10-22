@@ -240,11 +240,7 @@ func hostname() string {
 //
 //	DefaultSpec() → scriptSpecs.Spec (when HasDirectives=true) → scheduler job resources
 func EffectiveResourceSpec(specs *scheduler.ScriptSpecs) *scheduler.ResourceSpec {
-	var jobRes *scheduler.ResourceSpec
-	if sched := scheduler.ActiveScheduler(); sched != nil {
-		jobRes = sched.GetJobResources()
-	}
-	return scheduler.ResolveResourceSpecFrom(DefaultSpec(), jobRes, specs)
+	return scheduler.ResolveResourceSpecFrom(DefaultSpec(), scheduler.CurrentJobResources(), specs)
 }
 
 // acquireBuildLockFile creates the lock file, holds it and writes JSON metadata.

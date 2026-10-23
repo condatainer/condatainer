@@ -222,3 +222,14 @@ func TestReadManifestWithoutManifest(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNoManifest", err)
 	}
 }
+
+// A document newer than this build reports its version, not the field it cannot decode.
+func TestDecodeRefusesANewerSchemaBeforeReadingFields(t *testing.T) {
+	newer := []byte(`{"schema_version":2,"name":7,"platform":"?"}`)
+	if _, err := DecodeManifest(newer, "image"); !errors.Is(err, ErrUnsupportedSchema) || !strings.Contains(err.Error(), "update CondaTainer") {
+		t.Errorf("DecodeManifest error = %v, want ErrUnsupportedSchema naming the update", err)
+	}
+	if _, err := DecodeRuntime(newer, "image"); !errors.Is(err, ErrUnsupportedSchema) || !strings.Contains(err.Error(), "update CondaTainer") {
+		t.Errorf("DecodeRuntime error = %v, want ErrUnsupportedSchema naming the update", err)
+	}
+}

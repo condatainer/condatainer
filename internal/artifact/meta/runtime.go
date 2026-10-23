@@ -176,6 +176,9 @@ func readRuntimeUncached(imagePath string) (Runtime, error) {
 // what the bytes mean is decided in one place, whether they came from an image,
 // a staging directory, or a registry blob.
 func DecodeRuntime(data []byte, source string) (Runtime, error) {
+	if err := checkSchema(data, "runtime", source); err != nil {
+		return Runtime{}, err
+	}
 	var rt Runtime
 	if err := json.Unmarshal(data, &rt); err != nil {
 		return Runtime{}, fmt.Errorf("%w: %s: %w", ErrInvalid, source, err)

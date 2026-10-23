@@ -190,7 +190,7 @@ type Target struct {
 }
 
 // ScratchPath is where a build's scratch space appears inside the container,
-// whichever workspace mode is in use — it is what $CNT_TMP points at.
+// whichever workspace mode is in use — it is what $CNT_BUILD_TMPDIR points at.
 const ScratchPath = "/cnt_tmp"
 
 // buildEnv is the environment a script recipe runs with: the image from Spec,
@@ -219,13 +219,13 @@ func buildEnv(spec Spec, opts Options) []string {
 		prefix = meta.Prefix(spec.Image.Name, typ)
 	}
 
-	// CNT_NAME is the complete name and there is no CNT_VERSION: not every image
+	// CNT_BUILD_NAME is the complete name and there is no CNT_BUILD_VERSION: not every image
 	// has one version axis. A recipe that varies by version uses a #PH: instead.
 	return append(scheduler.ResourceEnvVars(buildRS),
-		"CNT_NAME="+spec.Image.Name,
-		"CNT_TYPE="+string(typ),
-		"CNT_PREFIX="+prefix,
-		"CNT_TMP="+ScratchPath,
+		"CNT_BUILD_NAME="+spec.Image.Name,
+		"CNT_BUILD_TYPE="+string(typ),
+		"CNT_BUILD_PREFIX="+prefix,
+		"CNT_BUILD_TMPDIR="+ScratchPath,
 		"TMPDIR="+ScratchPath,
 		"IN_CONDATAINER=1",
 	)

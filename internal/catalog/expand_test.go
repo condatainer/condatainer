@@ -53,7 +53,7 @@ func TestExpand(t *testing.T) {
 		t.Error("Script() did not return the rendered copy")
 	}
 	// A shell ${VAR} is not a placeholder and must survive substitution.
-	if !strings.Contains(rendered, `"$CNT_PREFIX/index"`) || !strings.Contains(rendered, `"$NCPU"`) {
+	if !strings.Contains(rendered, `"$CNT_BUILD_PREFIX/index"`) || !strings.Contains(rendered, `"$NCPU"`) {
 		t.Error("Rendered lost a shell variable")
 	}
 

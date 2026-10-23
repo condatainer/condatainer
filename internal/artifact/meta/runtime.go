@@ -32,7 +32,7 @@ type Runtime struct {
 	Description   string       `json:"description,omitempty"`
 	Platform      Platform     `json:"platform"`
 	// Prefix is where the payload sits inside the container, /cnt/<name> for app
-	// and data, and what the recipe wrote to as $CNT_PREFIX. Empty for os,
+	// and data, and what the recipe wrote to as $CNT_BUILD_PREFIX. Empty for os,
 	// whose files apply at the root. Readers take it as authoritative rather
 	// than reconstructing it from the name.
 	Prefix string `json:"prefix,omitempty"`

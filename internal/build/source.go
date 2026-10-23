@@ -28,8 +28,8 @@ import (
 // edited one in place would leave the record describing bytes that are gone.
 const SourcePath = "/cnt_src"
 
-// sourceEnvPrefix is how a recipe names a fetched source: $CNT_SRC_<name>.
-const sourceEnvPrefix = "CNT_SRC_"
+// sourceEnvPrefix is how a recipe names a fetched source: $CNT_BUILD_SRC_<name>.
+const sourceEnvPrefix = "CNT_BUILD_SRC_"
 
 // sourceHeaderTimeout bounds waiting for a server to answer, not the transfer.
 // A genome FASTA legitimately takes an hour; a server that has said nothing in
@@ -353,7 +353,7 @@ func (p *sourceProgress) report(final bool) {
 	p.log.Info("Downloading "+p.label, args...)
 }
 
-// sourceEnvFor renders the $CNT_SRC_<name> settings a recipe body reads, from
+// sourceEnvFor renders the $CNT_BUILD_SRC_<name> settings a recipe body reads, from
 // what actually arrived rather than what was declared — a name reaches the
 // recipe only once there is a file behind it.
 func sourceEnvFor(fetched []meta.SourceFile) []string {

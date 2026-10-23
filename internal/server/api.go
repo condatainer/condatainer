@@ -57,7 +57,7 @@ func (s *srv) enrichRun(run *helper.HelperRun) helperListEntry {
 		e.EndsAtMs = est.UnixMilli()
 	}
 	e.LastMessage = s.watcher.LastMsg(run.ID)
-	e.WalltimeStr = fmtDuration(run.Walltime)
+	e.WalltimeStr = fmtDuration(run.Walltime())
 	return e
 }
 

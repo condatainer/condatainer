@@ -783,19 +783,19 @@ func newHelperRun(id, name, jobID, cwd string, walltime time.Duration,
 		normalizedOverlays[i] = normalizeOverlayForHistory(ol, cwd)
 	}
 	run := &HelperRun{
-		ID:         id,
-		Name:       name,
-		JobID:      jobID,
-		Runner:     runner,
-		CWD:        cwd,
-		Walltime:   walltime,
-		GPU:        FormatGpuSpec(spec),
-		EnvOverlay: normalizeOverlayForHistory(opts.EnvImg, cwd),
-		Overlays:   normalizedOverlays,
-		Params:     params,
-		StartedAt:  time.Now(),
-		Status:     status,
-		Connect:    Connect(),
+		ID:           id,
+		Name:         name,
+		JobID:        jobID,
+		Runner:       runner,
+		CWD:          cwd,
+		WalltimeSecs: int64(walltime.Seconds()),
+		GPU:          FormatGpuSpec(spec),
+		EnvOverlay:   normalizeOverlayForHistory(opts.EnvImg, cwd),
+		Overlays:     normalizedOverlays,
+		Params:       params,
+		StartedAt:    time.Now(),
+		Status:       status,
+		Connect:      Connect(),
 	}
 	if spec != nil {
 		run.CPUs = spec.CpusPerTask

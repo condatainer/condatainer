@@ -13,6 +13,7 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 - Every run records `Connect`, the `helper.connect` value at submission.
   - The bind address is fixed at submission. Only `direct` binds all interfaces.
   - The dashboard that connects later may be a restarted process, so it reads the run, not current config.
+- Headers are read by `catalog.ScanAnnotations`, as in a recipe. A `#NCPU:`, `#MEM:` or `#TIME:` value that does not parse refuses the run and names its line.
 - Account and partition resolve the same way on every entry point: flag or dashboard field, then config.
   - They are applied once, in `buildHelperScriptSpecs`.
   - There is no script-header tier. `#NCPU:` and `#MEM:` describe what the workload needs. Account and partition describe the user's own cluster access, which a script cannot know.

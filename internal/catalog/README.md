@@ -43,6 +43,8 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - Recipes, user scripts and project scanning all read through it, so a key means the same everywhere and adding one happens once.
 - Position carries no meaning. There is no header block and nothing bounds the scan.
 - A recipe that writes a job script in a heredoc therefore also declares whatever that script declares. Nothing distinguishes the two without parsing shell.
+- A value ends at the first `##`, which starts a comment. A single `#` is part of the value, so a URL fragment or a colour code survives.
+- Helper scripts read their headers through it too, so one rule decides a value everywhere.
 - An upper-case key keeps prose out: `# note: rerun weekly` is a comment, `#DEP: star/2.7.11b` is a declaration.
 - Scheduler directives are not annotations. `#SBATCH --time=01:00:00` has colons in its value, so they are matched by prefix and handed to the scheduler packages verbatim.
 - `StripComments` is what the keys hash. It removes whole-line comments, so editing a comment moves neither key.

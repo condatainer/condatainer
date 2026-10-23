@@ -283,9 +283,8 @@ func (s *srv) handleHelperRunning(w http.ResponseWriter, r *http.Request, name s
 	}
 	out := resp{Running: running}
 	if scriptPath, err := config.FindHelperScript(name); err == nil {
-		if meta, err := helper.ParseHelperScriptMeta(scriptPath); err == nil {
-			out.SingletonBlocked = helper.SingletonBlocked(meta, running)
-		}
+		meta, _ := helper.ParseHelperScriptMeta(scriptPath)
+		out.SingletonBlocked = helper.SingletonBlocked(meta, running)
 	}
 	writeJSON(w, out)
 }

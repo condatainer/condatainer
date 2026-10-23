@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "source": "https://github.com/my-lab/rnaseq",
+  "oci": {
+    "push": "ghcr.io/my-lab/rnaseq/cnt",
+    "audience": "restricted"
+  },
+  "match": "identity",
+  "archs": [
+    "amd64",
+    "arm64"
+  ],
+  "pins": {
+    "base:": {
+      "artifacts": {
+        "amd64": "provenance/ubuntu24--base@0123456789ab",
+        "arm64": "provenance/ubuntu24--base@ba9876543210"
+      }
+    },
+    "grch38/genome/gencode49": {
+      "artifacts": {
+        "noarch": "provenance/grch38--genome--gencode49@8ce02116f302"
+      }
+    },
+    "path:overlays/combined.sqf": {
+      "artifacts": {
+        "noarch": "provenance/env@41b5204f99c1"
+      },
+      "manual": true
+    },
+    "star/2.7.11b": {
+      "artifacts": {
+        "amd64": "provenance/star--2.7.11b@a31f902c12ab",
+        "arm64": "provenance/star--2.7.11b@f00dfeed1234"
+      }
+    }
+  },
+  "remotes": {
+    "provenance/star--2.7.11b@a31f902c12ab": [
+      {
+        "repository": "ghcr.io/condatainer/cnt",
+        "manifest_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }
+    ]
+  }
+}

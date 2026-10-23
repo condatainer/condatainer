@@ -36,6 +36,25 @@ const (
 // document.
 const SchemaVersion = 1
 
+// checkSchema reads schema_version alone and refuses a version this build does not read, so a newer
+// document reports its version instead of whichever field first failed to decode.
+func checkSchema(data []byte, doc, source string) error {
+	var head struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(data, &head); err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrInvalid, source, err)
+	}
+	if head.SchemaVersion == SchemaVersion {
+		return nil
+	}
+	hint := ""
+	if head.SchemaVersion > SchemaVersion {
+		hint = "; update CondaTainer"
+	}
+	return fmt.Errorf("%s: %w: %s is %d (this build reads %d)%s", source, ErrUnsupportedSchema, doc, head.SchemaVersion, SchemaVersion, hint)
+}
+
 // Errors a caller distinguishes. Everything else is a plain validation failure.
 var (
 	// ErrNoRuntime reports that the image carries no runtime.json. It is expected

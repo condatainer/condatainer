@@ -16,6 +16,14 @@
 - It is the same directory an image carries at `/.cnt/provenance/`, read by the same code. Two readers could drift into a lock that verifies against an image that does not.
 - `.helper-history/` is the one gitignored exception. It is machine-local recency, and a checkout restamps mtimes.
 
+## Reading older and newer locks
+
+- A newer build reads an older lock by translating it in memory. It writes the newest format only when `project lock` runs.
+- An older build refuses a newer lock and says to update. The version is read before any other field.
+- Unknown fields are refused. An older build that rewrote the lock would drop what it did not understand, or leave a new field pointing at a pin it removed.
+- `lock/testdata/lock_v1.json` is a version 1 lock. Every later build keeps reading it to the same pins, so it is never edited to fit a change.
+- `Verify` recomputes every key from the vendored sources. Every identity scheme a release has used stays in the code.
+
 ## Architectures
 
 - A pin holds one artifact per architecture: `amd64`, `arm64`, or the one `noarch`.

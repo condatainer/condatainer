@@ -21,7 +21,7 @@ type HelperRun struct {
 	Name        string            `json:"name"`          // helper script name
 	JobID       string            `json:"job_id"`        // scheduler job ID or ""
 	Runner      string            `json:"runner"`        // "local", or the scheduler type ("slurm", "pbs", "lsf", "htcondor")
-	Node        string            `json:"node"`          // compute node hostname
+	Node        string            `json:"node"`          // node name from the "start" event, else from "ready"
 	Port        int               `json:"port"`          // 0 = URL-only service (vscode-tunnel)
 	CWD         string            `json:"cwd"`           // working directory
 	Walltime    time.Duration     `json:"walltime_secs"` // from #TIME: / -t flag
@@ -36,7 +36,7 @@ type HelperRun struct {
 	Connect     string            `json:"connect,omitempty"`     // helper.connect at submission: "auto"|"ssh"|"scheduler"|"direct"
 	StartedAt   time.Time         `json:"started_at"`
 	EndedAt     *time.Time        `json:"ended_at,omitempty"`
-	Status      string            `json:"status"` // "running"|"done"|"failed"
+	Status      string            `json:"status"` // "pending"|"starting"|"running"|"done"|"failed"
 }
 
 // Headless reports whether the run is a local process rather than a scheduler
@@ -90,6 +90,46 @@ type StateEvent struct {
 
 	// "done" fields — pointer so exit_code:0 is preserved in JSON (not omitted by omitempty)
 	ExitCode *int `json:"exit_code,omitempty"`
+}
+
+// StartState is derived from a "start" StateEvent.
+type StartState struct {
+	Node      string    `json:"node"`
+	JobID     string    `json:"job_id"`
+	Timestamp time.Time `json:"ts"`
+}
+
+// ApplyStart records the node the job started on and moves a pending run to starting.
+func (r *HelperRun) ApplyStart(st *StartState) {
+	if st.Node != "" {
+		r.Node = st.Node
+	}
+	if r.Status == "pending" {
+		r.Status = "starting"
+	}
+}
+
+// ApplyReady records the service a ready run offers. The node of a "start" event stays: it is
+// the scheduler's name, while the ready node is only the address a tunnel dials.
+func (r *HelperRun) ApplyReady(rs *ReadyState) {
+	r.Status = "running"
+	if r.Node == "" {
+		r.Node = rs.Node
+	}
+	r.Port = rs.Port
+	r.URLPath = rs.URLPath
+	r.ExternalURL = rs.ExternalURL
+	r.StartedAt = rs.Timestamp
+	r.Walltime = time.Duration(rs.WalltimeSec) * time.Second
+}
+
+// ShortNode is a node name up to its first dot, for display. An IPv4 address stays whole.
+func ShortNode(node string) string {
+	head, _, dotted := strings.Cut(node, ".")
+	if !dotted || strings.Trim(node, "0123456789.") == "" {
+		return node
+	}
+	return head
 }
 
 // ReadyState is derived from a "ready" StateEvent; used by callers that need
@@ -187,6 +227,20 @@ func ReadEventsFrom(id string, offset int64) ([]StateEvent, int64, error) {
 	}
 	pos, _ := f.Seek(0, 1)
 	return events, pos, scanner.Err()
+}
+
+// ReadStartEvent returns the first "start" event for the given helper, or nil if none yet.
+func ReadStartEvent(id string) (*StartState, error) {
+	events, _, err := ReadEventsFrom(id, 0)
+	if err != nil {
+		return nil, err
+	}
+	for _, ev := range events {
+		if ev.Type == "start" {
+			return &StartState{Node: ev.Node, JobID: ev.JobID, Timestamp: ev.Ts}, nil
+		}
+	}
+	return nil, nil
 }
 
 // ReadReadyEvent returns the first "ready" event for the given helper, or nil if none yet.

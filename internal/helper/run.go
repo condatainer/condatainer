@@ -132,18 +132,18 @@ func ResolveHelperSpec(scriptPath string) *scheduler.ResourceSpec {
 }
 
 // resolveSpec merges resources with priority: scheduler defaults < script headers < overrides.
-// Recognised script headers: #NCPUS:, #MEM:, #TIME:, #GPU:.
+// Recognised script headers: #NCPU:, #MEM:, #TIME:, #GPU:.
 func resolveSpec(scriptPath string, overrides *scheduler.ResourceSpec) *scheduler.ResourceSpec {
 	base := scheduler.DefaultSpec()
 
-	// Script headers (#NCPUS:/#MEM:/#TIME:/#GPU:) override config defaults.
+	// Script headers (#NCPU:/#MEM:/#TIME:/#GPU:) override config defaults.
 	meta, err := ParseHelperScriptMeta(scriptPath)
 	if err != nil {
 		slog.Default().Debug("helper: could not parse script meta", "err", err)
 	} else {
 		scriptDefaults := &scheduler.ResourceSpec{}
-		if meta.NCPUs > 0 {
-			scriptDefaults.CpusPerTask = meta.NCPUs
+		if meta.NCPU > 0 {
+			scriptDefaults.CpusPerTask = meta.NCPU
 		}
 		if meta.MemMB > 0 {
 			scriptDefaults.MemPerNodeMB = meta.MemMB
@@ -642,7 +642,7 @@ func newHelperID(name string) string {
 // Stdout and Stderr are /dev/null because the command body uses `exec >>` to
 // redirect output to the per-ID state dir; the scheduler-level log is unused.
 // account/partition fall back to scheduler.Account()/.Partition when empty —
-// there is no script-header tier for either (unlike ncpus/mem/time/gpu), since a script
+// there is no script-header tier for either (unlike cpu/mem/time/gpu), since a script
 // author has no way to know a user's cluster account.
 func buildHelperScriptSpecs(name, cwd, account, partition string, excludeNodes []string, spec *scheduler.ResourceSpec) *scheduler.ScriptSpecs {
 	if account == "" {
@@ -798,7 +798,7 @@ func newHelperRun(id, name, jobID, cwd string, walltime time.Duration,
 		Connect:      Connect(),
 	}
 	if spec != nil {
-		run.CPUs = spec.CpusPerTask
+		run.CPU = spec.CpusPerTask
 		if mb := spec.GetMemPerNodeMB(); mb > 0 {
 			run.Mem = utils.FormatMemoryMB(mb)
 		}

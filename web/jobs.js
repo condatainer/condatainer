@@ -250,7 +250,7 @@ function openDetail(id) {
 
   // Resources
   gid('d-resources').innerHTML =
-    '<div class="d-res"><span class="d-res-k">CPUs</span><span class="d-res-v">'    + escHtml(job.cpus || '—')         + '</span></div>' +
+    '<div class="d-res"><span class="d-res-k">CPUs</span><span class="d-res-v">'    + escHtml(job.cpu || '—')          + '</span></div>' +
     '<div class="d-res"><span class="d-res-k">Memory</span><span class="d-res-v">'  + escHtml(job.mem || '—')          + '</span></div>' +
     '<div class="d-res"><span class="d-res-k">GPU</span><span class="d-res-v">'     + escHtml(job.gpu || '—')          + '</span></div>' +
     '<div class="d-res"><span class="d-res-k">Walltime</span><span class="d-res-v">'+ escHtml(job.walltime_str || '—') + '</span></div>';
@@ -375,7 +375,7 @@ async function rerunJob(jobOrId) {
   if (!job) return;
   await ensureOverlaysLoaded();
   queueStartSelection(job.name, {
-    cpus:    job.cpus,
+    cpu:     job.cpu,
     mem:     job.mem,
     wall:    job.walltime_str,
     gpu:     job.gpu     || '',

@@ -25,7 +25,7 @@ type HelperRun struct {
 	Port         int               `json:"port"`          // 0 = URL-only service (vscode-tunnel)
 	CWD          string            `json:"cwd"`           // working directory
 	WalltimeSecs int64             `json:"walltime_secs"` // from #TIME: / -t flag, in seconds
-	CPUs         int               `json:"cpus,omitempty"`
+	CPU          int               `json:"cpu,omitempty"`
 	Mem          string            `json:"mem,omitempty"`         // e.g. "32GB", "1536MB" — via utils.FormatMemoryMB
 	GPU          string            `json:"gpu,omitempty"`         // e.g. "a100:1"
 	EnvOverlay   string            `json:"env_overlay,omitempty"` // writable .img (-e)

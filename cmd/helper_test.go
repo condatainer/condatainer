@@ -5,7 +5,7 @@ import "testing"
 func TestParsePostScriptHelperFlags(t *testing.T) {
 	flags, rest, err := parsePostScriptHelperFlags([]string{
 		"-m", "16g",
-		"--cpus=6",
+		"--cpu=6",
 		"-t12h",
 		"--gpu", "a100:1",
 		"-eenv.img",
@@ -90,8 +90,8 @@ func TestParsePostScriptHelperFlagsRequiresValues(t *testing.T) {
 	if _, _, err := parsePostScriptHelperFlags([]string{"-m"}); err == nil {
 		t.Fatal("expected missing -m value to return an error")
 	}
-	if _, _, err := parsePostScriptHelperFlags([]string{"--cpus=0"}); err == nil {
-		t.Fatal("expected invalid --cpus value to return an error")
+	if _, _, err := parsePostScriptHelperFlags([]string{"--cpu=0"}); err == nil {
+		t.Fatal("expected invalid --cpu value to return an error")
 	}
 }
 

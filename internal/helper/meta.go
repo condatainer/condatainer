@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -58,6 +59,31 @@ type HelperScriptMeta struct {
 	Walltime time.Duration
 	// GPU is the default GPU spec from #GPU:. Empty means not set.
 	GPU string
+}
+
+// paramKeyPattern is the shape of a #PARAM: key. The key is exported into the helper's environment.
+var paramKeyPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
+// reservedParamKeys are variables a #PARAM: key may not name: the job's resources and the process
+// environment every tool reads.
+var reservedParamKeys = map[string]bool{
+	"NCPU": true, "MEM": true, "MEM_GB": true, "NNODE": true, "NRANK": true,
+	"NRANK_PER_NODE": true, "OMP_NUM_THREADS": true, "PATH": true, "HOME": true, "TMPDIR": true,
+}
+
+// validateParamKey reports why key cannot name a #PARAM:, or nil.
+//   - A key is upper case letters, digits and underscores, and does not start with a digit.
+//   - CNT_ is CondaTainer's prefix, and the resource and process variables are reserved.
+func validateParamKey(key string) error {
+	switch {
+	case !paramKeyPattern.MatchString(key):
+		return fmt.Errorf("KEY %q must be upper case letters, digits and underscores, not starting with a digit", key)
+	case strings.HasPrefix(key, "CNT_"):
+		return fmt.Errorf("KEY %q starts with CNT_, which CondaTainer uses", key)
+	case reservedParamKeys[key]:
+		return fmt.Errorf("KEY %q is a reserved variable", key)
+	}
+	return nil
 }
 
 // ParseHelperParams extracts #PARAM: declarations from a helper script.
@@ -128,6 +154,9 @@ func parseHelperParamLine(s string) (HelperParam, error) {
 	}
 	if key == "" {
 		return HelperParam{}, fmt.Errorf("empty KEY in: %q", keyVal)
+	}
+	if err := validateParamKey(key); err != nil {
+		return HelperParam{}, err
 	}
 
 	// Remaining tokens are optional flag specs: "--long,-s" or "--long" or "-s"

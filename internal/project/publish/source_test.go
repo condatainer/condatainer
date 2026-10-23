@@ -42,6 +42,9 @@ func TestNormalizeRemoteURL(t *testing.T) {
 		"https://github.com/my-lab", // no repository
 		"https://github.com/",       // no path
 		"https://github.com/a/b/c",  // a page inside a repository
+		"ssh://git@git.institute.example:2222/lab/p.git", // a port means a custom server
+		"http://gitea.lab.example:3000/team/p.git",
+		"https://gitea.lab.example:3000/team/p.git",
 		"git@server:/srv/git/p.git", // absolute path: a bare repository
 		"/srv/repos/p.git",          // a local path, not a remote
 		"file:///srv/repos/p.git",   // ditto

@@ -113,7 +113,7 @@
 - Symlinked directories and scripts are never followed. A lock describes the checkout.
 - `cnt-lock/` and every dot-directory are skipped. They hold tool state (`.venv`, `.snakemake`) whose scripts are not this project's.
 - A build recipe is skipped. Its `#DEP:` are build dependencies already recorded in that artifact's provenance.
-- A recipe is identified by `$CNT_PREFIX`. That is a property of the file itself.
+- A recipe is identified by `$CNT_BUILD_PREFIX`. That is a property of the file itself.
 - A folder convention or a sibling `.sqf` would make a script's meaning depend on something outside it.
 - An analysis script must name an exact version. A result should say which version produced it.
 - That also keeps one module from having two keys.

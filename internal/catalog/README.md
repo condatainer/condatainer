@@ -64,7 +64,7 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - The architecture is `amd64` or `arm64`, Go's spelling, which artifacts and OCI indexes also use.
 - It is read as a word directly after the name. A URL contains `://` and a prompt starts with `ask:`, so neither can be mistaken for one.
 - Vendors spell architectures too many ways for a placeholder to stand in, so each architecture is a literal line.
-- A name with lines only for other architectures is an error, not an unset `$CNT_SRC_<name>`.
+- A name with lines only for other architectures is an error, not an unset `$CNT_BUILD_SRC_<name>`.
 - A name is all qualified or all plain. Mixing them would leave "which wins" to declaration order.
 - `Recipe.Prompts` is the one ordered list of questions: the `#INPUT:` prompts, then each `ask:`.
 - `#INPUT:` answers reach the recipe on stdin and `ask:` answers go to the fetch. Putting the recipe's own first tells them apart by count alone.

@@ -26,11 +26,11 @@ const starRecipe = `#!/usr/bin/env bash
 #SBATCH --mem=64G
 
 set -euo pipefail
-cat > "$CNT_TMP/job.sh" <<'EOF'
+cat > "$CNT_BUILD_TMPDIR/job.sh" <<'EOF'
 #SBATCH --this-is-not-a-directive
 #DEP:not/a/dep
 EOF
-STAR --runThreadN "$NCPU" --genomeDir "$CNT_PREFIX/index"
+STAR --runThreadN "$NCPU" --genomeDir "$CNT_BUILD_PREFIX/index"
 `
 
 func parse(t *testing.T, path, body string) *Recipe {

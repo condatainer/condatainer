@@ -18,7 +18,7 @@ const templateRecipe = `#!/usr/bin/env bash
 #SBATCH --mem=64G
 
 set -euo pipefail
-STAR --runMode genomeGenerate --genomeDir "$CNT_PREFIX/index"
+STAR --runMode genomeGenerate --genomeDir "$CNT_BUILD_PREFIX/index"
 `
 
 // Nothing that only describes a recipe may move its digest — least of all the

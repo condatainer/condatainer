@@ -334,12 +334,12 @@ func scanScript(path, rel string, merged map[string]*Request, result *ScanResult
 }
 
 // isBuildRecipe reports whether a script builds an artifact rather than analysing with one.
-//   - Only a recipe expands $CNT_PREFIX, where a build writes its payload.
+//   - Only a recipe expands $CNT_BUILD_PREFIX, where a build writes its payload.
 //   - A recipe's #DEP: are build dependencies already in that artifact's provenance, so reading them would make the project pin what it never mounts.
-//   - Comments are stripped first, and both $CNT_PREFIX and ${CNT_PREFIX} count.
+//   - Comments are stripped first, and both $CNT_BUILD_PREFIX and ${CNT_BUILD_PREFIX} count.
 func isBuildRecipe(text []byte) bool {
 	stripped := string(catalog.StripComments(text))
-	return strings.Contains(stripped, "$CNT_PREFIX") || strings.Contains(stripped, "${CNT_PREFIX}")
+	return strings.Contains(stripped, "$CNT_BUILD_PREFIX") || strings.Contains(stripped, "${CNT_BUILD_PREFIX}")
 }
 
 // ParseDeclaration turns one declaration into a Request, or returns why it cannot be one.

@@ -7,7 +7,7 @@ Builds overlay images from Conda packages, recipes or Apptainer definitions.
 - `BuildType` is how a target is built: Conda, Def or Script.
 - `catalog.Type` is what the payload is. The two are independent, so a script build can be any type.
 - Type only decides where the build works and how the archive is compressed.
-- An `app` or `data` build writes to `$CNT_PREFIX`, `/cnt/<name>`. That prefix is recorded in the image, so anything baked into the payload stays valid at run time.
+- An `app` or `data` build writes to `$CNT_BUILD_PREFIX`, `/cnt/<name>`. That prefix is recorded in the image, so anything baked into the payload stays valid at run time.
 - An `os` build has no prefix. Its payload is the root filesystem itself.
 
 ## Dependencies
@@ -104,7 +104,7 @@ Stale detection
 - Script and Conda builds run their install inside a container, so each has an implicit edge to the container root. It is separate from anything `#DEP:` declares.
 - The graph resolves it once before any node runs, and builds the configured default root first if none is installed.
 - The root is an ordinary `.def` recipe of type `os`, built through the normal build path. It has no dedicated path.
-- The install runs in a container because `$CNT_PREFIX` is baked into what gets installed. Shebangs, activation scripts and some RPATHs are not relocatable.
+- The install runs in a container because `$CNT_BUILD_PREFIX` is baked into what gets installed. Shebangs, activation scripts and some RPATHs are not relocatable.
 - The container root supplies that absolute path. It is not there for tool availability.
 - Packing never runs in a container. `mksquashfs` runs on the host and reads a directory exactly as it would through a bind mount.
 - Conda installs run through `internal/libexec`'s toolchain, not whatever the root happens to carry.

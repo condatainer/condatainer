@@ -70,7 +70,7 @@ func ApplyParamFlags(params []HelperParam, args []string) (map[string]string, []
 // ReservedShortFlags is the set of short flags consumed by parsePostScriptHelperFlags.
 // -l/-u are cobra-level only and never reach script arg parsing, so they are excluded.
 var ReservedShortFlags = map[string]string{
-	"-c": "--cpus", "-m": "--mem", "-t": "--time", "-g": "--gpu",
+	"-c": "--cpu", "-m": "--mem", "-t": "--time", "-g": "--gpu",
 	"-e": "--env", "-o": "--overlay", "-w": "--cwd",
 	"-A": "--account", "-p": "--partition",
 }
@@ -108,7 +108,7 @@ func PrintHelperUsage(scriptName string, params []HelperParam, spec *scheduler.R
 	}
 	fmt.Printf("Usage: condatainer helper %s [flags]\n\n", scriptName)
 	fmt.Println("Resource flags:")
-	fmt.Printf("  -c, --cpus        CPUs per job   (default: %d)\n", cpus)
+	fmt.Printf("  -c, --cpu         CPUs per job   (default: %d)\n", cpus)
 	fmt.Printf("  -m, --mem         Memory         (default: %s)\n", mem)
 	fmt.Printf("  -t, --time        Walltime       (default: %s)\n", timeStr)
 	fmt.Println("  -g, --gpu         GPU spec (e.g. a100:1)")

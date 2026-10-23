@@ -15,7 +15,7 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
   - The dashboard that connects later may be a restarted process, so it reads the run, not current config.
 - Account and partition resolve the same way on every entry point: flag or dashboard field, then config.
   - They are applied once, in `buildHelperScriptSpecs`.
-  - There is no script-header tier. `#NCPUS:` and `#MEM:` describe what the workload needs. Account and partition describe the user's own cluster access, which a script cannot know.
+  - There is no script-header tier. `#NCPU:` and `#MEM:` describe what the workload needs. Account and partition describe the user's own cluster access, which a script cannot know.
 
 ## Overlays
 

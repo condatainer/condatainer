@@ -51,8 +51,8 @@ type HelperScriptMeta struct {
 	// ParamValues holds the valid-value lists parsed from #VALUE: headers.
 	// Keys are param names (e.g. "POSIT_R", "CONDA_PYTHON"); values are the parsed list.
 	ParamValues map[string][]string
-	// NCPUs is the default CPU count from #NCPUS:. Zero means not set.
-	NCPUs int
+	// NCPU is the default CPU count from #NCPU:. Zero means not set.
+	NCPU int
 	// MemMB is the default memory in MB from #MEM:. Zero means not set.
 	MemMB int64
 	// Walltime is the default walltime from #TIME:. Zero means not set.
@@ -211,7 +211,7 @@ func stripInlineComment(s string) string {
 }
 
 // ParseHelperScriptMeta extracts metadata from a helper script.
-// Recognised headers: #NCPUS:, #MEM:, #TIME:, #GPU:, #IMG_PACKAGES:, #REQUIRED_OVERLAYS:,
+// Recognised headers: #NCPU:, #MEM:, #TIME:, #GPU:, #IMG_PACKAGES:, #REQUIRED_OVERLAYS:,
 // #POST_INSTALL_CMD:, #SINGLETON:, #BIND:, #VALUE:.
 func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 	if !utils.FileExists(scriptPath) {
@@ -228,9 +228,9 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		switch {
-		case strings.HasPrefix(line, "#NCPUS:"):
-			if n, err := strconv.Atoi(stripInlineComment(strings.TrimSpace(line[len("#NCPUS:"):]))); err == nil && n > 0 {
-				meta.NCPUs = n
+		case strings.HasPrefix(line, "#NCPU:"):
+			if n, err := strconv.Atoi(stripInlineComment(strings.TrimSpace(line[len("#NCPU:"):]))); err == nil && n > 0 {
+				meta.NCPU = n
 			}
 		case strings.HasPrefix(line, "#MEM:"):
 			rawMem := stripInlineComment(strings.TrimSpace(line[len("#MEM:"):]))

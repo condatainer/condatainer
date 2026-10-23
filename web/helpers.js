@@ -389,7 +389,7 @@ function _computeParams(params, pv) {
 
 function _rdPh(rd) {
   return {
-    cpus:      rd.cpus      ? String(rd.cpus) : '',
+    cpu:       rd.cpu       ? String(rd.cpu) : '',
     mem:       rd.mem       || '',
     time:      rd.walltime  || '',
     gpu:       rd.gpu       || '',
@@ -408,7 +408,7 @@ function _paramPlaceholder(param, opts) {
 function _applyConfigPlaceholders() {
   const cfg = _helperSavedConfig;
   const ph  = _rdPh((selectedHelper && selectedHelper.resource_defaults) || {});
-  gid('cfg-cpus').placeholder      = cfg.cpus      || ph.cpus;
+  gid('cfg-cpu').placeholder       = cfg.cpu       || ph.cpu;
   gid('cfg-mem').placeholder       = cfg.mem       || ph.mem;
   gid('cfg-wall').placeholder      = cfg.time      || ph.time;
   gid('cfg-gpu').placeholder       = cfg.gpu       || ph.gpu;
@@ -444,7 +444,7 @@ function openHelperConfigModal() {
 
   const rph = _rdPh(rd);
   const resRows = [
-    { key: 'cpus',      label: 'CPUs',          ph: rph.cpus },
+    { key: 'cpu',       label: 'CPUs',          ph: rph.cpu },
     { key: 'mem',       label: 'Memory',        ph: rph.mem  },
     { key: 'time',      label: 'Walltime',      ph: rph.time },
     { key: 'gpu',       label: 'GPU (optional)', ph: rph.gpu },
@@ -511,7 +511,7 @@ function openHelperConfigModal() {
 async function saveHelperConfigModal() {
   if (!selectedHelper) return;
   const data = {};
-  ['cpus', 'mem', 'time', 'gpu', 'account', 'partition'].forEach(k => {
+  ['cpu', 'mem', 'time', 'gpu', 'account', 'partition'].forEach(k => {
     const el = gid('hcfg-' + k);
     if (el) data[k] = el.value.trim();
   });
@@ -541,7 +541,7 @@ function resetStartForm(helper) {
   renderModuleChips();
 
   // Clear typed values; placeholders already reflect the defaults.
-  gid('cfg-cpus').value      = '';
+  gid('cfg-cpu').value       = '';
   gid('cfg-mem').value       = '';
   gid('cfg-wall').value      = '';
   gid('cfg-gpu').value       = '';
@@ -675,7 +675,7 @@ function selectHelper(name, overrides) {
   gid('start-term').innerHTML = '';
   if (_startBusy) _setStartBusy(true, iconSvg('play_arrow') + ' Starting…');
   if (!overrides) {
-    ['cfg-cpus', 'cfg-mem', 'cfg-wall', 'cfg-gpu', 'cfg-account', 'cfg-partition'].forEach(id => {
+    ['cfg-cpu', 'cfg-mem', 'cfg-wall', 'cfg-gpu', 'cfg-account', 'cfg-partition'].forEach(id => {
       const el = gid(id);
       if (!el) return;
       el.value = '';
@@ -735,14 +735,14 @@ function selectHelper(name, overrides) {
     paramWrap.innerHTML = '';
   }
 
-  // Load resource defaults from script headers (#NCPUS:/#MEM:/#TIME:)
+  // Load resource defaults from script headers (#NCPU:/#MEM:/#TIME:)
   fetch('/api/helpers/' + encodeURIComponent(name) + '/resources')
     .then(r => r.json())
     .then(d => {
       if (!selectedHelper || selectedHelper.name !== name) return;
       selectedHelper.resource_defaults = d || {};
       if (overrides) {
-        _setVal('cfg-cpus',  overrides.cpus  != null ? overrides.cpus  : (d.cpus  || ''));
+        _setVal('cfg-cpu',   overrides.cpu   != null ? overrides.cpu   : (d.cpu   || ''));
         _setVal('cfg-mem',   overrides.mem   || d.mem      || '');
         _setVal('cfg-wall',  overrides.wall  || d.walltime || '');
         _setVal('cfg-gpu',   overrides.gpu   != null ? overrides.gpu   : (d.gpu      || ''));
@@ -1470,7 +1470,7 @@ async function startHelper() {
   const _mem  = v => /^\d+$/.test(v) ? v + 'G' : v;
   const _wall = v => /^\d+$/.test(v) ? v + ':00:00' : /^\d+:\d+$/.test(v) ? v + ':00' : v;
   const body = {
-    cpus:    parseInt(_rv('cfg-cpus')) || 0,
+    cpu:     parseInt(_rv('cfg-cpu')) || 0,
     mem:     _mem(_rv('cfg-mem'))  || '',
     time:    _wall(_rv('cfg-wall')) || '',
     gpu:     gid('cfg-gpu').value.trim() || gid('cfg-gpu').placeholder || '',

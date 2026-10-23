@@ -53,11 +53,19 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 
 ## State files
 
-- The compute node writes `ready`, `done` and `messages`. The login node reads them.
+- The compute node writes `start`, `ready`, `done` and `messages`. The login node reads them.
 - They sit on shared storage because the two never share a host.
 - `_server_ready` waits for the port to accept connections before writing `ready`, so `ready` means listening.
   - The wait has a timeout so a service that never binds cannot hang the script. It reports ready with a warning.
   - Port `0` with an external URL needs no local port and no tunnel.
+- A headless wrapper exports the spec's resource variables, so `NCPU` and the rest are set as in a scheduler job.
+  - They are the request. No scheduler enforces them.
+- `start` is written before anything else runs, so a job that fails during setup still records where it ran.
+  - It carries the scheduler's own node name, the one a user can paste into `scheduler.exclude_nodes`.
+  - It sets the run's node and moves `pending` to `starting`. `ready` keeps that node.
+  - A tunnel dials the node of `ready`. The scheduler's name need not resolve from the login node.
+  - The server applies a `start` written while it was down when it starts.
+- Views show a node name up to its first dot, and an IPv4 address whole. History and the API carry the full name.
 - `StateDir` trusts `CNT_HELPER_STATE_DIR` inside a run, so path resolution inside the container cannot send messages elsewhere.
 
 ## Headless liveness

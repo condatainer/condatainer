@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -906,6 +907,65 @@ func TestPbsMultiChunkParsing(t *testing.T) {
 	}
 }
 
+func TestParsePbsWalltime(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    time.Duration
+		wantErr bool
+	}{
+		{in: "90", want: 90 * time.Second},
+		{in: "1:30", want: 90 * time.Second},
+		{in: "1:00:30", want: time.Hour + 30*time.Second},
+		{in: "01:30:00", want: 90 * time.Minute},
+		{in: "100:00:00", want: 100 * time.Hour},
+		{in: "0:90", want: 90 * time.Second},
+		{in: "00:00:00", want: 0},
+		{in: " 2:00:00 ", want: 2 * time.Hour},
+		{in: "0:0:90.5", want: 90 * time.Second},
+		{in: "", wantErr: true},
+		{in: "abc", wantErr: true},
+		{in: "-5", wantErr: true},
+		{in: "1::2", wantErr: true},
+		{in: "1:2:3:4", wantErr: true},
+		{in: "10.", wantErr: true},
+	}
+	for _, tt := range tests {
+		got, err := parsePbsWalltime(tt.in)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("parsePbsWalltime(%q) error = %v; wantErr %v", tt.in, err, tt.wantErr)
+			continue
+		}
+		if err == nil && got != tt.want {
+			t.Errorf("parsePbsWalltime(%q) = %v; want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
+// A script's walltime is read as PBS reads it: the last field is seconds.
+func TestPbsScriptWalltime(t *testing.T) {
+	for _, tt := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"90", 90 * time.Second},
+		{"1:30", 90 * time.Second},
+		{"01:30:00", 90 * time.Minute},
+	} {
+		scriptPath := filepath.Join(t.TempDir(), "job.sh")
+		body := "#!/bin/bash\n#PBS -l select=1:ncpus=1\n#PBS -l walltime=" + tt.value + "\n"
+		if err := os.WriteFile(scriptPath, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		specs, err := newTestPbsScheduler().ReadScriptSpecs(scriptPath)
+		if err != nil {
+			t.Fatalf("walltime=%s: %v", tt.value, err)
+		}
+		if specs.Spec == nil || specs.Spec.Time != tt.want {
+			t.Errorf("walltime=%s: Time = %+v; want %v", tt.value, specs.Spec, tt.want)
+		}
+	}
+}
+
 func TestPbsGetJobResources(t *testing.T) {
 	sched := &PbsScheduler{}
 
@@ -1132,9 +1192,9 @@ func TestPbsNonUniformMpiScriptGen(t *testing.T) {
 				MemPerNodeMB: 16384,
 			},
 			// ceil(14/4)=4 → nFull=3, rem=2, remNodes=1
-			// chunk1: 3:ncpus=8:mpiprocs=4:mem=16384mb
-			// chunk2: 1:ncpus=4:mpiprocs=2:mem=16384mb
-			wantSelect: "select=3:ncpus=8:mpiprocs=4:mem=16384mb+1:ncpus=4:mpiprocs=2:mem=16384mb",
+			// chunk1: 3:ncpus=8:mpiprocs=4:ompthreads=2:mem=16384mb
+			// chunk2: 1:ncpus=4:mpiprocs=2:ompthreads=2:mem=16384mb
+			wantSelect: "select=3:ncpus=8:mpiprocs=4:ompthreads=2:mem=16384mb+1:ncpus=4:mpiprocs=2:ompthreads=2:mem=16384mb",
 		},
 		{
 			name: "non-uniform with MemPerCpuMB: derived mem differs per chunk",
@@ -1145,7 +1205,7 @@ func TestPbsNonUniformMpiScriptGen(t *testing.T) {
 				MemPerCpuMB: 2048,
 			},
 			// full chunk: mem=2048*8=16384mb; remainder: mem=2048*4=8192mb
-			wantSelect: "select=3:ncpus=8:mpiprocs=4:mem=16384mb+1:ncpus=4:mpiprocs=2:mem=8192mb",
+			wantSelect: "select=3:ncpus=8:mpiprocs=4:ompthreads=2:mem=16384mb+1:ncpus=4:mpiprocs=2:ompthreads=2:mem=8192mb",
 		},
 		{
 			name: "non-uniform no mem: two chunks without mem",
@@ -1154,7 +1214,7 @@ func TestPbsNonUniformMpiScriptGen(t *testing.T) {
 				Ntasks:      14,
 				CpusPerTask: 2,
 			},
-			wantSelect: "select=3:ncpus=8:mpiprocs=4+1:ncpus=4:mpiprocs=2",
+			wantSelect: "select=3:ncpus=8:mpiprocs=4:ompthreads=2+1:ncpus=4:mpiprocs=2:ompthreads=2",
 		},
 		{
 			name: "uniform Ntasks divisible by Nodes: single chunk (inferred tasksPerNode)",
@@ -1165,8 +1225,8 @@ func TestPbsNonUniformMpiScriptGen(t *testing.T) {
 				MemPerNodeMB: 8192,
 			},
 			// 12%4==0 → tasksPerNode=3 inferred
-			// single chunk: select=4:ncpus=6:mpiprocs=3:mem=8192mb
-			wantSelect: "select=4:ncpus=6:mpiprocs=3:mem=8192mb",
+			// single chunk: select=4:ncpus=6:mpiprocs=3:ompthreads=2:mem=8192mb
+			wantSelect: "select=4:ncpus=6:mpiprocs=3:ompthreads=2:mem=8192mb",
 		},
 		{
 			name: "GPU with non-uniform Ntasks: error",
@@ -1214,6 +1274,201 @@ func TestPbsNonUniformMpiScriptGen(t *testing.T) {
 
 			if !strings.Contains(scriptContent, tt.wantSelect) {
 				t.Errorf("Script missing expected select directive:\n  want: %q\n  script:\n%s", tt.wantSelect, scriptContent)
+			}
+		})
+	}
+}
+
+// Memory across the chunks of a select is read as the same per CPU, else the same per node, else passthrough.
+func TestPbsMultiChunkMemory(t *testing.T) {
+	tests := []struct {
+		name            string
+		selectBody      string
+		wantPassthrough bool
+		wantNodes       int
+		wantCpusPerTask int
+		wantPerCpuMB    int64
+		wantPerNodeMB   int64
+	}{
+		{name: "same per node, different per CPU", selectBody: "3:ncpus=8:mpiprocs=4:mem=16384mb+1:ncpus=4:mpiprocs=2:mem=16384mb", wantNodes: 4, wantCpusPerTask: 2, wantPerNodeMB: 16384},
+		{name: "same per CPU, different per node", selectBody: "3:ncpus=8:mpiprocs=4:mem=16384mb+1:ncpus=4:mpiprocs=2:mem=8192mb", wantNodes: 4, wantCpusPerTask: 2, wantPerCpuMB: 2048},
+		{name: "identical chunks", selectBody: "2:ncpus=8:mpiprocs=2:mem=16gb+2:ncpus=8:mpiprocs=2:mem=16gb", wantNodes: 4, wantCpusPerTask: 4, wantPerCpuMB: 2048},
+		{name: "no memory", selectBody: "3:ncpus=8:mpiprocs=4+1:ncpus=4:mpiprocs=2", wantNodes: 4, wantCpusPerTask: 2},
+		{name: "different both ways", selectBody: "2:ncpus=8:mpiprocs=2:mem=16gb+2:ncpus=8:mpiprocs=2:mem=32gb", wantPassthrough: true},
+		{name: "memory in one chunk only", selectBody: "3:ncpus=8:mpiprocs=4:mem=16384mb+1:ncpus=4:mpiprocs=2", wantPassthrough: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptPath := filepath.Join(t.TempDir(), "job.sh")
+			body := "#!/bin/bash\n#PBS -l select=" + tt.selectBody + "\n"
+			if err := os.WriteFile(scriptPath, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			specs, err := newTestPbsScheduler().ReadScriptSpecs(scriptPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantPassthrough {
+				if specs.Spec != nil {
+					t.Fatalf("Spec = %+v; want passthrough", specs.Spec)
+				}
+				return
+			}
+			got := specs.Spec
+			if got == nil {
+				t.Fatal("passthrough; want a parsed spec")
+			}
+			if got.Nodes != tt.wantNodes || got.CpusPerTask != tt.wantCpusPerTask ||
+				got.MemPerCpuMB != tt.wantPerCpuMB || got.MemPerNodeMB != tt.wantPerNodeMB {
+				t.Errorf("Nodes = %d, CpusPerTask = %d, MemPerCpuMB = %d, MemPerNodeMB = %d; want %d, %d, %d, %d",
+					got.Nodes, got.CpusPerTask, got.MemPerCpuMB, got.MemPerNodeMB,
+					tt.wantNodes, tt.wantCpusPerTask, tt.wantPerCpuMB, tt.wantPerNodeMB)
+			}
+		})
+	}
+}
+
+// Every select the writer produces for an uneven layout reads back to the same spec.
+func TestPbsUnevenSelectRoundTrip(t *testing.T) {
+	for _, mem := range []struct {
+		name string
+		rs   ResourceSpec
+	}{
+		{"per node", ResourceSpec{MemPerNodeMB: 16384}},
+		{"per CPU", ResourceSpec{MemPerCpuMB: 2048}},
+		{"no memory", ResourceSpec{}},
+	} {
+		t.Run(mem.name, func(t *testing.T) {
+			rs := mem.rs
+			rs.Nodes, rs.Ntasks, rs.CpusPerTask = 4, 14, 2
+			jobSpec := &JobSpec{
+				Name:     "uneven",
+				Command:  "mpirun ./app",
+				Specs:    &ScriptSpecs{Spec: &rs, RemainingFlags: []string{}},
+				Metadata: map[string]string{},
+			}
+			pbs := newTestPbsScheduler()
+			scriptPath, err := pbs.CreateScriptWithSpec(jobSpec, t.TempDir())
+			if err != nil {
+				t.Fatalf("CreateScriptWithSpec: %v", err)
+			}
+			specs, err := pbs.ReadScriptSpecs(scriptPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := specs.Spec
+			if got == nil {
+				t.Fatal("the generated select reads as passthrough")
+			}
+			if got.Nodes != rs.Nodes || got.Ntasks != rs.Ntasks || got.CpusPerTask != rs.CpusPerTask ||
+				got.MemPerCpuMB != rs.MemPerCpuMB || got.MemPerNodeMB != rs.MemPerNodeMB {
+				t.Errorf("read back %+v; wrote %+v", got, rs)
+			}
+		})
+	}
+}
+
+// ompthreads is read when it equals the CPUs per rank, else the script is passthrough. The writer emits it for every chunk with more than one rank.
+func TestPbsOmpThreads(t *testing.T) {
+	tests := []struct {
+		name            string
+		selectBody      string
+		wantPassthrough bool
+		wantWritten     string
+	}{
+		{name: "equals CPUs per rank", selectBody: "2:ncpus=8:mpiprocs=4:ompthreads=2", wantWritten: "select=2:ncpus=8:mpiprocs=4:ompthreads=2"},
+		{name: "unset with ranks", selectBody: "2:ncpus=8:mpiprocs=4", wantWritten: "select=2:ncpus=8:mpiprocs=4:ompthreads=2"},
+		{name: "one rank equals ncpus", selectBody: "1:ncpus=4:ompthreads=4", wantWritten: "select=1:ncpus=4"},
+		{name: "one rank unset", selectBody: "1:ncpus=4", wantWritten: "select=1:ncpus=4"},
+		{name: "fewer threads than CPUs", selectBody: "1:ncpus=16:ompthreads=8", wantPassthrough: true},
+		{name: "differs per rank", selectBody: "2:ncpus=8:mpiprocs=4:ompthreads=4", wantPassthrough: true},
+		{name: "chunks differ", selectBody: "3:ncpus=8:mpiprocs=4:ompthreads=2+1:ncpus=4:mpiprocs=2:ompthreads=1", wantPassthrough: true},
+		{name: "every chunk", selectBody: "3:ncpus=8:mpiprocs=4+1:ncpus=4:mpiprocs=2", wantWritten: "select=3:ncpus=8:mpiprocs=4:ompthreads=2+1:ncpus=4:mpiprocs=2:ompthreads=2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptPath := filepath.Join(t.TempDir(), "job.sh")
+			if err := os.WriteFile(scriptPath, []byte("#!/bin/bash\n#PBS -l select="+tt.selectBody+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			pbs := newTestPbsScheduler()
+			specs, err := pbs.ReadScriptSpecs(scriptPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantPassthrough {
+				if specs.Spec != nil {
+					t.Fatalf("Spec = %+v; want passthrough", specs.Spec)
+				}
+				return
+			}
+			if specs.Spec == nil {
+				t.Fatal("passthrough; want a parsed spec")
+			}
+			out, err := pbs.CreateScriptWithSpec(&JobSpec{Name: "omp", Command: "true", Specs: specs, Metadata: map[string]string{}}, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "#PBS -l " + tt.wantWritten + "\n"; !strings.Contains(string(data), want) {
+				t.Errorf("script lacks %q:\n%s", want, data)
+			}
+		})
+	}
+}
+
+// A select resource outside the spec is kept as written in every chunk. Chunks that differ in them, or a part that is not key=value, make the script passthrough.
+func TestPbsSelectExtra(t *testing.T) {
+	tests := []struct {
+		name            string
+		selectBody      string
+		wantPassthrough bool
+		wantWritten     string
+	}{
+		{name: "gpu id", selectBody: "4:ncpus=1:ngpus=1:gpu_id=gpu0", wantWritten: "select=4:ncpus=1:ngpus=1:gpu_id=gpu0"},
+		{name: "several, in order", selectBody: "1:ncpus=4:host=node1:green=true", wantWritten: "select=1:ncpus=4:host=node1:green=true"},
+		{name: "with ranks", selectBody: "2:ncpus=8:mpiprocs=4:gpu_id=gpu0", wantWritten: "select=2:ncpus=8:mpiprocs=4:ompthreads=2:gpu_id=gpu0"},
+		{name: "same in every chunk", selectBody: "3:ncpus=8:mpiprocs=4:host=a+1:ncpus=4:mpiprocs=2:host=a", wantWritten: "select=3:ncpus=8:mpiprocs=4:ompthreads=2:host=a+1:ncpus=4:mpiprocs=2:ompthreads=2:host=a"},
+		{name: "differs across chunks", selectBody: "1:ncpus=4:host=a+1:ncpus=4:host=b", wantPassthrough: true},
+		{name: "in one chunk only", selectBody: "1:ncpus=4:host=a+1:ncpus=4", wantPassthrough: true},
+		{name: "not key=value", selectBody: "1:ncpus=4:green", wantPassthrough: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptPath := filepath.Join(t.TempDir(), "job.sh")
+			if err := os.WriteFile(scriptPath, []byte("#!/bin/bash\n#PBS -l select="+tt.selectBody+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			pbs := newTestPbsScheduler()
+			specs, err := pbs.ReadScriptSpecs(scriptPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantPassthrough {
+				if specs.Spec != nil {
+					t.Fatalf("Spec = %+v; want passthrough", specs.Spec)
+				}
+				if want := "-l select=" + tt.selectBody; !slices.Contains(specs.RemainingFlags, want) {
+					t.Errorf("RemainingFlags = %q; want it to hold %q", specs.RemainingFlags, want)
+				}
+				return
+			}
+			if specs.Spec == nil {
+				t.Fatal("passthrough; want a parsed spec")
+			}
+			out, err := pbs.CreateScriptWithSpec(&JobSpec{Name: "extra", Command: "true", Specs: specs, Metadata: map[string]string{}}, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "#PBS -l " + tt.wantWritten + "\n"; !strings.Contains(string(data), want) {
+				t.Errorf("script lacks %q:\n%s", want, data)
 			}
 		})
 	}

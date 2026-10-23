@@ -96,6 +96,9 @@ type ResourceSpec struct {
 	Gpu          *GpuSpec      // GPU requirements (nil = no GPU; Count = per node)
 	Time         time.Duration // Job walltime limit
 	Exclusive    bool          // Request exclusive node access (no other jobs on the same node)
+	// SelectExtra is the PBS select resources outside the spec, as written and joined by ":",
+	// such as "gpu_id=gpu0". Every chunk of the select carries them. Only PBS writes it.
+	SelectExtra string
 }
 
 // IsMPI returns true if the job requests more than one MPI task.
@@ -302,6 +305,9 @@ func (rs *ResourceSpec) Override(other *ResourceSpec) {
 	}
 	if other.Exclusive {
 		rs.Exclusive = other.Exclusive
+	}
+	if other.SelectExtra != "" {
+		rs.SelectExtra = other.SelectExtra
 	}
 }
 

@@ -138,64 +138,6 @@ func absPath(path string) string {
 	return path
 }
 
-// ResourceEnvVars returns the KEY=VALUE resource variables derived from rs.
-//   - Always set: NNODES, NTASKS, NCPUS (cpus per task) and OMP_NUM_THREADS.
-//   - NTASKS_PER_NODE only when TasksPerNode is known.
-//   - MEM (MB per task) and MEM_GB when memory is specified.
-//   - Parsing rounds TasksPerNode up when Nodes and Ntasks do not divide evenly. The script then enforces the layout memory assumed.
-func ResourceEnvVars(rs *ResourceSpec) []string {
-	nodes := 1
-	cpusPerTask := 1
-	var tasksPerNode int // 0 = unknown / free-distribution
-	var directNtasks int // rs.Ntasks when explicitly set
-
-	if rs != nil {
-		if rs.Nodes > 0 {
-			nodes = rs.Nodes
-		}
-		if rs.TasksPerNode > 0 {
-			tasksPerNode = rs.TasksPerNode
-		}
-		if rs.CpusPerTask > 0 {
-			cpusPerTask = rs.CpusPerTask
-		}
-		directNtasks = rs.Ntasks
-	}
-
-	// Total task count: prefer the directly set Ntasks; fall back to topology derivation.
-	ntasks := directNtasks
-	if ntasks <= 0 {
-		t := tasksPerNode
-		if t <= 0 {
-			t = 1
-		}
-		ntasks = nodes * t
-	}
-
-	env := []string{
-		fmt.Sprintf("NNODES=%d", nodes),
-		fmt.Sprintf("NTASKS=%d", ntasks),
-		fmt.Sprintf("NCPUS=%d", cpusPerTask),
-		fmt.Sprintf("OMP_NUM_THREADS=%d", cpusPerTask),
-	}
-	if tasksPerNode > 0 {
-		env = append(env,
-			fmt.Sprintf("NTASKS_PER_NODE=%d", tasksPerNode),
-		)
-	}
-
-	// Memory environment variables: MEM = memory per task
-	if rs != nil {
-		if memPerTaskMB := rs.GetMemPerTaskMB(); memPerTaskMB > 0 {
-			env = append(env,
-				fmt.Sprintf("MEM=%d", memPerTaskMB),
-				fmt.Sprintf("MEM_GB=%d", memPerTaskMB/1024),
-			)
-		}
-	}
-	return env
-}
-
 // writeJobHeader writes the job info echo block.
 //   - With JobHome set it first replaces HOME, saving the current one in CNT_REAL_HOME.
 //   - jobIDVar is the shell expression for the job ID.
@@ -268,10 +210,6 @@ func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime
 	}
 	fmt.Fprintf(w, "%s\n", "echo \"Started:    $(date '+%Y-%m-%d %T')\"")
 	fmt.Fprintln(w, "echo \"========================================\"")
-	// Set OMP_NUM_THREADS to the allocated CPUs per task if not already set by the scheduler.
-	if rs != nil && rs.CpusPerTask > 0 {
-		fmt.Fprintf(w, "export OMP_NUM_THREADS=${OMP_NUM_THREADS:-%d}\n", rs.CpusPerTask)
-	}
 	// Per-job proxy: start tunnel back to the submitting login node.
 	if specs != nil && specs.ProxyVia != "" {
 		fmt.Fprintf(w, "%s proxy start --via %s 2>/dev/null || true\n", utils.SelfCommand(), specs.ProxyVia)

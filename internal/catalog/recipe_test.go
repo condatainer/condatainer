@@ -30,7 +30,7 @@ cat > "$CNT_TMP/job.sh" <<'EOF'
 #SBATCH --this-is-not-a-directive
 #DEP:not/a/dep
 EOF
-STAR --runThreadN "$NCPUS" --genomeDir "$CNT_PREFIX/index"
+STAR --runThreadN "$NCPU" --genomeDir "$CNT_PREFIX/index"
 `
 
 func parse(t *testing.T, path, body string) *Recipe {

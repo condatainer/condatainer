@@ -44,7 +44,7 @@ function _fireJobNotification(job) {
   if (srvNotification !== 'web' && srvNotification !== 'both') return;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   new Notification('Helper ready: ' + job.name, {
-    body: job.node ? 'Running on ' + job.node : 'Job started',
+    body: job.node ? 'Running on ' + shortNode(job.node) : 'Job started',
     tag: 'condatainer-' + job.id,
   });
 }
@@ -113,7 +113,7 @@ function jobCardHTML(j, stableJobIds) {
         '<span class="badge ' + badgeClass(j.status) + '">' + escHtml(j.status) + '</span>' +
       '</div>' +
       '<div class="jc-meta">' +
-        '<span>' + escHtml(j.node || '—') + '</span><span class="jc-sep">|</span>' +
+        '<span title="' + escHtml(j.node || '') + '">' + escHtml(shortNode(j.node) || '—') + '</span><span class="jc-sep">|</span>' +
         pathTailHtml(j.cwd) +
         (overlay
           ? '<span class="jc-sep">|</span>' + pathTailHtml(overlay, '200px')
@@ -238,7 +238,7 @@ function openDetail(id) {
   if (job.runner) meta += '<span class="d-key">Runner</span><span class="d-val">' + escHtml(job.runner) + '</span>';
   if (job.job_id) meta += '<span class="d-key">Job ID</span><span class="d-val">' + escHtml(job.job_id) + '</span>';
   meta += '<span class="d-key">Started</span><span class="d-val">' + (job.started_at ? fmtDate(job.started_at) : '—') + '</span>';
-  if (job.node) meta += '<span class="d-key">Node</span><span class="d-val">' + escHtml(job.node) + '</span>';
+  if (job.node) meta += '<span class="d-key">Node</span><span class="d-val" title="' + escHtml(job.node) + '">' + escHtml(shortNode(job.node)) + '</span>';
   if (job.port > 0) {
     const bindAddr = (job.connect === 'direct' ? '0.0.0.0' : '127.0.0.1') + ':' + job.port;
     meta += '<span class="d-key">Bind</span><span class="d-val">' + escHtml(bindAddr) + '</span>';

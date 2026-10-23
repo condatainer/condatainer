@@ -4,6 +4,12 @@ function escHtml(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+
+// A node name up to its first dot, for display. An IPv4 address stays whole.
+function shortNode(node) {
+  if (!node || /^[\d.]+$/.test(node)) return node || '';
+  return node.split('.')[0];
+}
 // fmtSize follows the ls -h convention: one decimal below 10 (9.6 MB),
 // whole numbers from 10 up (96 MB), bytes always whole.
 function fmtSize(bytes) {

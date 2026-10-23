@@ -36,7 +36,7 @@ function renderHistory(filter) {
       '<tr data-id="' + id + '" onclick="openDetail(\'' + id + '\')">' +
         '<td class="td-name">' + escHtml(h.label || h.name) + '</td>' +
         '<td class="td-fit"><span class="badge ' + badgeClass(h.status) + '">' + escHtml(h.status) + '</span></td>' +
-        '<td class="mono td-muted td-node" title="' + escHtml(h.node || '') + '">' + escHtml((h.node || '—').split('.')[0]) + '</td>' +
+        '<td class="mono td-muted td-node" title="' + escHtml(h.node || '') + '">' + escHtml(shortNode(h.node) || '—') + '</td>' +
         '<td class="mono path-cell td-muted">' + pathTailHtml(h.cwd) + '</td>' +
         '<td class="td-muted td-fit">' + (h.ended_at ? fmtRelTime(h.ended_at) : '—') + '</td>' +
         '<td class="td-nowrap td-fit">' +

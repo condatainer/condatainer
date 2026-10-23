@@ -128,10 +128,16 @@ func (w *watcher) prePopulateDone() {
 				startedAt: r.StartedAt,
 				walltime:  r.Walltime,
 				port:      r.Port,
-				node:      r.Node,
+				node:      connectNode(r.ID, r.Node),
 				connect:   r.Connect,
 			}
 			w.runningCount.Add(1)
+			// A start event written while the server was down is applied now.
+			if r.Node == "" {
+				if st, _ := helper.ReadStartEvent(r.ID); st != nil {
+					w.applyStart(r.ID, st)
+				}
+			}
 			// Seed the offset to the current end of the events file so the first
 			// tick does not re-publish already-existing messages to the broker.
 			if info, err := os.Stat(helper.EventsFilePath(r.ID)); err == nil {
@@ -243,7 +249,7 @@ func (w *watcher) pollHelper(id string) {
 				startedAt: run.StartedAt,
 				walltime:  run.Walltime,
 				port:      run.Port,
-				node:      run.Node,
+				node:      connectNode(id, run.Node),
 				connect:   run.Connect,
 			}
 			w.runningCount.Add(1)
@@ -256,6 +262,11 @@ func (w *watcher) pollHelper(id string) {
 	for _, m := range r.NewMessages {
 		w.s.brokers.publish(id, m.Level, m.Text)
 		w.lastMsg.Store(id, m.Text)
+	}
+
+	// Before done, so a job that ends within one window still records its node.
+	if r.Start != nil {
+		w.applyStart(id, r.Start)
 	}
 
 	if r.Done != nil {
@@ -321,17 +332,28 @@ func (w *watcher) pollHelper(id string) {
 				connect:   inf.connect,
 			}
 		}
-		_ = helper.UpdateHistoryRun(id, func(run *helper.HelperRun) {
-			run.Status = "running"
-			run.Node = rs.Node
-			run.Port = rs.Port
-			run.URLPath = rs.URLPath
-			run.ExternalURL = rs.ExternalURL
-			run.StartedAt = rs.Timestamp
-			run.Walltime = walltime
-		})
+		_ = helper.UpdateHistoryRun(id, func(run *helper.HelperRun) { run.ApplyReady(rs) })
 		invalidateHistoryCache()
 	}
+}
+
+// applyStart records the node a helper's job started on and moves a pending run to starting.
+func (w *watcher) applyStart(id string, st *helper.StartState) {
+	if inf, ok := w.info[id]; ok && inf.status == "pending" {
+		inf.status = "starting"
+		w.info[id] = inf
+	}
+	_ = helper.UpdateHistoryRun(id, func(run *helper.HelperRun) { run.ApplyStart(st) })
+	invalidateHistoryCache()
+}
+
+// connectNode is the address a tunnel dials: the node of the ready event, else the recorded node.
+// The recorded node is the scheduler's name and need not resolve from here.
+func connectNode(id, recorded string) string {
+	if rs, _ := helper.ReadReadyEvent(id); rs != nil && rs.Node != "" {
+		return rs.Node
+	}
+	return recorded
 }
 
 // schedResult is the scheduler's answer about one helper's job.
@@ -414,9 +436,12 @@ func (w *watcher) applySchedResult(r schedResult) {
 	switch r.status {
 	case scheduler.JobStatusRunning:
 		if inf.status == "pending" {
-			w.info[r.id] = helperInfo{jobID: inf.jobID, name: inf.name, status: "starting", startedAt: inf.startedAt, walltime: inf.walltime, connect: inf.connect}
+			inf.status = "starting"
+			w.info[r.id] = inf
 			_ = helper.UpdateHistoryRun(r.id, func(run *helper.HelperRun) {
-				run.Status = "starting"
+				if run.Status == "pending" {
+					run.Status = "starting"
+				}
 			})
 			invalidateHistoryCache()
 		}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
@@ -122,5 +123,24 @@ func TestHelperBodyRecordsTheNodeBeforeSettingUp(t *testing.T) {
 	started, port := strings.Index(body, "condatainer _server_started\n"), strings.Index(body, "_pick_port")
 	if started < 0 || started > port {
 		t.Errorf("_server_started should come before _pick_port:\n%s", body)
+	}
+}
+
+// A headless helper exports the resource variables of its spec, as a scheduler job script does.
+func TestGenerateWrapperHeadlessExportsResources(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	spec := &scheduler.ResourceSpec{Nodes: 1, Ntasks: 1, TasksPerNode: 1, CpusPerTask: 4, MemPerNodeMB: 8192, Time: time.Hour}
+	path, err := generateWrapper("demo-1", "demo", t.TempDir(), t.TempDir(), stateDir, "", "", nil, time.Hour, nil, spec, nil, "true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"export NCPU=4\n", "export CNT_NCPU=4\n", "export MEM=8192\n", "export OMP_NUM_THREADS=4\n"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("job.sh lacks %q:\n%s", want, data)
+		}
 	}
 }

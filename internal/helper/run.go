@@ -674,7 +674,7 @@ func buildHelperScriptSpecs(name, cwd, account, partition string, excludeNodes [
 
 // generateWrapper writes the job script into the run's state dir and returns its path for Submit.
 //   - Script, logs and state files sit together, and the state dir is permanent.
-//   - Headless (sched == nil) writes job.sh directly.
+//   - Headless (sched == nil) writes job.sh directly, exporting the spec's resource variables as a scheduler job script does.
 //   - Otherwise it delegates to sched.CreateScriptWithSpec with the state dir as output dir.
 func generateWrapper(id, name, cwd, scriptDir, stateDir, account, partition string, excludeNodes []string, walltime time.Duration,
 	params map[string]string, spec *scheduler.ResourceSpec, sched scheduler.Scheduler,
@@ -694,6 +694,11 @@ func generateWrapper(id, name, cwd, scriptDir, stateDir, account, partition stri
 			return "", err
 		}
 		fmt.Fprintln(f, "#!/bin/bash")
+		if spec != nil {
+			for _, kv := range scheduler.ResourceEnvVars(spec) {
+				fmt.Fprintf(f, "export %s\n", kv)
+			}
+		}
 		fmt.Fprint(f, body)
 		f.Close()
 		if err := utils.MakeExecutable(shPath); err != nil {

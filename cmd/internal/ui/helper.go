@@ -206,7 +206,7 @@ func OfferSingletonBlocked(name string, running []*helper.HelperRun, serverPort 
 		age := FormatAge(time.Since(r.StartedAt))
 		url := r.AccessURL(serverPort)
 		tag, verb := RunStatusTag(r)
-		utils.PrintMessage("  %s  %s  %s %s %s ago", r.ID, r.Node, tag, verb, age)
+		utils.PrintMessage("  %s  %s  %s %s %s ago", r.ID, helper.ShortNode(r.Node), tag, verb, age)
 		if url != "" {
 			utils.PrintMessage("  Access: %s", url)
 		}
@@ -821,6 +821,10 @@ func MonitorHelper(ctx context.Context, id string, detached bool) error {
 			r := helper.PollOnce(id, msgOffset)
 			msgOffset = r.NewOffset
 
+			if r.Start != nil {
+				_ = helper.UpdateHistoryRun(id, func(run *helper.HelperRun) { run.ApplyStart(r.Start) })
+			}
+
 			// A detached watcher prints into a terminal the shell may be waiting on.
 			if detached && (len(r.NewMessages) > 0 || r.Ready != nil || r.Done != nil) {
 				fmt.Print("\r\n")
@@ -838,15 +842,7 @@ func MonitorHelper(ctx context.Context, id string, detached bool) error {
 
 			if r.Ready != nil {
 				rs := r.Ready
-				_ = helper.UpdateHistoryRun(id, func(run *helper.HelperRun) {
-					run.Status = "running"
-					run.Node = rs.Node
-					run.Port = rs.Port
-					run.URLPath = rs.URLPath
-					run.ExternalURL = rs.ExternalURL
-					run.StartedAt = rs.Timestamp
-					run.Walltime = time.Duration(rs.WalltimeSec) * time.Second
-				})
+				_ = helper.UpdateHistoryRun(id, func(run *helper.HelperRun) { run.ApplyReady(rs) })
 				tmp := &helper.HelperRun{ID: id, Port: rs.Port, URLPath: rs.URLPath, ExternalURL: rs.ExternalURL}
 				if u := tmp.AccessURL(config.GetRunningServerPort()); u != "" {
 					if detached {

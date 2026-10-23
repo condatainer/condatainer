@@ -70,12 +70,37 @@ func newHTCondorSchedulerWithBinary(condorSubmitBin string) (*HTCondorScheduler,
 	}, nil
 }
 
-// JobIDVar returns the name of the HTCondor job ID environment variable (set inside the job).
-func (h *HTCondorScheduler) JobIDVar() string { return "_CONDOR_JOB_ID" }
+// JobIDVar is empty: HTCondor sets no job ID variable. The ID is an attribute of the job ad file.
+func (h *HTCondorScheduler) JobIDVar() string { return "" }
 
-// GetCurrentJobID returns the HTCondor job ID of the currently running job, or "".
-func (h *HTCondorScheduler) GetCurrentJobID() string { return os.Getenv(h.JobIDVar()) }
-func (h *HTCondorScheduler) JobIDEnvExpr() string    { return "${" + h.JobIDVar() + "}" }
+// GetCurrentJobID returns the cluster ID of the running job, the ID Submit returns, or "".
+func (h *HTCondorScheduler) GetCurrentJobID() string { return jobAdValue("ClusterId") }
+
+// JobIDEnvExpr reads the cluster ID from the job ad.
+func (h *HTCondorScheduler) JobIDEnvExpr() string { return jobAdExpr("ClusterId") }
+
+// jobAdLabelExpr is the cluster and process ID, "12.0", for the job header.
+var jobAdLabelExpr = jobAdExpr("ClusterId") + "." + jobAdExpr("ProcId")
+
+// jobAdExpr is a shell expression for an integer attribute of the job ad file, $_CONDOR_JOB_AD.
+func jobAdExpr(attr string) string {
+	return `$(sed -n 's/^` + attr + ` = //p' "$_CONDOR_JOB_AD" 2>/dev/null)`
+}
+
+// jobAdValue reads an attribute of the job ad file, $_CONDOR_JOB_AD, or "" outside a job.
+func jobAdValue(attr string) string {
+	data, err := os.ReadFile(os.Getenv("_CONDOR_JOB_AD"))
+	if err != nil {
+		return ""
+	}
+	prefix := attr + " = "
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if value, ok := strings.CutPrefix(line, prefix); ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
 
 // NodeNameEnvExpr is the Machine attribute of the slot the job runs in.
 func (h *HTCondorScheduler) NodeNameEnvExpr() string {
@@ -428,22 +453,19 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 		htcRS.MemPerNodeMB = specs.Spec.MemPerNodeMB
 	}
 
-	// Export resource env vars: the nested "condatainer run <bash_script>" cannot
-	// re-read HTCondor specs (they live in the .sub file, not the bash script).
-	for _, kv := range ResourceEnvVars(htcRS) {
-		fmt.Fprintf(shWriter, "export %s\n", kv)
-	}
-	fmt.Fprintln(shWriter, "")
+	// The nested "condatainer run <bash_script>" cannot re-read HTCondor specs (they live in the
+	// .sub file, not the bash script), so the script exports them.
+	writeResourceExports(shWriter, htcRS)
 
 	// Array job: ARRAY_ARGS is set by HTCondor via the environment directive in the submit file
 	if jobSpec.Array != nil {
-		jobSpec.Metadata["Array Index"] = "$_CONDOR_PROC_ID"
+		jobSpec.Metadata["Array Index"] = jobAdExpr("ProcId")
 		jobSpec.Metadata["Array File"] = jobSpec.Array.InputFile
 		jobSpec.Metadata["Array Args"] = "$ARRAY_ARGS"
 	}
 
 	// Print job information at start
-	writeJobHeader(shWriter, "$_CONDOR_CLUSTER_ID.$_CONDOR_PROC_ID", specs, formatHMSTime, jobSpec.Metadata)
+	writeJobHeader(shWriter, jobAdLabelExpr, specs, formatHMSTime, jobSpec.Metadata)
 	fmt.Fprintln(shWriter, "")
 
 	// Write the command and capture exit code
@@ -452,7 +474,7 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 
 	// Print completion info
 	fmt.Fprintln(shWriter, "")
-	writeJobFooter(shWriter, "$_CONDOR_CLUSTER_ID.$_CONDOR_PROC_ID")
+	writeJobFooter(shWriter, jobAdLabelExpr)
 
 	shWriter.Flush()
 	shFile.Close()

@@ -534,14 +534,10 @@ func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (o
 //
 //	JobResources (scheduler env, actual allocation) > specs.Spec (directives) > defaults
 func effectiveResourceSpec(specs *scheduler.ScriptSpecs) *scheduler.ResourceSpec {
-	var jobRes *scheduler.ResourceSpec
-	if sched := scheduler.ActiveScheduler(); sched != nil {
-		jobRes = sched.GetJobResources()
-	}
-	return scheduler.ResolveResourceSpec(jobRes, specs)
+	return scheduler.ResolveResourceSpec(scheduler.CurrentJobResources(), specs)
 }
 
-// resourceEnvSettings derives NCPUS, MEM, MEM_GB from scheduler specs and returns them as KEY=VALUE strings suitable for EnvSettings.
+// resourceEnvSettings derives NNODE, NRANK, NCPU, MEM and the other resource variables from scheduler specs and returns them as KEY=VALUE strings suitable for EnvSettings.
 //   - In passthrough mode (Spec == nil) it falls back to live job resources.
 //   - Applies priority chain: JobResources > ScriptSpec > Defaults.
 func resourceEnvSettings(specs *scheduler.ScriptSpecs) []string {
@@ -554,11 +550,7 @@ func resourceEnvSettings(specs *scheduler.ScriptSpecs) []string {
 // liveJobResourceEnvSettings returns resource env vars from the active scheduler.
 // Returns nil when not in a job or cannot retrieve resources.
 func liveJobResourceEnvSettings() []string {
-	sched := scheduler.ActiveScheduler()
-	if sched == nil {
-		return nil
-	}
-	jobRes := sched.GetJobResources()
+	jobRes := scheduler.CurrentJobResources()
 	if jobRes == nil {
 		return nil
 	}

@@ -90,7 +90,7 @@ func PlanRun(ctx context.Context, opts RunOptions) (*RunPlan, error) {
 
 	meta, err := ParseHelperScriptMeta(opts.ScriptPath)
 	if err != nil {
-		logger.Debug("planning helper", "warn", "could not parse script meta", "err", err)
+		return nil, fmt.Errorf("helper %s: %w", opts.ScriptName, err)
 	}
 
 	// Singleton scripts forbid a second instance regardless of ForceNew:

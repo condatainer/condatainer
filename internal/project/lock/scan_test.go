@@ -232,9 +232,9 @@ func TestScanDoesNotFollowSymlinks(t *testing.T) {
 	}
 }
 
-func TestScanStripsInlineComments(t *testing.T) {
+func TestScanReadsTheValueUpToTwoHashes(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "run.sh", "#DEP: star/2.7.11b # the aligner\nrun\n")
+	write(t, root, "run.sh", "#DEP: star/2.7.11b ## the aligner\nrun\n")
 
 	if got := keys(scan(t, root)); len(got) != 1 || got[0] != "star/2.7.11b" {
 		t.Fatalf("requests = %v", got)

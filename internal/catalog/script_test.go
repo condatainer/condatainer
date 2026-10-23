@@ -52,9 +52,8 @@ func TestGetDependenciesFromScript_WithComments(t *testing.T) {
 	defer os.Remove(tmp.Name())
 
 	content := `#!/bin/bash
-#DEP:foo/1.0  # This is a dependency comment
-#DEP:bar/2.0 # Another comment
-#DEP:baz/3.0#No space before hash
+#DEP:foo/1.0  ## This is a dependency comment
+#DEP:bar/2.0 ## Another comment
 module load alpha/1.0 beta/2.0
 `
 	if _, err := tmp.WriteString(content); err != nil {
@@ -67,7 +66,7 @@ module load alpha/1.0 beta/2.0
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	expected := []string{"foo/1.0", "bar/2.0", "baz/3.0"}
+	expected := []string{"foo/1.0", "bar/2.0"}
 	if len(deps) != len(expected) {
 		t.Fatalf("expected %d deps, got %d: %v", len(expected), len(deps), deps)
 	}

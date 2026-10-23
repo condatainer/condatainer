@@ -140,22 +140,21 @@ func resolveSpec(scriptPath string, overrides *scheduler.ResourceSpec) *schedule
 	meta, err := ParseHelperScriptMeta(scriptPath)
 	if err != nil {
 		slog.Default().Debug("helper: could not parse script meta", "err", err)
-	} else {
-		scriptDefaults := &scheduler.ResourceSpec{}
-		if meta.NCPU > 0 {
-			scriptDefaults.CpusPerTask = meta.NCPU
-		}
-		if meta.MemMB > 0 {
-			scriptDefaults.MemPerNodeMB = meta.MemMB
-		}
-		if meta.Walltime > 0 {
-			scriptDefaults.Time = meta.Walltime
-		}
-		if meta.GPU != "" {
-			scriptDefaults.Gpu = ParseGPUSpec(meta.GPU)
-		}
-		base.Override(scriptDefaults)
 	}
+	scriptDefaults := &scheduler.ResourceSpec{}
+	if meta.NCPU > 0 {
+		scriptDefaults.CpusPerTask = meta.NCPU
+	}
+	if meta.MemMB > 0 {
+		scriptDefaults.MemPerNodeMB = meta.MemMB
+	}
+	if meta.Walltime > 0 {
+		scriptDefaults.Time = meta.Walltime
+	}
+	if meta.GPU != "" {
+		scriptDefaults.Gpu = ParseGPUSpec(meta.GPU)
+	}
+	base.Override(scriptDefaults)
 
 	// User overrides (CLI flags or server request) take highest priority.
 	base.Override(overrides)

@@ -143,6 +143,9 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - There is one spelling of a name. `Normalize` decides what a name is, and index keys use that form.
 - A second implementation elsewhere would make one string resolve two ways. The same holds for `CompareVersions` and constraint satisfaction.
 - The two backends must return identical entries for the same collection. A test builds one on disk, serves it over HTTP and diffs the results. That test is the contract.
+- Every format a source serves carries a required `schema_version`: `source.json` and both index files.
+  - An index wraps its entries in an object, since a bare object keyed by name has no room for a version.
+  - A version this build does not read is refused, and a newer one says to update.
 - The caller owns the cache directory and TTL. The package owns everything inside it.
 
 ## Imports

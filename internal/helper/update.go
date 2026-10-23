@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -108,7 +107,7 @@ func readHelperIndex(ctx context.Context, cat catalog.Catalog, src *catalog.Sour
 
 func decodeHelperIndex(data []byte) (map[string]RemoteScriptEntry, error) {
 	var meta map[string]RemoteScriptEntry
-	if err := json.Unmarshal(data, &meta); err != nil {
+	if err := catalog.DecodeIndex(data, "helpers", &meta); err != nil {
 		return nil, fmt.Errorf("failed to parse helper index: %w", err)
 	}
 	return meta, nil

@@ -31,3 +31,9 @@ func flagUsages(fs *pflag.FlagSet) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// jsonFlag registers --json hidden: its output format is not final, so --help leaves it out.
+func jsonFlag(fs *pflag.FlagSet, into *bool) {
+	fs.BoolVar(into, "json", false, "Print JSON")
+	_ = fs.MarkHidden("json")
+}

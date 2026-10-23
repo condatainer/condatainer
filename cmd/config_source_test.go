@@ -22,7 +22,7 @@ func recipeServer(t *testing.T, private bool) string {
 	if err := os.MkdirAll(filepath.Join(root, "index"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "index", "recipes.json"), []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "index", "recipes.json"), []byte(`{"schema_version":1,"recipes":{}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	files := http.FileServer(http.Dir(root))
@@ -217,8 +217,8 @@ func TestSourceAddStoresTheRegistryTokenWithTheSource(t *testing.T) {
 
 	root := t.TempDir()
 	for rel, body := range map[string]string{
-		"index/recipes.json": "{}",
-		"source.json":        `{"schema":1,"oci":{"registry":"` + endpoint + `"}}`,
+		"index/recipes.json": `{"schema_version":1,"recipes":{}}`,
+		"source.json":        `{"schema_version":1,"oci":{"registry":"` + endpoint + `"}}`,
 	} {
 		p := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {

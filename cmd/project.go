@@ -128,7 +128,7 @@ func newProjectLockCmd() *cobra.Command {
 			return reportLockState(result, jsonOutput)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
 }
 
@@ -184,7 +184,7 @@ func newProjectStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
 }
 
@@ -544,7 +544,7 @@ func newProjectListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
 }
 
@@ -859,7 +859,7 @@ func newProjectRegistryPushCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "Publish every pin, including ones a recipe source already serves")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be published, without uploading")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
 }
 
@@ -1120,7 +1120,7 @@ func newProjectValidateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	cmd.Flags().BoolVar(&lockOnly, "lock-only", false, "Check the lock and scripts only; no installed overlays needed (for CI)")
 	cmd.Flags().BoolVar(&payload, "payload", false,
 		"Also check installed file contents (reads the whole overlays)")
@@ -1352,7 +1352,7 @@ func newProjectRestoreCmd() *cobra.Command {
 			return runErr
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would happen, without doing it")
 	cmd.Flags().BoolVar(&noPrebuilt, "no-prebuilt", false,
 		"Rebuild missing overlays instead of downloading it (snapshot still downloaded; refused for one whose tools run on another architecture)")

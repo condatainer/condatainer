@@ -46,7 +46,6 @@ func newStoreListCmd() *cobra.Command {
 - Each address can be pasted into the other store commands.
 - An identity in grey belongs to the build installed under the plain name.
 - --detail adds the layout, size and relative file path.
-- --json adds the complete keys, absolute paths and exact sizes.
 - --all includes the overlay installed under the plain name.
 - --equiv lists the installed builds that can stand in for an equivalence key.`,
 		Example: `  condatainer store list
@@ -86,7 +85,7 @@ func newStoreListCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "Also list the overlay installed under the plain name")
 	cmd.Flags().BoolVar(&detail, "detail", false, "Show layout, size and path for each entry")
 	cmd.Flags().StringVar(&equivalence, "equiv", "", "List the builds matching an equivalence key or prefix")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
 }
 

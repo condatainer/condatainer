@@ -165,7 +165,7 @@ func ApplyHistoryRun(opts *helper.RunOptions, r *helper.HelperRun) {
 	if r.CWD != "" {
 		opts.CWD = r.CWD
 	}
-	if r.CPUs > 0 || r.Mem != "" || r.Walltime > 0 || r.GPU != "" {
+	if r.CPUs > 0 || r.Mem != "" || r.WalltimeSecs > 0 || r.GPU != "" {
 		if opts.Resources == nil {
 			opts.Resources = &scheduler.ResourceSpec{}
 		}
@@ -177,8 +177,8 @@ func ApplyHistoryRun(opts *helper.RunOptions, r *helper.HelperRun) {
 				opts.Resources.MemPerNodeMB = mb
 			}
 		}
-		if r.Walltime > 0 {
-			opts.Resources.Time = r.Walltime
+		if r.WalltimeSecs > 0 {
+			opts.Resources.Time = r.Walltime()
 		}
 		if r.GPU != "" {
 			opts.Resources.Gpu = helper.ParseGPUSpec(r.GPU)
@@ -937,8 +937,8 @@ func formatRunResources(r *helper.HelperRun) string {
 	if r.Mem != "" {
 		parts = append(parts, r.Mem)
 	}
-	if r.Walltime > 0 {
-		parts = append(parts, utils.FormatDuration(r.Walltime))
+	if r.WalltimeSecs > 0 {
+		parts = append(parts, utils.FormatDuration(r.Walltime()))
 	}
 	if r.GPU != "" {
 		parts = append(parts, r.GPU)

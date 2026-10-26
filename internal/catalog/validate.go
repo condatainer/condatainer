@@ -3,8 +3,6 @@ package catalog
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/artifact"
@@ -17,73 +15,8 @@ var ErrInvalidRecipe = errors.New("catalog: invalid recipe")
 // ErrUnsupportedArch reports a recipe that does not build on this machine's architecture.
 var ErrUnsupportedArch = errors.New("catalog: recipe does not build on this architecture")
 
-// IsPathDep reports whether a #DEP: value names an overlay file rather than a catalog name/version.
-//   - It is exported because it decides which grammar a dependency is read with: Normalize and ParseDep apply to names only, and a second answer elsewhere would let one string be a name in one place and a path in another.
-//   - The extensions are utils.IsOverlay's plus .sif; this package cannot import utils, so they are kept in sync by hand.
-func IsPathDep(value string) bool {
-	switch strings.ToLower(filepath.Ext(strings.TrimSpace(value))) {
-	case ".sqf", ".sqsh", ".squashfs", ".img", ".ext3", ".sif":
-		return true
-	}
-	return false
-}
-
-// ValidateDeps reports why a build of this type may not declare these dependencies, or nil.
-//   - Recipe.Validate and build.FromExternalSource share it: an external build has no catalog recipe to validate.
-//   - A running script is not held to it, since it mounts what it names and may name an overlay path.
-//   - Only data may declare #DEP:. An app is prebuilt and self-contained, and an os
-//     is self-contained by definition. A recipe that needs a compiler is an os
-//     artifact providing one.
-//   - A build dependency is a name/version, never a path. A built artifact records
-//     each edge as a name plus a complete identity, and a path supplies neither. That
-//     keeps a project's vendored source closure total.
-func ValidateDeps(name string, typ artifact.Type, deps []string) error {
-	if len(deps) == 0 {
-		return nil
-	}
-	var errs []error
-
-	if typ != artifact.TypeData {
-		errs = append(errs, fmt.Errorf("%w: %s is type %s and may not declare #DEP: (%s); only data has build dependencies",
-			ErrInvalidRecipe, name, typ, strings.Join(deps, ", ")))
-	}
-
-	var paths []string
-	for _, dep := range deps {
-		if IsPathDep(dep) {
-			paths = append(paths, dep)
-		}
-	}
-	if len(paths) > 0 {
-		errs = append(errs, fmt.Errorf("%w: %s declares #DEP: %s; a build dependency must be a name/version, not an overlay path",
-			ErrInvalidRecipe, name, strings.Join(paths, ", ")))
-	}
-
-	return errors.Join(errs...)
-}
-
-// HasComponents reports whether dep's slash-separated components occur as a contiguous
-// run of name's. Components compare as exact strings, never semantically (2.7.11b and
-// 2.7.11 name different builds), and never as substrings: star/2.7.11b must not match
-// inside star2.7.11b-old. internal/artifact/key.Role uses it: an app or os dependency
-// contributes to equivalence only when this is true, otherwise it is build history.
-func HasComponents(name, dep string) bool {
-	n := strings.Split(utils.NormalizeModule(name), "/")
-	d := strings.Split(utils.NormalizeModule(dep), "/")
-	if len(d) == 0 || len(d) > len(n) {
-		return false
-	}
-	for i := 0; i+len(d) <= len(n); i++ {
-		if slices.Equal(n[i:i+len(d)], d) {
-			return true
-		}
-	}
-	return false
-}
-
 // Validate reports headers a recipe of this type may not declare.
 //   - It runs once the recipe is fetched for a build, not while indexing: one bad recipe must not take a whole collection out of a listing.
-//   - The #DEP: rules are in ValidateDeps.
 //   - The rules only a recipe has:
 //   - #ARCH: only app and data, and only noarch or a list of amd64 and arm64: an os is a root
 //     filesystem and always architecture-specific.
@@ -94,10 +27,6 @@ func HasComponents(name, dep string) bool {
 //     fall back to the type default and publish what the author meant to hold back.
 func (r *Recipe) Validate() error {
 	var errs []error
-
-	if err := ValidateDeps(r.Name, r.Type, r.Deps); err != nil {
-		errs = append(errs, err)
-	}
 
 	for _, problem := range r.placeholderProblems {
 		errs = append(errs, fmt.Errorf("%w: %s: %s", ErrInvalidRecipe, r.Name, problem))

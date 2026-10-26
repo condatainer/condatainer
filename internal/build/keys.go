@@ -10,7 +10,6 @@ import (
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/store"
@@ -160,7 +159,7 @@ func (b *BuildObject) dependencyKeys(ctx context.Context) []key.Dep {
 		// no manifest, and records an edge with no keys at all. A locked rebuild
 		// supplies every dependency as a path, so this is its whole edge set.
 		requested, constrained := raw, raw
-		if !catalog.IsPathDep(raw) {
+		if !utils.IsPathDep(raw) {
 			parsed, err := utils.ParseDep(raw)
 			if err != nil {
 				log.Warn("Skipping an unparsable dependency", "dep", raw, "err", err)

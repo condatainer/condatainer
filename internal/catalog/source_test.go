@@ -113,7 +113,7 @@ func TestParseDescriptorOCI(t *testing.T) {
 		{name: "missing schema", json: `{"default_distro":"ubuntu24"}`, wantErr: "schema_version 0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ParseDescriptor([]byte(tc.json))
+			got, err := parseDescriptor([]byte(tc.json))
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %v, want containing %q", err, tc.wantErr)
@@ -320,10 +320,10 @@ func TestParseDescriptorChecksTheSourceURL(t *testing.T) {
 		{"whitespace", `{"schema_version":1,"source":"https://example.invalid/a b"}`, "whitespace"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ParseDescriptor([]byte(tc.json))
+			_, err := parseDescriptor([]byte(tc.json))
 			if tc.wantErr == "" {
 				if err != nil {
-					t.Fatalf("ParseDescriptor: %v", err)
+					t.Fatalf("parseDescriptor: %v", err)
 				}
 				return
 			}
@@ -423,7 +423,7 @@ func TestDecodeIndexRequiresTheVersionAndTheMember(t *testing.T) {
 }
 
 func TestParseDescriptorIgnoresAnAddedKey(t *testing.T) {
-	desc, err := ParseDescriptor([]byte(`{"schema_version":1,"mirrors":["https://m.example"],"oci":{"registry":"ghcr.io/lab/cnt","note":"x"}}`))
+	desc, err := parseDescriptor([]byte(`{"schema_version":1,"mirrors":["https://m.example"],"oci":{"registry":"ghcr.io/lab/cnt","note":"x"}}`))
 	if err != nil || desc.OCI.Registry != "ghcr.io/lab/cnt" {
 		t.Fatalf("descriptor = %+v, err = %v; a key this build does not know must not matter", desc, err)
 	}

@@ -1,4 +1,4 @@
-package catalog
+package build
 
 import (
 	"errors"
@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // depSource writes a collection with a small dependency graph:
@@ -15,7 +17,7 @@ import (
 //	app/1.0 -> lib/2.0 -> base-tool/1.0
 //	other/1.0 -> lib/2.0            (a diamond)
 //	app/1.0 -> samtools/1.23.1>=1.10 (no recipe: a fallback's problem)
-func depSource(t *testing.T) Catalog {
+func depSource(t *testing.T) catalog.Catalog {
 	t.Helper()
 	root := t.TempDir()
 	write := func(rel, body string) {
@@ -33,14 +35,14 @@ func depSource(t *testing.T) Catalog {
 	write("lib/1.0", "#DESC:old lib\n")
 	write("base-tool/1.0", "#DESC:base tool\n")
 
-	cat, err := Open(t.Context(), []Spec{{Name: "local", Base: root}}, Cache{})
+	cat, err := catalog.Open(t.Context(), []catalog.Spec{{Name: "local", Base: root}}, catalog.Cache{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return cat
 }
 
-func names(nodes []Node) []string {
+func names(nodes []depNode) []string {
 	out := make([]string, len(nodes))
 	for i, n := range nodes {
 		out[i] = n.Name()
@@ -50,7 +52,7 @@ func names(nodes []Node) []string {
 
 func TestResolveOrder(t *testing.T) {
 	cat := depSource(t)
-	plan, err := cat.Resolve(t.Context(), []string{"app/1.0"}, nil)
+	plan, err := resolveDeps(t.Context(), cat, []string{"app/1.0"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,12 +71,12 @@ func TestResolveOrder(t *testing.T) {
 // A name no source provides is a node with a nil Entry, not a failed walk.
 func TestResolveNotProvided(t *testing.T) {
 	cat := depSource(t)
-	plan, err := cat.Resolve(t.Context(), []string{"app/1.0"}, nil)
+	plan, err := resolveDeps(t.Context(), cat, []string{"app/1.0"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var conda *Node
+	var conda *depNode
 	for i, n := range plan.Order {
 		if n.Dep.Name == "samtools" {
 			conda = &plan.Order[i]
@@ -94,7 +96,7 @@ func TestResolveNotProvided(t *testing.T) {
 
 func TestResolveDiamond(t *testing.T) {
 	cat := depSource(t)
-	plan, err := cat.Resolve(t.Context(), []string{"app/1.0", "other/1.0"}, nil)
+	plan, err := resolveDeps(t.Context(), cat, []string{"app/1.0", "other/1.0"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,11 +132,11 @@ func TestResolveCycle(t *testing.T) {
 	write("a/1.0", "#DEP:b/1.0\n")
 	write("b/1.0", "#DEP:a/1.0\n")
 
-	cat, err := Open(t.Context(), []Spec{{Name: "local", Base: root}}, Cache{})
+	cat, err := catalog.Open(t.Context(), []catalog.Spec{{Name: "local", Base: root}}, catalog.Cache{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cat.Resolve(t.Context(), []string{"a/1.0"}, nil); err == nil ||
+	if _, err := resolveDeps(t.Context(), cat, []string{"a/1.0"}, nil); err == nil ||
 		!strings.Contains(err.Error(), "cycle") {
 		t.Errorf("err = %v, want a cycle report", err)
 	}
@@ -150,12 +152,12 @@ func TestResolveHave(t *testing.T) {
 		}
 		return nil
 	}
-	plan, err := cat.Resolve(t.Context(), []string{"app/1.0"}, have)
+	plan, err := resolveDeps(t.Context(), cat, []string{"app/1.0"}, have)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var lib *Node
+	var lib *depNode
 	for i, n := range plan.Order {
 		if n.Dep.Name == "lib" {
 			lib = &plan.Order[i]
@@ -176,7 +178,7 @@ func TestResolveHave(t *testing.T) {
 func TestResolveNewestInRange(t *testing.T) {
 	cat := depSource(t)
 
-	plan, err := cat.Resolve(t.Context(), []string{"lib"}, nil)
+	plan, err := resolveDeps(t.Context(), cat, []string{"lib"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +194,7 @@ func TestResolveNewestInRange(t *testing.T) {
 		}
 		return nil
 	}
-	plan, err = cat.Resolve(t.Context(), []string{"lib"}, have)
+	plan, err = resolveDeps(t.Context(), cat, []string{"lib"}, have)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +209,7 @@ func TestResolveConstraintBounds(t *testing.T) {
 	cat := depSource(t)
 	have := func(string) []string { return []string{"1.09", "1.30"} }
 
-	plan, err := cat.Resolve(t.Context(), []string{"samtools/1.23.1>=1.10"}, have)
+	plan, err := resolveDeps(t.Context(), cat, []string{"samtools/1.23.1>=1.10"}, have)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,11 +239,11 @@ func TestResolveTemplateDep(t *testing.T) {
 			"#PH:star_version:2.7.11b\n#PH:gencode_version:47-49\n"+
 			"#DEP:grch38/gtf/{gencode_version}\n")
 
-	cat, err := Open(t.Context(), []Spec{{Name: "local", Base: root}}, Cache{})
+	cat, err := catalog.Open(t.Context(), []catalog.Spec{{Name: "local", Base: root}}, catalog.Cache{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := cat.Resolve(t.Context(), []string{"grch38/star/2.7.11b/gencode48"}, nil)
+	plan, err := resolveDeps(t.Context(), cat, []string{"grch38/star/2.7.11b/gencode48"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,14 +276,14 @@ func TestResolveRefusesARecipeThatDoesNotBuildHere(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cat, err := Open(t.Context(), []Spec{{Name: "local", Base: root}}, Cache{})
+	cat, err := catalog.Open(t.Context(), []catalog.Spec{{Name: "local", Base: root}}, catalog.Cache{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = cat.Resolve(t.Context(), []string{"app/1.0"}, nil)
-	if !errors.Is(err, ErrUnsupportedArch) || !strings.Contains(err.Error(), "needed by app/1.0") {
-		t.Fatalf("err = %v, want ErrUnsupportedArch naming app/1.0", err)
+	_, err = resolveDeps(t.Context(), cat, []string{"app/1.0"}, nil)
+	if !errors.Is(err, catalog.ErrUnsupportedArch) || !strings.Contains(err.Error(), "needed by app/1.0") {
+		t.Fatalf("err = %v, want catalog.ErrUnsupportedArch naming app/1.0", err)
 	}
 
 	installed := func(name string) []string {
@@ -290,7 +292,7 @@ func TestResolveRefusesARecipeThatDoesNotBuildHere(t *testing.T) {
 		}
 		return nil
 	}
-	if _, err := cat.Resolve(t.Context(), []string{"app/1.0"}, installed); err != nil {
+	if _, err := resolveDeps(t.Context(), cat, []string{"app/1.0"}, installed); err != nil {
 		t.Errorf("an installed tool was refused: %v", err)
 	}
 }

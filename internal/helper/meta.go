@@ -271,3 +271,13 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 	}
 	return meta, errors.Join(problems...)
 }
+
+// ScriptDescription returns a script's first #DESC: value, or "".
+func ScriptDescription(scriptPath string) string {
+	text, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return ""
+	}
+	description, _ := utils.FindAnnotation(utils.ScanAnnotations(text), "#DESC")
+	return description
+}

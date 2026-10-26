@@ -25,8 +25,8 @@ func Expand(r *Recipe, vars map[string]string) (*Recipe, error) {
 	out.Name = name
 	out.IsTemplate = false
 	out.TargetTemplate = r.TargetTemplate
-	out.Description = replaceVars(r.Description, vars)
-	out.Rendered = []byte(replaceVars(string(r.Text), vars))
+	out.Description = ReplaceVars(r.Description, vars)
+	out.Rendered = []byte(ReplaceVars(string(r.Text), vars))
 
 	// PH keeps the chosen value per placeholder: what the artifact records as
 	// the vars it was built with.
@@ -37,13 +37,13 @@ func Expand(r *Recipe, vars map[string]string) (*Recipe, error) {
 
 	out.Deps = make([]string, len(r.Deps))
 	for i, dep := range r.Deps {
-		out.Deps[i] = replaceVars(dep, vars)
+		out.Deps[i] = ReplaceVars(dep, vars)
 	}
 
 	out.Env = make([]EnvVar, len(r.Env))
 	for i, env := range r.Env {
 		env.Segments = expandSegments(env.Segments, vars)
-		env.Note = replaceVars(env.Note, vars)
+		env.Note = ReplaceVars(env.Note, vars)
 		out.Env[i] = env
 	}
 
@@ -52,20 +52,20 @@ func Expand(r *Recipe, vars map[string]string) (*Recipe, error) {
 	// expansion unchanged.
 	out.Sources = make([]SourceURL, len(r.Sources))
 	for i, src := range r.Sources {
-		out.Sources[i] = SourceURL{Name: src.Name, Arch: src.Arch, URL: replaceVars(src.URL, vars), Prompt: replaceVars(src.Prompt, vars)}
+		out.Sources[i] = SourceURL{Name: src.Name, Arch: src.Arch, URL: ReplaceVars(src.URL, vars), Prompt: ReplaceVars(src.Prompt, vars)}
 	}
 
 	out.Inputs = slices.Clone(r.Inputs)
 	for i := range out.Inputs {
-		out.Inputs[i] = replaceVars(out.Inputs[i], vars)
+		out.Inputs[i] = ReplaceVars(out.Inputs[i], vars)
 	}
 	out.Directives = slices.Clone(r.Directives)
 	return &out, nil
 }
 
-// replaceVars substitutes {name} for each var. Only declared names are touched,
+// ReplaceVars substitutes {name} for each var. Only declared names are touched,
 // so a shell ${VAR} in the body is left alone.
-func replaceVars(s string, vars map[string]string) string {
+func ReplaceVars(s string, vars map[string]string) string {
 	if s == "" || len(vars) == 0 {
 		return s
 	}

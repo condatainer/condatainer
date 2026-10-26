@@ -75,6 +75,7 @@ What CondaTainer embeds in an image: what it says it is, what loading it does to
   - A data dependency contributes its equivalence key.
   - An app or OS named by the artifact contributes name and version.
   - A history-only app or OS contributes nothing.
+  - An app or OS dependency counts as named by the artifact when its slash-separated components occur as a contiguous run of the artifact's name. Components compare as exact strings, never as substrings or versions.
   - Only a data dependency's equivalence key is read, so a build can derive its key before that dependency exists.
 - The manifest freezes each dependency's role, so verification never reapplies a newer policy.
 - A dependency missing a key is unrecorded, and `provenance_complete` becomes false.

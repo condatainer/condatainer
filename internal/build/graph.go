@@ -118,7 +118,7 @@ func (bg *BuildGraph) resolvePlan(ctx context.Context, roots []string, hidden ma
 	if err != nil {
 		return err
 	}
-	plan, err := cat.Resolve(ctx, roots, InstalledVersions(hidden))
+	plan, err := resolveDeps(ctx, cat, roots, InstalledVersions(hidden))
 	if err != nil {
 		return err
 	}
@@ -196,7 +196,7 @@ func (bg *BuildGraph) dependencyPlan(obj *BuildObject) (map[string]plannedDep, b
 	planned := make(map[string]plannedDep)
 	for _, raw := range obj.Dependencies() {
 		requested, constrained := raw, raw
-		if !catalog.IsPathDep(raw) {
+		if !utils.IsPathDep(raw) {
 			parsed, err := utils.ParseDep(raw)
 			if err != nil {
 				continue

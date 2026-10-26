@@ -32,7 +32,7 @@ func packEnvSnapshot(t *testing.T, path string) {
 }
 
 // PairedPackages unions a paired snapshot's packages with the .img's own,
-// which is what makes #IMG_PACKAGES: checks pass against a thin .img sitting
+// which is what makes #ENV_PACKAGES: checks pass against a thin .img sitting
 // on a snapshot instead of falsely reporting everything as not installed.
 func TestPairedPackagesUnionsSnapshotAndImg(t *testing.T) {
 	requireSquashfsTools(t)

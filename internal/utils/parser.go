@@ -242,12 +242,12 @@ func SortVersionsDescending(values []string) []string {
 	return result
 }
 
-// imgPackageTokenRe matches {KEY} tokens in an #IMG_PACKAGES: template.
-var imgPackageTokenRe = regexp.MustCompile(`\{([A-Z][A-Z0-9_]*)\}`)
+// envPackageTokenRe matches {KEY} tokens in an #ENV_PACKAGES: template.
+var envPackageTokenRe = regexp.MustCompile(`\{([A-Z][A-Z0-9_]*)\}`)
 
-// ExtractImgPackageTokens returns the unique {KEY} token names from an #IMG_PACKAGES: template.
-func ExtractImgPackageTokens(imgPackages string) []string {
-	matches := imgPackageTokenRe.FindAllStringSubmatch(imgPackages, -1)
+// ExtractEnvPackageTokens returns the unique {KEY} token names from an #ENV_PACKAGES: template.
+func ExtractEnvPackageTokens(envPackages string) []string {
+	matches := envPackageTokenRe.FindAllStringSubmatch(envPackages, -1)
 	seen := map[string]bool{}
 	var result []string
 	for _, m := range matches {

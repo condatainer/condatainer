@@ -130,7 +130,7 @@ func OfferProjectReuse(ctx context.Context, name string, opts *helper.RunOptions
 		return nil, nil
 	}
 	meta, _ := helper.ParseHelperScriptMeta(opts.ScriptPath)
-	used, err := helper.ListReusable(standing.Root, name, filepath.ToSlash(location), meta.RequiredOverlays)
+	used, err := helper.ListReusable(standing.Root, name, filepath.ToSlash(location), meta.Deps)
 	if err != nil || len(used) == 0 {
 		return nil, nil
 	}
@@ -672,7 +672,7 @@ func WaitBeforeStart(ctx context.Context, d time.Duration) error {
 }
 
 // GuidedOverlayCreate runs the interactive wizard for creating a writable conda
-// overlay and installing the packages specified by meta.ImgPackages.
+// overlay and installing the packages specified by meta.EnvPackages.
 // cwd is the working directory used to compute the default overlay path (env.img
 // lives next to the project so FindEnvOverlay can auto-detect it on later runs).
 // Returns the path of the created image.
@@ -697,7 +697,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 	if err != nil {
 		return "", fmt.Errorf("invalid size %q: %w", sizeStr, err)
 	}
-	creationVars, err := promptCreationTokens(ctx, meta.ImgPackages, params, versions)
+	creationVars, err := promptCreationTokens(ctx, meta.EnvPackages, params, versions)
 	if err != nil {
 		return "", err
 	}
@@ -707,7 +707,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 		return "", err
 	}
 
-	pkgTemplate := meta.ImgPackages
+	pkgTemplate := meta.EnvPackages
 	for k, v := range params {
 		pkgTemplate = strings.ReplaceAll(pkgTemplate, "{"+k+"}", v)
 	}
@@ -734,12 +734,12 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 	} else {
 		utils.PrintMessage("Creating overlay; conda initialization will happen on first install")
 	}
-	if len(allPkgs) > 0 || meta.PostInstallCmd != "" {
+	if len(allPkgs) > 0 || meta.EnvPostInstall != "" {
 		if _, err := build.ResolveBase(ctx); err != nil {
 			return "", fmt.Errorf("overlay creation failed: %w", err)
 		}
 	}
-	if err := cntexec.CreateCondaOverlay(ctx, opts, allPkgs, meta.PostInstallCmd, false, io); err != nil {
+	if err := cntexec.CreateCondaOverlay(ctx, opts, allPkgs, meta.EnvPostInstall, false, io); err != nil {
 		return "", fmt.Errorf("overlay creation failed: %w", err)
 	}
 	utils.PrintSuccess("Created overlay %s", imgPath)
@@ -748,7 +748,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 }
 
 // GuidedInstallMissing prompts the user to install packages that failed the
-// #IMG_PACKAGES: check. Prints the unsatisfied specs, asks Y/n, then runs
+// #ENV_PACKAGES: check. Prints the unsatisfied specs, asks Y/n, then runs
 // micromamba install inside the overlay if confirmed.
 func GuidedInstallMissing(ctx context.Context, e *helper.ErrMissingPackages) error {
 	utils.PrintWarning("Conda packages not satisfied in %s:", e.EnvImg)
@@ -973,7 +973,7 @@ func promptDefault(ctx context.Context, prompt, defaultVal string) (string, erro
 
 func promptCreationTokens(ctx context.Context, imgPackages string, params map[string]string, versions map[string][]string) (map[string]string, error) {
 	result := make(map[string]string)
-	for _, tok := range utils.ExtractImgPackageTokens(imgPackages) {
+	for _, tok := range utils.ExtractEnvPackageTokens(imgPackages) {
 		if _, ok := params[tok]; ok {
 			continue
 		}

@@ -25,16 +25,16 @@ type ReuseOption struct {
 
 // ListReusable returns the combinations recorded for name at location that have something to apply, newest first.
 //   - Something to apply is added overlays, or params recovered from the recorded required names.
-//   - Params are recovered by matching template, the helper's #REQUIRED_OVERLAYS:.
-//   - #IMG_PACKAGES: params are never recorded or recovered.
-func ListReusable(root, name, location, template string) ([]ReuseOption, error) {
+//   - Params are recovered by matching the helper's #DEP: names.
+//   - #ENV_PACKAGES: params are never recorded or recovered.
+func ListReusable(root, name, location string, deps []string) ([]ReuseOption, error) {
 	used, err := helperhistory.ListUsed(root, name, location)
 	if err != nil {
 		return nil, err
 	}
 	var out []ReuseOption
 	for _, u := range used {
-		params := paramsFromRequired(template, u.Required)
+		params := paramsFromRequired(deps, u.Required)
 		if len(u.Overlays) == 0 && len(params) == 0 {
 			continue
 		}
@@ -50,11 +50,11 @@ func ListReusable(root, name, location, template string) ([]ReuseOption, error) 
 var paramToken = regexp.MustCompile(`\{([A-Za-z0-9_]+)\}`)
 
 // paramsFromRequired recovers the #PARAM: values a recorded required list was filled from.
-//   - Each template name holding a {KEY} is matched against the list.
+//   - Each #DEP: name holding a {KEY} is matched against the list.
 //   - "r/{POSIT_R}" against "r/4.4.3" gives POSIT_R=4.4.3.
-func paramsFromRequired(template string, required []string) map[string]string {
+func paramsFromRequired(deps, required []string) map[string]string {
 	params := map[string]string{}
-	for _, name := range strings.Fields(template) {
+	for _, name := range deps {
 		locs := paramToken.FindAllStringSubmatchIndex(name, -1)
 		if len(locs) == 0 {
 			continue

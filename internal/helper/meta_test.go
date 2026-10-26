@@ -3,6 +3,7 @@ package helper
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func TestParseHelperScriptMetaReadsHeadersLikeARecipe(t *testing.T) {
 #MEM: 8G
 #TIME: 2
 #BIND: /data#1:/ref
-#POST_INSTALL_CMD: echo "a#b"
+#ENV_POST_INSTALL: echo "a#b"
 #PARAM: COLOR=#ff0000 --color "A colour" ## shown in help
 `)
 	meta, err := ParseHelperScriptMeta(path)
@@ -60,8 +61,8 @@ func TestParseHelperScriptMetaReadsHeadersLikeARecipe(t *testing.T) {
 	if meta.NCPU != 4 || meta.MemMB != 8*1024 || meta.Walltime != 2*time.Hour {
 		t.Errorf("resources = %d cpu, %d MB, %v", meta.NCPU, meta.MemMB, meta.Walltime)
 	}
-	if len(meta.Binds) != 1 || meta.Binds[0] != "/data#1:/ref" || meta.PostInstallCmd != `echo "a#b"` {
-		t.Errorf("a single # was cut from a value: binds %q, post-install %q", meta.Binds, meta.PostInstallCmd)
+	if len(meta.Binds) != 1 || meta.Binds[0] != "/data#1:/ref" || meta.EnvPostInstall != `echo "a#b"` {
+		t.Errorf("a single # was cut from a value: binds %q, post-install %q", meta.Binds, meta.EnvPostInstall)
 	}
 	params, err := ParseHelperParams(path)
 	if err != nil || len(params) != 1 || params[0].Default != "#ff0000" || params[0].Description != "A colour" {
@@ -110,5 +111,26 @@ func TestHelperMetaReadsSharedHeaders(t *testing.T) {
 	_, err = write("#!/bin/bash\n#GPU: a100:0\n#NAME: job\n")
 	if err == nil || !strings.Contains(err.Error(), "#GPU on line 2") || !strings.Contains(err.Error(), "#NAME on line 3") {
 		t.Fatalf("a bad #GPU: and an unhonored #NAME: err = %v", err)
+	}
+}
+
+func TestHelperMetaReadsDepsAndEnvHeaders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "svc")
+	text := "#!/bin/bash\n#DEP: base\n#DEP: r/{POSIT_R}\n#DEP: base\n#ENV_PACKAGES:\n#ENV_POST_INSTALL: mm pin add r-base\n"
+	if err := os.WriteFile(path, []byte(text), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := ParseHelperScriptMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(meta.Deps, []string{"base", "r/{POSIT_R}"}) {
+		t.Errorf("Deps = %v, want the lines in order, once each, with the token kept", meta.Deps)
+	}
+	if !meta.EnvRequired || meta.EnvPackages != "" || meta.EnvPostInstall != "mm pin add r-base" {
+		t.Errorf("env = %v %q %q, want the overlay required with no packages", meta.EnvRequired, meta.EnvPackages, meta.EnvPostInstall)
+	}
+	if got := fillDeps(meta.Deps, map[string]string{"POSIT_R": "4.4.3"}); !slices.Equal(got, []string{"base", "r/4.4.3"}) {
+		t.Errorf("fillDeps = %v", got)
 	}
 }

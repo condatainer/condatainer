@@ -26,20 +26,18 @@ type HelperParam struct {
 
 // HelperScriptMeta holds overlay and singleton metadata extracted from a helper script.
 type HelperScriptMeta struct {
-	// ImgRequired is true when the #IMG_PACKAGES: header is present, meaning the
+	// EnvRequired is true when the #ENV_PACKAGES: header is present, meaning the
 	// helper requires a writable overlay (.img) even if no packages are listed.
-	ImgRequired bool
-	// ImgPackages is a template of conda packages for guided overlay creation and
+	EnvRequired bool
+	// EnvPackages is a template of conda packages for guided overlay creation and
 	// pre-submission package verification. {KEY} tokens are substituted from
-	// resolved #PARAM: values before use. Empty when #IMG_PACKAGES: has no value.
-	ImgPackages string
-	// RequiredOverlays is a space-separated template of named condatainer overlays
-	// (SquashFS images) to load before the helper runs. {KEY} tokens are substituted
-	// from resolved #PARAM: values (e.g. "rstudio-server build-essential r{POSIT_R}").
-	// Parsed from #REQUIRED_OVERLAYS:.
-	RequiredOverlays string
-	// PostInstallCmd is run inside the container after micromamba installs ImgPackages.
-	PostInstallCmd string
+	// resolved #PARAM: values before use. Empty when #ENV_PACKAGES: has no value.
+	EnvPackages string
+	// Deps are the overlays to load before the helper runs, one per #DEP: line, in the order written.
+	// {KEY} tokens are substituted from resolved #PARAM: values (e.g. "r/{POSIT_R}").
+	Deps []string
+	// EnvPostInstall is run inside the container after micromamba installs EnvPackages.
+	EnvPostInstall string
 	// Singleton is true when at most one running instance of this helper is allowed.
 	Singleton bool
 	// Binds is a list of extra bind-mount specs from #BIND: headers, in "src:dest" form.
@@ -198,14 +196,14 @@ func extractQuotedSuffix(s string) (string, string, error) {
 }
 
 // helperKeys are the headers a helper reads. One after the header block is reported, not dropped silently.
-var helperKeys = []string{"#DESC", "#PARAM", "#VALUE", "#NCPU", "#MEM", "#TIME", "#GPU", "#SINGLETON", "#BIND", "#IMG_PACKAGES", "#REQUIRED_OVERLAYS", "#POST_INSTALL_CMD"}
+var helperKeys = []string{"#DESC", "#PARAM", "#VALUE", "#NCPU", "#MEM", "#TIME", "#GPU", "#SINGLETON", "#BIND", "#DEP", "#ENV_PACKAGES", "#ENV_POST_INSTALL"}
 
 // unhonoredHeaders are the shared headers a helper does not read: the launch or the wrapper decides them.
 var unhonoredHeaders = []string{"#NAME", "#OUTPUT", "#ERROR", "#PARTITION", "#ACCOUNT", "#WRITABLE", "#FAKEROOT"}
 
 // ParseHelperScriptMeta extracts metadata from a helper script.
-// Recognised headers: #NCPU:, #MEM:, #TIME:, #GPU:, #IMG_PACKAGES:, #REQUIRED_OVERLAYS:,
-// #POST_INSTALL_CMD:, #SINGLETON:, #BIND:, #VALUE:.
+// Recognised headers: #NCPU:, #MEM:, #TIME:, #GPU:, #DEP:, #ENV_PACKAGES:,
+// #ENV_POST_INSTALL:, #SINGLETON:, #BIND:, #VALUE:.
 //   - A resource header or #SINGLETON: value that does not parse is an error naming its line.
 //   - A header the launch decides (#NAME:, #OUTPUT:, #ERROR:, #PARTITION:, #ACCOUNT:, #WRITABLE:, #FAKEROOT:) is an error naming its line.
 //   - The metadata that did parse is returned with the error, so a caller that ignores the error still gets it.
@@ -221,6 +219,7 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 	problems := []error{problem, utils.Reject(annotations, "a helper script", unhonoredHeaders...)}
 	meta := HelperScriptMeta{
 		ParamValues: make(map[string][]string),
+		Deps:        utils.Dependencies(annotations),
 		NCPU:        resources.CpusPerTask,
 		MemMB:       resources.MemPerNodeMB,
 		Walltime:    resources.Time,
@@ -231,17 +230,15 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 	}
 	for _, a := range annotations {
 		switch a.Key {
-		case "#IMG_PACKAGES":
-			meta.ImgRequired = true
-			meta.ImgPackages = a.Value
-		case "#REQUIRED_OVERLAYS":
-			meta.RequiredOverlays = a.Value
+		case "#ENV_PACKAGES":
+			meta.EnvRequired = true
+			meta.EnvPackages = a.Value
 		case "#BIND":
 			if a.Value != "" {
 				meta.Binds = append(meta.Binds, a.Value)
 			}
-		case "#POST_INSTALL_CMD":
-			meta.PostInstallCmd = a.Value
+		case "#ENV_POST_INSTALL":
+			meta.EnvPostInstall = a.Value
 		case "#VALUE":
 			key, spec, ok := strings.Cut(a.Value, "=")
 			if ok && strings.TrimSpace(key) != "" {

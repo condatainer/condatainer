@@ -231,14 +231,16 @@ func checkOverlayIntegrity(ctx context.Context, imgPath string) error {
 	return ext3.CheckIntegrity(ctx, imgPath, false)
 }
 
-// resolveOverlayTemplate substitutes {KEY} tokens in the #REQUIRED_OVERLAYS: template
-// with values from params, then splits on whitespace to return individual overlay names.
-func resolveOverlayTemplate(template string, params map[string]string) []string {
-	result := template
-	for k, v := range params {
-		result = strings.ReplaceAll(result, "{"+k+"}", v)
+// fillDeps substitutes {KEY} tokens in the #DEP: names with values from params.
+func fillDeps(deps []string, params map[string]string) []string {
+	out := make([]string, len(deps))
+	for i, dep := range deps {
+		for k, v := range params {
+			dep = strings.ReplaceAll(dep, "{"+k+"}", v)
+		}
+		out[i] = dep
 	}
-	return strings.Fields(result)
+	return out
 }
 
 // checkAndInstallNamedOverlays makes sure each named overlay exists and returns the resolved absolute paths.
@@ -315,7 +317,7 @@ func checkAndInstallNamedOverlays(ctx context.Context, names []string, distro st
 		}
 	}
 
-	// Reconstruct in original order so overlay precedence matches #REQUIRED_OVERLAYS.
+	// Reconstruct in original order so overlay precedence matches the #DEP: order.
 	var out []string
 	for _, name := range names {
 		out = append(out, resolved[name]...)
@@ -323,17 +325,17 @@ func checkAndInstallNamedOverlays(ctx context.Context, names []string, distro st
 	return out, nil
 }
 
-// checkPackages verifies every package in meta.ImgPackages is installed in envImg's conda environment.
-//   - {KEY} tokens are filled from params first. An empty ImgPackages or envImg returns nil.
+// checkPackages verifies every package in meta.EnvPackages is installed in envImg's conda environment.
+//   - {KEY} tokens are filled from params first. An empty EnvPackages or envImg returns nil.
 //   - It reads the image and its paired snapshot, without launching a container.
 //   - The conda constraints =, ==, >=, <=, >, < and != are accepted.
 func checkPackages(meta HelperScriptMeta, envImg string, params map[string]string) error {
-	if meta.ImgPackages == "" || envImg == "" {
+	if meta.EnvPackages == "" || envImg == "" {
 		return nil
 	}
 
 	// Substitute {KEY} tokens with resolved param values.
-	resolved := meta.ImgPackages
+	resolved := meta.EnvPackages
 	for k, v := range params {
 		resolved = strings.ReplaceAll(resolved, "{"+k+"}", v)
 	}

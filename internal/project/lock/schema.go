@@ -173,7 +173,7 @@ type PinEntry struct {
 	// someone says so.
 	//
 	// It exists because a project depends on artifacts no script declares: a
-	// helper's #REQUIRED_OVERLAYS: (build-essential, an RStudio image), and a
+	// helper's #DEP: (build-essential, an RStudio image), and a
 	// frozen environment. Recorded rather than derived, since "not currently
 	// declared" is what the sweep tests and deriving it would make the sweep a
 	// no-op.

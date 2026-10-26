@@ -131,10 +131,15 @@ func ScriptDependencies(scriptPath string) ([]string, error) {
 	}
 
 	WarnStray(scriptPath, StrayAnnotations(text, "#DEP"))
+	return Dependencies(ScanAnnotations(text)), nil
+}
 
+// Dependencies returns the values of the #DEP: annotations, one name per annotation, deduplicated in the order written.
+//   - A name is normalized, and a path is kept as written. A {KEY} token survives, for a reader that fills it.
+func Dependencies(annotations []Annotation) []string {
 	dependencies := []string{}
 	seen := make(map[string]bool)
-	for _, a := range SelectAnnotations(ScanAnnotations(text), "#DEP") {
+	for _, a := range SelectAnnotations(annotations, "#DEP") {
 		if a.Value == "" {
 			continue
 		}
@@ -147,5 +152,5 @@ func ScriptDependencies(scriptPath string) ([]string, error) {
 			seen[key] = true
 		}
 	}
-	return dependencies, nil
+	return dependencies
 }

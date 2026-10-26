@@ -627,13 +627,15 @@ func IsInsideJob() bool {
 
 // ParsedScript contains the normalized specs and detected script type
 type ParsedScript struct {
-	Specs      *ScriptSpecs  // Normalized scheduler specifications
-	ScriptType SchedulerType // Detected scheduler type from script directives
+	Specs       *ScriptSpecs  // Normalized scheduler specifications
+	ScriptType  SchedulerType // Detected scheduler type from script directives
+	FromHeaders bool          // The specs came from #KEY: headers, not native directives
 }
 
-// ParseScriptAny parses scheduler directives with the current scheduler's parser, then the others.
+// ParseScriptAny reads the resources a script asks for from one source.
+//   - The first source the script has wins whole: the current scheduler's directives, then the #KEY: resource headers, then another scheduler's directives.
+//   - Sources are never merged field by field. A source passed over prints one note.
 //   - A script written for one scheduler can run on another.
-//   - No directives returns nil, nil.
 func ParseScriptAny(scriptPath string) (*ParsedScript, error) {
 	// Determine current scheduler type — use active scheduler if already initialized.
 	var currentType SchedulerType
@@ -643,57 +645,52 @@ func ParseScriptAny(scriptPath string) (*ParsedScript, error) {
 		currentType = DetectType()
 	}
 
-	// Try current scheduler first, then others
-	tryOrder := []SchedulerType{}
-
-	// Add current scheduler first (if known)
 	if currentType != SchedulerUnknown {
-		tryOrder = append(tryOrder, currentType)
-	}
-
-	// Add other schedulers
-	allTypes := []SchedulerType{SchedulerSLURM, SchedulerPBS, SchedulerLSF, SchedulerHTCondor}
-	for _, st := range allTypes {
-		if st != currentType {
-			tryOrder = append(tryOrder, st)
+		if parsed, err := parseNativeScript(scriptPath, currentType); err != nil || parsed != nil {
+			return noteIgnoredSources(scriptPath, parsed, err)
 		}
 	}
-
-	// Try each scheduler parser
-	for _, schedType := range tryOrder {
-		var specs *ScriptSpecs
-		var err error
-
-		switch schedType {
-		case SchedulerSLURM:
-			specs, err = TryParseSlurmScript(scriptPath)
-		case SchedulerPBS:
-			specs, err = TryParsePbsScript(scriptPath)
-		case SchedulerLSF:
-			specs, err = TryParseLsfScript(scriptPath)
-		case SchedulerHTCondor:
-			// Only parse as HTCondor if the file has the native .sub extension.
-			if strings.HasSuffix(scriptPath, ".sub") {
-				specs, err = TryParseHTCondorScript(scriptPath)
-			}
-		default:
+	if parsed, err := parseHeaderScript(scriptPath, currentType); err != nil || parsed != nil {
+		return noteIgnoredSources(scriptPath, parsed, err)
+	}
+	for _, schedType := range []SchedulerType{SchedulerSLURM, SchedulerPBS, SchedulerLSF, SchedulerHTCondor} {
+		if schedType == currentType {
 			continue
 		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		// If we found directives, return the result
-		if specs != nil && HasSchedulerSpecs(specs) {
-			return &ParsedScript{
-				Specs:      specs,
-				ScriptType: schedType,
-			}, nil
+		if parsed, err := parseNativeScript(scriptPath, schedType); err != nil || parsed != nil {
+			return noteIgnoredSources(scriptPath, parsed, err)
 		}
 	}
 
 	// No scheduler directives found in any format
+	return nil, nil
+}
+
+// parseNativeScript reads the directives written for one scheduler, or returns nil when the script has none.
+func parseNativeScript(scriptPath string, schedType SchedulerType) (*ParsedScript, error) {
+	var specs *ScriptSpecs
+	var err error
+	switch schedType {
+	case SchedulerSLURM:
+		specs, err = TryParseSlurmScript(scriptPath)
+	case SchedulerPBS:
+		specs, err = TryParsePbsScript(scriptPath)
+	case SchedulerLSF:
+		specs, err = TryParseLsfScript(scriptPath)
+	case SchedulerHTCondor:
+		// Only parse as HTCondor if the file has the native .sub extension.
+		if strings.HasSuffix(scriptPath, ".sub") {
+			specs, err = TryParseHTCondorScript(scriptPath)
+		}
+	default:
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if specs != nil && HasSchedulerSpecs(specs) {
+		return &ParsedScript{Specs: specs, ScriptType: schedType}, nil
+	}
 	return nil, nil
 }
 

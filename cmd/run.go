@@ -71,12 +71,21 @@ var runCmd = &cobra.Command{
 	Short: "Run a script and auto-solve the dependencies by #DEP tags",
 	Long: `Execute a script with automatic dependency resolution.
 
-The script can contain these comment tags:
-  - #DEP: name/version   Declares a dependency, loaded automatically
-  - #DEP: /path/env.img  Declares an overlay file (.sqf or .img)
-  - #CNT <args>          Extra condatainer flags (see Container Flags)
+The script can contain these comment tags in its header:
+  - #DEP: name/version    Declares a dependency, loaded automatically
+  - #DEP: /path/env.img   Declares an overlay file (.sqf or .img)
+  - #CNT <args>           Extra condatainer flags (see Container Flags)
+  - #NCPU: 4              CPUs per task
+  - #MEM: 16G             Memory per node
+  - #TIME: 2h             Walltime
+  - #GPU: a100:2          GPUs per node: N, TYPE or TYPE:N
+  - #NAME:                Job name
+  - #OUTPUT: #ERROR:      Log files (stdout, stderr)
+  - #PARTITION: #ACCOUNT: Partition and account
 
-A submitted job gets the shell's environment.`,
+A script with any resource is submitted as a job and gets current shell's env.
+It can carry scheduler directives (e.g. #SBATCH), but only ONE set is read:
+  Current scheduler | TAG: | another scheduler.`,
 	Example: `  condatainer run script.sh                          # Check dependencies, then run
   condatainer run script.sh arg1 arg2                # Pass arguments to the script
   condatainer run -o log/s1.out run_tool.sh sample1  # Override stdout
@@ -410,6 +419,9 @@ func setDefaultWorkDir(specs *scheduler.ScriptSpecs) {
 //   - On failure: prints a warning and returns (scriptPath, nil).
 func resolveScriptAndSpecs(scriptPath string) (string, *scheduler.ScriptSpecs) {
 	specs, err := scheduler.ReadScriptSpecsFromPath(scriptPath)
+	if errors.Is(err, scheduler.ErrInvalidHeader) {
+		ExitWithError("%v", err)
+	}
 	if err != nil {
 		utils.PrintWarning("Failed to parse scheduler specs: %v", err)
 		return scriptPath, nil

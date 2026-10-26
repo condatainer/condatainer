@@ -19,6 +19,13 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
   - They are applied once, in `buildHelperScriptSpecs`.
   - There is no script-header tier. `#NCPU:` and `#MEM:` describe what the workload needs. Account and partition describe the user's own cluster access, which a script cannot know.
 
+## Source index
+
+- An HTTP source lists its helpers in `index/helpers.json`. A directory source has no index, and its helpers are read from their files.
+- Each entry carries `sha256` of the script bytes. A client then tells whether an added copy is current without downloading it.
+- An entry with no `sha256` makes that source's helper index unreadable. A half-read index would report every helper as changed.
+- `description` is optional. A script with no `#DESC:` is searched by name only.
+
 ## Binds
 
 - A `#BIND:` value reaches the wrapper's shell single-quoted, as one word. A space, a quote or a command substitution in it, or in a `#PARAM:` default, is text and never runs.

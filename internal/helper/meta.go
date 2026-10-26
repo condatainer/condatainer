@@ -253,6 +253,11 @@ func ScriptDescription(scriptPath string) string {
 	if err != nil {
 		return ""
 	}
+	return descriptionOf(text)
+}
+
+// descriptionOf returns the first #DESC: value in a script's header block, or "".
+func descriptionOf(text []byte) string {
 	description, _ := utils.FindAnnotation(utils.ScanAnnotations(text), "#DESC")
 	return description
 }

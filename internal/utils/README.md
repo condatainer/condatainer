@@ -19,11 +19,15 @@
 
 - `ScanAnnotations` is the one place a `#KEY: value ## note` line is tokenized. Recipes, user scripts, helper scripts and project scanning all read through it, so a key means the same everywhere.
 - A package owns the meaning of its own keys. This package knows the shape of a line and nothing about what a key does.
-- Position carries no meaning. There is no header block and nothing bounds the scan, so a recipe that writes a job script in a heredoc also declares whatever that script declares.
+- Only the header block declares: the leading blank and comment lines, up to the first line of code. A later line is ignored and warned about, never silently dropped.
+  - A recipe that writes a job script in a heredoc declares nothing of that script's.
+  - Schedulers read their directives the same way, and `HeaderEnd` is the one place the boundary is decided.
 - A value ends at the first `##`, which starts a comment. A single `#` is part of the value, so a URL fragment or a colour code survives.
 - An upper-case key keeps prose out: `# note: rerun weekly` is a comment, `#DEP: star/2.7.11b` is a declaration.
 - Scheduler directives are not annotations. `#SBATCH --time=01:00:00` has colons in its value, so they are matched by prefix and handed to the scheduler packages verbatim.
 - `StripComments` is what the keys hash. It removes whole-line comments only, since a trailing `#` may belong to shell (`echo "a # b"`, `${v#pre}`). It never touches what is stored or what runs.
+- A flag header is on when its line is present. `Flag` accepts no value or `true`, so `false` cannot read as on.
+- `Reject` names the first listed key a script writes. A consumer calls it for the shared headers it does not honor, so there is no table of script kinds.
 - `ParseValueList` reads a `#PH:` or `#VALUE:` list. A comma sorts newest first, a pipe keeps the order written, `*` is always last, and `values[0]` is the default offered.
 
 ## Module names

@@ -84,41 +84,17 @@ func detectScheduler(noSubmit bool) (scheduler.Scheduler, error) {
 	return sched, nil
 }
 
-// ParseGPUSpec parses a GPU spec into a GpuSpec:
-//   - "a100:2" is two a100s, and "a100" is one.
-//   - "2" is two of type "gpu".
-//   - "" is nil.
-func ParseGPUSpec(s string) *scheduler.GpuSpec {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	if idx := strings.LastIndex(s, ":"); idx >= 0 {
-		typePart := strings.TrimSpace(s[:idx])
-		countPart := strings.TrimSpace(s[idx+1:])
-		if n, err := strconv.Atoi(countPart); err == nil && n > 0 {
-			if typePart == "" {
-				typePart = "gpu"
-			}
-			return &scheduler.GpuSpec{Type: typePart, Count: n}
-		}
-	}
-	if n, err := strconv.Atoi(s); err == nil && n > 0 {
-		return &scheduler.GpuSpec{Type: "gpu", Count: n}
-	}
-	return &scheduler.GpuSpec{Type: s, Count: 1}
-}
-
-// FormatGpuSpec formats a ResourceSpec's GPU field back to a display string.
-// Returns "" when no GPU is set.
+// FormatGpuSpec formats a ResourceSpec's GPU field as a string scheduler.ParseGPU reads back.
+//   - A type of "" or "gpu" means any GPU, so only the count is written.
+//   - Returns "" when no GPU is set.
 func FormatGpuSpec(spec *scheduler.ResourceSpec) string {
 	if spec == nil || spec.Gpu == nil {
 		return ""
 	}
-	if spec.Gpu.Raw != "" {
-		return spec.Gpu.Raw
-	}
-	if spec.Gpu.Count > 1 {
+	switch {
+	case spec.Gpu.Type == "" || spec.Gpu.Type == "gpu":
+		return strconv.Itoa(spec.Gpu.Count)
+	case spec.Gpu.Count > 1:
 		return fmt.Sprintf("%s:%d", spec.Gpu.Type, spec.Gpu.Count)
 	}
 	return spec.Gpu.Type
@@ -151,9 +127,7 @@ func resolveSpec(scriptPath string, overrides *scheduler.ResourceSpec) *schedule
 	if meta.Walltime > 0 {
 		scriptDefaults.Time = meta.Walltime
 	}
-	if meta.GPU != "" {
-		scriptDefaults.Gpu = ParseGPUSpec(meta.GPU)
-	}
+	scriptDefaults.Gpu = meta.GPU
 	base.Override(scriptDefaults)
 
 	// User overrides (CLI flags or server request) take highest priority.

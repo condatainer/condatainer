@@ -170,10 +170,10 @@ module load alpha/1.0 beta/2.0
 	}
 }
 
-// Position carries no meaning: a declaration counts wherever it is written,
-// including inside a heredoc that writes another script.
-func TestScriptDependenciesReadsAnnotationsAnywhere(t *testing.T) {
-	tmp, err := os.CreateTemp("", "script-deps-anywhere-*.sh")
+// Only the header block declares: a #DEP: after the first command, or inside a heredoc
+// that writes another script, is ignored.
+func TestScriptDependenciesReadsTheHeaderOnly(t *testing.T) {
+	tmp, err := os.CreateTemp("", "script-deps-header-*.sh")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestScriptDependenciesReadsAnnotationsAnywhere(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	expected := []string{"foo/1.0", "below/3.0", "heredoc/4.0"}
+	expected := []string{"foo/1.0"}
 	if len(deps) != len(expected) {
 		t.Fatalf("expected %v, got %v", expected, deps)
 	}

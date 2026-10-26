@@ -181,7 +181,9 @@ func ApplyHistoryRun(opts *helper.RunOptions, r *helper.HelperRun) {
 			opts.Resources.Time = r.Walltime()
 		}
 		if r.GPU != "" {
-			opts.Resources.Gpu = helper.ParseGPUSpec(r.GPU)
+			if gpu, err := scheduler.ParseGPU(r.GPU); err == nil {
+				opts.Resources.Gpu = gpu
+			}
 		}
 	}
 	if r.EnvOverlay != "" {
@@ -336,8 +338,10 @@ func PromptSettings(ctx context.Context,
 	gpuDisp := helper.FormatGpuSpec(opts.Resources)
 	if gpuDisp == "" {
 		if v, ok := saved["gpu"]; ok && v != "" && v != "(none)" {
-			opts.Resources.Gpu = helper.ParseGPUSpec(v)
-			gpuDisp = v
+			if gpu, err := scheduler.ParseGPU(v); err == nil {
+				opts.Resources.Gpu = gpu
+				gpuDisp = v
+			}
 		}
 	}
 	if gpuDisp == "" {
@@ -493,7 +497,12 @@ func PromptSettings(ctx context.Context,
 				opts.Resources.Time = d
 				confirm = utils.FormatDuration(d)
 			case "g", "gpu":
-				opts.Resources.Gpu = helper.ParseGPUSpec(v)
+				gpu, err := scheduler.ParseGPU(v)
+				if err != nil {
+					fmt.Printf("[?] Invalid GPU %q — try again: ", v)
+					continue
+				}
+				opts.Resources.Gpu = gpu
 				confirm = v
 			default:
 				handled = false

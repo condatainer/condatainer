@@ -247,6 +247,7 @@ func (p *PbsScheduler) ReadScriptSpecs(scriptPath string) (*ScriptSpecs, error) 
 	if err != nil {
 		return nil, err
 	}
+	lines = headerLines(scriptPath, lines, p.extractDirectives)
 	return parseScript(scriptPath, lines, p.extractDirectives, p.parseRuntimeConfig, p.parseResourceSpec)
 }
 

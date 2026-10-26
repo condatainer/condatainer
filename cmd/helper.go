@@ -553,7 +553,11 @@ func runHelper(cmd *cobra.Command, args []string) error {
 			overrides.Time = d
 		}
 		if postFlags.gpuSet {
-			overrides.Gpu = helper.ParseGPUSpec(postFlags.gpu)
+			gpu, parseErr := scheduler.ParseGPU(postFlags.gpu)
+			if parseErr != nil {
+				return fmt.Errorf("invalid --gpu value %q: %w", postFlags.gpu, parseErr)
+			}
+			overrides.Gpu = gpu
 		}
 	}
 

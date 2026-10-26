@@ -160,6 +160,7 @@ func (s *SlurmScheduler) ReadScriptSpecs(scriptPath string) (*ScriptSpecs, error
 	if err != nil {
 		return nil, err
 	}
+	lines = headerLines(scriptPath, lines, s.extractDirectives)
 	return parseScript(scriptPath, lines, s.extractDirectives, s.parseRuntimeConfig, s.parseResourceSpec)
 }
 

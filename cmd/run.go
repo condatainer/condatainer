@@ -8,7 +8,6 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -256,7 +255,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 			override.Time = d
 		}
 		if runGPU != "" {
-			gpu, err := parseGpuFlag(runGPU)
+			gpu, err := scheduler.ParseGPU(runGPU)
 			if err != nil {
 				ExitWithError("--gpu %q: %v", runGPU, err)
 			}
@@ -1065,30 +1064,6 @@ func buildArraySpec() (*scheduler.ArraySpec, error) {
 }
 
 // parseArgsInScript extracts arguments from #CNT comments in the script
-// parseGpuFlag parses --gpu values: "N", "TYPE:N", or "TYPE" (count defaults to 1).
-func parseGpuFlag(s string) (*scheduler.GpuSpec, error) {
-	if before, after, found := strings.Cut(s, ":"); found {
-		// TYPE:N
-		count, err := strconv.Atoi(after)
-		if err != nil || count <= 0 {
-			return nil, fmt.Errorf("invalid GPU count %q (expected TYPE:N, e.g. a100:2)", after)
-		}
-		return &scheduler.GpuSpec{Type: strings.ToLower(before), Count: count}, nil
-	}
-	// bare N or bare TYPE
-	if count, err := strconv.Atoi(s); err == nil {
-		if count <= 0 {
-			return nil, fmt.Errorf("GPU count must be > 0")
-		}
-		return &scheduler.GpuSpec{Count: count}, nil
-	}
-	// TYPE only — default count 1
-	if s == "" {
-		return nil, fmt.Errorf("empty GPU spec")
-	}
-	return &scheduler.GpuSpec{Type: strings.ToLower(s), Count: 1}, nil
-}
-
 func parseArgsInScript(scriptPath string) ([]string, error) {
 	data, err := os.ReadFile(scriptPath)
 	if err != nil {

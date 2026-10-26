@@ -119,7 +119,7 @@ func IsPathDep(value string) bool {
 
 // ScriptDependencies returns the dependencies a script's #DEP: annotations declare, deduplicated.
 //   - A name is normalized, and a path is kept as written.
-//   - An annotation counts wherever it is written.
+//   - Only the header block is read. A #DEP: after the first command is ignored and warned about.
 //   - Only #DEP: counts. A `module load` line names the site's module tree, not an artifact.
 func ScriptDependencies(scriptPath string) ([]string, error) {
 	text, err := os.ReadFile(scriptPath)
@@ -129,6 +129,8 @@ func ScriptDependencies(scriptPath string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("failed to open script: %w", err)
 	}
+
+	WarnStray(scriptPath, StrayAnnotations(text, "#DEP"))
 
 	dependencies := []string{}
 	seen := make(map[string]bool)

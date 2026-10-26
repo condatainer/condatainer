@@ -323,7 +323,9 @@ func (s *srv) handleHelperResources(w http.ResponseWriter, r *http.Request, name
 			}
 		}
 		if gpuStr != "" {
-			overrides.Gpu = helper.ParseGPUSpec(gpuStr)
+			if gpu, err := scheduler.ParseGPU(gpuStr); err == nil {
+				overrides.Gpu = gpu
+			}
 		}
 	}
 	spec := helper.ResolveResources(r.Context(), scriptPath, overrides)
@@ -494,7 +496,12 @@ func (s *srv) handleHelperStart(w http.ResponseWriter, r *http.Request, name str
 			}
 		}
 		if req.GPU != "" {
-			startOverrides.Gpu = helper.ParseGPUSpec(req.GPU)
+			gpu, err := scheduler.ParseGPU(req.GPU)
+			if err != nil {
+				http.Error(w, "invalid gpu: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			startOverrides.Gpu = gpu
 		}
 	}
 

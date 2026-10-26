@@ -45,6 +45,18 @@ func readFileLines(path string) ([]string, error) {
 	return lines, nil
 }
 
+// headerLines returns the header block of a script: the lines a scheduler reads directives from.
+//   - A directive after the first command is ignored and warned about, as the scheduler ignores it.
+func headerLines(path string, lines []string, extract func([]string) []string) []string {
+	end := utils.HeaderEnd(lines)
+	for i := end; i < len(lines); i++ {
+		if len(extract([]string{lines[i]})) > 0 {
+			utils.WarnIgnoredLine(path, i+1, "a scheduler directive")
+		}
+	}
+	return lines[:end]
+}
+
 // parseScript is the two-stage pipeline behind each scheduler's ReadScriptSpecs.
 //   - Stage 1, ParseRuntimeConfig (job control), is critical. An error stops it, and its fields never reach RemainingFlags.
 //   - Stage 2, parseResourceSpec (geometry), is best effort. A failure returns nil, and the script becomes passthrough with a warning.

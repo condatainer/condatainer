@@ -178,7 +178,7 @@ func TestDefinitionRefusesSourceAndInput(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := parse(t, "recipes/ubuntu24/thing.def",
-				"Bootstrap: docker\nFrom: ubuntu:24.04\n"+tc.header+"\n")
+				tc.header+"\nBootstrap: docker\nFrom: ubuntu:24.04\n")
 			err := rec.Validate()
 			if err == nil || !strings.Contains(err.Error(), tc.key+":") ||
 				!strings.Contains(err.Error(), "definition") {

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -160,15 +159,5 @@ func TestRemoveDeletesOnlyWhatWasAdded(t *testing.T) {
 	}
 	if _, err := findRemovable("absent", dirs); !errors.Is(err, ErrNotAdded) {
 		t.Errorf("a missing name: %v", err)
-	}
-}
-
-func TestRemoveRefusesAHelperWithARunInProgress(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	if err := AppendHistory(&HelperRun{ID: "r1", Name: "svc", Status: "running", StartedAt: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := PlanRemove([]string{"svc"}, ""); !errors.Is(err, ErrInUse) {
-		t.Errorf("err = %v", err)
 	}
 }

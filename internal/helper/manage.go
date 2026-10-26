@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,7 +22,6 @@ var (
 	ErrNotAdded     = errors.New("helper: not added")
 	ErrUnrecorded   = errors.New("helper: file was not installed by add")
 	ErrHashMismatch = errors.New("helper: script does not match its index hash")
-	ErrInUse        = errors.New("helper: a run is in progress")
 )
 
 // UpgradeAction is what an upgrade does with one added helper.
@@ -72,8 +70,8 @@ func fetchScript(ctx context.Context, entry RemoteScriptEntry) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !bytes.HasPrefix(data, []byte("#!")) {
-		return nil, fmt.Errorf("%w: %s has no #! line", ErrNotScript, entry.Path)
+	if err := utils.CheckShebang(data); err != nil {
+		return nil, fmt.Errorf("%w: %s: %v", ErrNotScript, entry.Path, err)
 	}
 	if hashHex(data) != entry.SHA256 {
 		return nil, fmt.Errorf("%w: %s", ErrHashMismatch, entry.Path)
@@ -285,17 +283,13 @@ type RemoveItem struct {
 
 // PlanRemove says what remove would delete for each named helper.
 //   - layer limits it to one layer. Empty takes the nearest added copy.
-//   - A file add did not install is left, and a helper with a run in progress is refused.
+//   - A file add did not install is left.
 //   - A name that cannot be removed is an error, and the others are still planned. The errors are joined.
 func PlanRemove(names []string, layer config.DataLayer) ([]RemoveItem, error) {
 	dirs := scriptDirs(layer)
 	var items []RemoveItem
 	var errs []error
 	for _, name := range names {
-		if runs, _ := RunningHelpers(name); len(runs) > 0 {
-			errs = append(errs, fmt.Errorf("%s: %w", name, ErrInUse))
-			continue
-		}
 		item, err := findRemovable(name, dirs)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))

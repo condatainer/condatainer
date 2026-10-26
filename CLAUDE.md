@@ -12,6 +12,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 
 - Tests skip when `mksquashfs`, `squashfuse` or `fuse-overlayfs` are missing. Put the libexec `bin` and `lib/apptainer/bin` on `PATH` to run them.
 - Tests that read config call `testenv.Isolate()` in `TestMain`. The root dir is cached, so isolating later is too late.
+- `gopls` and `staticcheck` are in `$(go env GOPATH)/bin`, which is not on `PATH`. Run `staticcheck ./...` after editing Go files.
 - `golang.org/x/crypto` is replaced by `github.com/condatainer/x-crypto`. A workflow bumps it.
 
 ## Architecture

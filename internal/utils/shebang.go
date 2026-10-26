@@ -3,12 +3,12 @@ package utils
 import (
 	"bytes"
 	"errors"
-	"fmt"
+	"os"
 	"strings"
 )
 
 // ErrShebang reports a script whose first line is not an allowed interpreter line.
-var ErrShebang = errors.New("script: unsupported interpreter line")
+var ErrShebang = errors.New("first line must be #!/bin/bash or #!/bin/env <interpreter>")
 
 // ShebangCommand returns the interpreter and the argument a script's first line names, as the kernel reads it.
 //   - The argument is the rest of the line as one string, and "" when there is none.
@@ -33,7 +33,7 @@ func CheckShebang(script []byte) error {
 	line := strings.TrimSpace(string(first))
 	fields := strings.Fields(strings.TrimPrefix(line, "#!"))
 	if !strings.HasPrefix(line, "#!") || len(fields) == 0 {
-		return fmt.Errorf("%w: the first line must start with #!", ErrShebang)
+		return ErrShebang
 	}
 	switch fields[0] {
 	case "/bin/bash", "/usr/bin/bash":
@@ -43,5 +43,17 @@ func CheckShebang(script []byte) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("%w: %q is not #!/bin/bash, #!/usr/bin/bash, #!/usr/bin/env <interpreter> or #!/bin/env <interpreter>", ErrShebang, line)
+	return ErrShebang
+}
+
+// CheckShebangFile applies CheckShebang to the head of a file.
+func CheckShebangFile(file string) error {
+	f, err := os.Open(file)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	head := make([]byte, 512)
+	n, _ := f.Read(head)
+	return CheckShebang(head[:n])
 }

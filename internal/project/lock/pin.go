@@ -166,6 +166,30 @@ func resolveCandidate(root, request, target string, opts PinOptions) (store.Cand
 	return candidate, nil
 }
 
+// installedVersionsAdmitted lists the installed artifacts, as name/version and oldest first, that a shorter version prefix such as star/2.7 admits.
+func installedVersionsAdmitted(nameVersion string, opts PinOptions) []string {
+	want, err := utils.ParseDep(nameVersion)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var found []string
+	for _, candidate := range store.Scan(store.ScanOptions{Dirs: opts.SearchDirs}).Candidates {
+		have, err := utils.ParseDep(candidate.Name)
+		if err != nil || have.Name != want.Name || seen[candidate.Name] || !want.Satisfies(have.Version) {
+			continue
+		}
+		seen[candidate.Name] = true
+		found = append(found, candidate.Name)
+	}
+	sort.Slice(found, func(i, j int) bool {
+		a, _ := utils.ParseDep(found[i])
+		b, _ := utils.ParseDep(found[j])
+		return utils.CompareVersions(a.Version, b.Version) < 0
+	})
+	return found
+}
+
 // resolveByName finds the artifact a name request means with no identity given, and reports the other installed identities for that name.
 //   - It searches in the configured order, so a project pins what the name would mount outside a project.
 //   - Within one root the flat name--version file wins: the store's destination rule puts exactly one identity there.
@@ -176,6 +200,10 @@ func resolveByName(request string, opts PinOptions) (store.Candidate, []store.Ca
 	}
 	report := store.Scan(store.ScanOptions{Dirs: opts.SearchDirs, Name: name})
 	if len(report.Candidates) == 0 {
+		if versions := installedVersionsAdmitted(name, opts); len(versions) > 0 {
+			return store.Candidate{}, nil, fmt.Errorf("%w: %s is not a full version. Installed: %s. Write one in the script",
+				ErrNoCandidate, name, strings.Join(versions, ", "))
+		}
 		return store.Candidate{}, nil, fmt.Errorf("%w: %s is not installed", ErrNoCandidate, name)
 	}
 

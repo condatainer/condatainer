@@ -72,6 +72,10 @@ var runCmd = &cobra.Command{
 	Short: "Run a script and auto-solve the dependencies by #DEP tags",
 	Long: `Execute a script with automatic dependency resolution.
 
+The first line picks the interpreter:
+  Bash       : #!/bin/bash or #!/usr/bin/bash
+  Interpreter: #!/bin/env  or #!/usr/bin/env <interpreter>
+
 The script can contain these comment tags in its header:
   - #DEP: name/version    Declares a dependency, loaded automatically
   - #DEP: /path/env.img   Declares an overlay file (.sqf or .img)
@@ -209,6 +213,9 @@ func runScript(cmd *cobra.Command, args []string) error {
 
 	// 1. Read specs → resolve the content script (HTCondor: .sub → .sh; others: identity)
 	contentScript, scriptSpecs := resolveScriptAndSpecs(scriptPath)
+	if err := requireInterpreterLine(contentScript); err != nil {
+		ExitWithError("%v", err)
+	}
 
 	// CLI -o/-e/-n override script directives (highest priority)
 	if scriptSpecs != nil {
@@ -587,24 +594,11 @@ func liveJobResourceEnvSettings() []string {
 	return scheduler.ResourceEnvVars(jobRes)
 }
 
-// runLocally executes the script directly via apptainer with the given overlays.
+// runLocally executes the script in the container with the given overlays.
 func runLocally(ctx context.Context, contentScript string, overlays []string, specs *scheduler.ScriptSpecs, scriptArgs []string) error {
-	// Disable module commands and run the script
-	executionScript := `module() { :; }
-ml() { :; }
-export -f module ml
-`
-	fileInfo, err := os.Stat(contentScript)
+	command, err := scriptCommand(contentScript, scriptArgs)
 	if err != nil {
-		ExitWithError("Failed to stat script: %v", err)
-	}
-
-	if fileInfo.Mode()&0111 != 0 {
-		// Script is executable: $0 = contentScript, $@ = scriptArgs
-		executionScript += `"$0" "$@"`
-	} else {
-		// Run with bash: $0 = contentScript, $@ = scriptArgs
-		executionScript += `bash "$0" "$@"`
+		ExitWithError("%v", err)
 	}
 
 	// Auto-bind the script's directory so it's accessible inside the container.
@@ -625,7 +619,7 @@ export -f module ml
 	options := execpkg.Options{
 		Overlays:     overlays,
 		BindLibexec:  bindLibexec,
-		Command:      append([]string{"/bin/bash", "-c", executionScript, contentScript}, scriptArgs...),
+		Command:      command,
 		WritableImg:  runWritableImg,
 		EnvSettings:  append(resourceEnvSettings(specs), runEnvSettings...),
 		BindPaths:    bindPaths,
@@ -645,6 +639,24 @@ export -f module ml
 		return err
 	}
 	return nil
+}
+
+// scriptCommand returns the command that runs a script inside the container.
+//   - The interpreter and its argument come from the script's first line, as the kernel reads them. The executable bit is not read.
+func scriptCommand(script string, args []string) ([]string, error) {
+	text, err := os.ReadFile(script)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read script: %w", err)
+	}
+	interpreter, argument, err := utils.ShebangCommand(text)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", script, err)
+	}
+	command := []string{interpreter}
+	if argument != "" {
+		command = append(command, argument)
+	}
+	return append(append(command, script), args...), nil
 }
 
 // printDryRunSummary prints what condatainer run would do without executing.

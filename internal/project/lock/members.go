@@ -59,22 +59,23 @@ func (m *members) ignores(rel string, isDir bool) bool {
 	if isDir && (m.skip[path.Base(rel)] || strings.HasPrefix(path.Base(rel), ".")) {
 		return true
 	}
+	return m.gitIgnored(rel, isDir) || m.extra.Match(rel, isDir) == utils.IgnoreYes
+}
+
+// gitIgnored applies the `.gitignore` of the path's directory and of each parent; the deepest file that has a verdict decides.
+func (m *members) gitIgnored(rel string, isDir bool) bool {
 	for dir := path.Dir(rel); ; dir = path.Dir(dir) {
 		if dir == "." {
 			dir = ""
 		}
 		sub := strings.TrimPrefix(strings.TrimPrefix(rel, dir), "/")
 		if verdict := m.gitignore(dir).Match(sub, isDir); verdict != utils.IgnoreNone {
-			if verdict == utils.IgnoreYes {
-				return true
-			}
-			break
+			return verdict == utils.IgnoreYes
 		}
 		if dir == "" {
-			break
+			return false
 		}
 	}
-	return m.extra.Match(rel, isDir) == utils.IgnoreYes
 }
 
 // gitignore returns the rules of one directory's `.gitignore`, read once.

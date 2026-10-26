@@ -67,7 +67,7 @@ var helperCmd = &cobra.Command{
 - It returns once the job is submitted, and prints the access URL when the app is ready.
 - --wait stays attached until the app is ready.
 - Each helper has its own flags: condatainer helper <name> -h
-- Scheduler options (cpus, mem, time, gpu, account, partition) can be set per run or saved as defaults.
+- Scheduler options (cpu, mem, time, gpu, account, partition) can be set per run or saved as defaults.
 - --exclude-nodes keeps the job off the named nodes for one run. The default list is the scheduler.exclude_nodes config key.
 - It cannot run inside a container or a scheduler job.`,
 	Example: `  condatainer helper                     # Show running apps
@@ -91,7 +91,7 @@ func init() {
 	settings.AddSwitch(helperCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run headless on this node)"))
 
 	// Stop flag parsing after the first positional argument so helper-specific flags
-	// (e.g. -c/--cpus) are passed through to parsePostScriptHelperFlags rather than cobra.
+	// (e.g. -c/--cpu) are passed through to parsePostScriptHelperFlags rather than cobra.
 	helperCmd.Flags().SetInterspersed(false)
 }
 
@@ -152,7 +152,7 @@ func parsePostScriptHelperFlags(args []string) (postScriptHelperFlags, []string,
 		if strings.HasPrefix(arg, "--") {
 			name, val, hasVal := strings.Cut(arg, "=")
 			switch name {
-			case "--cpus":
+			case "--cpu":
 				v, err := valueFor(name, &i, val, hasVal)
 				if err != nil {
 					return flags, nil, err
@@ -863,7 +863,7 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 
 	switch sub {
 	case "-h", "--help", "":
-		keys := []string{"cpus", "mem", "time", "gpu", "account", "partition"}
+		keys := []string{"cpu", "mem", "time", "gpu", "account", "partition"}
 		for _, p := range params {
 			keys = append(keys, p.Key)
 		}
@@ -878,8 +878,8 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 		fmt.Println("  show        Show saved defaults")
 		fmt.Printf("\nExamples:\n")
 		fmt.Printf("  condatainer helper %s config show\n", name)
-		fmt.Printf("  condatainer helper %s config set cpus 4\n", name)
-		fmt.Printf("  condatainer helper %s config get cpus\n", name)
+		fmt.Printf("  condatainer helper %s config set cpu 4\n", name)
+		fmt.Printf("  condatainer helper %s config get cpu\n", name)
 		fmt.Printf("\nSaveable keys: %s\n", strings.Join(keys, ", "))
 
 	case "path":
@@ -939,7 +939,7 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 			}
 		}
 		rows = append(rows,
-			configRow{"cpus", resDefault(cpuDef)},
+			configRow{"cpu", resDefault(cpuDef)},
 			configRow{"mem", resDefault(memDef)},
 			configRow{"time", resDefault(timeDef)},
 			configRow{"gpu", "(none)"},
@@ -950,7 +950,7 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 			rows = append(rows, configRow{strings.ToLower(pp.Key), pp.Default})
 		}
 
-		maxKey := 4 // len("cpus")
+		maxKey := 4 // len("time")
 		for _, r := range rows {
 			if len(r.key) > maxKey {
 				maxKey = len(r.key)

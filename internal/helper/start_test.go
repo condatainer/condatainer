@@ -1,6 +1,8 @@
 package helper
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,8 +38,8 @@ func TestStartThenReadyKeepsNode(t *testing.T) {
 	if run.Status != "running" || run.Node != "node07.cluster.edu" {
 		t.Errorf("after ready: status %q, node %q; want running, node07.cluster.edu", run.Status, run.Node)
 	}
-	if run.Port != 8080 || run.Walltime != time.Hour {
-		t.Errorf("port %d, walltime %v; want 8080, 1h", run.Port, run.Walltime)
+	if run.Port != 8080 || run.Walltime() != time.Hour {
+		t.Errorf("port %d, walltime %v; want 8080, 1h", run.Port, run.Walltime())
 	}
 }
 
@@ -68,5 +70,18 @@ func TestShortNode(t *testing.T) {
 		if got := ShortNode(in); got != want {
 			t.Errorf("ShortNode(%q) = %q; want %q", in, got, want)
 		}
+	}
+}
+
+func TestHistoryRecordStoresWalltimeInSeconds(t *testing.T) {
+	data, err := json.Marshal(HelperRun{ID: "x", WalltimeSecs: 43200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"walltime_secs":43200`) {
+		t.Errorf("record = %s; want walltime_secs in seconds", data)
+	}
+	if got := (&HelperRun{WalltimeSecs: 43200}).Walltime(); got != 12*time.Hour {
+		t.Errorf("Walltime() = %v, want 12h", got)
 	}
 }

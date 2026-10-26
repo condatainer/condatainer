@@ -43,6 +43,8 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - Recipes, user scripts and project scanning all read through it, so a key means the same everywhere and adding one happens once.
 - Position carries no meaning. There is no header block and nothing bounds the scan.
 - A recipe that writes a job script in a heredoc therefore also declares whatever that script declares. Nothing distinguishes the two without parsing shell.
+- A value ends at the first `##`, which starts a comment. A single `#` is part of the value, so a URL fragment or a colour code survives.
+- Helper scripts read their headers through it too, so one rule decides a value everywhere.
 - An upper-case key keeps prose out: `# note: rerun weekly` is a comment, `#DEP: star/2.7.11b` is a declaration.
 - Scheduler directives are not annotations. `#SBATCH --time=01:00:00` has colons in its value, so they are matched by prefix and handed to the scheduler packages verbatim.
 - `StripComments` is what the keys hash. It removes whole-line comments, so editing a comment moves neither key.
@@ -64,7 +66,7 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - The architecture is `amd64` or `arm64`, Go's spelling, which artifacts and OCI indexes also use.
 - It is read as a word directly after the name. A URL contains `://` and a prompt starts with `ask:`, so neither can be mistaken for one.
 - Vendors spell architectures too many ways for a placeholder to stand in, so each architecture is a literal line.
-- A name with lines only for other architectures is an error, not an unset `$CNT_SRC_<name>`.
+- A name with lines only for other architectures is an error, not an unset `$CNT_BUILD_SRC_<name>`.
 - A name is all qualified or all plain. Mixing them would leave "which wins" to declaration order.
 - `Recipe.Prompts` is the one ordered list of questions: the `#INPUT:` prompts, then each `ask:`.
 - `#INPUT:` answers reach the recipe on stdin and `ask:` answers go to the fetch. Putting the recipe's own first tells them apart by count alone.
@@ -143,6 +145,10 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - There is one spelling of a name. `Normalize` decides what a name is, and index keys use that form.
 - A second implementation elsewhere would make one string resolve two ways. The same holds for `CompareVersions` and constraint satisfaction.
 - The two backends must return identical entries for the same collection. A test builds one on disk, serves it over HTTP and diffs the results. That test is the contract.
+- Every format a source serves carries a required `schema_version`: `source.json` and both index files.
+  - An index wraps its entries in an object, since a bare object keyed by name has no room for a version.
+  - A version this build does not read is refused, and a newer one says to update.
+  - A key a reader does not know is ignored. The version rises only for a change an older reader would misread.
 - The caller owns the cache directory and TTL. The package owns everything inside it.
 
 ## Imports

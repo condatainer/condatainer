@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -113,8 +112,8 @@ func (h *httpBackend) entries(ctx context.Context) (map[string]*Entry, error) {
 		return nil, err
 	}
 	var raw map[string]*Entry
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("catalog: %s index: %w", h.src.Name, err)
+	if err := DecodeIndex(data, "recipes", &raw); err != nil {
+		return nil, fmt.Errorf("%s index: %w", h.src.Name, err)
 	}
 	for name, e := range raw {
 		e.Name = name

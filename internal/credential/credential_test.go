@@ -164,3 +164,32 @@ func TestSourceRegistryTokenLivesWithItsSource(t *testing.T) {
 		t.Error("the registry token outlived its source")
 	}
 }
+
+func TestUnknownFieldsSurviveASaveAndARemove(t *testing.T) {
+	f := layerFile(t, "user")
+	seed := `{
+  "auths": {
+    "ghcr.io": {"auth": "eDp5", "expires": "2030-01-01"}
+  },
+  "helpers": {"x": 1}
+}
+`
+	if err := os.WriteFile(f.Path, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(f, Registry, "docker.io", Credential{Username: "u", Secret: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove(f, Registry, "docker.io"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(f.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"expires": "2030-01-01"`, `"helpers"`, `"auth": "eDp5"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("rewritten file lost %s:\n%s", want, data)
+		}
+	}
+}

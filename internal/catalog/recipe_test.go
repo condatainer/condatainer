@@ -26,11 +26,11 @@ const starRecipe = `#!/usr/bin/env bash
 #SBATCH --mem=64G
 
 set -euo pipefail
-cat > "$CNT_TMP/job.sh" <<'EOF'
+cat > "$CNT_BUILD_TMPDIR/job.sh" <<'EOF'
 #SBATCH --this-is-not-a-directive
 #DEP:not/a/dep
 EOF
-STAR --runThreadN "$NCPU" --genomeDir "$CNT_PREFIX/index"
+STAR --runThreadN "$NCPU" --genomeDir "$CNT_BUILD_PREFIX/index"
 `
 
 func parse(t *testing.T, path, body string) *Recipe {
@@ -124,8 +124,10 @@ func TestScanAnnotations(t *testing.T) {
 		{"indented", "  \t#DEP: star/2.7\n", []Annotation{{Key: "#DEP", Value: "star/2.7", Line: 1}}},
 		{"a note is kept apart from the value", "#ENV: PATH={prefix}/bin  ## on PATH\n",
 			[]Annotation{{Key: "#ENV", Value: "PATH={prefix}/bin", Note: "on PATH", Line: 1}}},
-		{"an inline comment is stripped", "#DEP: star/2.7  # the aligner\n",
-			[]Annotation{{Key: "#DEP", Value: "star/2.7", Line: 1}}},
+		{"a single # is part of the value", "#SOURCE: crx https://example.org/a#v2\n",
+			[]Annotation{{Key: "#SOURCE", Value: "crx https://example.org/a#v2", Line: 1}}},
+		{"## ends the value for any key", "#DEP: star/2.7  ## the aligner\n",
+			[]Annotation{{Key: "#DEP", Value: "star/2.7", Note: "the aligner", Line: 1}}},
 		{"a shebang is not an annotation", "#!/bin/bash\n", nil},
 		{"lower-case prose is not an annotation", "# note: rerun weekly\n", nil},
 		{"a bare key without '#' is not an annotation", "TYPE:app\n", nil},

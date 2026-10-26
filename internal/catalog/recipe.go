@@ -286,7 +286,7 @@ func splitNote(s string) (value, note string) {
 }
 
 // SourceURL is one #SOURCE: declaration: a name the recipe body refers to as
-// $CNT_SRC_<name>, and where the file comes from.
+// $CNT_BUILD_SRC_<name>, and where the file comes from.
 //
 // A link only the user holds — expiring, per-user, EULA-gated — is declared with
 // a Prompt instead of a URL, and the tool asks for it. The answer is never
@@ -400,7 +400,7 @@ func scanMalformedSources(text []byte) []string {
 	return out
 }
 
-// validSourceName reports whether name can be the tail of $CNT_SRC_<name>.
+// validSourceName reports whether name can be the tail of $CNT_BUILD_SRC_<name>.
 func validSourceName(name string) bool {
 	if name == "" {
 		return false

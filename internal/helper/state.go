@@ -17,26 +17,26 @@ import (
 
 // HelperRun records one execution of a helper (stored in JSONL history).
 type HelperRun struct {
-	ID          string            `json:"id"`            // "{name}-YYYYMMDD-HHMMSS"
-	Name        string            `json:"name"`          // helper script name
-	JobID       string            `json:"job_id"`        // scheduler job ID or ""
-	Runner      string            `json:"runner"`        // "local", or the scheduler type ("slurm", "pbs", "lsf", "htcondor")
-	Node        string            `json:"node"`          // node name from the "start" event, else from "ready"
-	Port        int               `json:"port"`          // 0 = URL-only service (vscode-tunnel)
-	CWD         string            `json:"cwd"`           // working directory
-	Walltime    time.Duration     `json:"walltime_secs"` // from #TIME: / -t flag
-	CPUs        int               `json:"cpus,omitempty"`
-	Mem         string            `json:"mem,omitempty"`         // e.g. "32GB", "1536MB" — via utils.FormatMemoryMB
-	GPU         string            `json:"gpu,omitempty"`         // e.g. "a100:1"
-	EnvOverlay  string            `json:"env_overlay,omitempty"` // writable .img (-e)
-	Overlays    []string          `json:"overlays,omitempty"`    // read-only .sqf (-o)
-	Params      map[string]string `json:"params,omitempty"`      // resolved #PARAM: values
-	URLPath     string            `json:"url_path"`              // appended to proxy URL (e.g. "?token=abc123")
-	ExternalURL string            `json:"external_url"`          // shown as-is, no proxy (e.g. vscode-tunnel URL)
-	Connect     string            `json:"connect,omitempty"`     // helper.connect at submission: "auto"|"ssh"|"scheduler"|"direct"
-	StartedAt   time.Time         `json:"started_at"`
-	EndedAt     *time.Time        `json:"ended_at,omitempty"`
-	Status      string            `json:"status"` // "pending"|"starting"|"running"|"done"|"failed"
+	ID           string            `json:"id"`            // "{name}-YYYYMMDD-HHMMSS"
+	Name         string            `json:"name"`          // helper script name
+	JobID        string            `json:"job_id"`        // scheduler job ID or ""
+	Runner       string            `json:"runner"`        // "local", or the scheduler type ("SLURM", "PBS", "LSF", "HTCondor")
+	Node         string            `json:"node"`          // node name from the "start" event, else from "ready"
+	Port         int               `json:"port"`          // 0 = URL-only service (vscode-tunnel)
+	CWD          string            `json:"cwd"`           // working directory
+	WalltimeSecs int64             `json:"walltime_secs"` // from #TIME: / -t flag, in seconds
+	CPU          int               `json:"cpu,omitempty"`
+	Mem          string            `json:"mem,omitempty"`         // e.g. "32GB", "1536MB" — via utils.FormatMemoryMB
+	GPU          string            `json:"gpu,omitempty"`         // e.g. "a100:1"
+	EnvOverlay   string            `json:"env_overlay,omitempty"` // writable .img (-e)
+	Overlays     []string          `json:"overlays,omitempty"`    // read-only .sqf (-o)
+	Params       map[string]string `json:"params,omitempty"`      // resolved #PARAM: values
+	URLPath      string            `json:"url_path"`              // appended to proxy URL (e.g. "?token=abc123")
+	ExternalURL  string            `json:"external_url"`          // shown as-is, no proxy (e.g. vscode-tunnel URL)
+	Connect      string            `json:"connect,omitempty"`     // helper.connect at submission: "auto"|"ssh"|"scheduler"|"direct"
+	StartedAt    time.Time         `json:"started_at"`
+	EndedAt      *time.Time        `json:"ended_at,omitempty"`
+	Status       string            `json:"status"` // "pending"|"starting"|"running"|"done"|"failed"
 }
 
 // Headless reports whether the run is a local process rather than a scheduler
@@ -62,12 +62,17 @@ func (r *HelperRun) AccessURL(serverPort int) string {
 	return ""
 }
 
+// Walltime is the run's walltime limit; zero when it is unknown.
+func (r *HelperRun) Walltime() time.Duration {
+	return time.Duration(r.WalltimeSecs) * time.Second
+}
+
 // EstimatedEnd returns StartedAt + Walltime; zero value if walltime is unknown.
 func (r *HelperRun) EstimatedEnd() time.Time {
-	if r.Walltime == 0 {
+	if r.WalltimeSecs == 0 {
 		return time.Time{}
 	}
-	return r.StartedAt.Add(r.Walltime)
+	return r.StartedAt.Add(r.Walltime())
 }
 
 // StateEvent is one entry in the unified events JSONL file per helper run.
@@ -120,7 +125,7 @@ func (r *HelperRun) ApplyReady(rs *ReadyState) {
 	r.URLPath = rs.URLPath
 	r.ExternalURL = rs.ExternalURL
 	r.StartedAt = rs.Timestamp
-	r.Walltime = time.Duration(rs.WalltimeSec) * time.Second
+	r.WalltimeSecs = rs.WalltimeSec
 }
 
 // ShortNode is a node name up to its first dot, for display. An IPv4 address stays whole.
@@ -370,13 +375,15 @@ func UpdateHistoryStatus(id, status string, endedAt time.Time) error {
 }
 
 // pruneHistory trims the history file so that at most limit completed entries
-// are retained. Active entries (pending/starting/running) are always kept.
+// are retained, and removes the state directories of the entries it drops.
+// Active entries (pending/starting/running) are always kept.
 func pruneHistory(limit int) error {
 	path := HistoryPath()
 	if path == "" {
 		return nil
 	}
-	return withHistoryLock(path, func() error {
+	var dropped []string
+	err := withHistoryLock(path, func() error {
 		runs, err := LoadHistory()
 		if err != nil {
 			return err
@@ -393,9 +400,16 @@ func pruneHistory(limit int) error {
 			return nil
 		}
 		// Keep the most recent `limit` completed entries (they are in insertion order).
+		for _, r := range done[:len(done)-limit] {
+			dropped = append(dropped, r.ID)
+		}
 		done = done[len(done)-limit:]
 		return rewriteHistory(path, append(active, done...))
 	})
+	if err == nil {
+		removeStateDirs(dropped)
+	}
+	return err
 }
 
 // withHistoryLock acquires an exclusive flock on path+".lock" for the duration of fn.
@@ -590,8 +604,8 @@ func RunningHelpers(name string) ([]*HelperRun, error) {
 			continue
 		}
 		// Walltime elapsed: treat as done even without a done event (e.g. SIGKILL).
-		if r.Walltime > 0 && !r.StartedAt.IsZero() && time.Now().After(r.StartedAt.Add(r.Walltime)) {
-			_ = UpdateHistoryStatus(r.ID, "done", r.StartedAt.Add(r.Walltime))
+		if r.WalltimeSecs > 0 && !r.StartedAt.IsZero() && time.Now().After(r.StartedAt.Add(r.Walltime())) {
+			_ = UpdateHistoryStatus(r.ID, "done", r.StartedAt.Add(r.Walltime()))
 			continue
 		}
 		// Headless: a released lock with no done event means the wrapper was killed.

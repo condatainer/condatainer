@@ -163,9 +163,9 @@ func collection(t *testing.T, endpoint string) catalog.Catalog {
 	return catalog.Catalog{{
 		Name: "lab",
 		Desc: catalog.Descriptor{
-			Schema: 1,
-			Source: collectionRepo,
-			OCI:    catalog.OCI{Registry: endpoint + "/cnt", Audience: string(registry.Public)},
+			SchemaVersion: 1,
+			Source:        collectionRepo,
+			OCI:           catalog.OCI{Registry: endpoint + "/cnt", Audience: string(registry.Public)},
 		},
 	}}
 }
@@ -212,11 +212,11 @@ func TestUpstreamIsBestEffort(t *testing.T) {
 		"an unreachable registry": collection(t, "127.0.0.1:1"),
 		"a collection that declares no pull endpoint": {{
 			Name: "lab",
-			Desc: catalog.Descriptor{Schema: 1, Source: collectionRepo},
+			Desc: catalog.Descriptor{SchemaVersion: 1, Source: collectionRepo},
 		}},
 		"a collection that published nothing this artifact came from": {{
 			Name: "other",
-			Desc: catalog.Descriptor{Schema: 1, Source: "https://github.com/somebody/else",
+			Desc: catalog.Descriptor{SchemaVersion: 1, Source: "https://github.com/somebody/else",
 				OCI: catalog.OCI{Registry: "127.0.0.1:1/cnt"}},
 		}},
 	}

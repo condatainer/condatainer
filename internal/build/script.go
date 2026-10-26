@@ -246,7 +246,7 @@ func (b *BuildObject) buildExecOpts() (execpkg.Options, execpkg.IO, error) {
 	// buildEnv. A backend does not assemble it, so every launch path agrees.
 	envSettings := buildEnv(b.spec, Options{Update: b.update, ScriptSpecs: b.scriptSpecs})
 
-	// The payload's install prefix, as the recipe sees it via $CNT_PREFIX.
+	// The payload's install prefix, as the recipe sees it via $CNT_BUILD_PREFIX.
 	prefix := b.spec.Image.Prefix
 	if prefix == "" {
 		prefix = "/cnt/" + b.spec.Image.Name
@@ -291,7 +291,7 @@ fi
 	// Fetched sources, read-only: the digest recorded for each describes the
 	// bytes that arrived, so a recipe that rewrote one in place would leave the
 	// record naming something that is gone. A recipe that needs to alter a
-	// source copies it into $CNT_TMP first.
+	// source copies it into $CNT_BUILD_TMPDIR first.
 	if len(b.spec.Source.Fetched) > 0 {
 		bindDirs = append(bindDirs, b.sourceDir()+":"+SourcePath+":ro")
 		envSettings = append(envSettings, sourceEnvFor(b.spec.Source.Fetched)...)

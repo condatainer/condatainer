@@ -1,9 +1,10 @@
 package helper
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -50,8 +51,8 @@ type HelperScriptMeta struct {
 	// ParamValues holds the valid-value lists parsed from #VALUE: headers.
 	// Keys are param names (e.g. "POSIT_R", "CONDA_PYTHON"); values are the parsed list.
 	ParamValues map[string][]string
-	// NCPUs is the default CPU count from #NCPUS:. Zero means not set.
-	NCPUs int
+	// NCPU is the default CPU count from #NCPU:. Zero means not set.
+	NCPU int
 	// MemMB is the default memory in MB from #MEM:. Zero means not set.
 	MemMB int64
 	// Walltime is the default walltime from #TIME:. Zero means not set.
@@ -60,42 +61,65 @@ type HelperScriptMeta struct {
 	GPU string
 }
 
+// paramKeyPattern is the shape of a #PARAM: key. The key is exported into the helper's environment.
+var paramKeyPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
+// reservedParamKeys are variables a #PARAM: key may not name: the job's resources and the process
+// environment every tool reads.
+var reservedParamKeys = map[string]bool{
+	"NCPU": true, "MEM": true, "MEM_GB": true, "NNODE": true, "NRANK": true,
+	"NRANK_PER_NODE": true, "OMP_NUM_THREADS": true, "PATH": true, "HOME": true, "TMPDIR": true,
+}
+
+// validateParamKey reports why key cannot name a #PARAM:, or nil.
+//   - A key is upper case letters, digits and underscores, and does not start with a digit.
+//   - CNT_ is CondaTainer's prefix, and the resource and process variables are reserved.
+func validateParamKey(key string) error {
+	switch {
+	case !paramKeyPattern.MatchString(key):
+		return fmt.Errorf("KEY %q must be upper case letters, digits and underscores, not starting with a digit", key)
+	case strings.HasPrefix(key, "CNT_"):
+		return fmt.Errorf("KEY %q starts with CNT_, which CondaTainer uses", key)
+	case reservedParamKeys[key]:
+		return fmt.Errorf("KEY %q is a reserved variable", key)
+	}
+	return nil
+}
+
 // ParseHelperParams extracts #PARAM: declarations from a helper script.
 // Format per line: #PARAM: KEY=default --long-flag,-s "Description"
 // - KEY=default: variable name and default value (empty after = means required)
 // - --long-flag,-s: optional flag spec (comma-separated; either part may be omitted)
 // - "Description": quoted description string
 func ParseHelperParams(scriptPath string) ([]HelperParam, error) {
-	if !utils.FileExists(scriptPath) {
-		return nil, fmt.Errorf("helper script not found at %s", scriptPath)
-	}
-	file, err := os.Open(scriptPath)
+	data, err := readHelperScript(scriptPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open script: %w", err)
+		return nil, err
 	}
-	defer file.Close()
-
 	var params []HelperParam
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "#PARAM:") {
+	for _, a := range catalog.Select(catalog.ScanAnnotations(data), "#PARAM") {
+		if a.Value == "" {
 			continue
 		}
-		rest := stripInlineComment(strings.TrimSpace(line[len("#PARAM:"):]))
-		if rest == "" {
-			continue
-		}
-		p, err := parseHelperParamLine(rest)
+		p, err := parseHelperParamLine(a.Value)
 		if err != nil {
-			return nil, fmt.Errorf("invalid #PARAM: line %q: %w", line, err)
+			return nil, fmt.Errorf("invalid #PARAM: on line %d: %w", a.Line, err)
 		}
 		params = append(params, p)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading script: %w", err)
-	}
 	return params, nil
+}
+
+// readHelperScript reads a helper script, or says why it cannot.
+func readHelperScript(scriptPath string) ([]byte, error) {
+	if !utils.FileExists(scriptPath) {
+		return nil, fmt.Errorf("helper script not found at %s", scriptPath)
+	}
+	data, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read script: %w", err)
+	}
+	return data, nil
 }
 
 // parseHelperParamLine parses the content after "#PARAM: " into a HelperParam.
@@ -128,6 +152,9 @@ func parseHelperParamLine(s string) (HelperParam, error) {
 	}
 	if key == "" {
 		return HelperParam{}, fmt.Errorf("empty KEY in: %q", keyVal)
+	}
+	if err := validateParamKey(key); err != nil {
+		return HelperParam{}, err
 	}
 
 	// Remaining tokens are optional flag specs: "--long,-s" or "--long" or "-s"
@@ -171,78 +198,77 @@ func extractQuotedSuffix(s string) (string, string, error) {
 	return quoted, rest, nil
 }
 
-// stripInlineComment removes a trailing inline comment (` #...`) from a header value.
-// A comment must be preceded by a space so bare `#` inside values (e.g. colour codes)
-// are not accidentally stripped.
-func stripInlineComment(s string) string {
-	if idx := strings.Index(s, " #"); idx >= 0 {
-		return strings.TrimRight(s[:idx], " \t")
-	}
-	return s
-}
-
 // ParseHelperScriptMeta extracts metadata from a helper script.
-// Recognised headers: #NCPUS:, #MEM:, #TIME:, #GPU:, #IMG_PACKAGES:, #REQUIRED_OVERLAYS:,
+// Recognised headers: #NCPU:, #MEM:, #TIME:, #GPU:, #IMG_PACKAGES:, #REQUIRED_OVERLAYS:,
 // #POST_INSTALL_CMD:, #SINGLETON:, #BIND:, #VALUE:.
+//   - A #NCPU:, #MEM: or #TIME: value that does not parse is an error naming its line.
+//   - The metadata that did parse is returned with the error, so a caller that ignores the error still gets it.
 func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
-	if !utils.FileExists(scriptPath) {
-		return HelperScriptMeta{}, fmt.Errorf("helper script not found at %s", scriptPath)
-	}
-	file, err := os.Open(scriptPath)
+	data, err := readHelperScript(scriptPath)
 	if err != nil {
-		return HelperScriptMeta{}, fmt.Errorf("failed to open script: %w", err)
+		return HelperScriptMeta{}, err
 	}
-	defer file.Close()
 
 	meta := HelperScriptMeta{ParamValues: make(map[string][]string)}
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		switch {
-		case strings.HasPrefix(line, "#NCPUS:"):
-			if n, err := strconv.Atoi(stripInlineComment(strings.TrimSpace(line[len("#NCPUS:"):]))); err == nil && n > 0 {
-				meta.NCPUs = n
+	var problems []error
+	reject := func(a catalog.Annotation, want string) {
+		problems = append(problems, fmt.Errorf("%s on line %d: %q is not %s", a.Key, a.Line, a.Value, want))
+	}
+	for _, a := range catalog.ScanAnnotations(data) {
+		switch a.Key {
+		case "#NCPU":
+			if a.Value == "" {
+				continue
 			}
-		case strings.HasPrefix(line, "#MEM:"):
-			rawMem := stripInlineComment(strings.TrimSpace(line[len("#MEM:"):]))
-			if mb, err := utils.ParseMemoryMBWithDefault(rawMem, "GB"); err == nil && mb > 0 {
+			if n, err := strconv.Atoi(a.Value); err == nil && n > 0 {
+				meta.NCPU = n
+			} else {
+				reject(a, "a positive whole number")
+			}
+		case "#MEM":
+			if a.Value == "" {
+				continue
+			}
+			if mb, err := utils.ParseMemoryMBWithDefault(a.Value, "GB"); err == nil && mb > 0 {
 				meta.MemMB = mb
+			} else {
+				reject(a, "a memory size such as 8G")
 			}
-		case strings.HasPrefix(line, "#TIME:"):
-			raw := stripInlineComment(strings.TrimSpace(line[len("#TIME:"):]))
+		case "#TIME":
+			if a.Value == "" {
+				continue
+			}
+			raw := a.Value
 			if _, err := strconv.Atoi(raw); err == nil {
-				raw = raw + "h"
+				raw += "h"
 			}
 			if d, err := utils.ParseWalltime(raw); err == nil && d > 0 {
 				meta.Walltime = d
+			} else {
+				reject(a, "a walltime such as 4h or 01:30:00")
 			}
-		case strings.HasPrefix(line, "#GPU:"):
-			meta.GPU = stripInlineComment(strings.TrimSpace(line[len("#GPU:"):]))
-		case strings.HasPrefix(line, "#IMG_PACKAGES:"):
+		case "#GPU":
+			meta.GPU = a.Value
+		case "#IMG_PACKAGES":
 			meta.ImgRequired = true
-			meta.ImgPackages = stripInlineComment(strings.TrimSpace(line[len("#IMG_PACKAGES:"):]))
-		case strings.HasPrefix(line, "#REQUIRED_OVERLAYS:"):
-			meta.RequiredOverlays = stripInlineComment(strings.TrimSpace(line[len("#REQUIRED_OVERLAYS:"):]))
-		case strings.HasPrefix(line, "#BIND:"):
-			if b := stripInlineComment(strings.TrimSpace(line[len("#BIND:"):])); b != "" {
-				meta.Binds = append(meta.Binds, b)
+			meta.ImgPackages = a.Value
+		case "#REQUIRED_OVERLAYS":
+			meta.RequiredOverlays = a.Value
+		case "#BIND":
+			if a.Value != "" {
+				meta.Binds = append(meta.Binds, a.Value)
 			}
-		case strings.HasPrefix(line, "#POST_INSTALL_CMD:"):
-			meta.PostInstallCmd = stripInlineComment(strings.TrimSpace(line[len("#POST_INSTALL_CMD:"):]))
-		case strings.HasPrefix(line, "#SINGLETON:"):
-			v := stripInlineComment(strings.TrimSpace(line[len("#SINGLETON:"):]))
-			meta.Singleton = strings.EqualFold(v, "true") || v == "1"
-		case strings.HasPrefix(line, "#VALUE:"):
-			rest := stripInlineComment(strings.TrimSpace(line[len("#VALUE:"):]))
-			key, spec, ok := strings.Cut(rest, "=")
+		case "#POST_INSTALL_CMD":
+			meta.PostInstallCmd = a.Value
+		case "#SINGLETON":
+			meta.Singleton = strings.EqualFold(a.Value, "true") || a.Value == "1"
+		case "#VALUE":
+			key, spec, ok := strings.Cut(a.Value, "=")
 			if ok && strings.TrimSpace(key) != "" {
 				// An empty spec yields a nil list: the param simply has no choices.
 				meta.ParamValues[strings.TrimSpace(key)] = catalog.ParseValues(spec)
 			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return HelperScriptMeta{}, fmt.Errorf("error reading script: %w", err)
-	}
-	return meta, nil
+	return meta, errors.Join(problems...)
 }

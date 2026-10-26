@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/credential"
 )
@@ -22,7 +23,7 @@ func recipeServer(t *testing.T, private bool) string {
 	if err := os.MkdirAll(filepath.Join(root, "index"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "index", "recipes.json"), []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "index", "recipes.json"), []byte(`{"schema_version":1,"recipes":{}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	files := http.FileServer(http.Dir(root))
@@ -217,8 +218,8 @@ func TestSourceAddStoresTheRegistryTokenWithTheSource(t *testing.T) {
 
 	root := t.TempDir()
 	for rel, body := range map[string]string{
-		"index/recipes.json": "{}",
-		"source.json":        `{"schema":1,"oci":{"registry":"` + endpoint + `"}}`,
+		"index/recipes.json": `{"schema_version":1,"recipes":{}}`,
+		"source.json":        `{"schema_version":1,"oci":{"registry":"` + endpoint + `"}}`,
 	} {
 		p := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -251,5 +252,68 @@ func TestSourceAddStoresTheRegistryTokenWithTheSource(t *testing.T) {
 	}
 	if logins, _ := credential.List([]credential.File{userFile}, credential.Registry); len(logins) != 0 {
 		t.Errorf("the registry token was saved as a login: %+v", logins)
+	}
+}
+
+// stderrOf runs fn and returns what it printed to stderr.
+func stderrOf(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	stderr := os.Stderr
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = write
+	runErr := fn()
+	write.Close()
+	os.Stderr = stderr
+	var out strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := read.Read(buf)
+		out.Write(buf[:n])
+		if readErr != nil {
+			break
+		}
+	}
+	read.Close()
+	return out.String(), runErr
+}
+
+func TestSourceWithAnInvalidDescriptorIsWarnedAbout(t *testing.T) {
+	t.Cleanup(func() {
+		_, path := userSources(t)
+		os.Remove(path)
+	})
+	good, bad := recipeDir(t), recipeDir(t)
+	if err := os.WriteFile(filepath.Join(good, "source.json"), []byte(`{"schema_version":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad, "source.json"), []byte(`{"schema":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := stderrOf(t, func() error { return addSource(t, "good", good, "") })
+	if err != nil || strings.Contains(out, "source.json") {
+		t.Errorf("a valid descriptor was warned about: err = %v\n%s", err, out)
+	}
+	out, err = stderrOf(t, func() error { return addSource(t, "bad", bad, "") })
+	if err != nil || !strings.Contains(out, "Source bad: source.json is ignored") || !strings.Contains(out, "schema_version 0") {
+		t.Errorf("add did not warn about the missing version: err = %v\n%s", err, out)
+	}
+
+	prev := config.Global.Sources
+	config.Global.Sources = []catalog.Spec{{Name: "good", Base: good}, {Name: "bad", Base: bad}}
+	config.ResetCatalog()
+	t.Cleanup(func() {
+		config.Global.Sources = prev
+		config.ResetCatalog()
+	})
+	out, err = stderrOf(t, func() error {
+		configSourceListCmd.SetContext(t.Context())
+		return runSourceList(configSourceListCmd, nil)
+	})
+	if err != nil || !strings.Contains(out, "Source bad: source.json is ignored") || strings.Contains(out, "Source good") {
+		t.Errorf("list did not warn only about the bad source: err = %v\n%s", err, out)
 	}
 }

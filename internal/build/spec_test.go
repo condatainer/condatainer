@@ -341,15 +341,15 @@ func TestBuildEnvFromSpec(t *testing.T) {
 	}
 
 	env := envMap(t, buildEnv(spec, Options{}))
-	if env["CNT_TYPE"] != "app" {
-		t.Errorf("CNT_TYPE = %q", env["CNT_TYPE"])
+	if env["CNT_BUILD_TYPE"] != "app" {
+		t.Errorf("CNT_BUILD_TYPE = %q", env["CNT_BUILD_TYPE"])
 	}
-	if env["CNT_PREFIX"] != "/cnt/samtools/1.23.1" {
-		t.Errorf("CNT_PREFIX = %q", env["CNT_PREFIX"])
+	if env["CNT_BUILD_PREFIX"] != "/cnt/samtools/1.23.1" {
+		t.Errorf("CNT_BUILD_PREFIX = %q", env["CNT_BUILD_PREFIX"])
 	}
 	// Scratch is backend-neutral: a recipe never learns which mode it runs under.
-	if env["CNT_TMP"] != ScratchPath || env["TMPDIR"] != ScratchPath {
-		t.Errorf("scratch = %q / %q, want %s", env["CNT_TMP"], env["TMPDIR"], ScratchPath)
+	if env["CNT_BUILD_TMPDIR"] != ScratchPath || env["TMPDIR"] != ScratchPath {
+		t.Errorf("scratch = %q / %q, want %s", env["CNT_BUILD_TMPDIR"], env["TMPDIR"], ScratchPath)
 	}
 	if env["IN_CONDATAINER"] != "1" {
 		t.Errorf("IN_CONDATAINER = %q", env["IN_CONDATAINER"])
@@ -362,7 +362,7 @@ func TestBuildEnvFromSpec(t *testing.T) {
 	}
 }
 
-// CNT_PREFIX has to be the same path the image records, or a payload bakes in a
+// CNT_BUILD_PREFIX has to be the same path the image records, or a payload bakes in a
 // location that does not exist when the image is loaded.
 func TestBuildEnvPrefixMatchesRuntime(t *testing.T) {
 	for _, name := range []string{"samtools/1.23.1", "grch38/star/2.7.11b/gencode47"} {
@@ -371,25 +371,25 @@ func TestBuildEnvPrefixMatchesRuntime(t *testing.T) {
 			Source: SourceSpec{Script: &ScriptSource{}},
 		}
 		env := envMap(t, buildEnv(spec, Options{}))
-		if got, want := env["CNT_PREFIX"], spec.Runtime().Prefix; got != want {
-			t.Errorf("%s: CNT_PREFIX = %q, recorded prefix = %q", name, got, want)
+		if got, want := env["CNT_BUILD_PREFIX"], spec.Runtime().Prefix; got != want {
+			t.Errorf("%s: CNT_BUILD_PREFIX = %q, recorded prefix = %q", name, got, want)
 		}
 	}
 }
 
 // The environment is a projection of Spec, so an image with no type still gets
-// a usable one rather than an empty CNT_TYPE the recipe would have to handle.
+// a usable one rather than an empty CNT_BUILD_TYPE the recipe would have to handle.
 func TestBuildEnvDefaultsType(t *testing.T) {
 	env := envMap(t, buildEnv(Spec{Image: ImageSpec{Name: "tool/1.0"}}, Options{}))
-	if env["CNT_TYPE"] != "app" {
-		t.Errorf("CNT_TYPE = %q, want app", env["CNT_TYPE"])
+	if env["CNT_BUILD_TYPE"] != "app" {
+		t.Errorf("CNT_BUILD_TYPE = %q, want app", env["CNT_BUILD_TYPE"])
 	}
-	if env["CNT_PREFIX"] != "/cnt/tool/1.0" {
-		t.Errorf("CNT_PREFIX = %q", env["CNT_PREFIX"])
+	if env["CNT_BUILD_PREFIX"] != "/cnt/tool/1.0" {
+		t.Errorf("CNT_BUILD_PREFIX = %q", env["CNT_BUILD_PREFIX"])
 	}
 }
 
-// CNT_NAME is the complete name and there is no CNT_VERSION: not every image
+// CNT_BUILD_NAME is the complete name and there is no CNT_BUILD_VERSION: not every image
 // has one version axis, so splitting at the last path segment would invent a
 // boundary the name does not have.
 func TestBuildEnvNameIsCompleteAndUnsplit(t *testing.T) {
@@ -400,11 +400,11 @@ func TestBuildEnvNameIsCompleteAndUnsplit(t *testing.T) {
 	} {
 		spec := Spec{Image: ImageSpec{Name: name, Type: catalog.TypeApp}}
 		env := envMap(t, buildEnv(spec, Options{}))
-		if env["CNT_NAME"] != name {
-			t.Errorf("CNT_NAME = %q, want the complete name %q", env["CNT_NAME"], name)
+		if env["CNT_BUILD_NAME"] != name {
+			t.Errorf("CNT_BUILD_NAME = %q, want the complete name %q", env["CNT_BUILD_NAME"], name)
 		}
-		if v, ok := env["CNT_VERSION"]; ok {
-			t.Errorf("CNT_VERSION = %q; it was removed", v)
+		if v, ok := env["CNT_BUILD_VERSION"]; ok {
+			t.Errorf("CNT_BUILD_VERSION = %q; it was removed", v)
 		}
 	}
 }

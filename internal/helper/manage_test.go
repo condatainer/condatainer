@@ -142,20 +142,23 @@ func TestRemoveDeletesOnlyWhatWasAdded(t *testing.T) {
 	if shadowedBy(dirs, far, "svc") != filepath.Join(near, "svc") {
 		t.Error("the nearer copy is not reported as shadowing")
 	}
-	path, uncovered, err := removeOne("svc", dirs)
-	if err != nil || path != filepath.Join(near, "svc") || uncovered != filepath.Join(far, "svc") {
-		t.Fatalf("removed %q, uncovered %q, %v", path, uncovered, err)
+	item, err := findRemovable("svc", dirs)
+	if err != nil || item.Path != filepath.Join(near, "svc") || item.Uncovers != filepath.Join(far, "svc") {
+		t.Fatalf("item = %+v, %v", item, err)
+	}
+	if err := removeItem(item); err != nil {
+		t.Fatal(err)
 	}
 	if rec, _ := ReadInstalled(near); len(rec.Helpers) != 0 {
 		t.Error("the record still names it")
 	}
-	if _, _, err := removeOne("mine", dirs); !errors.Is(err, ErrUnrecorded) {
+	if _, err := findRemovable("mine", dirs); !errors.Is(err, ErrUnrecorded) {
 		t.Errorf("an unrecorded file: %v", err)
 	}
 	if !utils.FileExists(filepath.Join(far, "mine")) {
 		t.Error("an unrecorded file was deleted")
 	}
-	if _, _, err := removeOne("absent", dirs); !errors.Is(err, ErrNotAdded) {
+	if _, err := findRemovable("absent", dirs); !errors.Is(err, ErrNotAdded) {
 		t.Errorf("a missing name: %v", err)
 	}
 }
@@ -165,7 +168,7 @@ func TestRemoveRefusesAHelperWithARunInProgress(t *testing.T) {
 	if err := AppendHistory(&HelperRun{ID: "r1", Name: "svc", Status: "running", StartedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Remove([]string{"svc"}, "", nil); !errors.Is(err, ErrInUse) {
+	if _, err := PlanRemove([]string{"svc"}, ""); !errors.Is(err, ErrInUse) {
 		t.Errorf("err = %v", err)
 	}
 }

@@ -28,6 +28,11 @@ const schedPollInterval = 30 * time.Second
 // Used as a backstop for SIGKILL/OOM-kill/node-crash; normal exits are caught via the done-event trap.
 const runningSchedPollInterval = 5 * time.Minute
 
+// unrecordedRecheck is how long a state directory with no history entry is left alone before
+// the history is read for it again. A directory appears a moment before its entry does, and
+// one left by a pruned run never gets an entry.
+const unrecordedRecheck = time.Minute
+
 // tunnelReopenInterval is the minimum time between tunnel reopen attempts for a helper
 // whose SSH connection has dropped. Open() dials in a background goroutine so this
 // just prevents hammering the SSH server on persistent auth failures.
@@ -69,6 +74,7 @@ type watcher struct {
 	s               *srv
 	offsets         map[string]int64      // per-helper message file byte offset
 	done            map[string]struct{}   // IDs that have reached a terminal state
+	unrecorded      map[string]time.Time  // state directories with no history entry: when each was last looked up
 	lastSchedPoll   map[string]time.Time  // last scheduler query time per helper
 	schedCheckedAt  map[string]time.Time  // when the last scheduler answer was applied per helper
 	schedInflight   map[string]struct{}   // helpers with a scheduler query running
@@ -84,6 +90,7 @@ func newWatcher(s *srv) *watcher {
 		s:               s,
 		offsets:         make(map[string]int64),
 		done:            make(map[string]struct{}),
+		unrecorded:      make(map[string]time.Time),
 		lastSchedPoll:   make(map[string]time.Time),
 		schedCheckedAt:  make(map[string]time.Time),
 		schedInflight:   make(map[string]struct{}),
@@ -240,20 +247,27 @@ func (w *watcher) pollHelper(id string) {
 	}
 	// Seed info cache on first encounter (helpers submitted after server start).
 	if _, known := w.info[id]; !known {
-		if run := helper.HistoryEntryForID(id); run != nil {
-			w.info[id] = helperInfo{
-				jobID:     run.JobID,
-				headless:  run.Headless(),
-				name:      run.Name,
-				status:    run.Status,
-				startedAt: run.StartedAt,
-				walltime:  run.Walltime(),
-				port:      run.Port,
-				node:      connectNode(id, run.Node),
-				connect:   run.Connect,
-			}
-			w.runningCount.Add(1)
+		if last, seen := w.unrecorded[id]; seen && time.Since(last) < unrecordedRecheck {
+			return
 		}
+		run := helper.HistoryEntryForID(id)
+		if run == nil {
+			w.unrecorded[id] = time.Now()
+			return
+		}
+		delete(w.unrecorded, id)
+		w.info[id] = helperInfo{
+			jobID:     run.JobID,
+			headless:  run.Headless(),
+			name:      run.Name,
+			status:    run.Status,
+			startedAt: run.StartedAt,
+			walltime:  run.Walltime(),
+			port:      run.Port,
+			node:      connectNode(id, run.Node),
+			connect:   run.Connect,
+		}
+		w.runningCount.Add(1)
 	}
 
 	r := helper.PollOnce(id, w.offsets[id])

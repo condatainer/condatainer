@@ -375,13 +375,15 @@ func UpdateHistoryStatus(id, status string, endedAt time.Time) error {
 }
 
 // pruneHistory trims the history file so that at most limit completed entries
-// are retained. Active entries (pending/starting/running) are always kept.
+// are retained, and removes the state directories of the entries it drops.
+// Active entries (pending/starting/running) are always kept.
 func pruneHistory(limit int) error {
 	path := HistoryPath()
 	if path == "" {
 		return nil
 	}
-	return withHistoryLock(path, func() error {
+	var dropped []string
+	err := withHistoryLock(path, func() error {
 		runs, err := LoadHistory()
 		if err != nil {
 			return err
@@ -398,9 +400,16 @@ func pruneHistory(limit int) error {
 			return nil
 		}
 		// Keep the most recent `limit` completed entries (they are in insertion order).
+		for _, r := range done[:len(done)-limit] {
+			dropped = append(dropped, r.ID)
+		}
 		done = done[len(done)-limit:]
 		return rewriteHistory(path, append(active, done...))
 	})
+	if err == nil {
+		removeStateDirs(dropped)
+	}
+	return err
 }
 
 // withHistoryLock acquires an exclusive flock on path+".lock" for the duration of fn.

@@ -29,6 +29,14 @@
 - A flag header is on when its line is present. `Flag` accepts no value or `true`, so `false` cannot read as on.
 - `ParseValueList` reads a `#PH:` or `#VALUE:` list. A comma sorts newest first, a pipe keeps the order written, `*` is always last, and `values[0]` is the default offered.
 
+## Ignore patterns
+
+- `Ignore` reads the `.gitignore` pattern syntax with no library and no `git`, so the answer is the same for a directory owned by another user and a project outside a repository.
+- A matcher answers for one path, relative to the directory its file lives in. Layering several files is the caller's.
+- It does not test a path's parents. A walker skips an ignored directory, so git's rule that an ignored directory cannot be re-included holds.
+- `**` is special only as a whole component. Beside other text it reads as `*`.
+- A line that cannot compile is skipped, as git skips it.
+
 ## Module names
 
 - `NormalizeModule` folds `name=version` and `name--version` into `name/version`. Index keys use this form, so a second implementation would make one string resolve two ways.

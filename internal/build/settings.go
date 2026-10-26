@@ -117,6 +117,21 @@ func SetJobTarget(specs *scheduler.ScriptSpecs) {
 	specs.Control.Account = JobAccount()
 }
 
+// jobNamePrefix starts every build job's name, apart from a helper's "cnt-h-".
+const jobNamePrefix = "cnt-b-"
+
+// SetJobName gives a build job the name "cnt-b-" plus the recipe's own #NAME:, or plus the name/version, made valid, when it sets none.
+func SetJobName(specs *scheduler.ScriptSpecs, nameVersion string) {
+	name := specs.Control.JobName
+	if name == "" {
+		name = scheduler.SanitizeJobName(nameVersion)
+	}
+	if !strings.HasPrefix(name, jobNamePrefix) {
+		name = jobNamePrefix + name
+	}
+	specs.Control.JobName = name
+}
+
 // AlwaysSubmitData reports whether data builds are submitted even without scheduler directives.
 func AlwaysSubmitData() bool { return keyAlwaysSubmitData.Get() }
 

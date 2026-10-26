@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -131,7 +132,6 @@ func Add(ctx context.Context, names []string, layer config.DataLayer, force bool
 			continue
 		}
 		if err := addOne(ctx, name, entry, dir, force); err != nil {
-			say(w, "WARN: %s: %v", name, err)
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
@@ -148,13 +148,13 @@ func addOne(ctx context.Context, name string, entry RemoteScriptEntry, dir strin
 	}
 	_, added := rec.Lookup(dir, name)
 	if added && !force {
-		return fmt.Errorf("%w in %s; use upgrade", ErrAlreadyAdded, dir)
+		return fmt.Errorf("%w in %s; `condatainer helper upgrade` brings it up to date, and `--force` replaces it", ErrAlreadyAdded, dir)
 	}
 	dest := filepath.Join(dir, name)
 	local, readErr := os.ReadFile(dest)
 	if readErr != nil || hashHex(local) != entry.SHA256 {
 		if readErr == nil && !added && !force {
-			return fmt.Errorf("%w: %s; use --force to replace it", ErrUnrecorded, dest)
+			return fmt.Errorf("%w: %s; `--force` replaces it", ErrUnrecorded, dest)
 		}
 		data, err := fetchScript(ctx, entry)
 		if err != nil {
@@ -179,6 +179,11 @@ func PlanUpgrade(ctx context.Context, names []string, layer config.DataLayer, w 
 	if err != nil {
 		return nil, fmt.Errorf("failed to read helper indexes: %w", err)
 	}
+	return PlanUpgradeWith(offers, layer, names)
+}
+
+// PlanUpgradeWith is PlanUpgrade against offers already read.
+func PlanUpgradeWith(offers map[string]RemoteScriptEntry, layer config.DataLayer, names []string) ([]UpgradeItem, error) {
 	return planUpgrade(offers, scriptDirs(layer), names)
 }
 
@@ -247,8 +252,7 @@ func ApplyUpgrade(ctx context.Context, items []UpgradeItem, w io.Writer) error {
 			continue
 		}
 		if err := upgradeOne(ctx, item); err != nil {
-			say(w, "WARN: %s in %s: %v", item.Name, item.Dir, err)
-			errs = append(errs, fmt.Errorf("%s: %w", item.Name, err))
+			errs = append(errs, fmt.Errorf("%s in %s: %w", item.Name, item.Dir, err))
 			continue
 		}
 		say(w, "Upgraded %s in %s", item.Name, item.Dir)
@@ -271,38 +275,60 @@ func upgradeOne(ctx context.Context, item UpgradeItem) error {
 	})
 }
 
-// Remove deletes each named helper that add installed.
+// RemoveItem is one added helper that remove would delete.
+type RemoveItem struct {
+	Name     string
+	Dir      string
+	Path     string
+	Uncovers string // the farther copy that serves the name afterwards, or ""
+}
+
+// PlanRemove says what remove would delete for each named helper.
 //   - layer limits it to one layer. Empty takes the nearest added copy.
 //   - A file add did not install is left, and a helper with a run in progress is refused.
-//   - A failure on one name does not stop the others. The errors are joined.
-func Remove(names []string, layer config.DataLayer, w io.Writer) error {
+//   - A name that cannot be removed is an error, and the others are still planned. The errors are joined.
+func PlanRemove(names []string, layer config.DataLayer) ([]RemoveItem, error) {
 	dirs := scriptDirs(layer)
+	var items []RemoveItem
 	var errs []error
 	for _, name := range names {
 		if runs, _ := RunningHelpers(name); len(runs) > 0 {
 			errs = append(errs, fmt.Errorf("%s: %w", name, ErrInUse))
 			continue
 		}
-		path, uncovered, err := removeOne(name, dirs)
+		item, err := findRemovable(name, dirs)
 		if err != nil {
-			say(w, "WARN: %s: %v", name, err)
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
-		say(w, "Removed %s", path)
-		if uncovered != "" {
-			say(w, "Note: %s now resolves to %s", name, uncovered)
+		items = append(items, item)
+	}
+	return items, errors.Join(errs...)
+}
+
+// Remove deletes the helpers a plan names and drops their records.
+//   - A failure on one does not stop the others. The errors are joined.
+func Remove(items []RemoveItem, w io.Writer) error {
+	var errs []error
+	for _, item := range items {
+		if err := removeItem(item); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", item.Name, err))
+			continue
+		}
+		say(w, "Removed %s", item.Path)
+		if item.Uncovers != "" {
+			say(w, "Note: %s now resolves to %s", item.Name, item.Uncovers)
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func removeOne(name string, dirs []string) (removed, uncovered string, err error) {
+func findRemovable(name string, dirs []string) (RemoveItem, error) {
 	unrecorded := ""
 	for i, dir := range dirs {
 		rec, err := ReadInstalled(dir)
 		if err != nil {
-			return "", "", err
+			return RemoveItem{}, err
 		}
 		path := filepath.Join(dir, name)
 		if _, added := rec.Lookup(dir, name); !added {
@@ -311,24 +337,77 @@ func removeOne(name string, dirs []string) (removed, uncovered string, err error
 			}
 			continue
 		}
-		if err := os.Remove(path); err != nil {
-			return "", "", err
-		}
-		if err := UpdateInstalled(dir, func(r *Installed) error {
-			delete(r.Helpers, name)
-			return nil
-		}); err != nil {
-			return "", "", err
-		}
+		item := RemoveItem{Name: name, Dir: dir, Path: path}
 		for _, farther := range dirs[i+1:] {
 			if candidate := filepath.Join(farther, name); utils.FileExists(candidate) {
-				return path, candidate, nil
+				item.Uncovers = candidate
+				break
 			}
 		}
-		return path, "", nil
+		return item, nil
 	}
 	if unrecorded != "" {
-		return "", "", fmt.Errorf("%w: %s is left in place", ErrUnrecorded, unrecorded)
+		return RemoveItem{}, fmt.Errorf("%w: %s is left in place", ErrUnrecorded, unrecorded)
 	}
-	return "", "", ErrNotAdded
+	return RemoveItem{}, ErrNotAdded
+}
+
+func removeItem(item RemoveItem) error {
+	if err := os.Remove(item.Path); err != nil {
+		return err
+	}
+	return UpdateInstalled(item.Dir, func(r *Installed) error {
+		delete(r.Helpers, item.Name)
+		return nil
+	})
+}
+
+// ListedScript is one script in a helper-scripts directory.
+type ListedScript struct {
+	Name        string
+	Description string
+	Added       bool   // recorded by add
+	HiddenBy    string // the nearer copy that hides it, or ""
+}
+
+// ListedDir is the scripts of one helper-scripts directory.
+type ListedDir struct {
+	Dir     string
+	Layer   config.DataLayer
+	Scripts []ListedScript
+}
+
+// ListScripts reads the scripts of each directory, nearest first, sorted by name.
+//   - A hidden file or a subdirectory is not a script.
+//   - A directory that cannot be read is left out.
+func ListScripts() ([]ListedDir, error) {
+	dirs := config.GetHelperScriptSearchPaths()
+	var out []ListedDir
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		rec, err := ReadInstalled(dir)
+		if err != nil {
+			return nil, err
+		}
+		group := ListedDir{Dir: dir, Layer: config.ClassifyDataDir(dir)}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || strings.HasPrefix(name, ".") {
+				continue
+			}
+			_, added := rec.Lookup(dir, name)
+			group.Scripts = append(group.Scripts, ListedScript{
+				Name:        name,
+				Description: ScriptDescription(filepath.Join(dir, name)),
+				Added:       added,
+				HiddenBy:    shadowedBy(dirs, dir, name),
+			})
+		}
+		sort.Slice(group.Scripts, func(i, j int) bool { return group.Scripts[i].Name < group.Scripts[j].Name })
+		out = append(out, group)
+	}
+	return out, nil
 }

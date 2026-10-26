@@ -36,7 +36,7 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 - `--force` is on `add` only. It is the one place a local edit is overwritten, and it is given per name.
 - A download must match the index hash. A mismatch means the index is stale, and nothing is written.
 - `upgrade` replaces a helper in the directory where it was added, and keeps and reports an edited file, a dropped one, and one in a directory the user cannot write.
-- `remove` deletes only what `add` recorded, and refuses a helper with a run in progress.
+- `remove` deletes only what `add` recorded, lists it and asks first, and refuses a helper with a run in progress.
 - One name failing never stops the rest. The errors are joined.
 - A copy hidden by a nearer directory is noted by `add` and `upgrade`. `remove` names the copy it uncovers.
 
@@ -74,7 +74,7 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 
 ## Waiting
 
-- `condatainer helper <name>` returns once the job is submitted.
+- `condatainer helper run <name>` returns once the job is submitted.
 - A hidden `_helper_watch` process keeps printing messages and the access URL until `ready`.
 - It writes straight to a terminal the shell may be waiting on, so each batch starts on a new line.
 - Without a terminal, or with `--wait`, the command waits itself. Ctrl+C there detaches and never stops the helper.

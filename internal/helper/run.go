@@ -629,7 +629,7 @@ func buildHelperScriptSpecs(name, cwd, account, partition string, excludeNodes [
 	ss := &scheduler.ScriptSpecs{
 		Spec: spec,
 		Control: scheduler.RuntimeConfig{
-			JobName:      "cnt-" + name,
+			JobName:      "cnt-h-" + name,
 			WorkDir:      cwd,
 			Stdout:       "/dev/null",
 			Stderr:       "/dev/null",
@@ -683,7 +683,7 @@ func generateWrapper(id, name, cwd, scriptDir, stateDir, account, partition stri
 	}
 
 	jobSpec := &scheduler.JobSpec{
-		Name:       "cnt-" + name,
+		Name:       "cnt-h-" + name,
 		Command:    body,
 		Specs:      buildHelperScriptSpecs(name, cwd, account, partition, excludeNodes, spec),
 		KeepScript: true,

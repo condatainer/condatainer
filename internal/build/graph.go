@@ -455,15 +455,7 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 		}
 	}
 
-	// Derive job name from name/version if not set in script
-	if specs.Control.JobName == "" {
-		name := obj.NameVersion()
-		if idx := strings.LastIndex(name, "/"); idx != -1 {
-			name = name[:idx]
-		}
-		specs.Control.JobName = "cnt-" + name
-	}
-
+	SetJobName(specs, obj.NameVersion())
 	SetJobTarget(specs)
 
 	// Create job specification

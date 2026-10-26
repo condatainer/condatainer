@@ -104,7 +104,11 @@ func (h *ResourceHeaders) set(a utils.Annotation) error {
 		}
 		h.Gpu = gpu
 	case "#NAME":
-		h.JobName = a.Value
+		name, err := ParseJobName(a.Value)
+		if err != nil {
+			return reject("a name of " + JobNameChars)
+		}
+		h.JobName = name
 	case "#OUTPUT":
 		h.Stdout = a.Value
 	case "#ERROR":

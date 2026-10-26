@@ -123,7 +123,7 @@ func init() {
 	runCmd.Flags().StringSliceVar(&runExcludeNodes, "exclude-nodes", nil, "Override the nodes the job must not run on (comma-separated; empty for none)")
 	runCmd.Flags().BoolVar(&runDryRun, "dry-run", false, "Show what would happen, without doing it")
 	settings.AddSwitch(runCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run locally)"))
-	runCmd.Flags().StringVarP(&runName, "name", "n", "", "Override job name")
+	runCmd.Flags().StringVarP(&runName, "name", "n", "", "Override job name (letters, digits, '.', '_' and '-')")
 	runCmd.Flags().StringVar(&runArray, "array", "", "Input file for array job (one entry per line)")
 	runCmd.Flags().IntVar(&runArrayLimit, "array-limit", 0, "Max concurrent array subjobs (0 = unlimited)")
 	RegisterProjectFlags(runCmd, &runProjectDir)
@@ -175,6 +175,12 @@ func runScript(cmd *cobra.Command, args []string) error {
 					ExitWithError("--%s %q is not a valid job ID", flagInfo.name, id)
 				}
 			}
+		}
+	}
+
+	if runName != "" {
+		if _, err := scheduler.ParseJobName(runName); err != nil {
+			ExitWithError("--name: %v", err)
 		}
 	}
 

@@ -198,14 +198,11 @@ func extractQuotedSuffix(s string) (string, string, error) {
 // helperKeys are the headers a helper reads. One after the header block is reported, not dropped silently.
 var helperKeys = []string{"#DESC", "#PARAM", "#VALUE", "#NCPU", "#MEM", "#TIME", "#GPU", "#SINGLETON", "#BIND", "#DEP", "#ENV_PACKAGES", "#ENV_POST_INSTALL"}
 
-// unhonoredHeaders are the shared headers a helper does not read: the launch or the wrapper decides them.
-var unhonoredHeaders = []string{"#NAME", "#OUTPUT", "#ERROR", "#PARTITION", "#ACCOUNT", "#WRITABLE", "#FAKEROOT"}
-
 // ParseHelperScriptMeta extracts metadata from a helper script.
 // Recognised headers: #NCPU:, #MEM:, #TIME:, #GPU:, #DEP:, #ENV_PACKAGES:,
 // #ENV_POST_INSTALL:, #SINGLETON:, #BIND:, #VALUE:.
 //   - A resource header or #SINGLETON: value that does not parse is an error naming its line.
-//   - A header the launch decides (#NAME:, #OUTPUT:, #ERROR:, #PARTITION:, #ACCOUNT:, #WRITABLE:, #FAKEROOT:) is an error naming its line.
+//   - A header the launch or the wrapper decides (#NAME:, #OUTPUT:, #ERROR:, #PARTITION:, #ACCOUNT:, #WRITABLE:, #FAKEROOT:) is not read.
 //   - The metadata that did parse is returned with the error, so a caller that ignores the error still gets it.
 func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 	data, err := readHelperScript(scriptPath)
@@ -216,7 +213,7 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 	annotations := utils.ScanAnnotations(data)
 	utils.WarnStray(scriptPath, utils.StrayAnnotations(data, helperKeys...))
 	resources, problem := scheduler.ParseResourceHeaders(annotations)
-	problems := []error{problem, utils.Reject(annotations, "a helper script", unhonoredHeaders...)}
+	problems := []error{problem}
 	meta := HelperScriptMeta{
 		ParamValues: make(map[string][]string),
 		Deps:        utils.Dependencies(annotations),

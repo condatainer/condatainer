@@ -108,9 +108,9 @@ func TestHelperMetaReadsSharedHeaders(t *testing.T) {
 		t.Fatalf("a bad #SINGLETON: meta = %+v, err = %v", meta, err)
 	}
 
-	_, err = write("#!/bin/bash\n#GPU: a100:0\n#NAME: job\n")
-	if err == nil || !strings.Contains(err.Error(), "#GPU on line 2") || !strings.Contains(err.Error(), "#NAME on line 3") {
-		t.Fatalf("a bad #GPU: and an unhonored #NAME: err = %v", err)
+	_, err = write("#!/bin/bash\n#GPU: a100:0\n#NAME: job\n#WRITABLE:\n")
+	if err == nil || !strings.Contains(err.Error(), "#GPU on line 2") || strings.Contains(err.Error(), "#NAME") || strings.Contains(err.Error(), "#WRITABLE") {
+		t.Fatalf("a bad #GPU: with headers the launch decides: err = %v", err)
 	}
 }
 

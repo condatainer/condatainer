@@ -68,13 +68,3 @@ func TestFlag(t *testing.T) {
 		}
 	}
 }
-
-func TestReject(t *testing.T) {
-	annotations := ScanAnnotations([]byte("#NCPU: 4\n#NAME: job\n"))
-	if err := Reject(annotations, "a helper script", "#OUTPUT", "#NAME"); err == nil || err.Error() != "#NAME on line 2: a helper script does not read it" {
-		t.Errorf("Reject = %v", err)
-	}
-	if err := Reject(annotations, "a helper script", "#OUTPUT"); err != nil {
-		t.Errorf("Reject of an absent key = %v", err)
-	}
-}

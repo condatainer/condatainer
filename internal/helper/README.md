@@ -14,10 +14,16 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
   - The bind address is fixed at submission. Only `direct` binds all interfaces.
   - The dashboard that connects later may be a restarted process, so it reads the run, not current config.
 - Headers are read by `utils.ScanAnnotations`, as in a recipe, and resources by `scheduler.ParseResourceHeaders`. A resource header or `#SINGLETON:` value that does not parse refuses the run and names its line.
-- A header the launch decides (`#NAME:`, `#OUTPUT:`, `#ERROR:`, `#PARTITION:`, `#ACCOUNT:`, `#WRITABLE:`, `#FAKEROOT:`) also refuses the run, rather than being silently dropped.
+- Headers a helper has no use for are not read.
 - Account and partition resolve the same way on every entry point: flag or dashboard field, then config.
   - They are applied once, in `buildHelperScriptSpecs`.
   - There is no script-header tier. `#NCPU:` and `#MEM:` describe what the workload needs. Account and partition describe the user's own cluster access, which a script cannot know.
+
+## Binds
+
+- A `#BIND:` value reaches the wrapper's shell single-quoted, as one word. A space, a quote or a command substitution in it, or in a `#PARAM:` default, is text and never runs.
+- `exec` expands `$VAR` and `${VAR}` when the container starts, on the node the job runs on.
+- A source under `$CNT_HELPER_STATE_DIR` is created before submission, since the state directory is known on the login node.
 
 ## Overlays
 

@@ -27,7 +27,6 @@
 - Scheduler directives are not annotations. `#SBATCH --time=01:00:00` has colons in its value, so they are matched by prefix and handed to the scheduler packages verbatim.
 - `StripComments` is what the keys hash. It removes whole-line comments only, since a trailing `#` may belong to shell (`echo "a # b"`, `${v#pre}`). It never touches what is stored or what runs.
 - A flag header is on when its line is present. `Flag` accepts no value or `true`, so `false` cannot read as on.
-- `Reject` names the first listed key a script writes. A consumer calls it for the shared headers it does not honor, so there is no table of script kinds.
 - `ParseValueList` reads a `#PH:` or `#VALUE:` list. A comma sorts newest first, a pipe keeps the order written, `*` is always last, and `values[0]` is the default offered.
 
 ## Module names

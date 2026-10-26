@@ -64,13 +64,11 @@ func TestParseRecipe(t *testing.T) {
 		t.Errorf("URL = %q", r.URL)
 	}
 
-	// The heredoc's lines count too: position carries no meaning, so a recipe
-	// that writes a job script also declares whatever that script declares.
-	wantDeps := []string{"star/{star_version}", "samtools/1.23.1>=1.10", "not/a/dep"}
+	wantDeps := []string{"star/{star_version}", "samtools/1.23.1>=1.10"}
 	if !slices.Equal(r.Deps, wantDeps) {
 		t.Errorf("Deps = %v, want %v", r.Deps, wantDeps)
 	}
-	wantDirectives := []string{"#SBATCH --cpus-per-task=8", "#SBATCH --mem=64G", "#SBATCH --this-is-not-a-directive"}
+	wantDirectives := []string{"#SBATCH --cpus-per-task=8", "#SBATCH --mem=64G"}
 	if !slices.Equal(r.Directives, wantDirectives) {
 		t.Errorf("Directives = %v, want %v", r.Directives, wantDirectives)
 	}
@@ -86,22 +84,20 @@ func TestParseRecipe(t *testing.T) {
 	}
 }
 
-// Position never disqualifies an annotation. A recipe that writes a job script
-// therefore adopts that script's declarations as its own — the cost of the rule,
-// recorded here so it is a decision rather than a surprise.
-func TestParseRecipeReadsAnnotationsAnywhere(t *testing.T) {
+// Only the header block declares. A recipe that writes a job script in a heredoc
+// declares nothing of that script's, and a key after the first command is ignored.
+func TestParseRecipeReadsTheHeaderOnly(t *testing.T) {
 	r := parse(t, "grch38/star-gencode", starRecipe)
-	if !slices.Contains(r.Deps, "not/a/dep") {
-		t.Errorf("Deps = %v, want the heredoc's #DEP: included", r.Deps)
+	if slices.Contains(r.Deps, "not/a/dep") {
+		t.Errorf("Deps = %v, want the heredoc's #DEP: ignored", r.Deps)
 	}
-	if !slices.Contains(r.Directives, "#SBATCH --this-is-not-a-directive") {
-		t.Errorf("Directives = %v, want the heredoc's #SBATCH included", r.Directives)
+	if slices.Contains(r.Directives, "#SBATCH --this-is-not-a-directive") {
+		t.Errorf("Directives = %v, want the heredoc's #SBATCH ignored", r.Directives)
 	}
 
-	// Nothing ends the annotations, so a key after an executable line is read.
 	below := parse(t, "x/y", "#DESC:kept\nBootstrap: docker\n#URL:below\n")
-	if below.Description != "kept" || below.URL != "below" {
-		t.Errorf("description=%q url=%q, want both read", below.Description, below.URL)
+	if below.Description != "kept" || below.URL != "" {
+		t.Errorf("description=%q url=%q, want only the header read", below.Description, below.URL)
 	}
 
 	// A .def has no shebang and needs no exception.

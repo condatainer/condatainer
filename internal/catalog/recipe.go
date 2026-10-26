@@ -176,6 +176,7 @@ func ParseRecipe(path string, r io.Reader) (*Recipe, error) {
 	rec.Name = strings.TrimPrefix(strings.TrimSuffix(path, ".def"), recipesDir+"/")
 
 	var declared string
+	utils.WarnStray(path, utils.StrayAnnotations(text, recipeKeys...))
 	rec.Directives = scanDirectives(text)
 	for _, a := range utils.ScanAnnotations(text) {
 		value, note := a.Value, a.Note
@@ -236,12 +237,16 @@ func ParseRecipe(path string, r io.Reader) (*Recipe, error) {
 	return rec, nil
 }
 
-// scanDirectives returns every scheduler directive line, verbatim.
+// recipeKeys are the headers ParseRecipe reads. One after the header block is reported, not dropped silently.
+var recipeKeys = []string{"#TYPE", "#ARCH", "#DESC", "#URL", "#LICENSE", "#REDISTRIBUTE", "#TARGET", "#DEP", "#ENV", "#SOURCE", "#INPUT", "#PH"}
+
+// scanDirectives returns every scheduler directive line of the header block, verbatim.
 //   - These are not annotations: `#SBATCH --time=01:00:00` has no `#KEY: value` shape, and cutting it on the first colon would split the value.
 //   - They are matched by prefix and handed to the scheduler packages to parse.
 func scanDirectives(text []byte) []string {
 	var out []string
-	for line := range strings.SplitSeq(string(text), "\n") {
+	lines := strings.Split(string(text), "\n")
+	for _, line := range lines[:utils.HeaderEnd(lines)] {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		switch {
 		case strings.HasPrefix(line, "#SBATCH"),

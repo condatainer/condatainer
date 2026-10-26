@@ -167,8 +167,8 @@ type ScanOptions struct {
 
 // Scan walks a project root and returns what its scripts declare.
 //
-// A declaration counts wherever it is written; position carries no meaning, so
-// the scanner and the runtime read a script the same way.
+// Only a script's header block declares, as at run time, so the scanner and the
+// runtime read a script the same way.
 func Scan(root string, opts ScanOptions) (*ScanResult, error) {
 	skip := map[string]bool{DirName: true}
 	for _, dir := range opts.ExcludeDirs {
@@ -308,6 +308,7 @@ func scanScript(path, rel string, merged map[string]*Request, result *ScanResult
 		return false, nil
 	}
 
+	utils.WarnStray(rel, utils.StrayAnnotations(text, "#DEP"))
 	for _, a := range utils.SelectAnnotations(utils.ScanAnnotations(text), "#DEP") {
 		if a.Value == "" {
 			continue

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -56,8 +56,8 @@ type HelperScriptMeta struct {
 	MemMB int64
 	// Walltime is the default walltime from #TIME:. Zero means not set.
 	Walltime time.Duration
-	// GPU is the default GPU spec from #GPU:. Empty means not set.
-	GPU string
+	// GPU is the default GPU request from #GPU:. Nil means not set.
+	GPU *scheduler.GpuSpec
 }
 
 // paramKeyPattern is the shape of a #PARAM: key. The key is exported into the helper's environment.
@@ -197,10 +197,17 @@ func extractQuotedSuffix(s string) (string, string, error) {
 	return quoted, rest, nil
 }
 
+// helperKeys are the headers a helper reads. One after the header block is reported, not dropped silently.
+var helperKeys = []string{"#DESC", "#PARAM", "#VALUE", "#NCPU", "#MEM", "#TIME", "#GPU", "#SINGLETON", "#BIND", "#IMG_PACKAGES", "#REQUIRED_OVERLAYS", "#POST_INSTALL_CMD"}
+
+// unhonoredHeaders are the shared headers a helper does not read: the launch or the wrapper decides them.
+var unhonoredHeaders = []string{"#NAME", "#OUTPUT", "#ERROR", "#PARTITION", "#ACCOUNT", "#WRITABLE", "#FAKEROOT"}
+
 // ParseHelperScriptMeta extracts metadata from a helper script.
 // Recognised headers: #NCPU:, #MEM:, #TIME:, #GPU:, #IMG_PACKAGES:, #REQUIRED_OVERLAYS:,
 // #POST_INSTALL_CMD:, #SINGLETON:, #BIND:, #VALUE:.
-//   - A #NCPU:, #MEM: or #TIME: value that does not parse is an error naming its line.
+//   - A resource header or #SINGLETON: value that does not parse is an error naming its line.
+//   - A header the launch decides (#NAME:, #OUTPUT:, #ERROR:, #PARTITION:, #ACCOUNT:, #WRITABLE:, #FAKEROOT:) is an error naming its line.
 //   - The metadata that did parse is returned with the error, so a caller that ignores the error still gets it.
 func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 	data, err := readHelperScript(scriptPath)
@@ -208,46 +215,22 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 		return HelperScriptMeta{}, err
 	}
 
-	meta := HelperScriptMeta{ParamValues: make(map[string][]string)}
-	var problems []error
-	reject := func(a utils.Annotation, want string) {
-		problems = append(problems, fmt.Errorf("%s on line %d: %q is not %s", a.Key, a.Line, a.Value, want))
+	annotations := utils.ScanAnnotations(data)
+	utils.WarnStray(scriptPath, utils.StrayAnnotations(data, helperKeys...))
+	resources, problem := scheduler.ParseResourceHeaders(annotations)
+	problems := []error{problem, utils.Reject(annotations, "a helper script", unhonoredHeaders...)}
+	meta := HelperScriptMeta{
+		ParamValues: make(map[string][]string),
+		NCPU:        resources.CpusPerTask,
+		MemMB:       resources.MemPerNodeMB,
+		Walltime:    resources.Time,
+		GPU:         resources.Gpu,
 	}
-	for _, a := range utils.ScanAnnotations(data) {
+	if meta.Singleton, err = utils.Flag(annotations, "#SINGLETON"); err != nil {
+		problems = append(problems, err)
+	}
+	for _, a := range annotations {
 		switch a.Key {
-		case "#NCPU":
-			if a.Value == "" {
-				continue
-			}
-			if n, err := strconv.Atoi(a.Value); err == nil && n > 0 {
-				meta.NCPU = n
-			} else {
-				reject(a, "a positive whole number")
-			}
-		case "#MEM":
-			if a.Value == "" {
-				continue
-			}
-			if mb, err := utils.ParseMemoryMBWithDefault(a.Value, "GB"); err == nil && mb > 0 {
-				meta.MemMB = mb
-			} else {
-				reject(a, "a memory size such as 8G")
-			}
-		case "#TIME":
-			if a.Value == "" {
-				continue
-			}
-			raw := a.Value
-			if _, err := strconv.Atoi(raw); err == nil {
-				raw += "h"
-			}
-			if d, err := utils.ParseWalltime(raw); err == nil && d > 0 {
-				meta.Walltime = d
-			} else {
-				reject(a, "a walltime such as 4h or 01:30:00")
-			}
-		case "#GPU":
-			meta.GPU = a.Value
 		case "#IMG_PACKAGES":
 			meta.ImgRequired = true
 			meta.ImgPackages = a.Value
@@ -259,8 +242,6 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 			}
 		case "#POST_INSTALL_CMD":
 			meta.PostInstallCmd = a.Value
-		case "#SINGLETON":
-			meta.Singleton = strings.EqualFold(a.Value, "true") || a.Value == "1"
 		case "#VALUE":
 			key, spec, ok := strings.Cut(a.Value, "=")
 			if ok && strings.TrimSpace(key) != "" {

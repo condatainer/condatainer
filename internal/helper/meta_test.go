@@ -87,3 +87,28 @@ func TestPlanRunRefusesAnUnparsableHeader(t *testing.T) {
 		t.Fatalf("error = %v, want the helper and the bad line named", err)
 	}
 }
+
+func TestHelperMetaReadsSharedHeaders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "svc")
+	write := func(text string) (HelperScriptMeta, error) {
+		if err := os.WriteFile(path, []byte(text), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return ParseHelperScriptMeta(path)
+	}
+
+	meta, err := write("#!/bin/bash\n#NCPU: 4\n#GPU: a100\n#SINGLETON:\n")
+	if err != nil || meta.NCPU != 4 || meta.GPU == nil || meta.GPU.Type != "a100" || !meta.Singleton {
+		t.Fatalf("meta = %+v, %v", meta, err)
+	}
+
+	meta, err = write("#!/bin/bash\n#NCPU: 4\n#SINGLETON: yes\n")
+	if err == nil || !strings.Contains(err.Error(), "#SINGLETON on line 3") || meta.NCPU != 4 {
+		t.Fatalf("a bad #SINGLETON: meta = %+v, err = %v", meta, err)
+	}
+
+	_, err = write("#!/bin/bash\n#GPU: a100:0\n#NAME: job\n")
+	if err == nil || !strings.Contains(err.Error(), "#GPU on line 2") || !strings.Contains(err.Error(), "#NAME on line 3") {
+		t.Fatalf("a bad #GPU: and an unhonored #NAME: err = %v", err)
+	}
+}

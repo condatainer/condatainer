@@ -23,6 +23,21 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - Defaults, then the script's directives, then the job's own non-zero fields.
 - The script layer applies only when it has directives. A script without any gets scheduler defaults filled in, and those must not replace the caller's.
 
+## Resource headers
+
+- `#NCPU:`, `#MEM:`, `#TIME:` and `#GPU:` ask for resources without naming a scheduler.
+- One reader serves every script type, so a value means the same everywhere.
+- A bare `#MEM:` number is GB and a bare `#TIME:` number is hours.
+- A GPU request is `N`, `TYPE` or `TYPE:N`. A bare count has no type, and the type is lower case.
+- An empty value is the same as no header.
+- A value that does not parse, or a header written twice, is an error naming its line. What did parse is still returned.
+
+## Script directives
+
+- A scheduler reads its directives from the header block of a script and stops at the first command. A directive after it is ignored and warned about.
+- Reading the same lines keeps one script meaning one thing, whoever reads it.
+- A submit description file is not a script and is read whole.
+
 ## Normalized variables
 
 - Recipes and scripts read `$NCPU`, `$MEM` and `$MEM_GB` on every scheduler, so they never learn a scheduler's own names.

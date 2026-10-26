@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -18,10 +20,15 @@ import (
 // helperIndexPath is where a collection publishes its helper listing.
 const helperIndexPath = "index/helpers.json"
 
+// ErrIndexEntry reports a helper index entry a build cannot use.
+var ErrIndexEntry = errors.New("helper: unusable index entry")
+
 // RemoteScriptEntry is one helper a source offers.
 type RemoteScriptEntry struct {
-	Path   string          `json:"path"`
-	Source *catalog.Source `json:"-"` // the source it came from
+	Path        string          `json:"path"`
+	Description string          `json:"description,omitempty"`
+	SHA256      string          `json:"sha256"` // of the script bytes, hex
+	Source      *catalog.Source `json:"-"`      // the source it came from
 }
 
 // RefreshRemoteMetadata reads the helper index from every configured source, merged with earlier sources winning.
@@ -89,7 +96,12 @@ func readHelperIndex(ctx context.Context, cat catalog.Catalog, src *catalog.Sour
 		}
 		scripts := make(map[string]RemoteScriptEntry, len(files))
 		for _, file := range files {
-			scripts[filepath.Base(file)] = RemoteScriptEntry{Path: file}
+			data, err := src.ReadFresh(ctx, file)
+			if err != nil {
+				return nil, err
+			}
+			sum := sha256.Sum256(data)
+			scripts[filepath.Base(file)] = RemoteScriptEntry{Path: file, Description: descriptionOf(data), SHA256: hex.EncodeToString(sum[:])}
 		}
 		return scripts, nil
 	}
@@ -109,6 +121,11 @@ func decodeHelperIndex(data []byte) (map[string]RemoteScriptEntry, error) {
 	var meta map[string]RemoteScriptEntry
 	if err := catalog.DecodeIndex(data, "helpers", &meta); err != nil {
 		return nil, fmt.Errorf("failed to parse helper index: %w", err)
+	}
+	for name, entry := range meta {
+		if entry.SHA256 == "" {
+			return nil, fmt.Errorf("%w: %q has no sha256", ErrIndexEntry, name)
+		}
 	}
 	return meta, nil
 }

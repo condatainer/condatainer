@@ -238,11 +238,41 @@ func New() *Lock {
 func EntryPath(entry string) string { return ProvenanceDir + "/" + entry }
 
 // Unmarshal parses a lock and rejects anything this build does not understand.
-//
-// Unknown fields are an error rather than a silent drop: a lock written by a
-// newer CondaTainer may mean something this one would quietly discard on the
-// next write.
+//   - The version is read first. A lock this build cannot read is reported as ErrSchema, and a newer one says to update.
+//   - Unknown fields are an error: a lock written by a newer CondaTainer may mean something this one would quietly discard on the next write.
 func Unmarshal(data []byte) (*Lock, error) {
+	var head struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(data, &head); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	var lock *Lock
+	var err error
+	switch head.SchemaVersion {
+	case 1:
+		lock, err = decodeV1(data)
+	default:
+		hint := ""
+		if head.SchemaVersion > SchemaVersion {
+			hint = "; update CondaTainer"
+		}
+		return nil, fmt.Errorf("%w: lock is %d (this build reads %d)%s", ErrSchema, head.SchemaVersion, SchemaVersion, hint)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lock.Pins == nil {
+		lock.Pins = map[string]PinEntry{}
+	}
+	if err := lock.Validate(); err != nil {
+		return nil, err
+	}
+	return lock, nil
+}
+
+// decodeV1 reads a version 1 lock, which is the current in-memory form.
+func decodeV1(data []byte) (*Lock, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 
@@ -252,15 +282,6 @@ func Unmarshal(data []byte) (*Lock, error) {
 	}
 	if decoder.More() {
 		return nil, fmt.Errorf("%w: trailing content after the lock document", ErrInvalid)
-	}
-	if lock.SchemaVersion != SchemaVersion {
-		return nil, fmt.Errorf("%w: lock is %d (this build reads %d)", ErrSchema, lock.SchemaVersion, SchemaVersion)
-	}
-	if lock.Pins == nil {
-		lock.Pins = map[string]PinEntry{}
-	}
-	if err := lock.Validate(); err != nil {
-		return nil, err
 	}
 	return &lock, nil
 }

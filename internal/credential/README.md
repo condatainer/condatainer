@@ -17,6 +17,8 @@ Stores secrets per config layer: registry logins and recipe-source tokens.
 - The most specific key wins, then the nearest layer.
 - So a personal entry for one repository beats a group's entry for the host, and a person's entry for the same key beats the group's.
 - An unreadable file holds nothing. A broken shared file must not stop a person's own credential from working.
+- A key or an entry field this build does not know is kept when the file is rewritten.
+- The file has no version. An entry stands alone, so a field this build ignores cannot contradict anything it changes.
 
 ## Files
 

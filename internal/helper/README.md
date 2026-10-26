@@ -8,14 +8,15 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 - `NoSubmit` is per run because the server is one long-lived process serving concurrent requests. Global config cannot be flipped for one caller.
 - A failed submit never falls back to headless. Running a compute-node job on a shared login node needs consent.
 - The error names the override instead.
-- Every run records `Runner`: `local`, or the scheduler type.
+- Every run records `Runner`: `local`, or the scheduler type (`SLURM`, `PBS`, `LSF` or `HTCondor`).
   - `JobID` and the early status only say which path it took until the run is `running`. After that nothing else does.
 - Every run records `Connect`, the `helper.connect` value at submission.
   - The bind address is fixed at submission. Only `direct` binds all interfaces.
   - The dashboard that connects later may be a restarted process, so it reads the run, not current config.
+- Headers are read by `catalog.ScanAnnotations`, as in a recipe. A `#NCPU:`, `#MEM:` or `#TIME:` value that does not parse refuses the run and names its line.
 - Account and partition resolve the same way on every entry point: flag or dashboard field, then config.
   - They are applied once, in `buildHelperScriptSpecs`.
-  - There is no script-header tier. `#NCPUS:` and `#MEM:` describe what the workload needs. Account and partition describe the user's own cluster access, which a script cannot know.
+  - There is no script-header tier. `#NCPU:` and `#MEM:` describe what the workload needs. Account and partition describe the user's own cluster access, which a script cannot know.
 
 ## Overlays
 
@@ -53,7 +54,7 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 
 ## State files
 
-- The compute node writes `start`, `ready`, `done` and `messages`. The login node reads them.
+- The compute node appends `start`, `ready`, `done` and message events to one `events` file, and the job's output goes to `job.log`. The login node reads them.
 - They sit on shared storage because the two never share a host.
 - `_server_ready` waits for the port to accept connections before writing `ready`, so `ready` means listening.
   - The wait has a timeout so a service that never binds cannot hang the script. It reports ready with a warning.
@@ -80,6 +81,15 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
   - Free with an owner recorded: gone.
   - Free and never written, or no file: unknown. It claims nothing, and `done`, ready and walltime remain the backstops.
 - `KillHeadlessProcess` signals only on the recorded host. Elsewhere it returns `ErrOtherHost`, and neither stop path closes out a run it could not signal.
+
+## Run records
+
+- `helper-history.jsonl` and each run's `events` file are read by any build, including one older than the writer.
+- A field is added, never retyped or given a new meaning.
+- A reader ignores a field it does not know.
+- A line that fails to decode is skipped, so a retyped field would hide a running helper.
+- Neither file carries a version.
+- Every duration is whole seconds, in `walltime_secs`.
 
 ## Shared history
 

@@ -10,7 +10,7 @@ import "strings"
 type Annotation struct {
 	// Key is the notation including its '#', e.g. "#DEP".
 	Key string
-	// Value is the text after the colon, with any trailing `# comment` removed.
+	// Value is the text after the colon up to the first `##`, trimmed. A single `#` is part of it.
 	Value string
 	// Note is the text after `##`, unparsed. Empty when there is none.
 	Note string
@@ -34,7 +34,7 @@ func ScanAnnotations(text []byte) []Annotation {
 			continue
 		}
 		value, note := splitNote(rest)
-		out = append(out, Annotation{Key: key, Value: stripInlineComment(value), Note: note, Line: i + 1})
+		out = append(out, Annotation{Key: key, Value: value, Note: note, Line: i + 1})
 	}
 	return out
 }
@@ -75,14 +75,4 @@ func cutKey(line string) (key, rest string, ok bool) {
 		}
 	}
 	return "#" + body, rest, true
-}
-
-// stripInlineComment removes a trailing `# comment` from an annotation value.
-//   - utils.StripInlineComment is the same three lines, kept separate because catalog sits below utils and the schedulers reach it through utils.
-//   - Neither belongs in the other's package for the sake of one string operation.
-func stripInlineComment(value string) string {
-	if i := strings.IndexByte(value, '#'); i >= 0 {
-		value = value[:i]
-	}
-	return strings.TrimSpace(value)
 }

@@ -479,6 +479,9 @@ func ReadManifest(imagePath string) (Manifest, error) {
 // archive read so what the bytes mean is decided in one place, whether they
 // came from an image, a staging directory, or a registry blob.
 func DecodeManifest(data []byte, source string) (Manifest, error) {
+	if err := checkSchema(data, "manifest", source); err != nil {
+		return Manifest{}, err
+	}
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Manifest{}, fmt.Errorf("%w: %s: %w", ErrInvalid, source, err)

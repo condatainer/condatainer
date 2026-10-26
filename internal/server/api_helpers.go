@@ -283,14 +283,13 @@ func (s *srv) handleHelperRunning(w http.ResponseWriter, r *http.Request, name s
 	}
 	out := resp{Running: running}
 	if scriptPath, err := config.FindHelperScript(name); err == nil {
-		if meta, err := helper.ParseHelperScriptMeta(scriptPath); err == nil {
-			out.SingletonBlocked = helper.SingletonBlocked(meta, running)
-		}
+		meta, _ := helper.ParseHelperScriptMeta(scriptPath)
+		out.SingletonBlocked = helper.SingletonBlocked(meta, running)
 	}
 	writeJSON(w, out)
 }
 
-// handleHelperResources serves GET /api/helpers/{name}/resources?cpus=&mem=&time=
+// handleHelperResources serves GET /api/helpers/{name}/resources?cpu=&mem=&time=
 func (s *srv) handleHelperResources(w http.ResponseWriter, r *http.Request, name string) {
 	scriptPath, err := config.FindHelperScript(name)
 	if err != nil {
@@ -299,7 +298,7 @@ func (s *srv) handleHelperResources(w http.ResponseWriter, r *http.Request, name
 	}
 	q := r.URL.Query()
 	cpus := 0
-	if v := q.Get("cpus"); v != "" {
+	if v := q.Get("cpu"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cpus = n
 		}
@@ -329,7 +328,7 @@ func (s *srv) handleHelperResources(w http.ResponseWriter, r *http.Request, name
 	}
 	spec := helper.ResolveResources(r.Context(), scriptPath, overrides)
 	type resp struct {
-		CPUs      int    `json:"cpus"`
+		CPU       int    `json:"cpu"`
 		MemMB     int64  `json:"mem_mb"`
 		Mem       string `json:"mem"`
 		Walltime  string `json:"walltime"`
@@ -339,7 +338,7 @@ func (s *srv) handleHelperResources(w http.ResponseWriter, r *http.Request, name
 	}
 	out := resp{}
 	if spec != nil {
-		out.CPUs = spec.GetNtasks() * spec.CpusPerTask
+		out.CPU = spec.GetNtasks() * spec.CpusPerTask
 		out.MemMB = spec.GetMemPerNodeMB()
 		if out.MemMB > 0 {
 			out.Mem = utils.FormatMemoryMB(out.MemMB)
@@ -349,7 +348,7 @@ func (s *srv) handleHelperResources(w http.ResponseWriter, r *http.Request, name
 		}
 		out.GPU = helper.FormatGpuSpec(spec)
 	}
-	// No script-header tier for account/partition (unlike cpus/mem/time/gpu) —
+	// No script-header tier for account/partition (unlike cpu/mem/time/gpu) —
 	// the placeholder is always the scheduler config default.
 	out.Account = scheduler.Account()
 	out.Partition = scheduler.Partition()
@@ -453,7 +452,7 @@ func (s *srv) handleHelperStart(w http.ResponseWriter, r *http.Request, name str
 	}
 
 	type startReq struct {
-		CPUs      int               `json:"cpus"`
+		CPU       int               `json:"cpu"`
 		Mem       string            `json:"mem"`
 		Time      string            `json:"time"`
 		GPU       string            `json:"gpu"`
@@ -479,10 +478,10 @@ func (s *srv) handleHelperStart(w http.ResponseWriter, r *http.Request, name str
 	}
 
 	var startOverrides *scheduler.ResourceSpec
-	if req.CPUs > 0 || req.Mem != "" || req.Time != "" || req.GPU != "" {
+	if req.CPU > 0 || req.Mem != "" || req.Time != "" || req.GPU != "" {
 		startOverrides = &scheduler.ResourceSpec{}
-		if req.CPUs > 0 {
-			startOverrides.CpusPerTask = req.CPUs
+		if req.CPU > 0 {
+			startOverrides.CpusPerTask = req.CPU
 		}
 		if req.Mem != "" {
 			if mb, err := utils.ParseMemoryMB(req.Mem); err == nil {

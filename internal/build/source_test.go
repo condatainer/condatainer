@@ -98,7 +98,7 @@ func TestShortReadFailsAndLeavesNothingBehind(t *testing.T) {
 
 func TestSourceEnvNamesWhatArrived(t *testing.T) {
 	got := sourceEnvFor([]meta.SourceFile{{Name: "gtf"}, {Name: "genome"}})
-	want := []string{"CNT_SRC_gtf=/cnt_src/gtf", "CNT_SRC_genome=/cnt_src/genome"}
+	want := []string{"CNT_BUILD_SRC_gtf=/cnt_src/gtf", "CNT_BUILD_SRC_genome=/cnt_src/genome"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("env = %v, want %v", got, want)
 	}

@@ -25,7 +25,6 @@ var searchCmd = &cobra.Command{
 - Results are limited to the configured channels, or to --channel.
 - By default the name must match exactly. -f matches approximately.`,
 	Example: `  condatainer search samtools              # Exact match
-  condatainer search samtools --json       # JSON output
   condatainer search samtools -c bioconda  # One channel
   condatainer search -f samtool            # Fuzzy match
   condatainer search -f samtool -l 200     # Fuzzy match, more results`,
@@ -36,7 +35,7 @@ var searchCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(searchCmd)
-	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "Print JSON")
+	jsonFlag(searchCmd.Flags(), &searchJSON)
 	searchCmd.Flags().BoolVarP(&searchFuzzy, "fuzzy", "f", false, "Fuzzy search: approximate name match")
 	searchCmd.Flags().StringArrayVarP(&searchChannels, "channel", "c", nil, "Conda channel to search (overrides config; repeatable)")
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "l", 100, "Fuzzy results to fetch before channel filtering")

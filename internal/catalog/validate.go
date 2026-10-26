@@ -147,7 +147,7 @@ func (r *Recipe) Validate() error {
 		}
 	}
 
-	// A source name becomes $CNT_SRC_<name> and addresses one record in the
+	// A source name becomes $CNT_BUILD_SRC_<name> and addresses one record in the
 	// identity, so a malformed or repeated one is rejected rather than skipped:
 	// the body would otherwise run against an unset variable.
 	type sourceKey struct{ name, arch string }

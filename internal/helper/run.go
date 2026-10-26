@@ -132,30 +132,29 @@ func ResolveHelperSpec(scriptPath string) *scheduler.ResourceSpec {
 }
 
 // resolveSpec merges resources with priority: scheduler defaults < script headers < overrides.
-// Recognised script headers: #NCPUS:, #MEM:, #TIME:, #GPU:.
+// Recognised script headers: #NCPU:, #MEM:, #TIME:, #GPU:.
 func resolveSpec(scriptPath string, overrides *scheduler.ResourceSpec) *scheduler.ResourceSpec {
 	base := scheduler.DefaultSpec()
 
-	// Script headers (#NCPUS:/#MEM:/#TIME:/#GPU:) override config defaults.
+	// Script headers (#NCPU:/#MEM:/#TIME:/#GPU:) override config defaults.
 	meta, err := ParseHelperScriptMeta(scriptPath)
 	if err != nil {
 		slog.Default().Debug("helper: could not parse script meta", "err", err)
-	} else {
-		scriptDefaults := &scheduler.ResourceSpec{}
-		if meta.NCPUs > 0 {
-			scriptDefaults.CpusPerTask = meta.NCPUs
-		}
-		if meta.MemMB > 0 {
-			scriptDefaults.MemPerNodeMB = meta.MemMB
-		}
-		if meta.Walltime > 0 {
-			scriptDefaults.Time = meta.Walltime
-		}
-		if meta.GPU != "" {
-			scriptDefaults.Gpu = ParseGPUSpec(meta.GPU)
-		}
-		base.Override(scriptDefaults)
 	}
+	scriptDefaults := &scheduler.ResourceSpec{}
+	if meta.NCPU > 0 {
+		scriptDefaults.CpusPerTask = meta.NCPU
+	}
+	if meta.MemMB > 0 {
+		scriptDefaults.MemPerNodeMB = meta.MemMB
+	}
+	if meta.Walltime > 0 {
+		scriptDefaults.Time = meta.Walltime
+	}
+	if meta.GPU != "" {
+		scriptDefaults.Gpu = ParseGPUSpec(meta.GPU)
+	}
+	base.Override(scriptDefaults)
 
 	// User overrides (CLI flags or server request) take highest priority.
 	base.Override(overrides)
@@ -471,22 +470,22 @@ func buildHelperCommandBody(id, name, cwd, scriptDir, stateDir string, walltime 
 	// SCRATCH is not exported: it would leak into nested condatainer calls, where it
 	// selects a data layer. Helper scripts use "${SCRATCH:-$HOME}" themselves.
 
-	// CNT_JOB_TMPDIR: per-job node-local scratch dir. Unix sockets (dbus, X11, PulseAudio,
+	// CNT_HELPER_TMPDIR: per-job node-local scratch dir. Unix sockets (dbus, X11, PulseAudio,
 	// rserver RPC) require local storage and do not work over NFS.
 	// For schedulers: scheduler-assigned dir (SLURM_TMPDIR etc.) when available, falling
 	// back to /tmp/cnt-$USER/$CNT_HELPER_ID. For headless: resolved at generation time.
 	// The directory is created here; cleanup is handled by the wrapper trap below.
 	if sched != nil {
 		if v := sched.TmpDirVar(); v != "" {
-			fmt.Fprintf(&sb, "export CNT_JOB_TMPDIR=\"${%s:-/tmp/cnt-${USER:-condatainer}/${CNT_HELPER_ID}}\"\n", v)
+			fmt.Fprintf(&sb, "export CNT_HELPER_TMPDIR=\"${%s:-/tmp/cnt-${USER:-condatainer}/${CNT_HELPER_ID}}\"\n", v)
 		} else {
-			fmt.Fprintln(&sb, `export CNT_JOB_TMPDIR="/tmp/cnt-${USER:-condatainer}/${CNT_HELPER_ID}"`)
+			fmt.Fprintln(&sb, `export CNT_HELPER_TMPDIR="/tmp/cnt-${USER:-condatainer}/${CNT_HELPER_ID}"`)
 		}
 	} else {
 		// Headless: generated and executed on the same login node, so resolve at generation time.
-		fmt.Fprintf(&sb, "export CNT_JOB_TMPDIR=%s\n", shellQuote(filepath.Join(utils.GetTmpDir(), id)))
+		fmt.Fprintf(&sb, "export CNT_HELPER_TMPDIR=%s\n", shellQuote(filepath.Join(utils.GetTmpDir(), id)))
 	}
-	fmt.Fprintln(&sb, `mkdir -p "$CNT_JOB_TMPDIR"`)
+	fmt.Fprintln(&sb, `mkdir -p "$CNT_HELPER_TMPDIR"`)
 
 	// #PARAM: values resolved from flags + prompts
 	for k, v := range params {
@@ -522,7 +521,7 @@ func buildHelperCommandBody(id, name, cwd, scriptDir, stateDir string, walltime 
 
 	// Until the container is running there is nothing to forward to: record done
 	// and clean up, so a stop during setup still leaves a finished helper.
-	// CNT_JOB_TMPDIR is always cleaned up: headless uses rm -rf on the resolved path;
+	// CNT_HELPER_TMPDIR is always cleaned up: headless uses rm -rf on the resolved path;
 	// scheduler uses the shell variable so it works for both the scheduler-assigned dir
 	// and the /tmp fallback (scheduler-assigned dirs being wiped twice is harmless).
 	cleanupTrap := `condatainer _server_done --exit-code 130`
@@ -533,7 +532,7 @@ func buildHelperCommandBody(id, name, cwd, scriptDir, stateDir string, walltime 
 		cleanupTrap += fmt.Sprintf(`; rm -rf %s; rmdir %s 2>/dev/null || true`,
 			shellQuote(jobTmpDir), shellQuote(parentDir))
 	} else {
-		cleanupTrap += `; rm -rf "$CNT_JOB_TMPDIR"`
+		cleanupTrap += `; rm -rf "$CNT_HELPER_TMPDIR"`
 	}
 	fmt.Fprintf(&sb, "trap '%s; exit 130' TERM INT\n", cleanupTrap)
 
@@ -591,7 +590,7 @@ func buildHelperCommandBody(id, name, cwd, scriptDir, stateDir string, walltime 
 		fmt.Fprintf(&sb, "rm -rf %s\n", shellQuote(jobTmpDir))
 		fmt.Fprintf(&sb, "rmdir %s 2>/dev/null || true\n", shellQuote(parentDir))
 	} else {
-		fmt.Fprintln(&sb, `rm -rf "$CNT_JOB_TMPDIR"`)
+		fmt.Fprintln(&sb, `rm -rf "$CNT_HELPER_TMPDIR"`)
 	}
 	fmt.Fprintln(&sb, `(exit $_cnt_exit)`)
 
@@ -642,7 +641,7 @@ func newHelperID(name string) string {
 // Stdout and Stderr are /dev/null because the command body uses `exec >>` to
 // redirect output to the per-ID state dir; the scheduler-level log is unused.
 // account/partition fall back to scheduler.Account()/.Partition when empty —
-// there is no script-header tier for either (unlike ncpus/mem/time/gpu), since a script
+// there is no script-header tier for either (unlike cpu/mem/time/gpu), since a script
 // author has no way to know a user's cluster account.
 func buildHelperScriptSpecs(name, cwd, account, partition string, excludeNodes []string, spec *scheduler.ResourceSpec) *scheduler.ScriptSpecs {
 	if account == "" {
@@ -783,22 +782,22 @@ func newHelperRun(id, name, jobID, cwd string, walltime time.Duration,
 		normalizedOverlays[i] = normalizeOverlayForHistory(ol, cwd)
 	}
 	run := &HelperRun{
-		ID:         id,
-		Name:       name,
-		JobID:      jobID,
-		Runner:     runner,
-		CWD:        cwd,
-		Walltime:   walltime,
-		GPU:        FormatGpuSpec(spec),
-		EnvOverlay: normalizeOverlayForHistory(opts.EnvImg, cwd),
-		Overlays:   normalizedOverlays,
-		Params:     params,
-		StartedAt:  time.Now(),
-		Status:     status,
-		Connect:    Connect(),
+		ID:           id,
+		Name:         name,
+		JobID:        jobID,
+		Runner:       runner,
+		CWD:          cwd,
+		WalltimeSecs: int64(walltime.Seconds()),
+		GPU:          FormatGpuSpec(spec),
+		EnvOverlay:   normalizeOverlayForHistory(opts.EnvImg, cwd),
+		Overlays:     normalizedOverlays,
+		Params:       params,
+		StartedAt:    time.Now(),
+		Status:       status,
+		Connect:      Connect(),
 	}
 	if spec != nil {
-		run.CPUs = spec.CpusPerTask
+		run.CPU = spec.CpusPerTask
 		if mb := spec.GetMemPerNodeMB(); mb > 0 {
 			run.Mem = utils.FormatMemoryMB(mb)
 		}

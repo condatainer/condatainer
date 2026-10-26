@@ -32,7 +32,7 @@ func fakeSource(t *testing.T) string {
 		}
 	}
 
-	write("source.json", `{"schema":1,"source":"https://example.invalid/r","default_distro":"ubuntu24","oci":{"registry":"oci://ghcr.io/lab/cnt/","audience":"restricted"}}`)
+	write("source.json", `{"schema_version":1,"source":"https://example.invalid/r","default_distro":"ubuntu24","oci":{"registry":"oci://ghcr.io/lab/cnt/","audience":"restricted"}}`)
 	write("recipes/cellranger/9.0.1", "#DESC:cellranger\n#URL:https://example.invalid\n")
 	write("recipes/ubuntu24/base.def", "#DESC:base\n\nBootstrap: docker\n")
 	write("recipes/grch38/star-gencode", starRecipe)
@@ -44,7 +44,7 @@ func fakeSource(t *testing.T) string {
 		t.Fatal(err)
 	}
 	entries := cat.Entries(t.Context())
-	data, err := json.Marshal(entries)
+	data, err := json.Marshal(map[string]any{"schema_version": IndexSchemaVersion, "recipes": entries})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,20 +94,21 @@ func TestParseDescriptorOCI(t *testing.T) {
 	}{
 		{
 			name: "absent OCI defaults safely",
-			json: `{"schema":1}`,
-			want: Descriptor{Schema: 1, OCI: OCI{Audience: "public"}},
+			json: `{"schema_version":1}`,
+			want: Descriptor{SchemaVersion: 1, OCI: OCI{Audience: "public"}},
 		},
 		{
 			name: "scheme normalization",
-			json: `{"schema":1,"oci":{"registry":"oci://ghcr.io/lab/cnt/","audience":"RESTRICTED"}}`,
-			want: Descriptor{Schema: 1, OCI: OCI{Registry: "ghcr.io/lab/cnt", Audience: "restricted"}},
+			json: `{"schema_version":1,"oci":{"registry":"oci://ghcr.io/lab/cnt/","audience":"RESTRICTED"}}`,
+			want: Descriptor{SchemaVersion: 1, OCI: OCI{Registry: "ghcr.io/lab/cnt", Audience: "restricted"}},
 		},
-		{name: "bad audience", json: `{"schema":1,"oci":{"registry":"ghcr.io/lab/cnt","audience":"private"}}`, wantErr: "audience"},
-		{name: "host alone is not a repository", json: `{"schema":1,"oci":{"registry":"ghcr.io"}}`, wantErr: "registry/repository coordinate"},
-		{name: "unsupported scheme", json: `{"schema":1,"oci":{"registry":"https://ghcr.io/lab/cnt"}}`, wantErr: "registry/repository coordinate"},
-		{name: "Docker Hub takes user/repo", json: `{"schema":1,"oci":{"registry":"docker.io/lab/cnt/deep"}}`, wantErr: "two parts"},
-		{name: "Docker Hub namespace alone is no repository", json: `{"schema":1,"oci":{"registry":"docker.io/lab"}}`, wantErr: "two parts"},
-		{name: "unsupported schema", json: `{"schema":2}`, wantErr: "unsupported"},
+		{name: "bad audience", json: `{"schema_version":1,"oci":{"registry":"ghcr.io/lab/cnt","audience":"private"}}`, wantErr: "audience"},
+		{name: "host alone is not a repository", json: `{"schema_version":1,"oci":{"registry":"ghcr.io"}}`, wantErr: "registry/repository coordinate"},
+		{name: "unsupported scheme", json: `{"schema_version":1,"oci":{"registry":"https://ghcr.io/lab/cnt"}}`, wantErr: "registry/repository coordinate"},
+		{name: "Docker Hub takes user/repo", json: `{"schema_version":1,"oci":{"registry":"docker.io/lab/cnt/deep"}}`, wantErr: "two parts"},
+		{name: "Docker Hub namespace alone is no repository", json: `{"schema_version":1,"oci":{"registry":"docker.io/lab"}}`, wantErr: "two parts"},
+		{name: "newer schema", json: `{"schema_version":2}`, wantErr: "update CondaTainer"},
+		{name: "missing schema", json: `{"default_distro":"ubuntu24"}`, wantErr: "schema_version 0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ParseDescriptor([]byte(tc.json))
@@ -129,7 +130,7 @@ func TestParseDescriptorOCI(t *testing.T) {
 
 func TestInvalidDescriptorDoesNotDisableRecipes(t *testing.T) {
 	root := fakeSource(t)
-	if err := os.WriteFile(filepath.Join(root, "source.json"), []byte(`{"schema":1,"oci":{"registry":"ghcr.io"}}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "source.json"), []byte(`{"schema_version":1,"oci":{"registry":"ghcr.io"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cat, err := Open(t.Context(), []Spec{{Name: "local", Base: root}}, Cache{})
@@ -309,12 +310,12 @@ func TestUnreachableSourceKeepsItsPlace(t *testing.T) {
 // enters rather than in each artifact built from it.
 func TestParseDescriptorChecksTheSourceURL(t *testing.T) {
 	for _, tc := range []struct{ name, json, wantErr string }{
-		{"https", `{"schema":1,"source":"https://github.com/lab/r"}`, ""},
-		{"http", `{"schema":1,"source":"http://git.lab.example/r"}`, ""},
-		{"absent", `{"schema":1}`, ""},
-		{"wrong scheme", `{"schema":1,"source":"ftp://example.invalid/r"}`, "http(s)"},
-		{"not a url", `{"schema":1,"source":"github.com/lab/r"}`, "http(s)"},
-		{"whitespace", `{"schema":1,"source":"https://example.invalid/a b"}`, "whitespace"},
+		{"https", `{"schema_version":1,"source":"https://github.com/lab/r"}`, ""},
+		{"http", `{"schema_version":1,"source":"http://git.lab.example/r"}`, ""},
+		{"absent", `{"schema_version":1}`, ""},
+		{"wrong scheme", `{"schema_version":1,"source":"ftp://example.invalid/r"}`, "http(s)"},
+		{"not a url", `{"schema_version":1,"source":"github.com/lab/r"}`, "http(s)"},
+		{"whitespace", `{"schema_version":1,"source":"https://example.invalid/a b"}`, "whitespace"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseDescriptor([]byte(tc.json))
@@ -399,5 +400,29 @@ func TestTokenNeverPrintsItsSecret(t *testing.T) {
 		if strings.Contains(s, "ghp_secret") {
 			t.Errorf("printed the secret: %s", s)
 		}
+	}
+}
+
+func TestDecodeIndexRequiresTheVersionAndTheMember(t *testing.T) {
+	var entries map[string]*Entry
+	if err := DecodeIndex([]byte(`{"schema_version":1,"recipes":{"a/b":{"path":"recipes/a/b"}}}`), "recipes", &entries); err != nil || entries["a/b"] == nil {
+		t.Fatalf("entries = %v, err = %v", entries, err)
+	}
+	for _, tc := range []struct{ name, doc, want string }{
+		{"bare map", `{"a/b":{"path":"recipes/a/b"}}`, "schema_version 0"},
+		{"newer", `{"schema_version":2,"recipes":{}}`, "update CondaTainer"},
+		{"no member", `{"schema_version":1,"helpers":{}}`, `no "recipes"`},
+	} {
+		err := DecodeIndex([]byte(tc.doc), "recipes", &entries)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error = %v, want containing %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+func TestParseDescriptorIgnoresAnAddedKey(t *testing.T) {
+	desc, err := ParseDescriptor([]byte(`{"schema_version":1,"mirrors":["https://m.example"],"oci":{"registry":"ghcr.io/lab/cnt","note":"x"}}`))
+	if err != nil || desc.OCI.Registry != "ghcr.io/lab/cnt" {
+		t.Fatalf("descriptor = %+v, err = %v; a key this build does not know must not matter", desc, err)
 	}
 }

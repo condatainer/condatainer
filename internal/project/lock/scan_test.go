@@ -232,9 +232,9 @@ func TestScanDoesNotFollowSymlinks(t *testing.T) {
 	}
 }
 
-func TestScanStripsInlineComments(t *testing.T) {
+func TestScanReadsTheValueUpToTwoHashes(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "run.sh", "#DEP: star/2.7.11b # the aligner\nrun\n")
+	write(t, root, "run.sh", "#DEP: star/2.7.11b ## the aligner\nrun\n")
 
 	if got := keys(scan(t, root)); len(got) != 1 || got[0] != "star/2.7.11b" {
 		t.Fatalf("requests = %v", got)
@@ -470,13 +470,13 @@ func TestScanReadsAHiddenProjectRoot(t *testing.T) {
 }
 
 // A recipe's #DEP: are its artifact's build dependencies, already recorded in
-// that artifact's provenance, not declarations the project mounts. $CNT_PREFIX
+// that artifact's provenance, not declarations the project mounts. $CNT_BUILD_PREFIX
 // is what identifies one, and comments are stripped before the check.
 func TestScanSkipsBuildRecipes(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "tool.sh", "#DEP: build-only/9.9\ninstall -d \"$CNT_PREFIX/bin\"\n")
-	write(t, root, "env.sh", "#DEP: build-only/8.8\ncp x \"${CNT_PREFIX}\"/lib\n")
-	write(t, root, "run.sh", "# built into $CNT_PREFIX\n#DEP: real/1.0\n")
+	write(t, root, "tool.sh", "#DEP: build-only/9.9\ninstall -d \"$CNT_BUILD_PREFIX/bin\"\n")
+	write(t, root, "env.sh", "#DEP: build-only/8.8\ncp x \"${CNT_BUILD_PREFIX}\"/lib\n")
+	write(t, root, "run.sh", "# built into $CNT_BUILD_PREFIX\n#DEP: real/1.0\n")
 
 	result := scan(t, root)
 	if got := keys(result); len(got) != 1 || got[0] != "real/1.0" {

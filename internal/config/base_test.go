@@ -12,7 +12,7 @@ import (
 func TestEnsureDefaultDistroRecordsOnce(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "source.json"),
-		[]byte(`{"schema":1,"default_distro":"ubuntu24"}`), 0o644); err != nil {
+		[]byte(`{"schema_version":1,"default_distro":"ubuntu24"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "recipes"), 0o755); err != nil {

@@ -281,6 +281,9 @@ func runScript(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Taken before the script's own #CNT lines are applied, which change the same variables: the job reads those itself.
+	containerFlags := forwardedFlagArgs(cmd.Flags())
+
 	// 2. Embedded #CNT args + dependency check/install
 	if err := processEmbeddedArgs(contentScript); err != nil {
 		return err
@@ -351,7 +354,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 		if sched == nil {
 			utils.PrintNote("Script has scheduler specs but no scheduler is available. Running locally.")
 		} else {
-			return submitRunJob(cmd.Context(), sched, originScriptPath, contentScript, scriptSpecs, runDependencies(), scriptArgs, arraySpec)
+			return submitRunJob(cmd.Context(), sched, originScriptPath, contentScript, scriptSpecs, runDependencies(), containerFlags, scriptArgs, arraySpec)
 		}
 	} else if !scheduler.HasSchedulerSpecs(scriptSpecs) {
 		utils.PrintNote("No scheduler specs found in script. Running locally.")
@@ -1128,12 +1131,36 @@ func detectMpi() (string, bool) {
 	return path, true
 }
 
+// forwardedFlagArgs returns the flags given on the command line that a submitted job must run with, as shell words.
+//   - A submitted job runs `condatainer run` again on the compute node, so a flag left out of that command is lost there.
+//   - Every flag that was set is forwarded, except the job flags, which the generated job script carries, and --project, which the working directory already carries.
+func forwardedFlagArgs(fs *pflag.FlagSet) []string {
+	var args []string
+	fs.VisitAll(func(fl *pflag.Flag) {
+		if !fl.Changed || runJobFlagNames[fl.Name] || fl.Name == "project" {
+			return
+		}
+		values := []string{fl.Value.String()}
+		if list, ok := fl.Value.(pflag.SliceValue); ok {
+			values = list.GetSlice()
+		}
+		for _, v := range values {
+			args = append(args, "--"+fl.Name+"="+shellQuote(v))
+		}
+	})
+	return args
+}
+
 // buildMpiRunCommand returns the shell command to embed in the job script.
 //   - When ntasks > 1 it requires mpiexec in PATH and wraps the condatainer run invocation with the full mpiexec path so compute nodes don't need a matching PATH.
 //   - Returns an error when ntasks > 1 but mpiexec cannot be found.
 //   - The user is responsible for installing the same MPI version inside the container.
-func buildMpiRunCommand(contentScript string, scriptArgs []string, specs *scheduler.ScriptSpecs, prependArrayArgs bool) (string, error) {
-	runCmd := fmt.Sprintf("%s run %s", utils.SelfCommand(), contentScript)
+func buildMpiRunCommand(contentScript string, containerFlags, scriptArgs []string, specs *scheduler.ScriptSpecs, prependArrayArgs bool) (string, error) {
+	runCmd := utils.SelfCommand() + " run"
+	if len(containerFlags) > 0 {
+		runCmd += " " + strings.Join(containerFlags, " ")
+	}
+	runCmd += " " + contentScript
 	if prependArrayArgs {
 		runCmd += " $ARRAY_ARGS"
 	}
@@ -1218,7 +1245,7 @@ func detectNativeArrayDirective(specs *scheduler.ScriptSpecs) string {
 // submitRunJob creates and submits a scheduler job to run the script.
 // contentScript is the bash script containing #DEP/#CNT directives — for HTCondor this is the
 // executable referenced in the .sub file, for other schedulers it equals scriptPath.
-func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPath, contentScript string, specs *scheduler.ScriptSpecs, deps []scheduler.Dependency, scriptArgs []string, arraySpec *scheduler.ArraySpec) error {
+func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPath, contentScript string, specs *scheduler.ScriptSpecs, deps []scheduler.Dependency, containerFlags, scriptArgs []string, arraySpec *scheduler.ArraySpec) error {
 	// Capture separate-output intent before CreateScriptWithSpec overrides Stdout/Stderr to /dev/null
 	arraySeparateOutput := arraySpec != nil && specs.Control.Stderr != "" && specs.Control.Stderr != specs.Control.Stdout
 
@@ -1239,7 +1266,7 @@ func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPa
 	// Build the condatainer run command pointing at the bash script.
 	// When the user provided a .sub file, contentScript is the executable .sh — the submitted
 	// job must re-invoke condatainer run on the bash script, not the submit file.
-	runCommand, err := buildMpiRunCommand(contentScript, scriptArgs, specs, arraySpec != nil)
+	runCommand, err := buildMpiRunCommand(contentScript, containerFlags, scriptArgs, specs, arraySpec != nil)
 	if err != nil {
 		utils.PrintError("%v", err)
 		return err

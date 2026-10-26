@@ -165,20 +165,20 @@ func ApplyHistoryRun(opts *helper.RunOptions, r *helper.HelperRun) {
 	if r.CWD != "" {
 		opts.CWD = r.CWD
 	}
-	if r.CPUs > 0 || r.Mem != "" || r.Walltime > 0 || r.GPU != "" {
+	if r.CPU > 0 || r.Mem != "" || r.WalltimeSecs > 0 || r.GPU != "" {
 		if opts.Resources == nil {
 			opts.Resources = &scheduler.ResourceSpec{}
 		}
-		if r.CPUs > 0 {
-			opts.Resources.CpusPerTask = r.CPUs
+		if r.CPU > 0 {
+			opts.Resources.CpusPerTask = r.CPU
 		}
 		if r.Mem != "" {
 			if mb, err := utils.ParseMemoryMB(r.Mem); err == nil {
 				opts.Resources.MemPerNodeMB = mb
 			}
 		}
-		if r.Walltime > 0 {
-			opts.Resources.Time = r.Walltime
+		if r.WalltimeSecs > 0 {
+			opts.Resources.Time = r.Walltime()
 		}
 		if r.GPU != "" {
 			opts.Resources.Gpu = helper.ParseGPUSpec(r.GPU)
@@ -282,7 +282,7 @@ func PromptSettings(ctx context.Context,
 	}
 	// Saved config resource defaults.
 	if cpus == 0 {
-		if v, ok := saved["cpus"]; ok {
+		if v, ok := saved["cpu"]; ok {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				cpus = n
 			}
@@ -468,7 +468,7 @@ func PromptSettings(ctx context.Context,
 			handled := true
 			var confirm string
 			switch k {
-			case "c", "cpus":
+			case "c", "cpu":
 				n, err := strconv.Atoi(v)
 				if err != nil || n <= 0 {
 					fmt.Printf("[?] Invalid CPUs value %q — try again: ", v)
@@ -931,14 +931,14 @@ func FormatRunResources(r *helper.HelperRun) string { return formatRunResources(
 
 func formatRunResources(r *helper.HelperRun) string {
 	var parts []string
-	if r.CPUs > 0 {
-		parts = append(parts, fmt.Sprintf("%dc", r.CPUs))
+	if r.CPU > 0 {
+		parts = append(parts, fmt.Sprintf("%dc", r.CPU))
 	}
 	if r.Mem != "" {
 		parts = append(parts, r.Mem)
 	}
-	if r.Walltime > 0 {
-		parts = append(parts, utils.FormatDuration(r.Walltime))
+	if r.WalltimeSecs > 0 {
+		parts = append(parts, utils.FormatDuration(r.Walltime()))
 	}
 	if r.GPU != "" {
 		parts = append(parts, r.GPU)

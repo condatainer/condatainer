@@ -128,7 +128,7 @@ func newProjectLockCmd() *cobra.Command {
 			return reportLockState(result, jsonOutput)
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
 }
 
@@ -184,7 +184,7 @@ func newProjectStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
 }
 
@@ -544,7 +544,7 @@ func newProjectListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
 }
 
@@ -682,7 +682,7 @@ func newProjectRegistryCmd() *cobra.Command {
 }
 
 func newProjectRegistrySetCmd() *cobra.Command {
-	var audience, source string
+	var audience, codeURL string
 	cmd := &cobra.Command{
 		Use:   "set [flags] <host>/<owner>/<repo>",
 		Short: "Set the publish destination",
@@ -691,8 +691,7 @@ func newProjectRegistrySetCmd() *cobra.Command {
 - Give a repository with no tag or digest. Every overlay goes into it.
 - --audience sets what a push may publish: public (default) or restricted.
 - A public destination refuses an app whose recipe does not allow redistribution.
-- --audience does not control who can pull.
-- --source is the code repository the published packages link back to.`,
+- --audience does not control who can pull.`,
 		Example:      `  condatainer project registry set ghcr.io/my-lab/rnaseq-2026/cnt --audience restricted`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
@@ -714,13 +713,15 @@ func newProjectRegistrySetCmd() *cobra.Command {
 				Push:     destination,
 				Audience: strings.ToLower(strings.TrimSpace(audience)),
 			}
-			if cmd.Flags().Changed("source") {
-				l.Source = strings.TrimSpace(source)
+			fromOrigin, originPort := false, false
+			if cmd.Flags().Changed("code-url") {
+				l.Source = strings.TrimSpace(codeURL)
 			} else if l.Source == "" {
 				// Derived once and recorded, never re-derived at push time: two
 				// collaborators with different remote spellings would otherwise
 				// publish two different annotations for one project.
-				l.Source = publish.OriginURL(cmd.Context(), root)
+				l.Source, originPort = publish.OriginURL(cmd.Context(), root)
+				fromOrigin = l.Source != ""
 			}
 			if err := lock.Publish(root, l); err != nil {
 				l.OCI = previous
@@ -729,16 +730,22 @@ func newProjectRegistrySetCmd() *cobra.Command {
 
 			utils.PrintSuccess("Publishing to %s", l.OCI.Push)
 			utils.PrintMessage("  audience %s", audienceOrDefault(l.OCI.Audience))
-			if l.Source != "" {
+			switch {
+			case l.Source != "":
 				utils.PrintMessage("  source   %s", l.Source)
-			} else {
-				utils.PrintMessage("  no repository URL was derived from origin; pass --source to record one")
+				if fromOrigin {
+					utils.PrintNote("The source was taken from the origin remote. Pass --code-url to use another.")
+				}
+			case originPort:
+				utils.PrintNote("The origin remote names a port. Pass --code-url to record the source.")
+			default:
+				utils.PrintMessage("  no repository URL was derived from origin; pass --code-url to record one")
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&audience, "audience", "public", "What a push may publish here: public or restricted")
-	cmd.Flags().StringVar(&source, "source", "", "Code repository the packages link back to (default: the origin remote)")
+	cmd.Flags().StringVar(&codeURL, "code-url", "", "Code repository URL that published packages link to (default: origin remote)")
 	return cmd
 }
 
@@ -852,7 +859,7 @@ func newProjectRegistryPushCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "Publish every pin, including ones a recipe source already serves")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be published, without uploading")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
 }
 
@@ -1113,7 +1120,7 @@ func newProjectValidateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	cmd.Flags().BoolVar(&lockOnly, "lock-only", false, "Check the lock and scripts only; no installed overlays needed (for CI)")
 	cmd.Flags().BoolVar(&payload, "payload", false,
 		"Also check installed file contents (reads the whole overlays)")
@@ -1345,7 +1352,7 @@ func newProjectRestoreCmd() *cobra.Command {
 			return runErr
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would happen, without doing it")
 	cmd.Flags().BoolVar(&noPrebuilt, "no-prebuilt", false,
 		"Rebuild missing overlays instead of downloading it (snapshot still downloaded; refused for one whose tools run on another architecture)")

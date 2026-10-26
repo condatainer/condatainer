@@ -2,6 +2,9 @@ package lock
 
 import (
 	"errors"
+	"maps"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -151,6 +154,8 @@ func TestUnmarshalRejectsUnknownFieldsAndSchemas(t *testing.T) {
 		{"unknown top-level field", `{"schema_version":1,"pins":{},"surprise":true}`, ErrInvalid},
 		{"unknown pin field", `{"schema_version":1,"pins":{"a":{"artifact":"provenance/a@b","pinned":true}}}`, ErrInvalid},
 		{"future schema", `{"schema_version":99,"pins":{}}`, ErrSchema},
+		{"future schema with a new field", `{"schema_version":2,"pins":{},"surprise":true}`, ErrSchema},
+		{"missing schema", `{"pins":{}}`, ErrSchema},
 		{"trailing content", `{"schema_version":1,"pins":{}} {}`, ErrInvalid},
 		{"remote outside artifacts", `{"schema_version":1,"pins":{},"remotes":{"/abs":[]}}`, ErrInvalid},
 	}
@@ -316,5 +321,53 @@ func TestMarshalSortsTheCoveredArchitectures(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"archs": [`+"\n"+`    "amd64",`) {
 		t.Errorf("archs are not sorted:\n%s", data)
+	}
+}
+
+// A lock newer than this build says so, whatever else in it this build cannot read.
+func TestUnmarshalTellsANewerLockToUpdate(t *testing.T) {
+	_, err := Unmarshal([]byte(`{"schema_version":2,"pins":{"a":{"artifacts":7}},"surprise":true}`))
+	if !errors.Is(err, ErrSchema) || !strings.Contains(err.Error(), "update CondaTainer") {
+		t.Fatalf("error = %v, want ErrSchema naming the update", err)
+	}
+}
+
+// testdata/lock_v1.json is a version 1 lock as the first release writes it. Every later
+// build must keep reading it to the same pins, so it is never edited to fit a change.
+func TestVersion1FixtureStaysReadable(t *testing.T) {
+	data, err := os.ReadFile("testdata/lock_v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := Unmarshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Match != MatchIdentity || l.OCI.Push != "ghcr.io/my-lab/rnaseq/cnt" || l.OCI.Audience != "restricted" ||
+		l.Source != "https://github.com/my-lab/rnaseq" || !slices.Equal(l.Archs, []string{"amd64", "arm64"}) {
+		t.Errorf("header fields = %+v", l)
+	}
+	want := map[string]string{
+		BaseKey + "|amd64":                          "provenance/ubuntu24--base@0123456789ab",
+		BaseKey + "|arm64":                          "provenance/ubuntu24--base@ba9876543210",
+		"grch38/genome/gencode49|noarch":            "provenance/grch38--genome--gencode49@8ce02116f302",
+		PathPrefix + "overlays/combined.sqf|noarch": "provenance/env@41b5204f99c1",
+		"star/2.7.11b|amd64":                        "provenance/star--2.7.11b@a31f902c12ab",
+		"star/2.7.11b|arm64":                        "provenance/star--2.7.11b@f00dfeed1234",
+	}
+	got := map[string]string{}
+	for key, pin := range l.Pins {
+		for arch, path := range pin.Artifacts {
+			got[key+"|"+arch] = path
+		}
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("pins = %v, want %v", got, want)
+	}
+	if !l.Pins[PathPrefix+"overlays/combined.sqf"].Manual {
+		t.Error("the manual pin lost its flag")
+	}
+	if len(l.Remotes["provenance/star--2.7.11b@a31f902c12ab"]) != 1 {
+		t.Errorf("remotes = %v, want one for the star artifact", l.Remotes)
 	}
 }

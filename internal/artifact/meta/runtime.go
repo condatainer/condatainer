@@ -32,7 +32,7 @@ type Runtime struct {
 	Description   string       `json:"description,omitempty"`
 	Platform      Platform     `json:"platform"`
 	// Prefix is where the payload sits inside the container, /cnt/<name> for app
-	// and data, and what the recipe wrote to as $CNT_PREFIX. Empty for os,
+	// and data, and what the recipe wrote to as $CNT_BUILD_PREFIX. Empty for os,
 	// whose files apply at the root. Readers take it as authoritative rather
 	// than reconstructing it from the name.
 	Prefix string `json:"prefix,omitempty"`
@@ -176,6 +176,9 @@ func readRuntimeUncached(imagePath string) (Runtime, error) {
 // what the bytes mean is decided in one place, whether they came from an image,
 // a staging directory, or a registry blob.
 func DecodeRuntime(data []byte, source string) (Runtime, error) {
+	if err := checkSchema(data, "runtime", source); err != nil {
+		return Runtime{}, err
+	}
 	var rt Runtime
 	if err := json.Unmarshal(data, &rt); err != nil {
 		return Runtime{}, fmt.Errorf("%w: %s: %w", ErrInvalid, source, err)

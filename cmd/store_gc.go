@@ -88,7 +88,7 @@ func newStoreGCCmd() *cobra.Command {
 	cmd.Flags().IntVar(&graceDay, "grace", 0, "Age in days below which nothing is collectable (default: store_gc_grace)")
 	cmd.Flags().StringVarP(&dir, "dir", "D", "", "Limit to a specific image directory (substring match)")
 	cmd.Flags().StringVarP(&layer, "layer", "l", "", "Limit to a data layer: u/user, r/cnt-root, e/extra-root")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOut)
 	cmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 			return []string{"user", "cnt-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp

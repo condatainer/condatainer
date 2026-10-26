@@ -61,9 +61,30 @@ type Found struct {
 // document holds registry logins under "auths" and recipe sources under
 // "sources", keyed alike. "auth" is base64 of "user:secret". A source entry may
 // also hold its registry and that registry's token, in the same encoding.
+//   - A top-level key or an entry field this build does not know is kept and written back.
 type document struct {
 	Auths   map[string]entry `json:"auths,omitempty"`
 	Sources map[string]entry `json:"sources,omitempty"`
+
+	extra map[string]json.RawMessage
+}
+
+func (d *document) UnmarshalJSON(data []byte) error {
+	type plain document
+	if err := json.Unmarshal(data, (*plain)(d)); err != nil {
+		return err
+	}
+	d.extra = unknownKeys(data, "auths", "sources")
+	return nil
+}
+
+func (d document) MarshalJSON() ([]byte, error) {
+	type plain document
+	known, err := json.Marshal(plain(d))
+	if err != nil {
+		return nil, err
+	}
+	return mergeKeys(known, d.extra)
 }
 
 // section is the map holding kind, created when create is set.
@@ -82,6 +103,58 @@ type entry struct {
 	Auth         string `json:"auth"`
 	Registry     string `json:"registry,omitempty"`
 	RegistryAuth string `json:"registry_auth,omitempty"`
+
+	extra map[string]json.RawMessage
+}
+
+func (e *entry) UnmarshalJSON(data []byte) error {
+	type plain entry
+	if err := json.Unmarshal(data, (*plain)(e)); err != nil {
+		return err
+	}
+	e.extra = unknownKeys(data, "auth", "registry", "registry_auth")
+	return nil
+}
+
+func (e entry) MarshalJSON() ([]byte, error) {
+	type plain entry
+	known, err := json.Marshal(plain(e))
+	if err != nil {
+		return nil, err
+	}
+	return mergeKeys(known, e.extra)
+}
+
+// unknownKeys returns the keys of the JSON object data other than known, or nil when there are none.
+func unknownKeys(data []byte, known ...string) map[string]json.RawMessage {
+	var all map[string]json.RawMessage
+	if json.Unmarshal(data, &all) != nil {
+		return nil
+	}
+	for _, key := range known {
+		delete(all, key)
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	return all
+}
+
+// mergeKeys adds the keys of extra that the JSON object known lacks.
+func mergeKeys(known []byte, extra map[string]json.RawMessage) ([]byte, error) {
+	if len(extra) == 0 {
+		return known, nil
+	}
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(known, &all); err != nil {
+		return nil, err
+	}
+	for key, value := range extra {
+		if _, ok := all[key]; !ok {
+			all[key] = value
+		}
+	}
+	return json.Marshal(all)
 }
 
 func (e entry) credential() (Credential, bool) { return decode(e.Auth) }

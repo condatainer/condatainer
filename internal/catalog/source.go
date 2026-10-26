@@ -55,7 +55,7 @@ func (t *Token) String() string { return fmt.Sprintf("%s (%s layer)", t.Key, t.L
 
 // Descriptor is a source's source.json.
 type Descriptor struct {
-	Schema int `json:"schema"`
+	SchemaVersion int `json:"schema_version"`
 	// Source is the collection's own code repository, recorded into every
 	// artifact it builds as manifest build.source and published as
 	// org.opencontainers.image.source.
@@ -194,16 +194,31 @@ func (s *Source) loadDescriptor(ctx context.Context) {
 	s.Desc = desc
 }
 
+// DescriptorSchemaVersion is the source.json format this build reads.
+const DescriptorSchemaVersion = 1
+
 // ParseDescriptor decodes and validates source.json.
-//   - A descriptor with no schema field (zero) is accepted; a non-zero unsupported schema is rejected.
+//   - The schema version is required, and a version this build does not read is rejected.
+//   - An unknown field is ignored, so a source can add a key without raising the version.
 //   - The OCI registry is normalized to a registry/repository root.
 func ParseDescriptor(data []byte) (Descriptor, error) {
+	var head struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(data, &head); err != nil {
+		return Descriptor{}, fmt.Errorf("catalog: decode source descriptor: %w", err)
+	}
+	if head.SchemaVersion != DescriptorSchemaVersion {
+		hint := ""
+		if head.SchemaVersion > DescriptorSchemaVersion {
+			hint = "; update CondaTainer"
+		}
+		return Descriptor{}, fmt.Errorf("catalog: source descriptor is schema_version %d (this build reads %d)%s",
+			head.SchemaVersion, DescriptorSchemaVersion, hint)
+	}
 	var desc Descriptor
 	if err := json.Unmarshal(data, &desc); err != nil {
 		return Descriptor{}, fmt.Errorf("catalog: decode source descriptor: %w", err)
-	}
-	if desc.Schema != 0 && desc.Schema != 1 {
-		return Descriptor{}, fmt.Errorf("catalog: unsupported source descriptor schema %d", desc.Schema)
 	}
 	if err := ValidSourceURL(desc.Source); err != nil {
 		return Descriptor{}, fmt.Errorf("catalog: source descriptor: %w", err)

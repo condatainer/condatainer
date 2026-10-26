@@ -44,7 +44,7 @@ func newStoreUseCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&identity, "identity", "", "Complete identity or unambiguous digest prefix")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print JSON")
+	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
 }
 

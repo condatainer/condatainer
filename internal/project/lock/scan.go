@@ -127,6 +127,10 @@ type ScanResult struct {
 	// Scripts are every scanned file, project-relative and sorted.
 	Scripts  []string
 	Findings []Finding
+	// SymlinkedScripts are scripts reached through a symlink whose target the scan does not read anywhere else.
+	SymlinkedScripts []string
+	// SymlinkedDirs are symlinks to directories. Their contents are never read.
+	SymlinkedDirs []string
 }
 
 // ScanScript reads one script's declarations, merged and finalized exactly as Scan does for a whole project.
@@ -179,10 +183,12 @@ func Scan(root string, opts ScanOptions) (*ScanResult, error) {
 			result.Scripts = append(result.Scripts, rel)
 		}
 		return err
-	})
+	}, func(path, rel string) { m.noteSymlink(path, rel, result) })
 	if err != nil {
 		return nil, err
 	}
+	sort.Strings(result.SymlinkedScripts)
+	sort.Strings(result.SymlinkedDirs)
 
 	finalize(merged, result)
 	return result, nil
@@ -337,9 +343,9 @@ func parseRequest(key string) (utils.Dep, error) {
 	return utils.ParseDep(key)
 }
 
-// walkScripts calls visit for every script of the project: a regular file, not a symlink, that the members rules keep and whose first line is an interpreter line `run` accepts.
+// walkScripts calls visit for every script, and symlink for every symlink it skips of the project: a regular file, not a symlink, that the members rules keep and whose first line is an interpreter line `run` accepts.
 //   - A directory symlink is never followed, and a symlinked script is not read: either can point outside the checkout, and a lock describes the checkout.
-func walkScripts(root string, m *members, visit func(path, rel string) error) error {
+func walkScripts(root string, m *members, visit func(path, rel string) error, symlink func(path, rel string)) error {
 	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -358,7 +364,13 @@ func walkScripts(root string, m *members, visit func(path, rel string) error) er
 			}
 			return nil
 		}
-		if entry.Type()&fs.ModeSymlink != 0 || !entry.Type().IsRegular() {
+		if entry.Type()&fs.ModeSymlink != 0 {
+			if symlink != nil && !m.ignores(relSlash, false) {
+				symlink(path, relSlash)
+			}
+			return nil
+		}
+		if !entry.Type().IsRegular() {
 			return nil
 		}
 		if m.ignores(relSlash, false) || utils.CheckShebangFile(path) != nil {

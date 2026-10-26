@@ -228,6 +228,36 @@ func TestScanAppliesGitignoreAndTheLockIgnoreList(t *testing.T) {
 	}
 }
 
+// A symlink to a script the scan reads elsewhere is not reported, and one to anything else is.
+func TestScanReportsSymlinksItSkips(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	write(t, root, "real.sh", "#!/bin/bash\n")
+	write(t, root, "src/ignored.sh", "#!/bin/bash\n")
+	write(t, root, ".gitignore", "src/ignored.sh\nlink-ignored.sh\n")
+	write(t, outside, "elsewhere.sh", "#!/bin/bash\n")
+	write(t, outside, "notes.txt", "text\n")
+	for name, target := range map[string]string{
+		"link-in.sh":      filepath.Join(root, "real.sh"),
+		"link-out.sh":     filepath.Join(outside, "elsewhere.sh"),
+		"link-ignored.sh": filepath.Join(outside, "elsewhere.sh"),
+		"link-text.txt":   filepath.Join(outside, "notes.txt"),
+		"link-to-gitnote": filepath.Join(root, "src/ignored.sh"),
+		"data":            outside,
+	} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+
+	result := scan(t, root)
+	if want := []string{"link-out.sh", "link-to-gitnote"}; !reflect.DeepEqual(result.SymlinkedScripts, want) {
+		t.Errorf("scripts = %v, want %v", result.SymlinkedScripts, want)
+	}
+	if want := []string{"data"}; !reflect.DeepEqual(result.SymlinkedDirs, want) {
+		t.Errorf("dirs = %v, want %v", result.SymlinkedDirs, want)
+	}
+}
+
 func TestScanRefusesANegationInTheLockIgnoreList(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "cnt-lock/ignore", "lib\n!lib/keep.sh\n")

@@ -32,7 +32,6 @@ func projectCheck(ctx context.Context, scriptPaths []string, metaDeps []string) 
 		return false, nil
 	}
 	root := standing.Root
-	announceProject(root)
 	if err := oneScript(root, scriptPaths, metaDeps); err != nil {
 		return true, err
 	}
@@ -42,8 +41,10 @@ func projectCheck(ctx context.Context, scriptPaths []string, metaDeps []string) 
 		return true, err
 	}
 	if outside {
+		announceUnlocked(root, script)
 		return false, nil
 	}
+	announceProject(root)
 	if checkAutoInstall {
 		// -a installs by name into a shared images directory, which is one
 		// checkout's dependency silently replacing the artifact every other user

@@ -180,6 +180,7 @@ func newProjectStatusCmd() *cobra.Command {
 			}
 			printUnpinnedHelperOverlays(status.UnpinnedHelperOverlays)
 			printManualPinUsage(status.ManualPinUsage)
+			printSymlinks(status.SymlinkedScripts, status.SymlinkedDirs)
 			return nil
 		},
 	}
@@ -203,6 +204,17 @@ func printNoProjectStatus(jsonOutput bool) error {
 // printUnpinnedHelperOverlays prints the "used by helpers but not pinned"
 // section §1/§2 add to both `project status` and `project lock`'s report —
 // its own heading, kept out of the #DEP:-derived unpinned list so the two
+
+// printSymlinks reports what the scan skipped as symlinks: a script is a warning, since its #DEP: is never pinned, and a directory is a note.
+func printSymlinks(scripts, dirs []string) {
+	if len(scripts) > 0 {
+		utils.PrintWarning("Symlink not scanned: %s", strings.Join(scripts, ", "))
+	}
+	if len(dirs) > 0 {
+		utils.PrintMessage("Symlinked folders skipped: %s", strings.Join(dirs, ", "))
+	}
+}
+
 // are never read as carrying the same weight.
 func printUnpinnedHelperOverlays(names []string) {
 	if len(names) == 0 {
@@ -656,9 +668,9 @@ func newProjectListCmd() *cobra.Command {
 					row += "  " + utils.StyleWarning("unreadable")
 				case pin.Manual:
 					manual++
-					row += "  " + short(pin.Identity) + "  " + archList(pin) + "  " + utils.StyleWarning("manual")
+					row += "  " + identityPrefix(pin.Identity) + "  " + archList(pin) + "  " + utils.StyleWarning("manual")
 				default:
-					row += "  " + short(pin.Identity) + "  " + archList(pin)
+					row += "  " + identityPrefix(pin.Identity) + "  " + archList(pin)
 				}
 				fmt.Println(row)
 				if pin.Problem != "" {
@@ -680,6 +692,15 @@ func newProjectListCmd() *cobra.Command {
 // archList names the architectures a pin has an artifact for.
 func archList(pin pinReport) string {
 	return strings.Join(slices.Sorted(maps.Keys(pin.Artifacts)), ",")
+}
+
+// pinAddress is where a request went, written as the store writes an address, name@identity.
+// A pin whose records cannot be read shows its vendored directory instead.
+func pinAddress(report pinReport, pin lock.PinEntry) string {
+	if report.Name == "" || report.Identity == "" {
+		return pinTarget(pin)
+	}
+	return report.Name + "@" + identityPrefix(report.Identity)
 }
 
 // pinTarget is the artifact a pin has for this machine, for a line that shows
@@ -1240,6 +1261,7 @@ func newProjectValidateCmd() *cobra.Command {
 			for _, problem := range notInstalled {
 				utils.PrintError("%s", problem)
 			}
+			printSymlinks(scanned.SymlinkedScripts, scanned.SymlinkedDirs)
 			if total > 0 {
 				utils.PrintHint("Run `condatainer project pin <request> <identity>` to choose an overlay for each unpinned request.")
 				return fmt.Errorf("project is not valid: %d problem(s)", total)
@@ -1366,13 +1388,18 @@ func reportLockState(result *orchestrate.LockResult, jsonOutput bool) error {
 		return pinFailure(failed)
 	}
 
+	verified, _ := lock.Verify(root, l)
+	reports := map[string]pinReport{}
+	for _, report := range pinReports(l, verified) {
+		reports[report.Request] = report
+	}
 	if pin, ok := l.Pins[lock.BaseKey]; ok {
-		utils.PrintMessage("  %s → %s", utils.StyleName("base"), pinTarget(pin))
+		utils.PrintMessage("  %s → %s", utils.StyleName("base"), pinAddress(reports[lock.BaseKey], pin))
 	}
 	for _, request := range scanned.Requests {
 		switch pin, ok := l.Pins[request.Key]; {
 		case ok:
-			utils.PrintMessage("  %s → %s", utils.StyleName(request.Key), pinTarget(pin))
+			utils.PrintMessage("  %s → %s", utils.StyleName(request.Key), pinAddress(reports[request.Key], pin))
 		case !request.Kind.Pinnable():
 			utils.PrintMessage("  %s → %s", utils.StyleName(request.Key), utils.StyleWarning("cannot be pinned"))
 		}
@@ -1399,6 +1426,7 @@ func reportLockState(result *orchestrate.LockResult, jsonOutput bool) error {
 	printUnpublishedNote(l, pinned)
 	printUnpinnedHelperOverlays(result.UnpinnedHelperOverlays)
 	printManualPinUsage(result.ManualPinUsage)
+	printSymlinks(scanned.SymlinkedScripts, scanned.SymlinkedDirs)
 	if len(failed) == 0 {
 		utils.PrintSuccess("Every declaration is pinned (%d).", len(l.Pins))
 		return nil
@@ -1507,11 +1535,11 @@ func reportPlan(plan *restore.Plan, jsonOutput bool) error {
 		for _, step := range plan.Steps {
 			line := fmt.Sprintf("  %-11s %s → %s", step.Action, utils.StyleName(step.Name), planDestination(step))
 			if step.Found != "" {
-				line += utils.StyleWarning(fmt.Sprintf(" (equivalent, not %s)", short(step.Identity)))
+				line += utils.StyleWarning(fmt.Sprintf(" (equivalent, not %s)", identityPrefix(step.Identity)))
 			}
 			utils.PrintMessage("%s", line)
 			if step.Replaces != "" {
-				utils.PrintWarning("    replaces %s already there", short(step.Replaces))
+				utils.PrintWarning("    replaces %s already there", identityPrefix(step.Replaces))
 			}
 		}
 		for _, problem := range plan.Problems {
@@ -1583,7 +1611,7 @@ func reportRestore(report *restore.Report, jsonOutput bool) error {
 // built from differently. Names only: the digests are in --json, and a line per
 // input would bury a restore of many artifacts.
 func equivalentNote(result restore.Result) string {
-	note := fmt.Sprintf(" (equivalent, not %s", short(result.Identity))
+	note := fmt.Sprintf(" (equivalent, not %s", identityPrefix(result.Identity))
 	if fields := diffFields(result.Diffs); len(fields) > 0 {
 		note += "; differs: " + strings.Join(fields, ", ")
 	}
@@ -1613,12 +1641,4 @@ func planDestination(step restore.Step) string {
 	default:
 		return "store or flat"
 	}
-}
-
-// short renders a digest for a one-line summary.
-func short(digest string) string {
-	if len(digest) > 19 {
-		return digest[:19]
-	}
-	return digest
 }

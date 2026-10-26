@@ -105,13 +105,18 @@ func IsMember(root, script string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	return m.member(rel), nil
+}
+
+// member reports whether the file at a slash-separated path is kept, with every directory above it.
+func (m *members) member(rel string) bool {
 	parts := strings.Split(rel, "/")
 	for i := range parts {
 		if m.ignores(strings.Join(parts[:i+1], "/"), i < len(parts)-1) {
-			return false, nil
+			return false
 		}
 	}
-	return true, nil
+	return true
 }
 
 // scriptRel returns the slash-separated path of script under root.
@@ -129,4 +134,42 @@ func scriptRel(root, script string) (string, error) {
 		return "", fmt.Errorf("%s is not inside %s", script, root)
 	}
 	return filepath.ToSlash(rel), nil
+}
+
+// noteSymlink records a symlink the walk skipped.
+//   - A link to a directory is listed by name.
+//   - A link to a script is listed unless its target is a script of the project, which the scan reads under its own name.
+func (m *members) noteSymlink(file, rel string, result *ScanResult) {
+	info, err := os.Stat(file)
+	if err != nil {
+		return
+	}
+	if info.IsDir() {
+		result.SymlinkedDirs = append(result.SymlinkedDirs, rel)
+		return
+	}
+	if !info.Mode().IsRegular() || utils.CheckShebangFile(file) != nil {
+		return
+	}
+	if target, ok := m.relativeTarget(file); ok && m.member(target) {
+		return
+	}
+	result.SymlinkedScripts = append(result.SymlinkedScripts, rel)
+}
+
+// relativeTarget returns the project-relative path a symlink resolves to, when it stays inside the project.
+func (m *members) relativeTarget(file string) (string, bool) {
+	real, err := filepath.EvalSymlinks(file)
+	if err != nil {
+		return "", false
+	}
+	root, err := filepath.EvalSymlinks(m.root)
+	if err != nil || !within(root, real) {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, real)
+	if err != nil {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
 }

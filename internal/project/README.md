@@ -132,6 +132,8 @@
 
 - A declaration counts wherever it is written. The scanner and `run` share one tokenizer, so they cannot disagree about a script.
 - Symlinked directories and scripts are never followed. A lock describes the checkout.
+- A symlink the scan skipped is reported, unless its target is a script the scan reads under its own name. A script link is a warning, since its `#DEP:` is never pinned. A directory link is a note.
+- `run` follows a link on a script's path. A target that is a script of the project uses the lock. Any other target is outside the project.
 - `cnt-lock/` and every dot-directory are skipped. They hold tool state (`.venv`, `.snakemake`) whose scripts are not this project's.
 - A build recipe is skipped. Its `#DEP:` are build dependencies already recorded in that artifact's provenance.
 - A recipe is identified by `$CNT_BUILD_PREFIX`. That is a property of the file itself.
@@ -223,7 +225,7 @@ A pin answers for its own keys. A build dependency only has to leave its depende
 - Resolve never acquires. An absent artifact is an error naming `project restore`.
 - A `name:` request is held to an exact identity when it is pinned, not when it runs.
 - With no pin, `exec -o`, `run` and `check` resolve as they would outside a project: an installed version first, then the catalog's candidates, never a build.
-- A live-resolved mount is marked, and each caller prints what it resolved to.
+- A live-resolved or equivalent mount is marked. `run`, `exec` and `e` list what they resolved as `request → name@identity`. Outside a project they show only a request that became a different name. A `run` that is about to submit a job and a `--dry-run` leave the list out, since the job's log and the dry-run summary carry it.
 - The project's root is the exception. It is fixed, never live.
 
 ## Verification

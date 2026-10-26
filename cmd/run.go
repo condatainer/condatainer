@@ -314,7 +314,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 	// A project's lock governs what this script mounts. Resolved before the dry
 	// run so a preview reports the identities the run would actually mount, not
 	// whatever currently answers to their names.
-	projectRun, err := projectRunContext(cmd.Context(), contentScript)
+	projectRun, err := projectRunContext(cmd.Context(), contentScript, !runDryRun && !willSubmitRun(scriptSpecs))
 	if err != nil {
 		return err
 	}
@@ -372,20 +372,35 @@ func runScript(cmd *cobra.Command, args []string) error {
 	}
 
 	// 4. Submit if scheduler specs present and scheduler available
+	noScheduler := false
 	if scheduler.Enabled() && scheduler.HasSchedulerSpecs(scriptSpecs) {
 		sched := scheduler.ActiveScheduler()
 		if sched == nil {
-			utils.PrintNote("Script has scheduler specs but no scheduler is available. Running locally.")
+			noScheduler = true
 		} else {
 			return submitRunJob(cmd.Context(), sched, originScriptPath, contentScript, scriptSpecs, runDependencies(), containerFlags, scriptArgs, arraySpec)
 		}
-	} else if !scheduler.HasSchedulerSpecs(scriptSpecs) {
-		utils.PrintNote("No scheduler specs found in script. Running locally.")
 	}
-	if runStdout != "" || runStderr != "" || runMem != "" || runTime != "" || runGPU != "" || runAccount != "" || runPartition != "" {
-		utils.PrintNote("-o/-e/-m/-t/-g/-A/-p are only used for submitted jobs and will be ignored when running locally.")
+	jobFlags := runStdout != "" || runStderr != "" || runMem != "" || runTime != "" || runGPU != "" || runAccount != "" || runPartition != ""
+	if note := localRunNote(noScheduler, jobFlags); note != "" {
+		utils.PrintNote("%s", note)
 	}
 	return runLocally(cmd.Context(), contentScript, overlays, scriptSpecs, scriptArgs)
+}
+
+// localRunNote is the one line a local run prints, or "" when it has nothing to add.
+//   - A script with no resources runs locally by definition and says nothing.
+//   - A fallback for lack of a scheduler, and job flags that a local run ignores, share one line.
+func localRunNote(noScheduler, jobFlags bool) string {
+	switch {
+	case noScheduler && jobFlags:
+		return "No scheduler: running locally, -o/-e/-m/-t/-g/-A/-p ignored"
+	case noScheduler:
+		return "No scheduler: running locally"
+	case jobFlags:
+		return "-o/-e/-m/-t/-g/-A/-p are only used for submitted jobs and are ignored when running locally"
+	}
+	return ""
 }
 
 // runDependencies returns the typed dependencies given by --afterok,
@@ -1133,7 +1148,7 @@ func buildMpiRunCommand(contentScript string, containerFlags, scriptArgs []strin
 	if !ok {
 		return "", fmt.Errorf("ntasks=%d needs mpiexec, which is not on PATH", getNtasks(specs))
 	}
-	utils.PrintNote("Detected mpiexec: %s", mpiexecPath)
+	utils.PrintDebug("Detected mpiexec: %s", mpiexecPath)
 	return fmt.Sprintf("%s -n %d %s", mpiexecPath, getNtasks(specs), runCmd), nil
 }
 

@@ -151,6 +151,6 @@ func ScriptsMatching(root, line string) ([]string, error) {
 			}
 		}
 		return nil
-	})
+	}, nil)
 	return scripts, err
 }

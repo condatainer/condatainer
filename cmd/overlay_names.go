@@ -67,17 +67,8 @@ func resolveOverlayValues(ctx context.Context, values []string, standing *projec
 			continue
 		}
 		out[kept[n]] = mount.Path + suffixes[n]
-		switch {
-		case mount.Found != "":
-			utils.PrintNote("%s is mounted from an equivalent overlay, not %s",
-				mount.Name, short(mount.Identity))
-		case mount.Live && standing != nil:
-			utils.PrintNote("%s resolved to %s, not pinned",
-				mount.Request, mount.Name)
-		case mount.Live && mount.Name != mount.Request:
-			utils.PrintNote("Expanding '%s' to '%s'", mount.Request, mount.Name)
-		}
 	}
+	printMounts(mounts, standing != nil)
 	return out, nil
 }
 

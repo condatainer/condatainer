@@ -49,6 +49,8 @@ type Pinned struct {
 	// produced, so a rescan cannot sweep it. Set by the caller, which is the only
 	// layer that knows whether anything declares the request.
 	Manual bool
+	// Shadowed is the root-relative key of a file that also exists and answers the same declaration, which this pin did not take. Empty when the declaration has one reading.
+	Shadowed string
 }
 
 // Pin resolves one request to an exact local artifact and vendors its source
@@ -628,15 +630,23 @@ func PinAll(root string, l *Lock, needPin []Request, opts PinOptions) (pinned []
 
 // pinFirstCandidate tries each of request's PathCandidates against the filesystem and pins the first that answers to a real artifact.
 //   - It is the only place resolution checks a file, which is sound because a pinned file must exist.
+//   - When the script-relative file wins and the root-relative file exists too, the pin records the root key as Shadowed.
 //   - Every other kind has one candidate.
 //   - The error returned is the first candidate's.
 func pinFirstCandidate(root string, request Request, opts PinOptions) (*Pinned, error) {
 	var err error
-	for _, key := range request.PathCandidates() {
+	for i, key := range request.PathCandidates() {
 		var pinned *Pinned
-		if pinned, err = Pin(root, key, "", opts); err == nil {
-			return pinned, nil
+		if pinned, err = Pin(root, key, "", opts); err != nil {
+			continue
 		}
+		if i == 0 && request.Fallback != "" {
+			rel := strings.TrimPrefix(request.Fallback, PathPrefix)
+			if _, statErr := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); statErr == nil {
+				pinned.Shadowed = request.Fallback
+			}
+		}
+		return pinned, nil
 	}
 	return nil, err
 }

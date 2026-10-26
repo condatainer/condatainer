@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"os"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/config"
@@ -15,11 +14,7 @@ func standingProject() (*project.Standing, error) {
 	if noProjectRequested {
 		return nil, nil
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	standing, err := project.StandingAt(cwd)
+	standing, err := standingProjectHere()
 	if err != nil || standing == nil {
 		return nil, err
 	}
@@ -59,11 +54,7 @@ func projectDefaultDistro() string {
 // for any reason — the safe default for a completion or display path, which
 // falls back to the configured default_distro rather than erroring.
 func projectSelectedDistro() string {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	standing, err := project.StandingAt(cwd)
+	standing, err := standingProjectHere()
 	if err != nil || standing == nil {
 		return ""
 	}
@@ -77,11 +68,7 @@ func projectBaseImage(ctx context.Context) (string, error) {
 	if noProjectRequested {
 		return "", nil
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	standing, err := project.StandingAt(cwd)
+	standing, err := standingProjectHere()
 	if err != nil || standing == nil {
 		return "", err
 	}

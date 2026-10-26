@@ -69,7 +69,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	if execHelpRequested(args) {
 		return cmd.Help()
 	}
-	if err := applyProjectRelocation(execProjectDir); err != nil {
+	if err := applyProjectFlag(execProjectDir); err != nil {
 		return err
 	}
 

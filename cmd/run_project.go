@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 
 	"github.com/condatainer/condatainer/internal/project"
@@ -29,11 +28,7 @@ func projectRunContext(ctx context.Context, contentScript string, list bool) (*p
 	if noProjectRequested {
 		return nil, nil
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	standing, err := project.StandingAt(cwd)
+	standing, err := standingProjectHere()
 	if err != nil || standing == nil {
 		return nil, err
 	}

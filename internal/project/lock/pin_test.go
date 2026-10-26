@@ -334,38 +334,36 @@ func TestPinRefusesUnpinnableRequests(t *testing.T) {
 	}
 }
 
-// MatchPin tries the literal key first, so a pin already recorded there keeps
-// meaning exactly that.
-func TestMatchPinPrefersTheLiteralKeyWhenBothArePinned(t *testing.T) {
+// MatchPin tries the script-relative key first, so a pin already recorded
+// there keeps meaning exactly that.
+func TestMatchPinPrefersTheScriptRelativeKeyWhenBothArePinned(t *testing.T) {
 	l := New()
-	l.Pins[PathPrefix+"xxx.sqf"] = pinOf("provenance/root--1@abc")
 	l.Pins[PathPrefix+"steps1/xxx.sqf"] = pinOf("provenance/nested--1@def")
-	request := Request{Key: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "xxx.sqf", Scripts: []string{"steps1/run.sh"}}
+	l.Pins[PathPrefix+"xxx.sqf"] = pinOf("provenance/root--1@abc")
+	request := Request{Key: PathPrefix + "steps1/xxx.sqf", Fallback: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "steps1/xxx.sqf", Scripts: []string{"steps1/run.sh"}}
 
 	key, entry, ok := MatchPin(l, request)
-	if !ok || key != PathPrefix+"xxx.sqf" || entry.Paths()[0] != "provenance/root--1@abc" {
-		t.Errorf("MatchPin = (%q, %#v, %v), want the literal key preferred", key, entry, ok)
+	if !ok || key != PathPrefix+"steps1/xxx.sqf" || entry.Paths()[0] != "provenance/nested--1@def" {
+		t.Errorf("MatchPin = (%q, %#v, %v), want the script-relative key preferred", key, entry, ok)
 	}
 }
 
-// A pin recorded only under a declaring script's own directory still answers
-// the literal, root-relative declaration — the fallback MatchPin and
-// pinFirstCandidate share.
-func TestMatchPinFallsBackToADeclaringScriptsDirectory(t *testing.T) {
+// A pin recorded only under the root-relative key still answers the declaration.
+func TestMatchPinFallsBackToTheRootRelativeKey(t *testing.T) {
 	l := New()
-	l.Pins[PathPrefix+"steps1/xxx.sqf"] = pinOf("provenance/tool--1@abc")
-	request := Request{Key: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "xxx.sqf", Scripts: []string{"steps1/run.sh"}}
+	l.Pins[PathPrefix+"xxx.sqf"] = pinOf("provenance/tool--1@abc")
+	request := Request{Key: PathPrefix + "steps1/xxx.sqf", Fallback: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "steps1/xxx.sqf", Scripts: []string{"steps1/run.sh"}}
 
 	key, entry, ok := MatchPin(l, request)
-	if !ok || key != PathPrefix+"steps1/xxx.sqf" || entry.Paths()[0] != "provenance/tool--1@abc" {
-		t.Errorf("MatchPin = (%q, %#v, %v), want the fallback candidate", key, entry, ok)
+	if !ok || key != PathPrefix+"xxx.sqf" || entry.Paths()[0] != "provenance/tool--1@abc" {
+		t.Errorf("MatchPin = (%q, %#v, %v), want the root-relative fallback", key, entry, ok)
 	}
 }
 
 // Nothing pinned under any candidate is an ordinary miss, not a crash.
 func TestMatchPinFalseWhenNothingAnswers(t *testing.T) {
 	l := New()
-	request := Request{Key: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "xxx.sqf", Scripts: []string{"steps1/run.sh"}}
+	request := Request{Key: PathPrefix + "steps1/xxx.sqf", Fallback: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "steps1/xxx.sqf", Scripts: []string{"steps1/run.sh"}}
 
 	if _, _, ok := MatchPin(l, request); ok {
 		t.Fatal("MatchPin found a pin that was never set")
@@ -423,15 +421,12 @@ func TestMatchPinExactNameDoesNotMatchADifferentVersion(t *testing.T) {
 	}
 }
 
-// pinFirstCandidate resolves a script-relative file when the root-relative
-// one does not exist, and records the resolved key, not the one as scanned.
-func TestPinFirstCandidateFallsBackToADeclaringScriptsDirectory(t *testing.T) {
+// pinFirstCandidate pins the root-relative file when the script-relative one
+// does not exist, and records the key that answered.
+func TestPinFirstCandidateFallsBackToTheRootRelativeFile(t *testing.T) {
 	root := t.TempDir()
 	built, manifest := packArtifact(t, "xxx.sqf", "testdata/tool", "recipe")
-	dest := filepath.Join(root, "steps1", "xxx.sqf")
-	if err := os.MkdirAll(filepath.Dir(dest), 0o775); err != nil {
-		t.Fatal(err)
-	}
+	dest := filepath.Join(root, "xxx.sqf")
 	data, err := os.ReadFile(built)
 	if err != nil {
 		t.Fatal(err)
@@ -440,24 +435,27 @@ func TestPinFirstCandidateFallsBackToADeclaringScriptsDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	request := Request{Key: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "xxx.sqf", Scripts: []string{"steps1/run.sh"}}
+	request := Request{Key: PathPrefix + "steps1/xxx.sqf", Fallback: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "steps1/xxx.sqf", Scripts: []string{"steps1/run.sh"}}
 	pinned, err := pinFirstCandidate(root, request, PinOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pinned.Request != PathPrefix+"steps1/xxx.sqf" {
-		t.Errorf("Request = %q, want the resolved script-relative key", pinned.Request)
+	if pinned.Request != PathPrefix+"xxx.sqf" {
+		t.Errorf("Request = %q, want the root-relative key", pinned.Request)
 	}
 	if pinned.Name != manifest.Name {
 		t.Errorf("Name = %q, want %q", pinned.Name, manifest.Name)
 	}
+	if pinned.Shadowed != "" {
+		t.Errorf("Shadowed = %q, want none: only one file exists", pinned.Shadowed)
+	}
 }
 
-// The root-relative candidate wins when a real file answers there too.
-func TestPinFirstCandidatePrefersTheRootRelativeFile(t *testing.T) {
+// The script-relative candidate wins when a real file answers there too.
+func TestPinFirstCandidatePrefersTheScriptRelativeFile(t *testing.T) {
 	root := t.TempDir()
-	rootBuilt, rootManifest := packArtifact(t, "xxx.sqf", "testdata/root-tool", "root-recipe")
-	nestedBuilt, _ := packArtifact(t, "xxx.sqf", "testdata/nested-tool", "nested-recipe")
+	rootBuilt, _ := packArtifact(t, "xxx.sqf", "testdata/root-tool", "root-recipe")
+	nestedBuilt, nestedManifest := packArtifact(t, "xxx.sqf", "testdata/nested-tool", "nested-recipe")
 
 	for _, pair := range []struct{ built, dest string }{
 		{rootBuilt, filepath.Join(root, "xxx.sqf")},
@@ -475,16 +473,54 @@ func TestPinFirstCandidatePrefersTheRootRelativeFile(t *testing.T) {
 		}
 	}
 
-	request := Request{Key: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "xxx.sqf", Scripts: []string{"steps1/run.sh"}}
+	request := Request{Key: PathPrefix + "steps1/xxx.sqf", Fallback: PathPrefix + "xxx.sqf", Kind: KindPath, Path: "steps1/xxx.sqf", Scripts: []string{"steps1/run.sh"}}
 	pinned, err := pinFirstCandidate(root, request, PinOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pinned.Request != PathPrefix+"xxx.sqf" {
-		t.Errorf("Request = %q, want the literal root-relative key preferred", pinned.Request)
+	if pinned.Request != PathPrefix+"steps1/xxx.sqf" {
+		t.Errorf("Request = %q, want the script-relative key preferred", pinned.Request)
 	}
-	if pinned.Name != rootManifest.Name {
-		t.Errorf("Name = %q, want the root file's %q", pinned.Name, rootManifest.Name)
+	if pinned.Name != nestedManifest.Name {
+		t.Errorf("Name = %q, want the script's file %q", pinned.Name, nestedManifest.Name)
+	}
+	if pinned.Shadowed != PathPrefix+"xxx.sqf" {
+		t.Errorf("Shadowed = %q, want the root file reported as ambiguous", pinned.Shadowed)
+	}
+}
+
+// Two steps that each write `x.sqf` beside their script get a pin each, and each
+// script finds the pin for its own file.
+func TestPinAllPinsTheSameTextOnceForEachStep(t *testing.T) {
+	root := projectRoot(t)
+	for _, step := range []string{"step1", "step2"} {
+		built, _ := packArtifact(t, "x.sqf", "testdata/"+step, step+"-recipe")
+		data, err := os.ReadFile(built)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, root, step+"/run.sh", "#!/bin/bash\n#DEP: x.sqf\nrun\n")
+		write(t, root, step+"/x.sqf", string(data))
+	}
+
+	l := New()
+	needPin := Reconcile(root, l, scan(t, root))
+	if len(needPin) != 2 {
+		t.Fatalf("needPin = %d requests, want one per step", len(needPin))
+	}
+	if _, failed := PinAll(root, l, needPin, PinOptions{}); len(failed) != 0 {
+		t.Fatalf("PinAll failed: %v", failed)
+	}
+
+	for _, step := range []string{"step1", "step2"} {
+		scanned, err := ScanScript(root, filepath.Join(root, step, "run.sh"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, _, ok := MatchPin(l, scanned.Requests[0])
+		if !ok || key != PathPrefix+step+"/x.sqf" {
+			t.Errorf("%s: MatchPin = (%q, %v), want its own file", step, key, ok)
+		}
 	}
 }
 

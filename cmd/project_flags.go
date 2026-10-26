@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/project"
+	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
@@ -45,24 +46,46 @@ func announceProjectMarked(root, remark string) {
 
 // RegisterProjectFlags registers --project and --no-project on a command
 // that acts in whatever project the caller is standing in. Call
-// applyProjectRelocation with dir's value first thing in the command's RunE,
-// before anything else reads the working directory.
+// applyProjectFlag with dir's value first thing in the command's RunE.
 func RegisterProjectFlags(cmd *cobra.Command, dir *string) {
-	cmd.Flags().StringVar(dir, "project", "", "Act as if standing in this directory instead of the current one")
-	cmd.Flags().BoolVar(&noProjectRequested, "no-project", false, "Ignore any project found above the current directory")
+	cmd.Flags().StringVar(dir, "project", "", "Project root (default: the nearest project above the current directory)")
+	cmd.Flags().BoolVar(&noProjectRequested, "no-project", false, "Ignore the project lock")
 }
 
-// applyProjectRelocation changes into dir, so every relative path resolved for the rest of the invocation — a script argument, an -o local file, a --bind path, and project lookup itself — resolves against it instead of the directory the command actually started in.
+// projectRootFlag is the project root named by --project, or "" when the project is the nearest one above the current directory.
+var projectRootFlag string
+
+// applyProjectFlag records the project root named by --project.
+//   - The working directory is not changed: a relative path, the default log folder and the job's work directory stay where the command was run.
 //   - A no-op when dir is empty.
 //   - Refused together with --no-project, since the two contradict each other.
-func applyProjectRelocation(dir string) error {
+//   - dir must be a project root: it holds cnt-lock/ itself, and no ancestor is searched.
+func applyProjectFlag(dir string) error {
+	projectRootFlag = ""
 	if dir == "" {
 		return nil
 	}
 	if noProjectRequested {
 		return fmt.Errorf("--project and --no-project cannot both be set")
 	}
-	return os.Chdir(dir)
+	root, err := lock.RootAt(dir)
+	if err != nil {
+		return fmt.Errorf("--project: %w", err)
+	}
+	projectRootFlag = root
+	return nil
+}
+
+// standingProjectHere is the project a run-family command works in: the one --project names, else the nearest one at or above the current directory. It is nil when there is none.
+func standingProjectHere() (*project.Standing, error) {
+	if projectRootFlag != "" {
+		return project.StandingAtRoot(projectRootFlag)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	return project.StandingAt(cwd)
 }
 
 // printMounts says what each dependency resolved to, as `request → name`.

@@ -162,7 +162,7 @@ func init() {
 }
 
 func runScript(cmd *cobra.Command, args []string) error {
-	if err := applyProjectRelocation(runProjectDir); err != nil {
+	if err := applyProjectFlag(runProjectDir); err != nil {
 		return err
 	}
 	for _, flagInfo := range []struct{ name, val string }{
@@ -246,7 +246,9 @@ func runScript(cmd *cobra.Command, args []string) error {
 			}
 			scriptSpecs.Control.ExcludeNodes = append([]string{}, runExcludeNodes...)
 		}
-		setDefaultWorkDir(scriptSpecs)
+		if err := useSubmitDir(originScriptPath, scriptSpecs); err != nil {
+			return err
+		}
 	}
 
 	// CLI -c/-m/-t/-g resource overrides (highest priority, only when spec is parsed)
@@ -432,16 +434,17 @@ func willSubmitRun(specs *scheduler.ScriptSpecs) bool {
 		!scheduler.IsInsideJob() && !config.IsInsideContainer() && scheduler.ActiveScheduler() != nil
 }
 
-// setDefaultWorkDir makes a job run where it was submitted from unless the script
-// names a directory. Without it PBS starts the job in $HOME, unlike the other
-// schedulers.
-func setDefaultWorkDir(specs *scheduler.ScriptSpecs) {
+// useSubmitDir makes a job run where it was submitted from, and refuses a script that names another directory.
+//   - A local run and a submitted job then start in the same place.
+//   - The job script always names the directory, because PBS otherwise starts a job in $HOME.
+func useSubmitDir(script string, specs *scheduler.ScriptSpecs) error {
 	if specs.Control.WorkDir != "" {
-		return
+		return fmt.Errorf("%s sets a working directory; remove it and run from that directory", script)
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		specs.Control.WorkDir = cwd
 	}
+	return nil
 }
 
 // resolveScriptAndSpecs tries to read scheduler specs and resolves the content script path.
@@ -1103,11 +1106,18 @@ func detectMpi() (string, bool) {
 
 // forwardedFlagArgs returns the flags given on the command line that a submitted job must run with, as shell words.
 //   - A submitted job runs `condatainer run` again on the compute node, so a flag left out of that command is lost there.
-//   - Every flag that was set is forwarded, except the job flags, which the generated job script carries, and --project, which the working directory already carries.
+//   - Every flag that was set is forwarded, except the job flags, which the generated job script carries.
+//   - --project is forwarded as the absolute project root, since the job starts in the directory the command was run from, which need not be in the project.
 func forwardedFlagArgs(fs *pflag.FlagSet) []string {
 	var args []string
 	fs.VisitAll(func(fl *pflag.Flag) {
-		if !fl.Changed || runJobFlagNames[fl.Name] || fl.Name == "project" {
+		if !fl.Changed || runJobFlagNames[fl.Name] {
+			return
+		}
+		if fl.Name == "project" {
+			if projectRootFlag != "" {
+				args = append(args, "--project="+shellQuote(projectRootFlag))
+			}
 			return
 		}
 		values := []string{fl.Value.String()}

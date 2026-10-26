@@ -251,20 +251,19 @@ func TestResolveAnchorsAPathSelectionOnTheProjectRoot(t *testing.T) {
 	}
 }
 
-// A path pinned under a declaring script's own directory — because the
-// root-relative file did not exist when it was locked — is still verified at
-// the resolved location, not at the literal text as scanned.
-func TestResolveMountsAPathPinnedUnderAFallbackKey(t *testing.T) {
+// A path pinned under its root-relative fallback key is verified at the
+// location that key names, not at the script-relative text as scanned.
+func TestResolveMountsAPathPinnedUnderTheFallbackKey(t *testing.T) {
 	root := projectRoot(t)
 	relative, _ := vendor(t, root, "tool/1.0", "echo tool\n")
 	l := lock.New()
-	l.Pins[lock.PathPrefix+"steps1/xxx.sqf"] = pinOf(relative)
+	l.Pins[lock.PathPrefix+"xxx.sqf"] = pinOf(relative)
 	requests := []lock.Request{{
-		Key: lock.PathPrefix + "xxx.sqf", Kind: lock.KindPath, Path: "xxx.sqf",
-		Scripts: []string{"steps1/run.sh"},
+		Key: lock.PathPrefix + "steps1/xxx.sqf", Fallback: lock.PathPrefix + "xxx.sqf",
+		Kind: lock.KindPath, Path: "steps1/xxx.sqf", Scripts: []string{"steps1/run.sh"},
 	}}
 
-	want := filepath.Join(root, "steps1", "xxx.sqf")
+	want := filepath.Join(root, "xxx.sqf")
 	var asked string
 	lookupAt := func(path, name string, keys meta.Keys, _ Match) (store.Candidate, bool) {
 		asked = path

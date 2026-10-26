@@ -46,6 +46,8 @@ type Request struct {
 	Dep utils.Dep
 	// Path is the cleaned project-relative path, set for the path kinds.
 	Path string
+	// Fallback is the root-relative pin key a path declaration also answers to when nothing is pinned under Key. Empty when Key is the only reading.
+	Fallback string
 	// Scripts are the project-relative scripts that declared this, sorted.
 	// Displayed, never serialized: rescanning finds them again.
 	Scripts []string
@@ -54,27 +56,13 @@ type Request struct {
 	first Finding
 }
 
-// PathCandidates lists the pin keys a KindPath request might mean, in preference order: the literal root-relative key, then the same suffix relative to each declaring script's directory.
-//   - A script can name a file beside it without spelling out its folder.
+// PathCandidates lists the pin keys a request might mean, in preference order: Key, which is relative to the declaring script's folder, then Fallback, which is relative to the project root.
 //   - Every other kind returns its own key alone.
 func (r Request) PathCandidates() []string {
-	if r.Kind != KindPath {
+	if r.Fallback == "" {
 		return []string{r.Key}
 	}
-	candidates := []string{r.Key}
-	seen := map[string]bool{r.Key: true}
-	for _, script := range r.Scripts {
-		dir := path.Dir(script)
-		if dir == "." {
-			continue
-		}
-		key := PathPrefix + path.Clean(path.Join(dir, r.Path))
-		if !seen[key] {
-			seen[key] = true
-			candidates = append(candidates, key)
-		}
-	}
-	return candidates
+	return []string{r.Key, r.Fallback}
 }
 
 // ConstraintReason reports why a version constraint cannot appear in a project
@@ -103,7 +91,7 @@ func unpinnableReason(kind Kind, target string) string {
 		// were tried and both escape.
 		anchor := ""
 		if !path.IsAbs(target) {
-			anchor = " (tried relative to the project root and relative to each script declaring it)"
+			anchor = " (tried relative to the declaring script and to the project root)"
 		}
 		return fmt.Sprintf("%s is outside the project%s, so restore cannot own that path; copy it under the project and declare that path instead",
 			target, anchor)
@@ -201,15 +189,8 @@ func Scan(root string, opts ScanOptions) (*ScanResult, error) {
 // once every script in scope has been read — which is why this runs here rather
 // than as each declaration is parsed.
 func finalize(merged map[string]*Request, result *ScanResult) {
-	taken := make(map[string]bool, len(merged))
-	for key := range merged {
-		taken[key] = true
-	}
 	for _, request := range merged {
 		sort.Strings(request.Scripts)
-		reclassifyEscaped(request, taken)
-	}
-	for _, request := range merged {
 		if !request.Kind.Pinnable() {
 			finding := request.first
 			finding.Reason = unpinnableReason(request.Kind, request.Path)
@@ -217,7 +198,12 @@ func finalize(merged map[string]*Request, result *ScanResult) {
 		}
 		result.Requests = append(result.Requests, *request)
 	}
-	sort.Slice(result.Requests, func(i, j int) bool { return result.Requests[i].Key < result.Requests[j].Key })
+	sort.Slice(result.Requests, func(i, j int) bool {
+		if result.Requests[i].Key != result.Requests[j].Key {
+			return result.Requests[i].Key < result.Requests[j].Key
+		}
+		return result.Requests[i].Fallback < result.Requests[j].Fallback
+	})
 	sort.Strings(result.Scripts)
 	sort.Slice(result.Findings, func(i, j int) bool {
 		if result.Findings[i].Script != result.Findings[j].Script {
@@ -227,35 +213,23 @@ func finalize(merged map[string]*Request, result *ScanResult) {
 	})
 }
 
-// reclassifyEscaped promotes a KindExternal request to KindPath when the same
-// suffix, taken relative to one of its declaring scripts, stays inside the project.
-//
-//   - A `../` declaration escapes only under the root anchor.
-//   - An absolute declaration is left alone: it names a location on disk.
-//   - taken holds the keys already in use, so two declarations never share one key.
-//   - A collision skips to the next script, or leaves the request KindExternal.
-func reclassifyEscaped(request *Request, taken map[string]bool) {
-	if request.Kind != KindExternal || path.IsAbs(request.Path) {
-		return
+// anchorToScript reads a relative path declaration from the folder of the script that wrote it.
+//   - The path is then Key; the root-relative reading becomes Fallback when it stays inside the project.
+//   - A script at the root, an absolute path and a path that leaves the project from the script's folder are left as written.
+func anchorToScript(request Request, script string) Request {
+	dir := path.Dir(script)
+	if dir == "." || path.IsAbs(request.Path) || (request.Kind != KindPath && request.Kind != KindExternal) {
+		return request
 	}
-	for _, script := range request.Scripts {
-		dir := path.Dir(script)
-		if dir == "." {
-			continue
-		}
-		joined := path.Clean(path.Join(dir, request.Path))
-		if joined == ".." || strings.HasPrefix(joined, "../") {
-			continue
-		}
-		key := PathPrefix + joined
-		if taken[key] {
-			continue
-		}
-		request.Kind = KindPath
-		request.Path = joined
-		request.Key = key
-		return
+	joined := path.Clean(path.Join(dir, request.Path))
+	if joined == ".." || strings.HasPrefix(joined, "../") {
+		return request
 	}
+	anchored := Request{Key: PathPrefix + joined, Kind: KindPath, Path: joined}
+	if request.Kind == KindPath && request.Key != anchored.Key {
+		anchored.Fallback = request.Key
+	}
+	return anchored
 }
 
 // scanScript reads one script's declarations, reporting whether it was read at
@@ -280,11 +254,13 @@ func scanScript(path, rel string, merged map[string]*Request, result *ScanResult
 				Script: rel, Line: a.Line, Text: a.Value, Reason: reason})
 			continue
 		}
-		have, ok := merged[request.Key]
+		request = anchorToScript(request, rel)
+		mergeKey := request.Key + "\x00" + request.Fallback
+		have, ok := merged[mergeKey]
 		if !ok {
 			request.Scripts = []string{rel}
 			request.first = Finding{Script: rel, Line: a.Line, Text: a.Value}
-			merged[request.Key] = &request
+			merged[mergeKey] = &request
 			continue
 		}
 		if have.Scripts[len(have.Scripts)-1] != rel {

@@ -40,7 +40,7 @@ func writeScript(t *testing.T, root, rel, body string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o775); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(body), 0o664); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/bash\n"+body), 0o664); err != nil {
 		t.Fatal(err)
 	}
 }

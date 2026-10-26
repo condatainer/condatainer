@@ -47,6 +47,23 @@
 - A remote cannot live in the artifact. It is a digest over the pushed content, so embedding it would need the digest before the bytes exist.
 - Order is retry priority. A pin records its upstream remote before any push, so the free location is tried first.
 
+## Which files are scripts
+
+- A script is any regular file whose first line is an interpreter line `run` accepts. The name does not matter.
+  - A Python or R analysis script declares like a bash one.
+  - A file with no such line is never opened past its first line.
+- The scanner runs no `git`. A directory owned by another user, a missing `git` and a project outside a repository behave the same.
+- It reads the `.gitignore` of every directory it walks, relative to that directory. It does not read `.git/info/exclude` or the user's global ignore file.
+- An ignored directory is skipped whole, so `venv/`, `renv/` and `node_modules/` are never opened.
+- A file git tracks but `.gitignore` matches is ignored too. The scanner never asks git which files are tracked.
+- Every dot-directory and `cnt-lock/` are skipped.
+- `cnt-lock/ignore` is the lock ignore list. It leaves a script in git and out of the lock.
+  - It is committed with the lock, so the team scans the same files.
+  - It is applied after the `.gitignore` files and has no `!` line.
+  - A file `.gitignore` ignores is not part of the project. A lock that recorded it would make no sense, so bringing it back is an edit of `.gitignore`.
+- `run`, `check` and `project lock` decide membership with the same rules (`IsMember`). A run and a lock cannot disagree about which scripts a project owns.
+- A script that is not a member is read as a script outside the project: its `#DEP:` are resolved, and nothing is pinned.
+
 ## Manual pins
 
 - `Pins` is a projection of the scan. Reconcile deletes every key the scan does not produce, so the map can be rebuilt from nothing.

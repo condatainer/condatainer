@@ -36,8 +36,8 @@ func findingTexts(fs []configFinding) string {
 
 func TestCheckReportsUnknownBadAndUnrunnable(t *testing.T) {
 	l := writeLayer(t, "config.yaml", "user", `build:
-  ncpus: 0
-  ncpu: 4
+  ncpu: 0
+  ncpus: 4
   mem: 8g
 nested_run: maybe
 host_apptainer: /nonexistent/apptainer
@@ -46,8 +46,8 @@ sources:
 `)
 	got := findingTexts(checkLayerFile(l))
 	for _, want := range []string{
-		`config.yaml:3 unknown key "build.ncpu"`,
-		"config.yaml:2 build.ncpus: 0 is below the minimum 1",
+		`config.yaml:3 unknown key "build.ncpus"`,
+		"config.yaml:2 build.ncpu: 0 is below the minimum 1",
 		"config.yaml:5 nested_run:",
 		"config.yaml:6 host_apptainer /nonexistent/apptainer:",
 	} {
@@ -61,8 +61,8 @@ sources:
 }
 
 func TestCheckReportsAValueAHigherLayerOverrides(t *testing.T) {
-	user := writeLayer(t, "user.yaml", "user", "build:\n  ncpus: 8\n")
-	site := writeLayer(t, "site.yaml", "cnt-root", "build:\n  ncpus: 4\n")
+	user := writeLayer(t, "user.yaml", "user", "build:\n  ncpu: 8\n")
+	site := writeLayer(t, "site.yaml", "cnt-root", "build:\n  ncpu: 4\n")
 	settings.SetLayers([]settings.Layer{user, site})
 	t.Cleanup(func() { settings.SetLayers(nil) })
 
@@ -74,14 +74,14 @@ func TestCheckReportsAValueAHigherLayerOverrides(t *testing.T) {
 			info = append(info, f.Message)
 		}
 	}
-	if len(info) != 1 || info[0] != "build.ncpus in cnt-root is overridden by user" {
+	if len(info) != 1 || info[0] != "build.ncpu in cnt-root is overridden by user" {
 		t.Errorf("info = %v", info)
 	}
 }
 
 func TestCheckReportsUnknownConfigVariables(t *testing.T) {
-	got := checkEnvironment([]string{"CNT_CONFIG_BUILD_NCPUS=4", "CNT_CONFIG_BUILD_NCPU=4", "CNT_ROOT=/x", "HOME=/h"})
-	if len(got) != 1 || got[0].Where != "CNT_CONFIG_BUILD_NCPU" || !got[0].Problem {
+	got := checkEnvironment([]string{"CNT_CONFIG_BUILD_NCPU=4", "CNT_CONFIG_BUILD_NCPUS=4", "CNT_ROOT=/x", "HOME=/h"})
+	if len(got) != 1 || got[0].Where != "CNT_CONFIG_BUILD_NCPUS" || !got[0].Problem {
 		t.Errorf("findings = %+v", got)
 	}
 }

@@ -761,8 +761,11 @@ func (b *BuildObject) collectInputAnswers(ctx context.Context) error {
 	return nil
 }
 
-// resolveResourceSpec parses scheduler directives from the build script and sets b.scriptSpecs.
-// Applies the priority chain: DefaultSpec() → script directives → current job resources.
+// resolveResourceSpec parses the resources the build script asks for and sets b.scriptSpecs.
+//   - The script is read from one source, as a run script is: the current scheduler's directives, else the #KEY: resource headers, else another scheduler's directives.
+//   - Container headers (#BIND:, #WRITABLE:, #FAKEROOT:) mean nothing to a build and are ignored. A build writes its own logs, so #OUTPUT: and #ERROR: have no effect.
+//
+// Applies the priority chain: DefaultSpec() → script → current job resources.
 func (b *BuildObject) resolveResourceSpec() error {
 	specs, err := scheduler.ReadScriptSpecsFromPath(b.buildSource)
 	if err != nil {

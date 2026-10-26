@@ -513,3 +513,20 @@ func TestApplyEntryRepinsAtANewIdentity(t *testing.T) {
 		t.Errorf("the lock does not verify after the re-pin:\n%s", problemText(problems))
 	}
 }
+
+// A shorter version prefix names no build. The error lists the installed versions it could mean.
+func TestResolveByNameExplainsAPartialVersion(t *testing.T) {
+	path, _ := packArtifact(t, "star--2.7.11b.sqf", "star/2.7.11b", "#TYPE:app\necho one\n")
+	opts := PinOptions{SearchDirs: []string{filepath.Dir(path)}}
+
+	_, _, err := resolveByName("star/2.7", opts)
+	if !errors.Is(err, ErrNoCandidate) || !strings.Contains(err.Error(), "star/2.7 is not a full version. Installed: star/2.7.11b") {
+		t.Errorf("partial version: %v", err)
+	}
+	if _, _, err := resolveByName("star/3", opts); !errors.Is(err, ErrNoCandidate) || !strings.Contains(err.Error(), "star/3 is not installed") {
+		t.Errorf("unrelated version: %v", err)
+	}
+	if _, _, err := resolveByName("star/2.7.11b", opts); err != nil {
+		t.Errorf("full version: %v", err)
+	}
+}

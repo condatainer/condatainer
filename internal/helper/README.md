@@ -36,9 +36,14 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 - `--force` is on `add` only. It is the one place a local edit is overwritten, and it is given per name.
 - A download must match the index hash. A mismatch means the index is stale, and nothing is written.
 - `upgrade` replaces a helper in the directory where it was added, and keeps and reports an edited file, a dropped one, and one in a directory the user cannot write.
-- `remove` deletes only what `add` recorded, lists it and asks first, and refuses a helper with a run in progress.
+- `remove` deletes only what `add` recorded, and lists it and asks first.
 - One name failing never stops the rest. The errors are joined.
 - A copy hidden by a nearer directory is noted by `add` and `upgrade`. `remove` names the copy it uncovers.
+
+## Script copy
+
+- A run executes a copy of the script in its state dir, made at submission. Changing the helper-scripts directory then cannot interrupt a run.
+- The first line must be an allowed interpreter line, and the run executes that interpreter on the copy.
 
 ## Binds
 

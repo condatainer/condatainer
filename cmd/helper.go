@@ -461,11 +461,6 @@ func runHelperRun(cmd *cobra.Command, args []string) error {
 			scriptName, strings.Join(config.GetHelperScriptSearchPaths(), ", "), missingHelperHint(cmd.Context(), scriptName))
 	}
 
-	// Ensure executable.
-	if err := utils.MakeExecutable(scriptPath); err != nil {
-		utils.PrintDebug("Failed to chmod helper script: %v", err)
-	}
-
 	// Check apptainer is available.
 	if _, err := apptainer.Normal(); err != nil {
 		cmd.SilenceUsage = true

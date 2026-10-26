@@ -207,8 +207,20 @@ func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string,
 		parts = append(parts, "--pwd="+shellQuote(opts.CWD))
 	}
 
-	// Helper script runs directly via its shebang; no "bash" prefix.
-	parts = append(parts, shellQuote(opts.ScriptPath))
+	// The copy in the state dir runs through the interpreter its first line names, as the kernel would run it.
+	script, err := os.ReadFile(opts.ScriptPath)
+	if err != nil {
+		return "", err
+	}
+	interpreter, argument, err := utils.ShebangCommand(script)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", opts.ScriptPath, err)
+	}
+	parts = append(parts, shellQuote(interpreter))
+	if argument != "" {
+		parts = append(parts, shellQuote(argument))
+	}
+	parts = append(parts, `"$CNT_HELPER_STATE_DIR/`+copiedScriptName+`"`)
 	return strings.Join(parts, " "), nil
 }
 
@@ -424,7 +436,7 @@ func checkPkgConstraint(installedVer, op, requiredVer string) bool {
 // buildHelperCommandBody builds the bash body CreateScriptWithSpec places between its header and footer.
 //   - It sets the helper identity variables, redirects output into the state dir, picks a free port, runs the container command and writes the done file.
 //   - The final `(exit $_cnt_exit)` carries the container's exit code to the `_EXIT_CODE=$?` line CreateScriptWithSpec appends.
-func buildHelperCommandBody(id, name, cwd, scriptDir, stateDir string, walltime time.Duration,
+func buildHelperCommandBody(id, name, cwd, stateDir string, walltime time.Duration,
 	params map[string]string, sched scheduler.Scheduler, containerCmd string, bindAll bool) string {
 
 	jobIDExpr := "$$" // headless: shell PID
@@ -442,7 +454,6 @@ func buildHelperCommandBody(id, name, cwd, scriptDir, stateDir string, walltime 
 	fmt.Fprintf(&sb, "export CNT_HELPER_STATE_DIR=%s\n", shellQuote(stateDir))
 	fmt.Fprintf(&sb, "export CNT_HELPER_CWD=%s\n", shellQuote(cwd))
 	fmt.Fprintf(&sb, "export CNT_HELPER_WALLTIME_SECS=%d\n", int64(walltime.Seconds()))
-	fmt.Fprintf(&sb, "export CNT_HELPER_SCRIPT_DIR=%s\n", shellQuote(scriptDir))
 	// SCRATCH is not exported: it would leak into nested condatainer calls, where it
 	// selects a data layer. Helper scripts use "${SCRATCH:-$HOME}" themselves.
 
@@ -647,18 +658,39 @@ func buildHelperScriptSpecs(name, cwd, account, partition string, excludeNodes [
 	return ss
 }
 
+// copiedScriptName is the helper script's name in the run's state dir.
+const copiedScriptName = "script"
+
+// copyScript copies the helper script into the state dir, so the run uses the script as it was submitted.
+//   - The script must start with an allowed interpreter line.
+//   - The copy is not made executable: the interpreter reads it.
+func copyScript(scriptPath, stateDir string) error {
+	data, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return err
+	}
+	if err := utils.CheckShebang(data); err != nil {
+		return fmt.Errorf("%s: %w", scriptPath, err)
+	}
+	dest := filepath.Join(stateDir, copiedScriptName)
+	return os.WriteFile(dest, data, utils.PermFile)
+}
+
 // generateWrapper writes the job script into the run's state dir and returns its path for Submit.
 //   - Script, logs and state files sit together, and the state dir is permanent.
 //   - Headless (sched == nil) writes job.sh directly, exporting the spec's resource variables as a scheduler job script does.
 //   - Otherwise it delegates to sched.CreateScriptWithSpec with the state dir as output dir.
-func generateWrapper(id, name, cwd, scriptDir, stateDir, account, partition string, excludeNodes []string, walltime time.Duration,
+func generateWrapper(id, name, cwd, scriptPath, stateDir, account, partition string, excludeNodes []string, walltime time.Duration,
 	params map[string]string, spec *scheduler.ResourceSpec, sched scheduler.Scheduler,
 	containerCmd string) (string, error) {
 
-	body := buildHelperCommandBody(id, name, cwd, scriptDir, stateDir, walltime, params, sched, containerCmd, Connect() == ConnectDirect)
+	body := buildHelperCommandBody(id, name, cwd, stateDir, walltime, params, sched, containerCmd, Connect() == ConnectDirect)
 
 	if err := utils.MkdirAllShared(stateDir); err != nil {
 		return "", fmt.Errorf("creating state dir: %w", err)
+	}
+	if err := copyScript(scriptPath, stateDir); err != nil {
+		return "", fmt.Errorf("copying the helper script: %w", err)
 	}
 
 	// Headless: plain bash script in the state dir.

@@ -65,7 +65,7 @@ var helperRemoveCmd = &cobra.Command{
 
 - It lists what it will delete and asks first.
 - A script you wrote yourself is left in place.
-- A helper with a run in progress is refused. Saved defaults and run history stay.`,
+- Saved defaults and run history stay.`,
 	Example: `  condatainer helper remove code-server
   condatainer helper remove code-server -l user`,
 	Args:              cobra.MinimumNArgs(1),

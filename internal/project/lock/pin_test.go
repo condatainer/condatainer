@@ -252,7 +252,7 @@ func TestReconcileDropsStaleAndReportsWhatNeedsPinning(t *testing.T) {
 	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	l.Pins["gone/1.0"] = pinOf(appPath)
 
-	write(t, root, "run.sh", "#DEP: star/2.7.11b\n#DEP: cutadapt/5.0\n#DEP: env.img\nrun\n")
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: star/2.7.11b\n#DEP: cutadapt/5.0\n#DEP: env.img\nrun\n")
 	result := scan(t, root)
 
 	needPin := Reconcile(root, l, result)
@@ -280,7 +280,7 @@ func TestReconcileDropsAnInvalidPin(t *testing.T) {
 
 	l := New()
 	l.Pins["star/2.7.11b"] = pinOf(appPath)
-	write(t, root, "run.sh", "#DEP: star/2.7.11b\nrun\n")
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: star/2.7.11b\nrun\n")
 
 	needPin := Reconcile(root, l, scan(t, root))
 	if _, kept := l.Pins["star/2.7.11b"]; kept {

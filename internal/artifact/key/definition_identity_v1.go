@@ -3,7 +3,7 @@ package key
 import (
 	"fmt"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 )
 
 // deriveDefinitionIdentityV1 answers: "Which exact definition build is this?"
@@ -17,7 +17,7 @@ import (
 //
 // Definitions cannot have dependencies. The written upstream reference already reaches the key through the recipe, and From pins the bytes it resolved to. A failed resolution contributes the explicit "unrecorded" marker.
 func deriveDefinitionIdentityV1(a Artifact) (Value, Model, error) {
-	if a.Type != catalog.TypeOS {
+	if a.Type != artifact.TypeOS {
 		return Value{}, Model{}, fmt.Errorf("%s cannot derive type %s", DefinitionIdentityV1, a.Type)
 	}
 	if len(a.Deps) > 0 {

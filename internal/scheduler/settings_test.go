@@ -31,7 +31,7 @@ func TestEnabledIsOffWhenTheBinaryCannotRun(t *testing.T) {
 }
 
 func TestDefaultSpecAndTimeout(t *testing.T) {
-	settingstest.Override(t, "scheduler.ncpus", "4")
+	settingstest.Override(t, "scheduler.ncpu", "4")
 	settingstest.Override(t, "scheduler.mem", "8g")
 	settingstest.Override(t, "scheduler.time", "01:30:00")
 	settingstest.Override(t, "scheduler.timeout", "5")

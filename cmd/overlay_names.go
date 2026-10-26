@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/project"
 	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/runtime/container"
@@ -31,7 +30,7 @@ func resolveOverlayValues(ctx context.Context, values []string, standing *projec
 		}
 		request, reason := lock.ParseDeclaration(name)
 		if reason != "" {
-			if dep, err := catalog.ParseDep(name); allowConstraint && err == nil && dep.Op != "" {
+			if dep, err := utils.ParseDep(name); allowConstraint && err == nil && dep.Op != "" {
 				continue
 			}
 			return nil, fmt.Errorf("%s: %s", name, reason)

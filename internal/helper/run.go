@@ -84,41 +84,17 @@ func detectScheduler(noSubmit bool) (scheduler.Scheduler, error) {
 	return sched, nil
 }
 
-// ParseGPUSpec parses a GPU spec into a GpuSpec:
-//   - "a100:2" is two a100s, and "a100" is one.
-//   - "2" is two of type "gpu".
-//   - "" is nil.
-func ParseGPUSpec(s string) *scheduler.GpuSpec {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	if idx := strings.LastIndex(s, ":"); idx >= 0 {
-		typePart := strings.TrimSpace(s[:idx])
-		countPart := strings.TrimSpace(s[idx+1:])
-		if n, err := strconv.Atoi(countPart); err == nil && n > 0 {
-			if typePart == "" {
-				typePart = "gpu"
-			}
-			return &scheduler.GpuSpec{Type: typePart, Count: n}
-		}
-	}
-	if n, err := strconv.Atoi(s); err == nil && n > 0 {
-		return &scheduler.GpuSpec{Type: "gpu", Count: n}
-	}
-	return &scheduler.GpuSpec{Type: s, Count: 1}
-}
-
-// FormatGpuSpec formats a ResourceSpec's GPU field back to a display string.
-// Returns "" when no GPU is set.
+// FormatGpuSpec formats a ResourceSpec's GPU field as a string scheduler.ParseGPU reads back.
+//   - A type of "" or "gpu" means any GPU, so only the count is written.
+//   - Returns "" when no GPU is set.
 func FormatGpuSpec(spec *scheduler.ResourceSpec) string {
 	if spec == nil || spec.Gpu == nil {
 		return ""
 	}
-	if spec.Gpu.Raw != "" {
-		return spec.Gpu.Raw
-	}
-	if spec.Gpu.Count > 1 {
+	switch {
+	case spec.Gpu.Type == "" || spec.Gpu.Type == "gpu":
+		return strconv.Itoa(spec.Gpu.Count)
+	case spec.Gpu.Count > 1:
 		return fmt.Sprintf("%s:%d", spec.Gpu.Type, spec.Gpu.Count)
 	}
 	return spec.Gpu.Type
@@ -151,9 +127,7 @@ func resolveSpec(scriptPath string, overrides *scheduler.ResourceSpec) *schedule
 	if meta.Walltime > 0 {
 		scriptDefaults.Time = meta.Walltime
 	}
-	if meta.GPU != "" {
-		scriptDefaults.Gpu = ParseGPUSpec(meta.GPU)
-	}
+	scriptDefaults.Gpu = meta.GPU
 	base.Override(scriptDefaults)
 
 	// User overrides (CLI flags or server request) take highest priority.
@@ -222,10 +196,10 @@ func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string,
 	// Bind condatainer binary so helpers can call _server_ready/_server_message inside.
 	parts = append(parts, "--bind", shellQuote(exe+":/usr/local/bin/condatainer"))
 
-	// Extra binds from #BIND: headers. Double-quoted so $VAR references (e.g.
-	// $CNT_HELPER_STATE_DIR, $HOME) are expanded by the shell when the wrapper runs.
+	// Extra binds from #BIND: headers, single-quoted: the wrapper's shell never sees a value, and
+	// `exec` expands $VAR (e.g. $CNT_HELPER_STATE_DIR, $HOME) when the container starts.
 	for _, b := range opts.ExtraBinds {
-		parts = append(parts, "--bind", `"`+b+`"`)
+		parts = append(parts, "--bind", shellQuote(b))
 	}
 
 	// Working directory inside container — passed through to apptainer as --flag=value.
@@ -257,14 +231,16 @@ func checkOverlayIntegrity(ctx context.Context, imgPath string) error {
 	return ext3.CheckIntegrity(ctx, imgPath, false)
 }
 
-// resolveOverlayTemplate substitutes {KEY} tokens in the #REQUIRED_OVERLAYS: template
-// with values from params, then splits on whitespace to return individual overlay names.
-func resolveOverlayTemplate(template string, params map[string]string) []string {
-	result := template
-	for k, v := range params {
-		result = strings.ReplaceAll(result, "{"+k+"}", v)
+// fillDeps substitutes {KEY} tokens in the #DEP: names with values from params.
+func fillDeps(deps []string, params map[string]string) []string {
+	out := make([]string, len(deps))
+	for i, dep := range deps {
+		for k, v := range params {
+			dep = strings.ReplaceAll(dep, "{"+k+"}", v)
+		}
+		out[i] = dep
 	}
-	return strings.Fields(result)
+	return out
 }
 
 // checkAndInstallNamedOverlays makes sure each named overlay exists and returns the resolved absolute paths.
@@ -288,7 +264,7 @@ func checkAndInstallNamedOverlays(ctx context.Context, names []string, distro st
 				stillMissing = append(stillMissing, name)
 				continue
 			}
-			if resolvedName != catalog.Normalize(name) {
+			if resolvedName != utils.NormalizeModule(name) {
 				logger.Info(fmt.Sprintf("%s -> %s", name, resolvedName), "kind", "note")
 			}
 			found[name] = []string{path}
@@ -341,7 +317,7 @@ func checkAndInstallNamedOverlays(ctx context.Context, names []string, distro st
 		}
 	}
 
-	// Reconstruct in original order so overlay precedence matches #REQUIRED_OVERLAYS.
+	// Reconstruct in original order so overlay precedence matches the #DEP: order.
 	var out []string
 	for _, name := range names {
 		out = append(out, resolved[name]...)
@@ -349,17 +325,17 @@ func checkAndInstallNamedOverlays(ctx context.Context, names []string, distro st
 	return out, nil
 }
 
-// checkPackages verifies every package in meta.ImgPackages is installed in envImg's conda environment.
-//   - {KEY} tokens are filled from params first. An empty ImgPackages or envImg returns nil.
+// checkPackages verifies every package in meta.EnvPackages is installed in envImg's conda environment.
+//   - {KEY} tokens are filled from params first. An empty EnvPackages or envImg returns nil.
 //   - It reads the image and its paired snapshot, without launching a container.
 //   - The conda constraints =, ==, >=, <=, >, < and != are accepted.
 func checkPackages(meta HelperScriptMeta, envImg string, params map[string]string) error {
-	if meta.ImgPackages == "" || envImg == "" {
+	if meta.EnvPackages == "" || envImg == "" {
 		return nil
 	}
 
 	// Substitute {KEY} tokens with resolved param values.
-	resolved := meta.ImgPackages
+	resolved := meta.EnvPackages
 	for k, v := range params {
 		resolved = strings.ReplaceAll(resolved, "{"+k+"}", v)
 	}
@@ -653,7 +629,7 @@ func buildHelperScriptSpecs(name, cwd, account, partition string, excludeNodes [
 	ss := &scheduler.ScriptSpecs{
 		Spec: spec,
 		Control: scheduler.RuntimeConfig{
-			JobName:      "cnt-" + name,
+			JobName:      "cnt-h-" + name,
 			WorkDir:      cwd,
 			Stdout:       "/dev/null",
 			Stderr:       "/dev/null",
@@ -707,7 +683,7 @@ func generateWrapper(id, name, cwd, scriptDir, stateDir, account, partition stri
 	}
 
 	jobSpec := &scheduler.JobSpec{
-		Name:       "cnt-" + name,
+		Name:       "cnt-h-" + name,
 		Command:    body,
 		Specs:      buildHelperScriptSpecs(name, cwd, account, partition, excludeNodes, spec),
 		KeepScript: true,

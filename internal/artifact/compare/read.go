@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image"
 )
 
@@ -19,7 +19,7 @@ import (
 // from what it is about to produce.
 type Artifact struct {
 	Name string
-	Type catalog.Type
+	Type artifact.Type
 	// Arch is the recorded architecture, or "noarch".
 	Arch string
 	// Format is the build type. Two artifacts of different formats are never

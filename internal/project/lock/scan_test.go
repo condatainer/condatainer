@@ -98,29 +98,32 @@ func TestScanRejectsAVersionConstraint(t *testing.T) {
 	}
 }
 
-// Position carries no meaning: a declaration below the first command counts,
-// and so does one inside a heredoc that writes another script. The scanner and
-// the runtime therefore read a script the same way.
-func TestScanReadsDeclarationsAnywhere(t *testing.T) {
+// Only the header block declares. A declaration below the first command, or inside a
+// heredoc that writes another script, is not the script's own.
+func TestScanReadsTheHeaderOnly(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "run.sh", "#!/bin/bash\n#DEP: star/2.7.11b\necho hello\n#DEP: cutadapt/5.0\n")
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: star/2.7.11b\necho hello\n#DEP: cutadapt/5.0\ncat <<'END' > out.sh\n#DEP: bwa/0.7\nEND\n")
 
 	result := scan(t, root)
-	want := []string{"cutadapt/5.0", "star/2.7.11b"}
-	if got := keys(result); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("requests = %v, want %v", got, want)
+	if got := keys(result); len(got) != 1 || got[0] != "star/2.7.11b" {
+		t.Fatalf("requests = %v, want only the header's", got)
 	}
 	if len(result.Findings) != 0 {
 		t.Errorf("findings = %#v, want none", result.Findings)
 	}
 }
 
-func TestScanReadsHeredocDeclarations(t *testing.T) {
+// A {placeholder} belongs to a helper script, which fills it, so the scan reports it and pins nothing.
+func TestScanReportsAPlaceholderDeclaration(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "gen.sh", "#!/bin/bash\n#DEP: star/2.7.11b\ncat <<'END' > out.sh\n#DEP: cutadapt/5.0\nEND\n")
+	write(t, root, "helper.sh", "#DEP: igv/{IGV}\nrun\n")
 
-	if got := keys(scan(t, root)); len(got) != 2 {
-		t.Fatalf("requests = %v, want the heredoc declaration included", got)
+	result := scan(t, root)
+	if got := keys(result); len(got) != 0 {
+		t.Errorf("requests = %v, want none", got)
+	}
+	if len(result.Findings) != 1 || !strings.Contains(result.Findings[0].Reason, "placeholder") {
+		t.Errorf("findings = %#v, want one naming the placeholder", result.Findings)
 	}
 }
 

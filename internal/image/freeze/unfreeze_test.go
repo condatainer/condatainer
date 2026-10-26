@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/toolpath"
 )
 
@@ -186,7 +186,7 @@ func appArtifact(t *testing.T) string {
 	if err := meta.StageManifest(metaDir, meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "samtools/1.23.1",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     meta.BuildTypeConda,
 		Platform:      meta.NativePlatform(),
 	}); err != nil {

@@ -1,6 +1,9 @@
 package scheduler
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -232,6 +235,34 @@ func TestResourceEnvVars(t *testing.T) {
 				}
 			}
 
+		})
+	}
+}
+
+// A scheduler stops reading directives at the first command, so a directive after it
+// is not part of the script's request.
+func TestScriptDirectivesAreReadFromTheHeaderOnly(t *testing.T) {
+	for name, tc := range map[string]struct {
+		parse func(string) (*ScriptSpecs, error)
+		line  string
+	}{
+		"slurm": {TryParseSlurmScript, "#SBATCH --cpus-per-task=%d"},
+		"pbs":   {TryParsePbsScript, "#PBS -l select=1:ncpus=%d"},
+		"lsf":   {TryParseLsfScript, "#BSUB -n %d"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "job.sh")
+			text := "#!/bin/bash\n" + fmt.Sprintf(tc.line, 4) + "\necho start\n" + fmt.Sprintf(tc.line, 16) + "\n"
+			if err := os.WriteFile(path, []byte(text), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			specs, err := tc.parse(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(specs.RawFlags) != 1 || !strings.HasSuffix(specs.RawFlags[0], "4") {
+				t.Errorf("RawFlags = %v, want only the header's directive", specs.RawFlags)
+			}
 		})
 	}
 }

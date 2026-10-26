@@ -8,9 +8,15 @@ import (
 	"testing"
 )
 
+// layerFile is a layer in a directory that is not group-writable, whatever the umask,
+// since a group-writable one widens the file to 0660.
 func layerFile(t *testing.T, layer string) File {
 	t.Helper()
-	return File{Layer: layer, Path: filepath.Join(t.TempDir(), FileName)}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return File{Layer: layer, Path: filepath.Join(dir, FileName)}
 }
 
 func TestKeysWalkFromTheScopeToItsHost(t *testing.T) {

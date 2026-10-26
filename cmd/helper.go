@@ -13,7 +13,6 @@ import (
 	"time"
 
 	ui "github.com/condatainer/condatainer/cmd/internal/ui"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/helper"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
@@ -412,7 +411,7 @@ func runHelper(cmd *cobra.Command, args []string) error {
 				name := entry.Name()
 				if !entry.IsDir() && !strings.HasPrefix(name, ".") && !seen[name] {
 					seen[name] = true
-					description := catalog.GetDescriptionFromScript(filepath.Join(dir, name))
+					description := helper.ScriptDescription(filepath.Join(dir, name))
 					scripts = append(scripts, scriptInfo{name, description})
 					if len(name) > maxNameLen {
 						maxNameLen = len(name)
@@ -554,7 +553,11 @@ func runHelper(cmd *cobra.Command, args []string) error {
 			overrides.Time = d
 		}
 		if postFlags.gpuSet {
-			overrides.Gpu = helper.ParseGPUSpec(postFlags.gpu)
+			gpu, parseErr := scheduler.ParseGPU(postFlags.gpu)
+			if parseErr != nil {
+				return fmt.Errorf("invalid --gpu value %q: %w", postFlags.gpu, parseErr)
+			}
+			overrides.Gpu = gpu
 		}
 	}
 
@@ -696,7 +699,7 @@ func runHelper(cmd *cobra.Command, args []string) error {
 	// A resolved env.sqf (no .img yet) does not count as writable, so this
 	// still runs the wizard — CreateCondaOverlay itself is snapshot-aware, so
 	// installing here does not duplicate what the snapshot already has.
-	if meta.ImgPackages != "" && !utils.IsImg(opts.EnvImg) {
+	if meta.EnvPackages != "" && !utils.IsImg(opts.EnvImg) {
 		created, err := ui.GuidedOverlayCreate(ctx, opts.ScriptName, meta, opts.Params, versions, opts.CWD)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {

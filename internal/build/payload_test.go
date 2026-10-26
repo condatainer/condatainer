@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // Only a recipe's build carries a payload key: a Conda environment and a
@@ -21,7 +21,7 @@ func TestOnlyAScriptBuildIsPayloadKeyed(t *testing.T) {
 		{BuildTypeConda, false},
 		{BuildTypeDef, false},
 	} {
-		b := newPackObject(t, catalog.TypeApp)
+		b := newPackObject(t, artifact.TypeApp)
 		b.buildType = tc.buildType
 		if err := os.MkdirAll(b.ws.CntDir, 0o755); err != nil {
 			t.Fatal(err)

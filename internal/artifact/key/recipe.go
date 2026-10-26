@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // RecipeDigest returns the digest every recipe-backed V1 scheme includes.
@@ -15,7 +15,7 @@ import (
 //   - So a #PH: menu #AUTOUPDATE: grew, a reworded #DESC: or a changed scheduler directive moves no key.
 //   - The input is the recipe as stored at /.cnt/recipe, a template with its tokens intact. Placeholders carry which variant was built.
 func RecipeDigest(recipe []byte) string {
-	return Digest(catalog.StripComments(recipe))
+	return Digest(utils.StripComments(recipe))
 }
 
 // Placeholders converts selected #PH: values into canonical model fields sorted

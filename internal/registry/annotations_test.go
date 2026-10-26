@@ -6,15 +6,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 func fullManifest() meta.Manifest {
 	return meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "grch38/star/2.7.11b/gencode49-101",
-		Type:          catalog.TypeData,
+		Type:          artifact.TypeData,
 		BuildType:     "script",
 		Description:   "STAR index for GENCODE 49",
 		URL:           "https://github.com/alexdobin/STAR",
@@ -64,7 +64,7 @@ func TestAnnotationsOmitsWhatIsNotRecorded(t *testing.T) {
 	m := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "myenv",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		Platform:      meta.Platform{OS: "linux", Arch: "amd64"},
 	}
 	ann := Annotations(m, "")

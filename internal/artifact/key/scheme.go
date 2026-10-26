@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/conda"
@@ -335,11 +336,11 @@ func upstreamDigest(m meta.Manifest) string {
 
 func validateRole(dep meta.Dependency) error {
 	switch dep.Type {
-	case catalog.TypeData:
+	case artifact.TypeData:
 		if dep.Role != meta.RoleData {
 			return fmt.Errorf("data dependency %s has role %q", dep.Name, dep.Role)
 		}
-	case catalog.TypeApp, catalog.TypeOS:
+	case artifact.TypeApp, artifact.TypeOS:
 		if dep.Role != meta.RoleApp && dep.Role != meta.RoleHistory {
 			return fmt.Errorf("%s dependency %s has role %q", dep.Type, dep.Name, dep.Role)
 		}

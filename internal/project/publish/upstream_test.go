@@ -13,6 +13,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
@@ -38,7 +39,7 @@ func vendorDataFor(t *testing.T, root, name, recipe, arch string, deps ...meta.D
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeData,
+		Type:          artifact.TypeData,
 		BuildType:     "script",
 		Platform:      meta.Platform{OS: "linux", Arch: arch},
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
@@ -70,7 +71,7 @@ func vendorApp(t *testing.T, root, name, recipe string) string {
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "script",
 		Platform:      meta.Platform{OS: "linux", Arch: meta.NativeArch()},
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
@@ -256,7 +257,7 @@ func vendorEnv(t *testing.T, root, identity string) string {
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          meta.EnvName,
-		Type:          catalog.TypeEnv,
+		Type:          artifact.TypeEnv,
 		BuildType:     meta.BuildTypeSnapshot,
 		Platform:      meta.Platform{OS: "linux", Arch: meta.NativeArch()},
 		Keys:          meta.Keys{Identity: ref, Equiv: ref},

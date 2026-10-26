@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/toolpath"
@@ -239,7 +239,7 @@ func describe(opts Options, tr Translation, env []meta.EnvVar, facts payloadFact
 	m := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          meta.EnvName,
-		Type:          catalog.TypeEnv,
+		Type:          artifact.TypeEnv,
 		BuildType:     meta.BuildTypeSnapshot,
 		Description:   opts.Description,
 		Platform:      platform,
@@ -258,7 +258,7 @@ func describe(opts Options, tr Translation, env []meta.EnvVar, facts payloadFact
 	rt := meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          meta.EnvName,
-		Type:          catalog.TypeEnv,
+		Type:          artifact.TypeEnv,
 		Description:   opts.Description,
 		Platform:      platform,
 		// {prefix} is kept intact, as it is for every other artifact: the token

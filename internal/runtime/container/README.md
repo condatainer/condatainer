@@ -81,10 +81,12 @@ Root selection has already run, so ordering never decides which overlay becomes 
 
 ## Binds
 
-- A bind is its host and container path together. A later repeat wins, so an explicit remap or `ro` replaces an automatic bind.
+- A container path is bound once, and the later bind wins whatever its host, so an explicit remap or `ro` replaces an automatic bind, as a later overlay does.
 - Order: automatic binds, then configured `bind`, then `CNT_BIND`, then `--bind`.
 - `CNT_BIND` adds to the configured list, where `CNT_CONFIG_BIND` replaces it. Entries are `|`-separated, since a bind holds `:`.
 - Configured binds apply to runs, never to builds, so a build does not depend on the host's binds.
+- A script's `#BIND:` headers are run-script binds. They expand `$VAR` when the container starts, so a submitted job expands on the node it runs on. They go after the configured binds and before `--bind`, so a `--bind` to the same container path replaces it.
+- `#WRITABLE:` and `#FAKEROOT:` are flags with no value, read from the script that runs. A job re-reads them, so they are never forwarded as flags.
 - A configured bind whose host path is missing is skipped. One config serves hosts that differ.
 - With a conda environment mounted, the self-provisioned toolchain directory is bound at the same path as on the host.
   - In-container `mm` and `env` then find `micromamba`, without the base image carrying one.

@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/compare"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/toolpath"
@@ -29,7 +29,7 @@ const EnvPrefix = meta.EnvPrefix
 // nothing — no variables, no PATH entry, no description. It still mounts.
 type Contribution struct {
 	Name        string
-	Type        catalog.Type
+	Type        artifact.Type
 	Description string
 	Prefix      string
 	Configs     map[string]string
@@ -41,7 +41,7 @@ type Contribution struct {
 // environment (a writable .img, via imgContribution, or an honestly
 // TypeEnv-tagged .sqf) do; TypeOS/TypeData never do, regardless of Prefix.
 func (c Contribution) ContributesBin() bool {
-	return (c.Type == catalog.TypeApp || c.Type == catalog.TypeEnv) && c.Prefix != ""
+	return (c.Type == artifact.TypeApp || c.Type == artifact.TypeEnv) && c.Prefix != ""
 }
 
 // resolveImage reads what one image contributes, plus a diagnostic when it contributes
@@ -154,7 +154,7 @@ func degradeDiagnostic(path string, err error) *Diagnostic {
 //   - Its Type is TypeEnv, as an env-typed .sqf snapshot reports, so both forms of a conda environment reach PATH and activation through the one ContributesBin() check.
 func imgContribution(imgPath string) (Contribution, *Diagnostic) {
 	c := Contribution{
-		Type:    catalog.TypeEnv,
+		Type:    artifact.TypeEnv,
 		Prefix:  EnvPrefix,
 		Configs: map[string]string{},
 		Notes:   map[string]string{},

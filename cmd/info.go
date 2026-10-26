@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/compare"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image/ext3"
 	"github.com/condatainer/condatainer/internal/image/freeze"
@@ -56,7 +56,7 @@ func runInfoOverlay(cmd *cobra.Command, args []string) error {
 	overlayArg := args[0]
 
 	overlayPath, err := installedOverlayFile(cmd.Context(), overlayArg)
-	if err != nil && catalog.Normalize(overlayArg) == config.BaseRecipeName() {
+	if err != nil && utils.NormalizeModule(overlayArg) == config.BaseRecipeName() {
 		overlayPath, err = config.FindBaseImage(), nil
 	}
 	if err != nil {
@@ -135,10 +135,10 @@ func verifyPayload(cmd *cobra.Command, overlayPath string) error {
 // env — taken from its embedded metadata. An image built before that metadata
 // has none, and its layout cannot tell app from data, so that reports "" for
 // unknown.
-func imageType(imagePath string) catalog.Type {
+func imageType(imagePath string) artifact.Type {
 	if rt, err := meta.ReadRuntime(imagePath); err == nil {
 		switch rt.Type {
-		case catalog.TypeOS, catalog.TypeApp, catalog.TypeData, catalog.TypeEnv:
+		case artifact.TypeOS, artifact.TypeApp, artifact.TypeData, artifact.TypeEnv:
 			return rt.Type
 		}
 	}
@@ -149,9 +149,9 @@ func imageType(imagePath string) catalog.Type {
 // stored value: it is spelled out so it cannot be read as the environment
 // variables the rest of the tool calls env, and so a .sqf and the .img it came
 // from say the same word.
-func typeLabel(typ catalog.Type) string {
+func typeLabel(typ artifact.Type) string {
 	switch typ {
-	case catalog.TypeEnv:
+	case artifact.TypeEnv:
 		return "environment"
 	case "":
 		return "unknown"
@@ -164,14 +164,14 @@ func typeLabel(typ catalog.Type) string {
 //
 // An environment shows no prefix of its own: every one of them records the same
 // EnvPrefix, so printing it says nothing that the type has not already said.
-func displayPayload(overlayPath string, typ catalog.Type, prefix string) {
+func displayPayload(overlayPath string, typ artifact.Type, prefix string) {
 	whiteouts, convention := 0, ""
-	if typ == catalog.TypeEnv {
+	if typ == artifact.TypeEnv {
 		if m, err := meta.ReadManifest(overlayPath); err == nil && m.Snapshot != nil {
 			whiteouts, convention = m.Snapshot.Whiteouts, m.Snapshot.Convention
 		}
 	}
-	showPrefix := prefix != "" && (typ == catalog.TypeApp || typ == catalog.TypeData)
+	showPrefix := prefix != "" && (typ == artifact.TypeApp || typ == artifact.TypeData)
 	if !showPrefix && whiteouts == 0 {
 		return
 	}
@@ -237,7 +237,7 @@ func displayImageInfo(overlayPath string) error {
 	fmt.Printf("  %-14s %s\n", "Path:", overlayPath)
 	fmt.Printf("  %-14s %s\n", "Size:", utils.FormatSize(fileInfo.Size()))
 	fmt.Printf("  %-14s %s (Read-Only)\n", "Type:", typeLabel(typ))
-	if typ == catalog.TypeOS {
+	if typ == artifact.TypeOS {
 		if osInfo := squashfs.GetOSInfoAt(overlayPath, offset); osInfo != nil {
 			fmt.Printf("  %-14s %s\n", "Distro:", osInfo.String())
 		}

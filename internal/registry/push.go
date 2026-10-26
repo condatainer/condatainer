@@ -13,6 +13,7 @@ import (
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/compare"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
@@ -64,7 +65,7 @@ func (v Audience) Accepts(m meta.Manifest) error {
 		return nil
 	}
 	switch m.Type {
-	case catalog.TypeOS, catalog.TypeData:
+	case artifact.TypeOS, artifact.TypeData:
 		return nil
 	}
 	return fmt.Errorf("%s overlays are not published to a %s registry: %s installs software that is not ours to redistribute; declare #REDISTRIBUTE: yes in its recipe if its licence permits it, or push to an endpoint declared restricted", m.Type, v, m.Name)

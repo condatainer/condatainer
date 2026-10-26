@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/conda"
@@ -31,7 +32,7 @@ var ErrBuildDirExists = errors.New("build directory already exists")
 var ErrBuildCancelled = errors.New("build cancelled by user")
 
 // BuildType is how a target is built — the shape of its source, nothing more.
-// What the payload *is* (os, app, data, env) is its catalog.Type.
+// What the payload *is* (os, app, data, env) is its artifact.Type.
 //
 // It is meta.BuildType, the type the manifest records. The unset value is "",
 // which SourceSpec.BuildType returns until a source is resolved. There is no
@@ -304,8 +305,8 @@ func (b *BuildObject) setupCondaFields() error {
 // own libraries, so it is always an app contributing only its prefix — there is
 // no recipe to take #ENV: or a description from.
 func (b *BuildObject) setCondaSpec() {
-	b.spec.Image.Type = catalog.TypeApp
-	b.spec.Image.Prefix = meta.Prefix(b.spec.Image.Name, catalog.TypeApp)
+	b.spec.Image.Type = artifact.TypeApp
+	b.spec.Image.Prefix = meta.Prefix(b.spec.Image.Name, artifact.TypeApp)
 	b.spec.Image.Env = nil
 
 	src := &CondaSource{Channels: slices.Clone(conda.Channels())}
@@ -338,7 +339,7 @@ func (b *BuildObject) RequiresScheduler() bool {
 		return false
 	}
 	return scheduler.HasSchedulerSpecs(b.scriptSpecs) ||
-		(AlwaysSubmitData() && b.spec.Image.Type == catalog.TypeData)
+		(AlwaysSubmitData() && b.spec.Image.Type == artifact.TypeData)
 }
 
 // BuildLockInfo holds metadata stored inside a build lock file.
@@ -559,7 +560,7 @@ func (b *BuildObject) GetMissingDependencies() ([]string, error) {
 			}
 			continue
 		}
-		parsed, err := catalog.ParseDep(dep)
+		parsed, err := utils.ParseDep(dep)
 		if err != nil {
 			continue
 		}
@@ -687,7 +688,7 @@ func (b *BuildObject) parseDependencies() error {
 	if b.spec.Dependencies != nil {
 		return nil
 	}
-	deps, err := catalog.GetDependenciesFromScript(b.buildSource)
+	deps, err := utils.ScriptDependencies(b.buildSource)
 	if err != nil {
 		return fmt.Errorf("failed to parse dependencies: %w", err)
 	}
@@ -760,8 +761,11 @@ func (b *BuildObject) collectInputAnswers(ctx context.Context) error {
 	return nil
 }
 
-// resolveResourceSpec parses scheduler directives from the build script and sets b.scriptSpecs.
-// Applies the priority chain: DefaultSpec() → script directives → current job resources.
+// resolveResourceSpec parses the resources the build script asks for and sets b.scriptSpecs.
+//   - The script is read from one source, as a run script is: the current scheduler's directives, else the #KEY: resource headers, else another scheduler's directives.
+//   - Container headers (#BIND:, #WRITABLE:, #FAKEROOT:) mean nothing to a build and are ignored. A build writes its own logs, so #OUTPUT: and #ERROR: have no effect.
+//
+// Applies the priority chain: DefaultSpec() → script → current job resources.
 func (b *BuildObject) resolveResourceSpec() error {
 	specs, err := scheduler.ReadScriptSpecsFromPath(b.buildSource)
 	if err != nil {
@@ -795,7 +799,7 @@ func NewStoreBuildObject(ctx context.Context, nameVersion string, imagesDir stri
 }
 
 func newBuildObject(ctx context.Context, nameVersion string, external bool, imagesDir string, update, store bool) (*BuildObject, error) {
-	normalized := catalog.Normalize(nameVersion)
+	normalized := utils.NormalizeModule(nameVersion)
 
 	// Handle channel annotation (e.g. "bioconda::star/2.7.11b"):
 	// strip the channel prefix for path/naming; keep it for the micromamba spec.
@@ -878,7 +882,7 @@ type sourceOptions struct{ name string }
 // WithName names the artifact, whatever the target path is called. It also
 // overrides a script's #TARGET:.
 func WithName(name string) Option {
-	return func(o *sourceOptions) { o.name = catalog.Normalize(name) }
+	return func(o *sourceOptions) { o.name = utils.NormalizeModule(name) }
 }
 
 func applyOptions(opts []Option) sourceOptions {
@@ -902,14 +906,14 @@ func nameFor(fallback string, opts []Option) string {
 // list, into imagesDir/<nameVersion>.sqf. With WithName, nameVersion only
 // spells the file, verbatim, and the option is the artifact's name.
 func NewCondaObjectWithSource(nameVersion, buildSource, imagesDir string, update bool, opts ...Option) (*BuildObject, error) {
-	normalized := catalog.Normalize(nameVersion)
+	normalized := utils.NormalizeModule(nameVersion)
 	name, fileStem := normalized, strings.ReplaceAll(normalized, "/", "--")
 	if o := applyOptions(opts); o.name != "" {
 		name, fileStem = o.name, nameVersion
 	}
 
 	// A conda environment is an app, so it always gets fast local scratch.
-	tmpDir := tmpRootForType(catalog.TypeApp)
+	tmpDir := tmpRootForType(artifact.TypeApp)
 
 	// Make tmpDir absolute
 	if absDir, err := filepath.Abs(tmpDir); err == nil {
@@ -928,7 +932,7 @@ func NewCondaObjectWithSource(nameVersion, buildSource, imagesDir string, update
 		"targetOverlay", targetOverlay, "cntDir", ws.CntDir)
 
 	base := &BuildObject{
-		spec:        Spec{Image: ImageSpec{Name: name, Type: catalog.TypeApp}},
+		spec:        Spec{Image: ImageSpec{Name: name, Type: artifact.TypeApp}},
 		ws:          ws,
 		tgt:         targetFor(targetOverlay),
 		buildSource: buildSource,
@@ -989,7 +993,7 @@ func (b *BuildObject) captureLocalSourceSpec(isDef bool) {
 //   - A path artifact's filename carries no naming claim.
 func FromExternalSource(ctx context.Context, targetPrefix, source string, isApptainer bool, imagesDir string, update bool, opts ...Option) (*BuildObject, error) {
 	nameVersion := filepath.Base(targetPrefix)
-	nameVersion = catalog.Normalize(nameVersion)
+	nameVersion = utils.NormalizeModule(nameVersion)
 
 	// Determine build type from source file extension
 	isDef := isApptainer || strings.HasSuffix(source, ".def")
@@ -998,20 +1002,20 @@ func FromExternalSource(ctx context.Context, targetPrefix, source string, isAppt
 	var target string
 	var deps []string
 	if isShell {
-		parsedType, err := catalog.GetTypeFromScript(source)
+		parsedType, err := GetTypeFromScript(source)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse external build type: %w", err)
 		}
 		externalType = parsedType
 
-		if deps, err = catalog.GetDependenciesFromScript(source); err != nil {
+		if deps, err = utils.ScriptDependencies(source); err != nil {
 			return nil, fmt.Errorf("failed to parse external build dependencies: %w", err)
 		}
 	}
 	// A definition declares its name the same way; a remote URI has no file to read.
 	if isShell || strings.HasSuffix(source, ".def") {
 		var err error
-		if target, err = catalog.GetTargetFromScript(source); err != nil {
+		if target, err = GetTargetFromScript(source); err != nil {
 			return nil, fmt.Errorf("failed to parse external build target: %w", err)
 		}
 	}
@@ -1026,7 +1030,7 @@ func FromExternalSource(ctx context.Context, targetPrefix, source string, isAppt
 
 	// The same rules a catalog recipe answers to: only data may depend on
 	// anything, and an edge is a name/version rather than an overlay path.
-	if err := catalog.ValidateDeps(nameVersion, externalTyp, deps); err != nil {
+	if err := validateDeps(nameVersion, externalTyp, deps); err != nil {
 		return nil, err
 	}
 	// Checked after the type, so an app declaring #DEP: hears the more
@@ -1095,7 +1099,7 @@ func createConcreteType(ctx context.Context, base *BuildObject, tmpDir string) (
 			return nil, err
 		}
 		// A conda environment is self-contained software, whatever its name shape.
-		base.spec.Image.Type = catalog.TypeApp
+		base.spec.Image.Type = artifact.TypeApp
 		base.buildType = BuildTypeConda
 		base.setCondaSpec()
 		return base, nil
@@ -1198,7 +1202,7 @@ func resolveBuildSource(ctx context.Context, base *BuildObject, tmpDir string) (
 	}
 	// Validation happens here rather than while indexing, so one bad recipe stops
 	// its own build instead of taking a whole collection out of every listing.
-	if err := recipe.Validate(); err != nil {
+	if err := validateRecipe(recipe); err != nil {
 		return false, false, err
 	}
 	if err := recipe.BuildableOn(meta.NativeArch()); err != nil {

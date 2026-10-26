@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // recipeArtifact builds a manifest whose keys really are what its recipe
@@ -20,9 +20,9 @@ import (
 // schemes enforce that at generation, so a fixture with edges is data.
 func recipeArtifact(t *testing.T, name, recipe string, deps ...meta.Dependency) (meta.Manifest, map[string][]byte) {
 	t.Helper()
-	typ := catalog.TypeApp
+	typ := artifact.TypeApp
 	if len(deps) > 0 {
-		typ = catalog.TypeData
+		typ = artifact.TypeData
 	}
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
@@ -147,7 +147,7 @@ func TestVerifyRejectsAnUnvendoredDependency(t *testing.T) {
 func TestVerifyRejectsAnUnrecordedEdge(t *testing.T) {
 	root := projectRoot(t)
 	app, appFiles := recipeArtifact(t, "star/2.7.11b", "echo star\n",
-		meta.Dependency{Name: "mystery/1.0", Type: catalog.TypeApp, Role: meta.RoleApp, Records: "unrecorded"})
+		meta.Dependency{Name: "mystery/1.0", Type: artifact.TypeApp, Role: meta.RoleApp, Records: "unrecorded"})
 	appPath := vendor(t, root, app, appFiles)
 
 	l := New()

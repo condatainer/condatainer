@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
@@ -196,14 +196,14 @@ func TestShellQuoteSurvivesAQuoteInAPath(t *testing.T) {
 func TestCallsForJobFollowsAlwaysSubmitData(t *testing.T) {
 	settingstest.Override(t, "build.always_submit_data", "true")
 
-	if !callsForJob(catalog.TypeData, nil) {
+	if !callsForJob(artifact.TypeData, nil) {
 		t.Error("a data rebuild does not call for a job under always_submit_data")
 	}
-	if callsForJob(catalog.TypeApp, nil) {
+	if callsForJob(artifact.TypeApp, nil) {
 		t.Error("an app rebuild calls for a job under always_submit_data")
 	}
 	settingstest.Override(t, "build.always_submit_data", "false")
-	if callsForJob(catalog.TypeData, nil) {
+	if callsForJob(artifact.TypeData, nil) {
 		t.Error("a data rebuild calls for a job with the flag off")
 	}
 }

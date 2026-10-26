@@ -130,7 +130,7 @@ func OfferProjectReuse(ctx context.Context, name string, opts *helper.RunOptions
 		return nil, nil
 	}
 	meta, _ := helper.ParseHelperScriptMeta(opts.ScriptPath)
-	used, err := helper.ListReusable(standing.Root, name, filepath.ToSlash(location), meta.RequiredOverlays)
+	used, err := helper.ListReusable(standing.Root, name, filepath.ToSlash(location), meta.Deps)
 	if err != nil || len(used) == 0 {
 		return nil, nil
 	}
@@ -181,7 +181,9 @@ func ApplyHistoryRun(opts *helper.RunOptions, r *helper.HelperRun) {
 			opts.Resources.Time = r.Walltime()
 		}
 		if r.GPU != "" {
-			opts.Resources.Gpu = helper.ParseGPUSpec(r.GPU)
+			if gpu, err := scheduler.ParseGPU(r.GPU); err == nil {
+				opts.Resources.Gpu = gpu
+			}
 		}
 	}
 	if r.EnvOverlay != "" {
@@ -336,8 +338,10 @@ func PromptSettings(ctx context.Context,
 	gpuDisp := helper.FormatGpuSpec(opts.Resources)
 	if gpuDisp == "" {
 		if v, ok := saved["gpu"]; ok && v != "" && v != "(none)" {
-			opts.Resources.Gpu = helper.ParseGPUSpec(v)
-			gpuDisp = v
+			if gpu, err := scheduler.ParseGPU(v); err == nil {
+				opts.Resources.Gpu = gpu
+				gpuDisp = v
+			}
 		}
 	}
 	if gpuDisp == "" {
@@ -493,7 +497,12 @@ func PromptSettings(ctx context.Context,
 				opts.Resources.Time = d
 				confirm = utils.FormatDuration(d)
 			case "g", "gpu":
-				opts.Resources.Gpu = helper.ParseGPUSpec(v)
+				gpu, err := scheduler.ParseGPU(v)
+				if err != nil {
+					fmt.Printf("[?] Invalid GPU %q — try again: ", v)
+					continue
+				}
+				opts.Resources.Gpu = gpu
 				confirm = v
 			default:
 				handled = false
@@ -663,7 +672,7 @@ func WaitBeforeStart(ctx context.Context, d time.Duration) error {
 }
 
 // GuidedOverlayCreate runs the interactive wizard for creating a writable conda
-// overlay and installing the packages specified by meta.ImgPackages.
+// overlay and installing the packages specified by meta.EnvPackages.
 // cwd is the working directory used to compute the default overlay path (env.img
 // lives next to the project so FindEnvOverlay can auto-detect it on later runs).
 // Returns the path of the created image.
@@ -688,7 +697,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 	if err != nil {
 		return "", fmt.Errorf("invalid size %q: %w", sizeStr, err)
 	}
-	creationVars, err := promptCreationTokens(ctx, meta.ImgPackages, params, versions)
+	creationVars, err := promptCreationTokens(ctx, meta.EnvPackages, params, versions)
 	if err != nil {
 		return "", err
 	}
@@ -698,7 +707,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 		return "", err
 	}
 
-	pkgTemplate := meta.ImgPackages
+	pkgTemplate := meta.EnvPackages
 	for k, v := range params {
 		pkgTemplate = strings.ReplaceAll(pkgTemplate, "{"+k+"}", v)
 	}
@@ -725,12 +734,12 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 	} else {
 		utils.PrintMessage("Creating overlay; conda initialization will happen on first install")
 	}
-	if len(allPkgs) > 0 || meta.PostInstallCmd != "" {
+	if len(allPkgs) > 0 || meta.EnvPostInstall != "" {
 		if _, err := build.ResolveBase(ctx); err != nil {
 			return "", fmt.Errorf("overlay creation failed: %w", err)
 		}
 	}
-	if err := cntexec.CreateCondaOverlay(ctx, opts, allPkgs, meta.PostInstallCmd, false, io); err != nil {
+	if err := cntexec.CreateCondaOverlay(ctx, opts, allPkgs, meta.EnvPostInstall, false, io); err != nil {
 		return "", fmt.Errorf("overlay creation failed: %w", err)
 	}
 	utils.PrintSuccess("Created overlay %s", imgPath)
@@ -739,7 +748,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 }
 
 // GuidedInstallMissing prompts the user to install packages that failed the
-// #IMG_PACKAGES: check. Prints the unsatisfied specs, asks Y/n, then runs
+// #ENV_PACKAGES: check. Prints the unsatisfied specs, asks Y/n, then runs
 // micromamba install inside the overlay if confirmed.
 func GuidedInstallMissing(ctx context.Context, e *helper.ErrMissingPackages) error {
 	utils.PrintWarning("Conda packages not satisfied in %s:", e.EnvImg)
@@ -964,7 +973,7 @@ func promptDefault(ctx context.Context, prompt, defaultVal string) (string, erro
 
 func promptCreationTokens(ctx context.Context, imgPackages string, params map[string]string, versions map[string][]string) (map[string]string, error) {
 	result := make(map[string]string)
-	for _, tok := range utils.ExtractImgPackageTokens(imgPackages) {
+	for _, tok := range utils.ExtractEnvPackageTokens(imgPackages) {
 		if _, ok := params[tok]; ok {
 			continue
 		}

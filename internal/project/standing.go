@@ -13,8 +13,8 @@ import (
 
 // Standing is the project a caller is standing in, loaded once from its
 // working directory. Every overlay- and base-resolution entry point in this
-// package hangs off it, so `exec`/`run`'s `-o` handling, a helper's
-// `#REQUIRED_OVERLAYS:`, and root resolution all read one lock the same way
+// package hangs off it, so `exec`/`run`'s `-o` handling, a helper's `#DEP:`
+// names, and root resolution all read one lock the same way
 // instead of three packages repeating "find the root, load the lock, handle
 // no-project" on their own.
 type Standing struct {

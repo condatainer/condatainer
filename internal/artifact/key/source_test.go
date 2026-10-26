@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // srcFile builds a fetched-source record whose digest is the hash of text, so a
@@ -17,7 +17,7 @@ func srcFile(name, text string) meta.SourceFile {
 func TestSourcesEnterIdentitySortedByName(t *testing.T) {
 	gtf, genome := srcFile("gtf", "annotation"), srcFile("genome", "assembly")
 	a := Artifact{
-		Type:    catalog.TypeData,
+		Type:    artifact.TypeData,
 		Recipe:  []byte("echo build\n"),
 		Fetched: []meta.SourceFile{gtf, genome},
 	}
@@ -49,7 +49,7 @@ func TestSourcesEnterIdentitySortedByName(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, _, _ := deriveScriptIdentityV1(Artifact{
-		Type: catalog.TypeData, Recipe: a.Recipe,
+		Type: artifact.TypeData, Recipe: a.Recipe,
 		Fetched: []meta.SourceFile{gtf, genome},
 	})
 	if reordered.Ref.SHA256 != first.Ref.SHA256 {
@@ -61,7 +61,7 @@ func TestSourcesEnterIdentitySortedByName(t *testing.T) {
 // same placeholders, different bytes.
 func TestRecutSourceMovesIdentityButNotEquivalence(t *testing.T) {
 	base := Artifact{
-		Type:    catalog.TypeData,
+		Type:    artifact.TypeData,
 		Recipe:  []byte("echo build\n"),
 		Fetched: []meta.SourceFile{srcFile("gtf", "release 49")},
 	}
@@ -102,24 +102,24 @@ func TestSourceModelRejectsBadInput(t *testing.T) {
 	}{
 		{
 			name:  "equivalence carries no sources",
-			model: Model{Kind: KindEquiv, Type: catalog.TypeData, Sources: []SourceValue{good}},
+			model: Model{Kind: KindEquiv, Type: artifact.TypeData, Sources: []SourceValue{good}},
 			want:  "identity only",
 		},
 		{
 			name: "digest must be sha256",
-			model: Model{Kind: KindIdentity, Type: catalog.TypeData,
+			model: Model{Kind: KindIdentity, Type: artifact.TypeData,
 				Sources: []SourceValue{{Name: "gtf", Digest: "deadbeef"}}},
 			want: "not a sha256 digest",
 		},
 		{
 			name: "name must be a token",
-			model: Model{Kind: KindIdentity, Type: catalog.TypeData,
+			model: Model{Kind: KindIdentity, Type: artifact.TypeData,
 				Sources: []SourceValue{{Name: "two words", Digest: good.Digest}}},
 			want: "not a usable source name",
 		},
 		{
 			name: "one name once",
-			model: Model{Kind: KindIdentity, Type: catalog.TypeData,
+			model: Model{Kind: KindIdentity, Type: artifact.TypeData,
 				Sources: []SourceValue{good, good}},
 			want: "appears more than once",
 		},

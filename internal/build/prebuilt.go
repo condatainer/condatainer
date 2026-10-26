@@ -7,9 +7,9 @@ import (
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/registry"
@@ -52,14 +52,14 @@ type prebuiltPlan struct {
 // a dependent's equivalence: its name and type, and for data its equivalence key.
 type plannedDep struct {
 	Name  string
-	Type  catalog.Type
+	Type  artifact.Type
 	Equiv meta.KeyRef
 }
 
 // plannedAs reports what this node will contribute as a dependency. A data
 // dependency contributes its equivalence key, so it is unknown until derived.
 func (b *BuildObject) plannedAs() (plannedDep, bool) {
-	if b.spec.Image.Type == catalog.TypeData && b.plannedEquiv.Empty() {
+	if b.spec.Image.Type == artifact.TypeData && b.plannedEquiv.Empty() {
 		return plannedDep{}, false
 	}
 	return plannedDep{Name: b.spec.Image.Name, Type: b.spec.Image.Type, Equiv: b.plannedEquiv}, true

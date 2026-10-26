@@ -136,6 +136,7 @@ func (l *LsfScheduler) ReadScriptSpecs(scriptPath string) (*ScriptSpecs, error) 
 	if err != nil {
 		return nil, err
 	}
+	lines = headerLines(scriptPath, lines, l.extractDirectives)
 	return parseScript(scriptPath, lines, l.extractDirectives, l.parseRuntimeConfig, l.parseResourceSpec)
 }
 

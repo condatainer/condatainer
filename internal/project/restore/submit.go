@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/build"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image/producer"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/project"
@@ -128,9 +128,9 @@ func planJobs(ctx context.Context, root string, verified *lock.Verified, plan *P
 
 // callsForJob reports whether a rebuild of this type is a scheduler job by itself:
 // its recipe carries directives, or it is data and build.always_submit_data is set.
-func callsForJob(typ catalog.Type, specs *scheduler.ScriptSpecs) bool {
+func callsForJob(typ artifact.Type, specs *scheduler.ScriptSpecs) bool {
 	return scheduler.HasSchedulerSpecs(specs) ||
-		(build.AlwaysSubmitData() && typ == catalog.TypeData)
+		(build.AlwaysSubmitData() && typ == artifact.TypeData)
 }
 
 // partition splits a plan into the steps the scheduler runs (submit) and the build
@@ -316,18 +316,13 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 		return "", err
 	}
 	specs.Control.WorkDir = workdir
-	if specs.Control.JobName == "" {
-		name := entry.Manifest.Name
-		if idx := strings.LastIndex(name, "/"); idx != -1 {
-			name = name[:idx]
-		}
-		specs.Control.JobName = "cnt-" + name
-	}
+	build.SetJobName(specs, entry.Manifest.Name)
 	if scheduler.ProxyPerJob() {
 		if host, err := os.Hostname(); err == nil && host != "" {
 			specs.ProxyVia = host
 		}
 	}
+	build.SetJobTarget(specs)
 
 	// A destination is part of the job's name so two of them do not write one
 	// log, which OverrideOutput derives from it.

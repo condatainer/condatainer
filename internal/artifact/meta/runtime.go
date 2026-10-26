@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	artifactcache "github.com/condatainer/condatainer/internal/artifact/cache"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image/tool"
 )
 
@@ -26,11 +26,11 @@ const RuntimeFileName = "runtime.json"
 // metadata read on the mount path, so it stays small and stops growing: anything
 // added for provenance belongs in the manifest, which no exec pays for.
 type Runtime struct {
-	SchemaVersion int          `json:"schema_version"`
-	Name          string       `json:"name"`
-	Type          catalog.Type `json:"type"` // os, app, data, env
-	Description   string       `json:"description,omitempty"`
-	Platform      Platform     `json:"platform"`
+	SchemaVersion int           `json:"schema_version"`
+	Name          string        `json:"name"`
+	Type          artifact.Type `json:"type"` // os, app, data, env
+	Description   string        `json:"description,omitempty"`
+	Platform      Platform      `json:"platform"`
 	// Prefix is where the payload sits inside the container, /cnt/<name> for app
 	// and data, and what the recipe wrote to as $CNT_BUILD_PREFIX. Empty for os,
 	// whose files apply at the root. Readers take it as authoritative rather
@@ -65,14 +65,14 @@ func ValidateRuntime(r Runtime) error {
 	}
 
 	switch r.Type {
-	case catalog.TypeApp, catalog.TypeData:
+	case artifact.TypeApp, artifact.TypeData:
 		if r.Prefix == "" {
 			return fmt.Errorf("%w: %s image %q has no runtime prefix", ErrInvalid, r.Type, r.Name)
 		}
 		if !strings.HasPrefix(r.Prefix, "/") {
 			return fmt.Errorf("%w: prefix %q is not absolute", ErrInvalid, r.Prefix)
 		}
-	case catalog.TypeEnv:
+	case artifact.TypeEnv:
 		// An environment records EnvPrefix and only that: it is where its conda
 		// prefix is, so PATH and {prefix} resolve as they did for the .img it came
 		// from, and two environments collide there. One whose payload has no
@@ -81,7 +81,7 @@ func ValidateRuntime(r Runtime) error {
 			return fmt.Errorf("%w: %s is an environment and may record only %s as its prefix, not %q",
 				ErrInvalid, r.Name, EnvPrefix, r.Prefix)
 		}
-	case catalog.TypeOS:
+	case artifact.TypeOS:
 		// No prefix: it applies at the container root. A stray one is ignored
 		// rather than rejected, since nothing reads it for this type.
 	default:

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 func TestNormalizedToolVersion(t *testing.T) {
@@ -33,7 +33,7 @@ func TestNormalizedToolVersion(t *testing.T) {
 func TestBuildObjectManifestAddsCapturedTools(t *testing.T) {
 	b := &BuildObject{
 		spec: Spec{
-			Image:  ImageSpec{Name: "samtools/1.23.1", Type: catalog.TypeApp},
+			Image:  ImageSpec{Name: "samtools/1.23.1", Type: artifact.TypeApp},
 			Source: SourceSpec{Script: &ScriptSource{}},
 		},
 		buildTools: meta.BuildTools{

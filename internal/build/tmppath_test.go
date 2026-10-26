@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/testenv"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -105,14 +105,14 @@ func TestTmpRootForExternal(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		typ   catalog.Type
+		typ   artifact.Type
 		isDef bool
 		want  string
 	}{
-		{name: "app", typ: catalog.TypeApp, want: scratch},
+		{name: "app", typ: artifact.TypeApp, want: scratch},
 		{name: "unknown type defaults to scratch", typ: "", want: scratch},
-		{name: "data", typ: catalog.TypeData, want: targetDir},
-		{name: "definition", typ: catalog.TypeOS, isDef: true, want: scratch},
+		{name: "data", typ: artifact.TypeData, want: targetDir},
+		{name: "definition", typ: artifact.TypeOS, isDef: true, want: scratch},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -130,7 +130,7 @@ func TestCNTTmpDirMovesOnlyTheFastRoot(t *testing.T) {
 	override := t.TempDir()
 	t.Setenv("CNT_TMPDIR", override)
 
-	if got := tmpRootForType(catalog.TypeApp); got != utils.GetTmpDir() {
+	if got := tmpRootForType(artifact.TypeApp); got != utils.GetTmpDir() {
 		t.Errorf("app root = %q, want the fast root %q", got, utils.GetTmpDir())
 	}
 	if !strings.HasPrefix(utils.GetTmpDir(), override) {
@@ -143,7 +143,7 @@ func TestCNTTmpDirMovesOnlyTheFastRoot(t *testing.T) {
 	}
 
 	targetDir := t.TempDir()
-	if got := tmpRootForExternal(targetDir, catalog.TypeData, false); got != targetDir {
+	if got := tmpRootForExternal(targetDir, artifact.TypeData, false); got != targetDir {
 		t.Errorf("external data root = %q, want the target dir %q", got, targetDir)
 	}
 }

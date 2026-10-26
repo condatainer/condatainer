@@ -10,6 +10,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // writeRecipe creates a one-recipe collection and returns its root.
@@ -157,7 +158,7 @@ func TestNewBuildObject_DoesNotParseInteractiveWhenInstalled(t *testing.T) {
 
 	// Create an overlay file in imagesDir to simulate already-installed overlay
 	nameVersion := "cellranger/8.0.1"
-	fileName := strings.ReplaceAll(catalog.Normalize(nameVersion), "/", "--") + ".sqf"
+	fileName := strings.ReplaceAll(utils.NormalizeModule(nameVersion), "/", "--") + ".sqf"
 	overlayPath := filepath.Join(imagesDir, fileName)
 	if err := os.WriteFile(overlayPath, []byte{}, 0o664); err != nil {
 		t.Fatalf("failed to create overlay file: %v", err)
@@ -187,7 +188,7 @@ func TestNewBuildObject_ErrorsWhenBuildLockExists(t *testing.T) {
 	// Simulate a build in progress: claim and hold the lock next to the target
 	// image, as a running build does, so isBuildLockStale() treats it as active.
 	nameVersion := "cellranger/8.0.1"
-	sqfName := strings.ReplaceAll(catalog.Normalize(nameVersion), "/", "--") + ".sqf"
+	sqfName := strings.ReplaceAll(utils.NormalizeModule(nameVersion), "/", "--") + ".sqf"
 	lockPath := filepath.Join(imagesDir, sqfName+".lock")
 	liveLock := BuildLockInfo{
 		Runner:    "local",
@@ -371,5 +372,19 @@ func TestExternalSourceRefusesAPathDependency(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not an overlay path") {
 		t.Errorf("refusal does not name the rule: %v", err)
+	}
+}
+
+// A build reads the resource headers like a run script does. A container header means
+// nothing to a build, so it is ignored.
+func TestParseScriptMetadata_ResourceHeaders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "recipe.sh")
+	text := "#!/bin/bash\n#NCPU: 8\n#MEM: 16G\n#TIME: 3h\n#BIND: /a:/b\n#WRITABLE:\n#FAKEROOT:\necho hi\n"
+	if err := os.WriteFile(path, []byte(text), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b := &BuildObject{spec: Spec{Image: ImageSpec{Name: "foo/bar"}}, buildSource: path}
+	if err := b.parseScriptMetadata(context.Background()); err != nil || b.effectiveNcpus() != 8 {
+		t.Fatalf("ncpus=%d err=%v, want 8 and no error", b.effectiveNcpus(), err)
 	}
 }

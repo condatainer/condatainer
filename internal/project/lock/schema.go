@@ -37,7 +37,7 @@ const FileName = "lock.json"
 const ProvenanceDir = "provenance"
 
 // PathPrefix marks a pin key that addresses an overlay by project path
-// rather than by name. A path request has no catalog.Dep to render, and the
+// rather than by name. A path request has no utils.Dep to render, and the
 // prefix keeps the two kinds of key from ever colliding.
 const PathPrefix = "path:"
 
@@ -173,7 +173,7 @@ type PinEntry struct {
 	// someone says so.
 	//
 	// It exists because a project depends on artifacts no script declares: a
-	// helper's #REQUIRED_OVERLAYS: (build-essential, an RStudio image), and a
+	// helper's #DEP: (build-essential, an RStudio image), and a
 	// frozen environment. Recorded rather than derived, since "not currently
 	// declared" is what the sweep tests and deriving it would make the sweep a
 	// no-op.

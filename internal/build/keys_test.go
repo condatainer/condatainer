@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 )
 
@@ -25,7 +25,7 @@ func packDependency(t *testing.T, filename, name, recipe string) (string, meta.M
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "script",
 		Platform:      meta.NativePlatform(),
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
@@ -41,7 +41,7 @@ func packDependency(t *testing.T, filename, name, recipe string) (string, meta.M
 	if err := meta.StageRuntime(dir, meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		Platform:      meta.NativePlatform(),
 		Prefix:        "/cnt/" + name,
 	}); err != nil {
@@ -62,7 +62,7 @@ func packDependency(t *testing.T, filename, name, recipe string) (string, meta.M
 	return out, manifest
 }
 
-// A path is recognized before it is parsed, never after. catalog.ParseDep
+// A path is recognized before it is parsed, never after. utils.ParseDep
 // *succeeds* on an overlay path and normalizes it into a name, turning
 // .../hello--1.0.sqf into ".../hello/1.0.sqf" — which names nothing, so no
 // manifest is read and the edge carries no keys at all. A locked rebuild

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // Normalize and TrimBaseScheme both "clean up a reference" and do opposite things:
@@ -90,7 +90,7 @@ func TestIsLoopback(t *testing.T) {
 func builtManifest(name, arch string, buildType meta.BuildType) meta.Manifest {
 	return meta.Manifest{
 		Name:      name,
-		Type:      catalog.TypeApp,
+		Type:      artifact.TypeApp,
 		BuildType: buildType,
 		Platform:  meta.Platform{OS: "linux", Arch: arch},
 		Keys: meta.Keys{

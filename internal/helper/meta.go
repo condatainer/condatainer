@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -27,20 +26,18 @@ type HelperParam struct {
 
 // HelperScriptMeta holds overlay and singleton metadata extracted from a helper script.
 type HelperScriptMeta struct {
-	// ImgRequired is true when the #IMG_PACKAGES: header is present, meaning the
+	// EnvRequired is true when the #ENV_PACKAGES: header is present, meaning the
 	// helper requires a writable overlay (.img) even if no packages are listed.
-	ImgRequired bool
-	// ImgPackages is a template of conda packages for guided overlay creation and
+	EnvRequired bool
+	// EnvPackages is a template of conda packages for guided overlay creation and
 	// pre-submission package verification. {KEY} tokens are substituted from
-	// resolved #PARAM: values before use. Empty when #IMG_PACKAGES: has no value.
-	ImgPackages string
-	// RequiredOverlays is a space-separated template of named condatainer overlays
-	// (SquashFS images) to load before the helper runs. {KEY} tokens are substituted
-	// from resolved #PARAM: values (e.g. "rstudio-server build-essential r{POSIT_R}").
-	// Parsed from #REQUIRED_OVERLAYS:.
-	RequiredOverlays string
-	// PostInstallCmd is run inside the container after micromamba installs ImgPackages.
-	PostInstallCmd string
+	// resolved #PARAM: values before use. Empty when #ENV_PACKAGES: has no value.
+	EnvPackages string
+	// Deps are the overlays to load before the helper runs, one per #DEP: line, in the order written.
+	// {KEY} tokens are substituted from resolved #PARAM: values (e.g. "r/{POSIT_R}").
+	Deps []string
+	// EnvPostInstall is run inside the container after micromamba installs EnvPackages.
+	EnvPostInstall string
 	// Singleton is true when at most one running instance of this helper is allowed.
 	Singleton bool
 	// Binds is a list of extra bind-mount specs from #BIND: headers, in "src:dest" form.
@@ -57,8 +54,8 @@ type HelperScriptMeta struct {
 	MemMB int64
 	// Walltime is the default walltime from #TIME:. Zero means not set.
 	Walltime time.Duration
-	// GPU is the default GPU spec from #GPU:. Empty means not set.
-	GPU string
+	// GPU is the default GPU request from #GPU:. Nil means not set.
+	GPU *scheduler.GpuSpec
 }
 
 // paramKeyPattern is the shape of a #PARAM: key. The key is exported into the helper's environment.
@@ -97,7 +94,7 @@ func ParseHelperParams(scriptPath string) ([]HelperParam, error) {
 		return nil, err
 	}
 	var params []HelperParam
-	for _, a := range catalog.Select(catalog.ScanAnnotations(data), "#PARAM") {
+	for _, a := range utils.SelectAnnotations(utils.ScanAnnotations(data), "#PARAM") {
 		if a.Value == "" {
 			continue
 		}
@@ -198,10 +195,14 @@ func extractQuotedSuffix(s string) (string, string, error) {
 	return quoted, rest, nil
 }
 
+// helperKeys are the headers a helper reads. One after the header block is reported, not dropped silently.
+var helperKeys = []string{"#DESC", "#PARAM", "#VALUE", "#NCPU", "#MEM", "#TIME", "#GPU", "#SINGLETON", "#BIND", "#DEP", "#ENV_PACKAGES", "#ENV_POST_INSTALL"}
+
 // ParseHelperScriptMeta extracts metadata from a helper script.
-// Recognised headers: #NCPU:, #MEM:, #TIME:, #GPU:, #IMG_PACKAGES:, #REQUIRED_OVERLAYS:,
-// #POST_INSTALL_CMD:, #SINGLETON:, #BIND:, #VALUE:.
-//   - A #NCPU:, #MEM: or #TIME: value that does not parse is an error naming its line.
+// Recognised headers: #NCPU:, #MEM:, #TIME:, #GPU:, #DEP:, #ENV_PACKAGES:,
+// #ENV_POST_INSTALL:, #SINGLETON:, #BIND:, #VALUE:.
+//   - A resource header or #SINGLETON: value that does not parse is an error naming its line.
+//   - A header the launch or the wrapper decides (#NAME:, #OUTPUT:, #ERROR:, #PARTITION:, #ACCOUNT:, #WRITABLE:, #FAKEROOT:) is not read.
 //   - The metadata that did parse is returned with the error, so a caller that ignores the error still gets it.
 func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 	data, err := readHelperScript(scriptPath)
@@ -209,66 +210,49 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 		return HelperScriptMeta{}, err
 	}
 
-	meta := HelperScriptMeta{ParamValues: make(map[string][]string)}
-	var problems []error
-	reject := func(a catalog.Annotation, want string) {
-		problems = append(problems, fmt.Errorf("%s on line %d: %q is not %s", a.Key, a.Line, a.Value, want))
+	annotations := utils.ScanAnnotations(data)
+	utils.WarnStray(scriptPath, utils.StrayAnnotations(data, helperKeys...))
+	resources, problem := scheduler.ParseResourceHeaders(annotations)
+	problems := []error{problem}
+	meta := HelperScriptMeta{
+		ParamValues: make(map[string][]string),
+		Deps:        utils.Dependencies(annotations),
+		NCPU:        resources.CpusPerTask,
+		MemMB:       resources.MemPerNodeMB,
+		Walltime:    resources.Time,
+		GPU:         resources.Gpu,
 	}
-	for _, a := range catalog.ScanAnnotations(data) {
+	if meta.Singleton, err = utils.Flag(annotations, "#SINGLETON"); err != nil {
+		problems = append(problems, err)
+	}
+	for _, a := range annotations {
 		switch a.Key {
-		case "#NCPU":
-			if a.Value == "" {
-				continue
-			}
-			if n, err := strconv.Atoi(a.Value); err == nil && n > 0 {
-				meta.NCPU = n
-			} else {
-				reject(a, "a positive whole number")
-			}
-		case "#MEM":
-			if a.Value == "" {
-				continue
-			}
-			if mb, err := utils.ParseMemoryMBWithDefault(a.Value, "GB"); err == nil && mb > 0 {
-				meta.MemMB = mb
-			} else {
-				reject(a, "a memory size such as 8G")
-			}
-		case "#TIME":
-			if a.Value == "" {
-				continue
-			}
-			raw := a.Value
-			if _, err := strconv.Atoi(raw); err == nil {
-				raw += "h"
-			}
-			if d, err := utils.ParseWalltime(raw); err == nil && d > 0 {
-				meta.Walltime = d
-			} else {
-				reject(a, "a walltime such as 4h or 01:30:00")
-			}
-		case "#GPU":
-			meta.GPU = a.Value
-		case "#IMG_PACKAGES":
-			meta.ImgRequired = true
-			meta.ImgPackages = a.Value
-		case "#REQUIRED_OVERLAYS":
-			meta.RequiredOverlays = a.Value
+		case "#ENV_PACKAGES":
+			meta.EnvRequired = true
+			meta.EnvPackages = a.Value
 		case "#BIND":
 			if a.Value != "" {
 				meta.Binds = append(meta.Binds, a.Value)
 			}
-		case "#POST_INSTALL_CMD":
-			meta.PostInstallCmd = a.Value
-		case "#SINGLETON":
-			meta.Singleton = strings.EqualFold(a.Value, "true") || a.Value == "1"
+		case "#ENV_POST_INSTALL":
+			meta.EnvPostInstall = a.Value
 		case "#VALUE":
 			key, spec, ok := strings.Cut(a.Value, "=")
 			if ok && strings.TrimSpace(key) != "" {
 				// An empty spec yields a nil list: the param simply has no choices.
-				meta.ParamValues[strings.TrimSpace(key)] = catalog.ParseValues(spec)
+				meta.ParamValues[strings.TrimSpace(key)] = utils.ParseValueList(spec)
 			}
 		}
 	}
 	return meta, errors.Join(problems...)
+}
+
+// ScriptDescription returns a script's first #DESC: value, or "".
+func ScriptDescription(scriptPath string) string {
+	text, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return ""
+	}
+	description, _ := utils.FindAnnotation(utils.ScanAnnotations(text), "#DESC")
+	return description
 }

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 func TestPresentListOverlayTrustsRecordedType(t *testing.T) {
@@ -19,17 +19,17 @@ func TestPresentListOverlayTrustsRecordedType(t *testing.T) {
 	}{
 		{
 			name: "deep explicitly app", encoded: "team--tool--1.0", recorded: true,
-			runtime: meta.Runtime{Name: "team/tool/1.0", Type: catalog.TypeApp},
+			runtime: meta.Runtime{Name: "team/tool/1.0", Type: artifact.TypeApp},
 			want:    listPresentation{name: "team/tool", version: "1.0"},
 		},
 		{
 			name: "shallow explicitly data", encoded: "reference--1", recorded: true,
-			runtime: meta.Runtime{Name: "reference/1", Type: catalog.TypeData},
+			runtime: meta.Runtime{Name: "reference/1", Type: artifact.TypeData},
 			want:    listPresentation{name: "reference/1", data: true},
 		},
 		{
 			name: "os", encoded: "ubuntu24--tool--1", recorded: true,
-			runtime: meta.Runtime{Name: "ubuntu24/tool/1", Type: catalog.TypeOS},
+			runtime: meta.Runtime{Name: "ubuntu24/tool/1", Type: artifact.TypeOS},
 			want:    listPresentation{name: "ubuntu24/tool/1", version: "(system app)"},
 		},
 		{

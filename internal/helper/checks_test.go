@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 func requireSquashfsTools(t *testing.T) {
@@ -29,7 +29,7 @@ func packEnvSnapshot(t *testing.T, path string) {
 	rt := meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          meta.EnvName,
-		Type:          catalog.TypeEnv,
+		Type:          artifact.TypeEnv,
 		Platform:      meta.NativePlatform(),
 		Prefix:        meta.EnvPrefix,
 	}

@@ -27,6 +27,9 @@ type ProjectStatus struct {
 	// usageIndex-derived signals project/orchestrate.Lock returns.
 	UnpinnedHelperOverlays []string            `json:"unpinned_helper_overlays,omitempty"`
 	ManualPinUsage         map[string][]string `json:"manual_pin_usage,omitempty"`
+	// SymlinkedScripts and SymlinkedDirs are the symlinks the scan skipped.
+	SymlinkedScripts []string `json:"symlinked_scripts,omitempty"`
+	SymlinkedDirs    []string `json:"symlinked_dirs,omitempty"`
 }
 
 // StatusAt reads status for the project rooted exactly at root — no walking
@@ -66,6 +69,8 @@ func statusAt(root string, l *lock.Lock) (*ProjectStatus, error) {
 		Unpinned:               unpinnedRequests(l, scanned),
 		UnpinnedHelperOverlays: unpinnedOverlays,
 		ManualPinUsage:         usage,
+		SymlinkedScripts:       scanned.SymlinkedScripts,
+		SymlinkedDirs:          scanned.SymlinkedDirs,
 	}, nil
 }
 

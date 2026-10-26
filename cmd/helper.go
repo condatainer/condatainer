@@ -49,49 +49,109 @@ type postScriptHelperFlags struct {
 	waitSet      bool
 }
 
-var (
-	helperPath   bool
-	helperList   bool
-	helperUpdate bool
-	helperLayer  string
-)
-
 var helperCmd = &cobra.Command{
-	Use:   "helper [flags] [script-name] [script-args...]",
+	Use:   "helper",
 	Short: "Run web apps like RStudio on HPC",
 	Long: `Run web apps like RStudio inside CondaTainer on HPC.
 
 - A helper submits a job, starts the app, and opens an SSH tunnel to your browser.
 - With no arguments, it shows the apps you have running.
-- It returns once the job is submitted, and prints the access URL when the app is ready.
-- --wait stays attached until the app is ready.
-- Each helper has its own flags: condatainer helper <name> -h
-- Scheduler options (cpu, mem, time, gpu, account, partition) can be set per run or saved as defaults.
-- --exclude-nodes keeps the job off the named nodes for one run. The default list is the scheduler.exclude_nodes config key.
 - It cannot run inside a container or a scheduler job.`,
-	Example: `  condatainer helper                     # Show running apps
-  condatainer helper code-server         # Start code-server
-  condatainer helper code-server -h      # Show its flags and defaults
-  condatainer helper code-server config  # Show or save its defaults
-  condatainer helper stop                # Stop a running app
-  condatainer helper --update            # Update helper scripts from remote
-  condatainer helper --update -l e       # Update them into the extra-root layer`,
+	Example: `  condatainer helper                       # Show running apps
+  condatainer helper run code-server       # Start code-server
+  condatainer helper run code-server -h    # Show its flags and defaults
+  condatainer helper config code-server    # Show or save its defaults
+  condatainer helper stop                  # Stop a running app
+  condatainer helper avail                 # List the helpers the sources offer
+  condatainer helper add code-server       # Add one
+  condatainer helper upgrade               # Bring added helpers up to date`,
+	SilenceUsage: true,
+	RunE:         runHelper,
+}
+
+var helperRunCmd = &cobra.Command{
+	Use:   "run [flags] <name> [script-args...]",
+	Short: "Start a helper",
+	Long: `Start a helper on a compute node.
+
+- It submits a job, starts the app, and opens an SSH tunnel to your browser.
+- It returns once the job is submitted, and prints the access URL when the app is ready.
+- Each helper has its own flags, shown by 'condatainer helper run <name> -h'.
+- Scheduler options (cpu, mem, time, gpu, account, partition) can be set per run or saved as defaults.`,
+	Example: `  condatainer helper run code-server
+  condatainer helper run code-server -h
+  condatainer helper run rstudio-server --cpu 8 --mem 32G`,
+	Args:              cobra.MinimumNArgs(1),
 	SilenceUsage:      true,
-	RunE:              runHelper,
+	RunE:              runHelperRun,
+	ValidArgsFunction: completeHelperScripts,
+}
+
+var helperStopAll bool
+
+var helperStopCmd = &cobra.Command{
+	Use:   "stop [name]",
+	Short: "Stop a running helper",
+	Long: `Stop a running helper.
+
+- With no name, it asks which running helper to stop.`,
+	Example: `  condatainer helper stop
+  condatainer helper stop code-server
+  condatainer helper stop --all`,
+	Args:         cobra.MaximumNArgs(1),
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		refuseInsideJob(cmd)
+		name := ""
+		if len(args) > 0 {
+			name = args[0]
+		}
+		return runHelperStop(cmd.Context(), name, helperStopAll)
+	},
+	ValidArgsFunction: completeHelperScripts,
+}
+
+var helperConfigCmd = &cobra.Command{
+	Use:   "config <name> [path|list|get <key>|set <key> <value>]",
+	Short: "List or save a helper's defaults",
+	Example: `  condatainer helper config code-server
+  condatainer helper config code-server set cpu 4
+  condatainer helper config code-server get cpu`,
+	Args:         cobra.MinimumNArgs(1),
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		refuseInsideJob(cmd)
+		scriptPath, _ := config.FindHelperScript(args[0])
+		return runHelperConfig(args[0], scriptPath, args[1:])
+	},
 	ValidArgsFunction: completeHelperScripts,
 }
 
 func init() {
 	rootCmd.AddCommand(helperCmd)
-	helperCmd.Flags().BoolVar(&helperPath, "path", false, "Show the helper scripts directory")
-	helperCmd.Flags().BoolVarP(&helperList, "list", "L", false, "List available helper scripts")
-	helperCmd.Flags().BoolVarP(&helperUpdate, "update", "u", false, "Update helper scripts from remote")
-	helperCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "With --update, install into this layer: u/user, r/cnt-root, e/extra-root")
-	settings.AddSwitch(helperCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run headless on this node)"))
+	helperCmd.AddCommand(helperRunCmd, helperStopCmd, helperConfigCmd)
+	helperStopCmd.Flags().BoolVarP(&helperStopAll, "all", "a", false, "Stop every match without asking")
+	settings.AddSwitch(helperRunCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run headless on this node)"))
 
 	// Stop flag parsing after the first positional argument so helper-specific flags
 	// (e.g. -c/--cpu) are passed through to parsePostScriptHelperFlags rather than cobra.
-	helperCmd.Flags().SetInterspersed(false)
+	helperRunCmd.Flags().SetInterspersed(false)
+
+	// Usage: the flags before the name, then the flags after it, which are read by hand.
+	helperRunCmd.SetUsageFunc(func(cmd *cobra.Command) error {
+		out := cmd.OutOrStderr()
+		fmt.Fprintf(out, "Usage:\n  %s\n", cmd.UseLine())
+		if cmd.HasExample() {
+			fmt.Fprintf(out, "\nExamples:\n%s\n", cmd.Example)
+		}
+		fmt.Fprintf(out, "\nFlags:\n%s\n", cmd.LocalFlags().FlagUsages())
+		helper.PrintRunFlags(out, nil)
+		if cmd.HasAvailableInheritedFlags() {
+			fmt.Fprintf(out, "\nGlobal Flags:\n%s", cmd.InheritedFlags().FlagUsages())
+		}
+		return nil
+	})
+	helperConfigCmd.Flags().SetInterspersed(false)
 }
 
 // completeHelperScripts provides shell completion for helper script names
@@ -342,151 +402,32 @@ func parsePositiveIntFlag(name, value string) (int, error) {
 	return n, nil
 }
 
-func runHelper(cmd *cobra.Command, args []string) error {
-	// Prevent helper commands when inside a container or scheduler job
-	// (except --path / --list / config — config writes to NFS and is safe from inside).
-	helperConfigMode := len(args) > 1 && args[1] == "config"
-	if config.IsInsideContainer() && !helperPath && !helperList && !helperConfigMode {
+// refuseInsideJob exits when a helper command runs inside a container or a scheduler job.
+func refuseInsideJob(cmd *cobra.Command) {
+	if config.IsInsideContainer() {
 		cmd.SilenceUsage = true
 		ExitWithError("helper commands are not available inside a container")
 	}
-	if scheduler.IsInsideJob() && !helperPath && !helperList && !helperConfigMode {
+	if scheduler.IsInsideJob() {
 		cmd.SilenceUsage = true
 		ExitWithError("helper commands are not available inside a scheduler job")
 	}
+}
 
-	if helperLayer != "" && !helperUpdate {
-		cmd.SilenceUsage = true
-		ExitWithError("--layer only applies with --update")
+func runHelper(cmd *cobra.Command, args []string) error {
+	cmd.SilenceUsage = true
+	if len(args) > 0 {
+		ExitWithError("unknown command %q: start a helper with `condatainer helper run %s`", args[0], args[0])
 	}
+	refuseInsideJob(cmd)
+	helper.EnsureServer()
+	return showHelperStatus("")
+}
 
-	// --- Path Mode ---
-	if helperPath {
-		if len(args) > 0 {
-			// Find specific script in all search paths
-			scriptName := args[0]
-			scriptPath, err := config.FindHelperScript(scriptName)
-			if err != nil {
-				cmd.SilenceUsage = true
-				ExitWithError("helper script '%s' not found (searched: %s)",
-					scriptName, strings.Join(config.GetHelperScriptSearchPaths(), ", "))
-			}
-			fmt.Println(scriptPath)
-			return nil
-		}
-
-		// Show all helper script search paths
-		fmt.Println("Helper script search paths (priority order):")
-		for i, dir := range config.GetHelperScriptSearchPaths() {
-			exists := ""
-			if !config.DirExists(dir) {
-				exists = " (not found)"
-			}
-			fmt.Printf("  %d. %s%s\n", i+1, dir, exists)
-		}
-
-		// Show writable directory
-		if writableDir := config.PeekWritableHelperScriptsDir(); writableDir != "" {
-			fmt.Printf("\nWritable directory: %s\n", writableDir)
-		}
-		return nil
-	}
-
-	// --- List Mode ---
-	if helperList {
-		type scriptInfo struct {
-			name        string
-			description string
-		}
-		seen := make(map[string]bool)
-		var scripts []scriptInfo
-		maxNameLen := 0
-
-		for _, dir := range config.GetHelperScriptSearchPaths() {
-			entries, err := os.ReadDir(dir)
-			if err != nil {
-				continue
-			}
-			for _, entry := range entries {
-				name := entry.Name()
-				if !entry.IsDir() && !strings.HasPrefix(name, ".") && !seen[name] {
-					seen[name] = true
-					description := helper.ScriptDescription(filepath.Join(dir, name))
-					scripts = append(scripts, scriptInfo{name, description})
-					if len(name) > maxNameLen {
-						maxNameLen = len(name)
-					}
-				}
-			}
-		}
-
-		for _, s := range scripts {
-			if s.description != "" {
-				fmt.Printf("  %-*s  %s\n", maxNameLen, s.name, s.description)
-			} else {
-				fmt.Printf("  %s\n", s.name)
-			}
-		}
-		return nil
-	}
-
-	// --- Update Mode ---
-	if helperUpdate {
-		name := ""
-		if len(args) > 0 {
-			name = args[0]
-		}
-		var layer config.DataLayer
-		if helperLayer != "" {
-			var err error
-			if layer, err = config.ParseDataLayer(helperLayer); err != nil {
-				cmd.SilenceUsage = true
-				ExitWithError("%v", err)
-			}
-		}
-		if err := helper.UpdateRemoteScripts(cmd.Context(), name, layer, false, os.Stdout); err != nil {
-			cmd.SilenceUsage = true
-			ExitWithError("%v", err)
-		}
-		return nil
-	}
-
-	// --- Run Mode ---
-	if len(args) == 0 {
-		helper.EnsureServer()
-		return showHelperStatus("")
-	}
-
-	// Intercept: condatainer helper stop [--all] — stop across all helper names
-	if args[0] == "stop" {
-		stopAll := false
-		for _, a := range args[1:] {
-			if a == "--all" || a == "-a" {
-				stopAll = true
-			}
-		}
-		return runHelperStop(cmd.Context(), "", stopAll)
-	}
-
+func runHelperRun(cmd *cobra.Command, args []string) error {
+	refuseInsideJob(cmd)
 	scriptName := args[0]
 	scriptArgs := args[1:]
-
-	// Intercept: condatainer helper <name> config [path|show|get <key>|set <key> <val>]
-	if len(scriptArgs) > 0 && scriptArgs[0] == "config" {
-		scriptPath, _ := config.FindHelperScript(scriptName)
-		return runHelperConfig(scriptName, scriptPath, scriptArgs[1:])
-	}
-
-	// Intercept: condatainer helper <name> stop [--all]
-	if len(scriptArgs) > 0 && scriptArgs[0] == "stop" {
-		stopAll := false
-		for _, a := range scriptArgs[1:] {
-			if a == "--all" || a == "-a" {
-				stopAll = true
-			}
-		}
-		return runHelperStop(cmd.Context(), scriptName, stopAll)
-	}
 
 	// Intercept -h/--help in the remaining args to show helper-specific usage.
 	for _, a := range scriptArgs {
@@ -516,13 +457,8 @@ func runHelper(cmd *cobra.Command, args []string) error {
 	scriptPath, err := config.FindHelperScript(scriptName)
 	if err != nil {
 		cmd.SilenceUsage = true
-		ExitWithError("helper script '%s' not found\nSearched: %s\nRun `condatainer helper --update` to fetch available helper scripts",
-			scriptName, strings.Join(config.GetHelperScriptSearchPaths(), ", "))
-	}
-
-	// Ensure executable.
-	if err := utils.MakeExecutable(scriptPath); err != nil {
-		utils.PrintDebug("Failed to chmod helper script: %v", err)
+		ExitWithError("helper script '%s' not found\nSearched: %s\n%s",
+			scriptName, strings.Join(config.GetHelperScriptSearchPaths(), ", "), missingHelperHint(cmd.Context(), scriptName))
 	}
 
 	// Check apptainer is available.
@@ -821,9 +757,9 @@ func showHelperStatus(name string) error {
 	}
 	if len(running) == 0 {
 		if name != "" {
-			fmt.Printf("No %s helpers running. Use `condatainer helper %s` to start.\n", name, name)
+			fmt.Printf("No %s helpers running. Use `condatainer helper run %s` to start.\n", name, name)
 		} else {
-			fmt.Println("No helpers running. Use `condatainer helper <name>` to start.")
+			fmt.Println("No helpers running. Use `condatainer helper run <name>` to start.")
 		}
 		return nil
 	}
@@ -849,14 +785,14 @@ func showHelperStatus(name string) error {
 	return nil
 }
 
-// runHelperConfig handles: condatainer helper <name> config [show|get <key>|set <key> <val>|path|-h]
+// runHelperConfig handles: condatainer helper config <name> [list|get <key>|set <key> <val>|path|-h]
 func runHelperConfig(name, scriptPath string, args []string) error {
 	sub := ""
 	if len(args) > 0 {
 		sub = args[0]
 	}
 
-	// Load params and spec once (needed for show and -h).
+	// Load params and spec once (needed for list and -h).
 	var params []helper.HelperParam
 	var spec *scheduler.ResourceSpec
 	if scriptPath != "" {
@@ -873,16 +809,16 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 		// Laid out to match cobra's help format; this cannot be a real cobra
 		// command because the helper name is only known at runtime.
 		fmt.Printf("Show or save default settings for the %s helper.\n\n", name)
-		fmt.Printf("Usage:\n  condatainer helper %s config <command>\n\n", name)
+		fmt.Printf("Usage:\n  condatainer helper config %s <command>\n\n", name)
 		fmt.Println("Available Commands:")
 		fmt.Println("  get         Print a single saved value")
 		fmt.Println("  path        Print the config file path")
 		fmt.Println("  set         Save a default value")
-		fmt.Println("  show        Show saved defaults")
+		fmt.Println("  list        List saved defaults")
 		fmt.Printf("\nExamples:\n")
-		fmt.Printf("  condatainer helper %s config show\n", name)
-		fmt.Printf("  condatainer helper %s config set cpu 4\n", name)
-		fmt.Printf("  condatainer helper %s config get cpu\n", name)
+		fmt.Printf("  condatainer helper config %s list\n", name)
+		fmt.Printf("  condatainer helper config %s set cpu 4\n", name)
+		fmt.Printf("  condatainer helper config %s get cpu\n", name)
 		fmt.Printf("\nSaveable keys: %s\n", strings.Join(keys, ", "))
 
 	case "path":
@@ -894,7 +830,7 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 
 	case "get":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: `condatainer helper %s config get <key>`", name)
+			return fmt.Errorf("usage: `condatainer helper config %s get <key>`", name)
 		}
 		v, ok := helper.GetHelperConfigKey(name, args[1])
 		if !ok {
@@ -904,13 +840,13 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 
 	case "set":
 		if len(args) < 3 {
-			return fmt.Errorf("usage: `condatainer helper %s config set <key> <value>`", name)
+			return fmt.Errorf("usage: `condatainer helper config %s set <key> <value>`", name)
 		}
 		if err := helper.SetHelperConfigKey(name, args[1], args[2]); err != nil {
 			return fmt.Errorf("saving config: %w", err)
 		}
 
-	case "show":
+	case "list", "ls", "show":
 		cfg, err := helper.LoadHelperConfig(name)
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
@@ -973,7 +909,7 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 		}
 
 	default:
-		return fmt.Errorf("unknown config command %q — try `condatainer helper %s config -h`", sub, name)
+		return fmt.Errorf("unknown config command %q — try `condatainer helper config %s -h`", sub, name)
 	}
 	return nil
 }
@@ -1057,4 +993,14 @@ func splitNodeFlag(v string) []string {
 		}
 	}
 	return names
+}
+
+// missingHelperHint says how to get a helper that is not installed: add it when a source offers it, else list what is offered.
+func missingHelperHint(ctx context.Context, name string) string {
+	if offers, err := helper.RefreshRemoteMetadata(ctx, false, nil); err == nil {
+		if _, ok := offers[name]; ok {
+			return fmt.Sprintf("Add it with `condatainer helper add %s`", name)
+		}
+	}
+	return "See the helpers a source offers with `condatainer helper avail`"
 }

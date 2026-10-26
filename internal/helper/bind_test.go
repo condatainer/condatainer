@@ -1,6 +1,8 @@
 package helper
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -8,8 +10,12 @@ import (
 // A #BIND: value reaches the wrapper's shell as one single-quoted word: a space, a quote
 // or a command substitution in it is text, and `exec` expands the variables later.
 func TestHelperBindsAreSingleQuoted(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "script")
+	if err := os.WriteFile(script, []byte("#!/bin/bash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cmd, err := buildCondatainerCmd(RunOptions{
-		ScriptPath: "/h/script",
+		ScriptPath: script,
 		ExtraBinds: []string{`$HOME/my data:/d"ata`, "$(touch /tmp/x):/y", "${CNT_HELPER_STATE_DIR}/logs:/logs"},
 	}, nil)
 	if err != nil {

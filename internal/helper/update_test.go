@@ -1,7 +1,8 @@
 package helper
 
 import (
-	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,62 +33,11 @@ func TestHelperIndexNotFound(t *testing.T) {
 	}
 }
 
-// A script is read from its source, written executable, and replaced on the next update.
-// A file without a #! line is reported and leaves any installed copy alone.
-func TestInstallScriptsReplacesWithExecutable(t *testing.T) {
-	src := t.TempDir()
-	script := filepath.Join(src, "helpers", "svc")
-	if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "helpers", "data"), []byte("\x00not a script"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cat, err := catalog.Open(t.Context(), []catalog.Spec{{Name: "lab", Base: src}}, catalog.Cache{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries := map[string]RemoteScriptEntry{
-		"svc":     {Path: "helpers/svc", Source: cat[0]},
-		"data":    {Path: "helpers/data", Source: cat[0]},
-		"missing": {Path: "helpers/missing", Source: cat[0]},
-	}
-
-	dest := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dest, "data"), []byte("#!/bin/bash\nold\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, body := range []string{"#!/bin/bash\necho one\n", "#!/bin/bash\necho two\n"} {
-		if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		var out bytes.Buffer
-		installScripts(t.Context(), entries, dest, &out)
-
-		got, err := os.ReadFile(filepath.Join(dest, "svc"))
-		if err != nil || string(got) != body {
-			t.Fatalf("installed = %q, %v, want %q", got, err, body)
-		}
-		if info, _ := os.Stat(filepath.Join(dest, "svc")); info.Mode()&0o111 == 0 {
-			t.Errorf("installed script is not executable: %v", info.Mode())
-		}
-		if !strings.Contains(out.String(), "WARN: failed to update missing") {
-			t.Errorf("an unreadable script is not reported: %q", out.String())
-		}
-		if !strings.Contains(out.String(), "WARN: failed to update data: helper: not a script") {
-			t.Errorf("a file without #! is not reported: %q", out.String())
-		}
-		if kept, _ := os.ReadFile(filepath.Join(dest, "data")); string(kept) != "#!/bin/bash\nold\n" {
-			t.Errorf("an installed copy was overwritten by a non-script: %q", kept)
-		}
-	}
-}
-
 // A directory source offers the files in helpers/, with no index to write.
 func TestReadHelperIndexScansDirectorySource(t *testing.T) {
 	src := t.TempDir()
 	for name, body := range map[string]string{
-		"helpers/svc":       "#!/bin/bash\n",
+		"helpers/svc":       "#!/bin/bash\n#DESC: a service ## note\n",
 		"helpers/.hidden":   "x",
 		"helpers/sub/inner": "x",
 		"recipes/foo":       "#DESC:x\n",
@@ -112,11 +62,26 @@ func TestReadHelperIndexScansDirectorySource(t *testing.T) {
 	if len(got) != 1 || got["svc"].Path != "helpers/svc" {
 		t.Errorf("helpers = %+v, want only svc at helpers/svc", got)
 	}
+	sum := sha256.Sum256([]byte("#!/bin/bash\n#DESC: a service ## note\n"))
+	if e := got["svc"]; e.Description != "a service" || e.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Errorf("svc = %+v, want its description and the hash of its bytes", e)
+	}
 
 	if err := os.RemoveAll(filepath.Join(src, "helpers")); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := readHelperIndex(t.Context(), cat, cat[0], nil); err != nil || len(got) != 0 {
 		t.Errorf("without helpers/: %+v, %v, want none and no error", got, err)
+	}
+}
+
+func TestHelperIndexEntryNeedsAHash(t *testing.T) {
+	good := `{"schema_version": 1, "helpers": {"a": {"path": "helpers/a", "sha256": "ab"}}}`
+	if got, err := decodeHelperIndex([]byte(good)); err != nil || got["a"].SHA256 != "ab" || got["a"].Description != "" {
+		t.Errorf("an entry with no description: %+v, %v", got, err)
+	}
+	bad := `{"schema_version": 1, "helpers": {"a": {"path": "helpers/a", "sha256": "ab"}, "b": {"path": "helpers/b"}}}`
+	if _, err := decodeHelperIndex([]byte(bad)); !errors.Is(err, ErrIndexEntry) || !strings.Contains(err.Error(), `"b"`) {
+		t.Errorf("an entry with no sha256: %v", err)
 	}
 }

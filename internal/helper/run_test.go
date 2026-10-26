@@ -2,6 +2,7 @@ package helper
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // checkAndInstallNamedOverlays resolves a bare, distro-unprefixed name
@@ -81,7 +83,7 @@ func TestWrapperForwardsTermAndWaits(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := buildHelperCommandBody("t-1", "t", dir, dir, stateDir, time.Hour, nil, nil, child, false)
+	body := buildHelperCommandBody("t-1", "t", dir, stateDir, time.Hour, nil, nil, child, false)
 	wrapper := write("wrapper.sh", "#!/bin/bash\n"+body)
 
 	cmd := exec.Command("bash", wrapper)
@@ -119,7 +121,7 @@ func TestWrapperForwardsTermAndWaits(t *testing.T) {
 }
 
 func TestHelperBodyRecordsTheNodeBeforeSettingUp(t *testing.T) {
-	body := buildHelperCommandBody("t-1", "t", "/w", "/w", "/w/state", time.Hour, nil, nil, "true", false)
+	body := buildHelperCommandBody("t-1", "t", "/w", "/w/state", time.Hour, nil, nil, "true", false)
 	started, port := strings.Index(body, "condatainer _server_started\n"), strings.Index(body, "_pick_port")
 	if started < 0 || started > port {
 		t.Errorf("_server_started should come before _pick_port:\n%s", body)
@@ -130,7 +132,11 @@ func TestHelperBodyRecordsTheNodeBeforeSettingUp(t *testing.T) {
 func TestGenerateWrapperHeadlessExportsResources(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	spec := &scheduler.ResourceSpec{Nodes: 1, Ntasks: 1, TasksPerNode: 1, CpusPerTask: 4, MemPerNodeMB: 8192, Time: time.Hour}
-	path, err := generateWrapper("demo-1", "demo", t.TempDir(), t.TempDir(), stateDir, "", "", nil, time.Hour, nil, spec, nil, "true")
+	script := filepath.Join(t.TempDir(), "demo")
+	if err := os.WriteFile(script, []byte("#!/bin/bash\necho hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path, err := generateWrapper("demo-1", "demo", t.TempDir(), script, stateDir, "", "", nil, time.Hour, nil, spec, nil, "true")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,5 +148,37 @@ func TestGenerateWrapperHeadlessExportsResources(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("job.sh lacks %q:\n%s", want, data)
 		}
+	}
+}
+
+// A run executes its own copy of the script, so later changes to the helper-scripts directory do not reach it.
+func TestRunUsesACopyOfTheScript(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "demo")
+	body := "#!/usr/bin/env bash\necho v1\n"
+	if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := buildCondatainerCmd(RunOptions{ScriptPath: script}, nil)
+	if err != nil || !strings.HasSuffix(cmd, ` /usr/bin/env bash "$CNT_HELPER_STATE_DIR/script"`) {
+		t.Errorf("command = %q, %v; want the interpreter, its argument and the copy", cmd, err)
+	}
+
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if _, err := generateWrapper("demo-1", "demo", t.TempDir(), script, stateDir, "", "", nil, time.Hour, nil, &scheduler.ResourceSpec{}, nil, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, []byte("#!/bin/bash\necho v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(stateDir, copiedScriptName))
+	if err != nil || string(got) != body {
+		t.Errorf("copy = %q, %v; want the submitted bytes", got, err)
+	}
+
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := generateWrapper("demo-2", "demo", t.TempDir(), script, filepath.Join(t.TempDir(), "s2"), "", "", nil, time.Hour, nil, &scheduler.ResourceSpec{}, nil, "true"); !errors.Is(err, utils.ErrShebang) {
+		t.Errorf("a script with an unsupported interpreter line: %v", err)
 	}
 }

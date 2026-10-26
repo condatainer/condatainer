@@ -109,7 +109,6 @@ func TestParseDescriptorOCI(t *testing.T) {
 		{name: "Docker Hub namespace alone is no repository", json: `{"schema_version":1,"oci":{"registry":"docker.io/lab"}}`, wantErr: "two parts"},
 		{name: "newer schema", json: `{"schema_version":2}`, wantErr: "update CondaTainer"},
 		{name: "missing schema", json: `{"default_distro":"ubuntu24"}`, wantErr: "schema_version 0"},
-		{name: "unknown field", json: `{"schema_version":1,"regsitry":"ghcr.io/lab/cnt"}`, wantErr: "unknown field"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ParseDescriptor([]byte(tc.json))
@@ -418,5 +417,12 @@ func TestDecodeIndexRequiresTheVersionAndTheMember(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: error = %v, want containing %q", tc.name, err, tc.want)
 		}
+	}
+}
+
+func TestParseDescriptorIgnoresAnAddedKey(t *testing.T) {
+	desc, err := ParseDescriptor([]byte(`{"schema_version":1,"mirrors":["https://m.example"],"oci":{"registry":"ghcr.io/lab/cnt","note":"x"}}`))
+	if err != nil || desc.OCI.Registry != "ghcr.io/lab/cnt" {
+		t.Fatalf("descriptor = %+v, err = %v; a key this build does not know must not matter", desc, err)
 	}
 }

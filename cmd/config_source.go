@@ -277,12 +277,20 @@ func runSourceAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	utils.PrintMessage("Added source %s (%s layer)", name, utils.StyleName(layer))
+	warnDescriptor(name, src.DescriptorErr)
 
 	if token != "" {
 		saveSourceRegistry(cmd, name, base, file, src.Desc.OCI.Registry)
 		noteTokenFile(file)
 	}
 	return nil
+}
+
+// warnDescriptor says that a source's source.json is unusable, which otherwise shows only when a registry command needs it.
+func warnDescriptor(name string, err error) {
+	if err != nil {
+		utils.PrintWarning("Source %s: source.json is ignored, so its registry and provenance are unavailable: %v", name, err)
+	}
 }
 
 // confirmSharedToken asks, before any token is entered, whether to save it in
@@ -414,6 +422,11 @@ func runSourceList(cmd *cobra.Command, _ []string) error {
 	}
 	files := config.CredentialFiles()
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	defer func() {
+		for _, s := range cat {
+			warnDescriptor(s.Name, s.DescriptorErr)
+		}
+	}()
 	fmt.Fprintln(tw, "#\tNAME\tURL\tLAYER\tACCESS")
 	for i, s := range config.ResolvedSources() {
 		access := "public"

@@ -139,71 +139,8 @@ func gunzip(data []byte) ([]byte, error) {
 	return io.ReadAll(zr)
 }
 
-// UpdateRemoteScripts syncs helper scripts from the configured sources.
-//   - When name is non-empty, only that helper is updated.
-//   - layer picks the data layer that receives them. Empty takes the furthest writable one.
-//   - Each script is read the way the source's recipes are, so its token and host apply.
-func UpdateRemoteScripts(ctx context.Context, name string, layer config.DataLayer, forceMetadata bool, w io.Writer) error {
-	entries, err := RefreshRemoteMetadata(ctx, forceMetadata, w)
-	if err != nil {
-		return fmt.Errorf("failed to read helper indexes: %w", err)
-	}
-	if name != "" {
-		entry, ok := entries[name]
-		if !ok {
-			return fmt.Errorf("helper script %q not found in any source", name)
-		}
-		entries = map[string]RemoteScriptEntry{name: entry}
-	}
-
-	var helperScriptsDir string
-	if layer == "" {
-		helperScriptsDir, err = config.GetWritableHelperScriptsDir()
-	} else {
-		helperScriptsDir, err = config.GetWritableHelperScriptsDirIn(layer)
-	}
-	if err != nil {
-		return err
-	}
-	if err := utils.MkdirAllShared(helperScriptsDir); err != nil {
-		return fmt.Errorf("failed to create helper scripts directory: %w", err)
-	}
-
-	if w != nil {
-		fmt.Fprintf(w, "Updating helper scripts in %s (%s)\n", helperScriptsDir, config.ClassifyDataDir(helperScriptsDir))
-	}
-	installScripts(ctx, entries, helperScriptsDir, w)
-	if w != nil {
-		fmt.Fprintln(w, "Helper update finished.")
-	}
-	return nil
-}
-
-// ErrNotScript reports a downloaded helper that does not start with a #! line.
+// ErrNotScript reports a downloaded helper whose first line is not an allowed interpreter line.
 var ErrNotScript = errors.New("helper: not a script")
-
-// installScripts reads each script from its source and writes it into dir, executable.
-//   - A file that cannot be read or written, or does not start with #!, is reported and skipped. An installed copy stays as it was.
-func installScripts(ctx context.Context, entries map[string]RemoteScriptEntry, dir string, w io.Writer) {
-	for scriptName, entry := range entries {
-		if entry.Path == "" || entry.Source == nil {
-			continue
-		}
-		if w != nil {
-			fmt.Fprintf(w, "Updating %s\n", scriptName)
-		}
-		data, err := entry.Source.ReadFresh(ctx, entry.Path)
-		if err == nil && !bytes.HasPrefix(data, []byte("#!")) {
-			err = fmt.Errorf("%w: %s has no #! line", ErrNotScript, entry.Path)
-		}
-		if err == nil {
-			err = writeExecutable(filepath.Join(dir, filepath.Base(entry.Path)), data)
-		}
-		if err != nil && w != nil {
-			fmt.Fprintf(w, "WARN: failed to update %s: %v\n", scriptName, err)
-		}
-	}
-}
 
 // writeExecutable replaces the file at destPath with data and makes it executable.
 func writeExecutable(destPath string, data []byte) error {

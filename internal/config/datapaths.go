@@ -545,6 +545,24 @@ func GetWritableHelperScriptsDirIn(layer DataLayer) (string, error) {
 	return "", fmt.Errorf("no writable helper scripts directory in the %s layer (searched: %v)", layer, paths)
 }
 
+// WritableHelperLayers returns the layers with a helper scripts directory the user could write, without creating anything.
+//   - Order: extra-root, cnt-root, user.
+func WritableHelperLayers() []DataLayer {
+	var layers []DataLayer
+	for _, layer := range []DataLayer{LayerExtraRoot, LayerCntRoot, LayerUser} {
+		var candidates []SearchDir
+		for _, d := range helperWriteDirs() {
+			if ClassifyDataDir(d.Path) == layer {
+				candidates = append(candidates, d)
+			}
+		}
+		if peekWritableDir(candidates) != "" {
+			layers = append(layers, layer)
+		}
+	}
+	return layers
+}
+
 // GetWritableCacheDir returns the writable personal cache directory
 // ($XDG_CACHE_HOME/condatainer or ~/.cache/condatainer) — never a shared dir.
 func GetWritableCacheDir() (string, error) {

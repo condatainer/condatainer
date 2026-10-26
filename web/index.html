@@ -74,7 +74,7 @@
           <div class="s-sub">Launch a new helper on a compute node</div>
         </div>
         <div class="btn-row">
-          <button class="btn btn-sm" id="start-update-btn" onclick="updateHelperScripts()" title="Download remote helper scripts"><svg class="icon"><use href="#i-download"></use></svg>Update</button>
+          <button class="btn btn-sm" id="start-manage-btn" onclick="openHelperManager()" title="Add, upgrade and remove helpers"><svg class="icon"><use href="#i-settings"></use></svg>Manage</button>
           <button class="btn btn-sm" id="start-refresh-btn" onclick="refreshStartHelpers()" title="Reload helper list"><svg class="icon"><use href="#i-refresh"></use></svg>Refresh</button>
         </div>
       </div>
@@ -504,6 +504,39 @@
   </div>
 </div>
 
+<!-- ── Helper Manager Modal ─────────────── -->
+<div class="modal-backdrop" id="hm-modal">
+  <div class="modal modal-lg">
+    <div class="modal-hdr">
+      <span>Helpers</span>
+      <button class="btn btn-ghost btn-sm btn-icon" onclick="closeModal('hm-modal')"><svg class="icon"><use href="#i-close"></use></svg></button>
+    </div>
+    <div class="modal-tabs">
+      <button class="modal-tab active" id="hm-tab-available-btn" onclick="hmSwitchTab('available')">Available</button>
+      <button class="modal-tab" id="hm-tab-installed-btn" onclick="hmSwitchTab('installed')">Installed</button>
+    </div>
+    <div class="modal-search">
+      <div class="search-wrap">
+        <input id="hm-search" placeholder="Search helpers…" title="Space-separated terms must all match" oninput="hmRender()">
+        <button class="search-clear" type="button" tabindex="-1" title="Clear" onclick="clearSearchInput(this)"><svg class="icon"><use href="#i-close"></use></svg></button>
+      </div>
+    </div>
+    <div class="modal-tab-body active" id="hm-tab-available">
+      <div class="modal-body" id="hm-available-list"></div>
+    </div>
+    <div class="modal-tab-body" id="hm-tab-installed">
+      <div class="modal-body" id="hm-installed-list"></div>
+    </div>
+    <div class="modal-ftr oc-ftr">
+      <label class="hm-layer" id="hm-layer-wrap" hidden>Add to <select id="hm-layer"></select></label>
+      <div class="btn-row">
+        <button class="btn btn-sm" id="hm-upgrade-all" onclick="hmUpgradeAll()" hidden>Upgrade all</button>
+        <button class="btn btn-sm" onclick="closeModal('hm-modal')">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Upload Conflict Modal ──────────────── -->
 <div class="modal-backdrop" id="upload-conflict-modal">
   <div class="modal modal-sm">
@@ -595,6 +628,7 @@
 <script src="/static/app.js"></script>
 <script src="/static/jobs.js"></script>
 <script src="/static/helpers.js"></script>
+<script src="/static/helper_manager.js"></script>
 <script src="/static/overlays.js"></script>
 <script src="/static/history.js"></script>
 <script src="/static/files.js"></script>

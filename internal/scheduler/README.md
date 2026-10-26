@@ -32,6 +32,17 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - An empty value is the same as no header.
 - A value that does not parse, or a header written twice, is an error naming its line. What did parse is still returned.
 
+## Which source a script is read from
+
+- A script may carry the current scheduler's directives, `#KEY:` resource headers and another scheduler's directives.
+- The first it has is read whole, in that order. Nothing is merged field by field.
+  - Merging would let one script mean different jobs depending on which lines were read last.
+  - A skipped source prints one note naming its first line.
+- A header is written for no scheduler, so its result carries the host's type. Nothing is translated, and a partition or account in a header is used as written.
+- Directives of another scheduler lose their partition and account on translation, because those names belong to one cluster.
+- A resource, partition or account header makes the script a job. A name or a log path alone does not.
+- A submit description file keeps its own rules and reads no header.
+
 ## Script directives
 
 - A scheduler reads its directives from the header block of a script and stops at the first command. A directive after it is ignored and warned about.

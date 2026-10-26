@@ -14,6 +14,9 @@ var (
 	// ErrScriptNotFound indicates the script file was not found
 	ErrScriptNotFound = errors.New("script file not found")
 
+	// ErrInvalidHeader indicates a #KEY: header whose value does not parse
+	ErrInvalidHeader = errors.New("invalid script header")
+
 	// ErrInvalidScriptFormat indicates the script has invalid format
 	ErrInvalidScriptFormat = errors.New("invalid script format")
 

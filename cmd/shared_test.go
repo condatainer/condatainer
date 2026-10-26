@@ -1,6 +1,9 @@
 package cmd
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // MatchesOrAliasWithText matches against a name and a description: AND terms may be
 // split across the two, while anchored patterns still match the name on its own.
@@ -46,5 +49,14 @@ func TestMatchesOrAliasWithText_EmptyQuery(t *testing.T) {
 	q := NewSearchQuery(nil, nil)
 	if !q.MatchesOrAliasWithText("anything", "", "") {
 		t.Error("empty query should match every entry")
+	}
+}
+
+func TestExpandBinds(t *testing.T) {
+	t.Setenv("CNT_TEST_DIR", "/scratch")
+	got := expandBinds([]string{"$CNT_TEST_DIR/a:/a", "${CNT_TEST_DIR}/b:/b:ro", "/plain:/plain"})
+	want := []string{"/scratch/a:/a", "/scratch/b:/b:ro", "/plain:/plain"}
+	if !slices.Equal(got, want) {
+		t.Errorf("expandBinds = %v, want %v", got, want)
 	}
 }

@@ -196,10 +196,10 @@ func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string,
 	// Bind condatainer binary so helpers can call _server_ready/_server_message inside.
 	parts = append(parts, "--bind", shellQuote(exe+":/usr/local/bin/condatainer"))
 
-	// Extra binds from #BIND: headers. Double-quoted so $VAR references (e.g.
-	// $CNT_HELPER_STATE_DIR, $HOME) are expanded by the shell when the wrapper runs.
+	// Extra binds from #BIND: headers, single-quoted: the wrapper's shell never sees a value, and
+	// `exec` expands $VAR (e.g. $CNT_HELPER_STATE_DIR, $HOME) when the container starts.
 	for _, b := range opts.ExtraBinds {
-		parts = append(parts, "--bind", `"`+b+`"`)
+		parts = append(parts, "--bind", shellQuote(b))
 	}
 
 	// Working directory inside container — passed through to apptainer as --flag=value.

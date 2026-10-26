@@ -109,19 +109,6 @@ func Flag(annotations []Annotation, key string) (bool, error) {
 	return true, nil
 }
 
-// Reject returns an error for the first annotation whose key is one of keys.
-//   - scope names the script that does not read them, such as "a helper script".
-func Reject(annotations []Annotation, scope string, keys ...string) error {
-	for _, a := range annotations {
-		for _, key := range keys {
-			if a.Key == key {
-				return fmt.Errorf("%s on line %d: %s does not read it", key, a.Line, scope)
-			}
-		}
-	}
-	return nil
-}
-
 // FindAnnotation returns the value of the first annotation with key, and whether one was
 // present. Most keys are single-valued, and the first wins.
 func FindAnnotation(annotations []Annotation, key string) (string, bool) {

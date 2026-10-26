@@ -246,9 +246,10 @@ func ExecutePlan(ctx context.Context, plan *RunPlan) (string, error) {
 	// Apptainer can mount them before the helper script runs.
 	// Only absolute paths (after $CNT_HELPER_STATE_DIR substitution) are created;
 	// sources with remaining $VAR references (e.g. $HOME on the compute node) are skipped.
+	stateDirVar := strings.NewReplacer("${CNT_HELPER_STATE_DIR}", stateDir, "$CNT_HELPER_STATE_DIR", stateDir)
 	for _, b := range plan.Options.ExtraBinds {
 		src, _, _ := strings.Cut(b, ":")
-		src = strings.ReplaceAll(src, "$CNT_HELPER_STATE_DIR", stateDir)
+		src = stateDirVar.Replace(src)
 		if filepath.IsAbs(src) {
 			_ = utils.MkdirAllShared(src)
 		}

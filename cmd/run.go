@@ -15,6 +15,7 @@ import (
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/image/sif"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
+	"github.com/condatainer/condatainer/internal/runtime/container"
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
@@ -74,7 +75,9 @@ var runCmd = &cobra.Command{
 The script can contain these comment tags in its header:
   - #DEP: name/version    Declares a dependency, loaded automatically
   - #DEP: /path/env.img   Declares an overlay file (.sqf or .img)
-  - #CNT <args>           Extra condatainer flags (see Container Flags)
+  - #BIND: host:container Extra bind mount, repeatable
+  - #WRITABLE:            Mount .img overlays writable
+  - #FAKEROOT:            Run with fakeroot privileges
   - #NCPU: 4              CPUs per task
   - #MEM: 16G             Memory per node
   - #TIME: 2h             Walltime
@@ -288,11 +291,11 @@ func runScript(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Taken before the script's own #CNT lines are applied, which change the same variables: the job reads those itself.
+	// Taken before the script's own container headers are applied, which change the same variables: the job reads those itself.
 	containerFlags := forwardedFlagArgs(cmd.Flags())
 
-	// 2. Embedded #CNT args + dependency check/install
-	if err := processEmbeddedArgs(contentScript); err != nil {
+	// 2. Container headers + dependency check/install
+	if err := applyScriptHeaders(contentScript); err != nil {
 		return err
 	}
 	// A project's lock governs what this script mounts. Resolved before the dry
@@ -438,16 +441,20 @@ func resolveScriptAndSpecs(scriptPath string) (string, *scheduler.ScriptSpecs) {
 	return contentScript, specs
 }
 
-// processEmbeddedArgs reads #CNT tags from the script and applies them to run options.
-func processEmbeddedArgs(scriptPath string) error {
-	scriptArgs, err := parseArgsInScript(scriptPath)
+// applyScriptHeaders adds the script's #BIND:, #WRITABLE: and #FAKEROOT: headers to the run options.
+func applyScriptHeaders(scriptPath string) error {
+	text, err := os.ReadFile(scriptPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read script: %w", err)
 	}
-	if len(scriptArgs) > 0 {
-		utils.PrintDebug("[RUN] Additional script arguments found: %v", scriptArgs)
-		applyScriptArgs(scriptArgs)
+	utils.WarnStray(scriptPath, utils.StrayAnnotations(text, "#BIND", "#WRITABLE", "#FAKEROOT"))
+	headers, err := container.ParseHeaders(utils.ScanAnnotations(text))
+	if err != nil {
+		return fmt.Errorf("%s: %w", scriptPath, err)
 	}
+	runBindPaths = append(headers.Binds, runBindPaths...) // before --bind, so an explicit flag wins
+	runWritableImg = runWritableImg || headers.Writable
+	runFakeroot = runFakeroot || headers.Fakeroot
 	return nil
 }
 
@@ -994,39 +1001,6 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 	}
 }
 
-// applyScriptArgs parses #CNT arguments and applies them to run options
-func applyScriptArgs(scriptArgs []string) {
-	for _, argLine := range scriptArgs {
-		parts := strings.Fields(argLine)
-		for i := 0; i < len(parts); i++ {
-			arg := parts[i]
-			switch arg {
-			case "-w", "--writable":
-				runWritableImg = true
-			case "-f", "--fakeroot":
-				runFakeroot = true
-			case "--env":
-				if i+1 < len(parts) {
-					i++
-					runEnvSettings = append(runEnvSettings, parts[i])
-				}
-			case "--bind":
-				if i+1 < len(parts) {
-					i++
-					runBindPaths = append(runBindPaths, parts[i])
-				}
-			default:
-				// Handle --flag=VALUE formats
-				if v, ok := strings.CutPrefix(arg, "--env="); ok {
-					runEnvSettings = append(runEnvSettings, v)
-				} else if v, ok := strings.CutPrefix(arg, "--bind="); ok {
-					runBindPaths = append(runBindPaths, v)
-				}
-			}
-		}
-	}
-}
-
 // buildArraySpec reads and validates the array input file, returning an ArraySpec.
 //   - All non-empty lines must shell-split into the same number of tokens.
 //   - Returns nil when --array was not provided.
@@ -1073,29 +1047,6 @@ func buildArraySpec() (*scheduler.ArraySpec, error) {
 		SampleArgs: sampleArgs,
 		BlankLines: blankLines,
 	}, nil
-}
-
-// parseArgsInScript extracts arguments from #CNT comments in the script
-func parseArgsInScript(scriptPath string) ([]string, error) {
-	data, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read script: %w", err)
-	}
-
-	args := []string{}
-	lines := strings.Split(string(data), "\n")
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "#CNT") {
-			argLine := strings.TrimSpace(strings.TrimPrefix(line, "#CNT"))
-			if argLine != "" {
-				args = append(args, argLine)
-			}
-		}
-	}
-
-	return args, nil
 }
 
 // getNtasks returns the total number of MPI tasks using the priority chain:
@@ -1229,7 +1180,7 @@ func detectNativeArrayDirective(specs *scheduler.ScriptSpecs) string {
 }
 
 // submitRunJob creates and submits a scheduler job to run the script.
-// contentScript is the bash script containing #DEP/#CNT directives — for HTCondor this is the
+// contentScript is the bash script containing the #DEP and container headers — for HTCondor this is the
 // executable referenced in the .sub file, for other schedulers it equals scriptPath.
 func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPath, contentScript string, specs *scheduler.ScriptSpecs, deps []scheduler.Dependency, containerFlags, scriptArgs []string, arraySpec *scheduler.ArraySpec) error {
 	// Capture separate-output intent before CreateScriptWithSpec overrides Stdout/Stderr to /dev/null

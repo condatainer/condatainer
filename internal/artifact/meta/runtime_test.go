@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/image/tool"
 	"github.com/condatainer/condatainer/internal/toolpath"
 )
 
 func TestValidateRuntimeAcceptsEachType(t *testing.T) {
-	for _, typ := range []catalog.Type{catalog.TypeApp, catalog.TypeData} {
+	for _, typ := range []artifact.Type{artifact.TypeApp, artifact.TypeData} {
 		r := validRuntime()
 		r.Type = typ
 		if err := ValidateRuntime(r); err != nil {
@@ -23,7 +23,7 @@ func TestValidateRuntimeAcceptsEachType(t *testing.T) {
 	}
 	// An os applies at the container root, so it carries no prefix.
 	r := validRuntime()
-	r.Type = catalog.TypeOS
+	r.Type = artifact.TypeOS
 	r.Prefix = ""
 	if err := ValidateRuntime(r); err != nil {
 		t.Errorf("os without a prefix rejected: %v", err)
@@ -72,12 +72,12 @@ func TestNormalizeOnlyFillsInAnAbsentType(t *testing.T) {
 	r := validRuntime()
 	r.Type = ""
 	r.Normalize()
-	if r.Type != catalog.TypeApp {
+	if r.Type != artifact.TypeApp {
 		t.Errorf("an absent type normalized to %q, want app", r.Type)
 	}
 
-	for _, raw := range []catalog.Type{
-		catalog.TypeOS, catalog.TypeApp, catalog.TypeData, catalog.TypeEnv,
+	for _, raw := range []artifact.Type{
+		artifact.TypeOS, artifact.TypeApp, artifact.TypeData, artifact.TypeEnv,
 		"bundle", "module", "APP",
 	} {
 		r := validRuntime()
@@ -242,7 +242,7 @@ func TestReadRuntimeUnsupportedSchema(t *testing.T) {
 // reading it as app would mount and gate it as something it is not. "APP" is the
 // case that makes the point: a case difference is not a spelling to correct.
 func TestReadRuntimeRejectsUnknownType(t *testing.T) {
-	for _, raw := range []catalog.Type{"bundle", "APP"} {
+	for _, raw := range []artifact.Type{"bundle", "APP"} {
 		odd := validRuntime()
 		odd.Type = raw
 

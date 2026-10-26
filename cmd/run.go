@@ -8,15 +8,14 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/image/sif"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
+	"github.com/condatainer/condatainer/internal/runtime/container"
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
@@ -73,12 +72,23 @@ var runCmd = &cobra.Command{
 	Short: "Run a script and auto-solve the dependencies by #DEP tags",
 	Long: `Execute a script with automatic dependency resolution.
 
-The script can contain these comment tags:
-  - #DEP: name/version   Declares a dependency, loaded automatically
-  - #DEP: /path/env.img  Declares an overlay file (.sqf or .img)
-  - #CNT <args>          Extra condatainer flags (see Container Flags)
+The script can contain these comment tags in its header:
+  - #DEP: name/version    Declares a dependency, loaded automatically
+  - #DEP: /path/env.img   Declares an overlay file (.sqf or .img)
+  - #BIND: host:container Extra bind mount, repeatable
+  - #WRITABLE:            Mount .img overlays writable
+  - #FAKEROOT:            Run with fakeroot privileges
+  - #NCPU: 4              CPUs per task
+  - #MEM: 16G             Memory per node
+  - #TIME: 2h             Walltime
+  - #GPU: a100:2          GPUs per node: N, TYPE or TYPE:N
+  - #NAME:                Job name
+  - #OUTPUT: #ERROR:      Log files (stdout, stderr)
+  - #PARTITION: #ACCOUNT: Partition and account
 
-A submitted job gets the shell's environment.`,
+A script with any resource is submitted as a job and gets current shell's env.
+It can carry scheduler directives (e.g. #SBATCH), but only ONE set is read:
+  Current scheduler | TAG: | another scheduler.`,
 	Example: `  condatainer run script.sh                          # Check dependencies, then run
   condatainer run script.sh arg1 arg2                # Pass arguments to the script
   condatainer run -o log/s1.out run_tool.sh sample1  # Override stdout
@@ -113,7 +123,7 @@ func init() {
 	runCmd.Flags().StringSliceVar(&runExcludeNodes, "exclude-nodes", nil, "Override the nodes the job must not run on (comma-separated; empty for none)")
 	runCmd.Flags().BoolVar(&runDryRun, "dry-run", false, "Show what would happen, without doing it")
 	settings.AddSwitch(runCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run locally)"))
-	runCmd.Flags().StringVarP(&runName, "name", "n", "", "Override job name")
+	runCmd.Flags().StringVarP(&runName, "name", "n", "", "Override job name (letters, digits, '.', '_' and '-')")
 	runCmd.Flags().StringVar(&runArray, "array", "", "Input file for array job (one entry per line)")
 	runCmd.Flags().IntVar(&runArrayLimit, "array-limit", 0, "Max concurrent array subjobs (0 = unlimited)")
 	RegisterProjectFlags(runCmd, &runProjectDir)
@@ -165,6 +175,12 @@ func runScript(cmd *cobra.Command, args []string) error {
 					ExitWithError("--%s %q is not a valid job ID", flagInfo.name, id)
 				}
 			}
+		}
+	}
+
+	if runName != "" {
+		if _, err := scheduler.ParseJobName(runName); err != nil {
+			ExitWithError("--name: %v", err)
 		}
 	}
 
@@ -257,7 +273,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 			override.Time = d
 		}
 		if runGPU != "" {
-			gpu, err := parseGpuFlag(runGPU)
+			gpu, err := scheduler.ParseGPU(runGPU)
 			if err != nil {
 				ExitWithError("--gpu %q: %v", runGPU, err)
 			}
@@ -281,11 +297,11 @@ func runScript(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Taken before the script's own #CNT lines are applied, which change the same variables: the job reads those itself.
+	// Taken before the script's own container headers are applied, which change the same variables: the job reads those itself.
 	containerFlags := forwardedFlagArgs(cmd.Flags())
 
-	// 2. Embedded #CNT args + dependency check/install
-	if err := processEmbeddedArgs(contentScript); err != nil {
+	// 2. Container headers + dependency check/install
+	if err := applyScriptHeaders(contentScript); err != nil {
 		return err
 	}
 	// A project's lock governs what this script mounts. Resolved before the dry
@@ -412,6 +428,9 @@ func setDefaultWorkDir(specs *scheduler.ScriptSpecs) {
 //   - On failure: prints a warning and returns (scriptPath, nil).
 func resolveScriptAndSpecs(scriptPath string) (string, *scheduler.ScriptSpecs) {
 	specs, err := scheduler.ReadScriptSpecsFromPath(scriptPath)
+	if errors.Is(err, scheduler.ErrInvalidHeader) {
+		ExitWithError("%v", err)
+	}
 	if err != nil {
 		utils.PrintWarning("Failed to parse scheduler specs: %v", err)
 		return scriptPath, nil
@@ -428,23 +447,27 @@ func resolveScriptAndSpecs(scriptPath string) (string, *scheduler.ScriptSpecs) {
 	return contentScript, specs
 }
 
-// processEmbeddedArgs reads #CNT tags from the script and applies them to run options.
-func processEmbeddedArgs(scriptPath string) error {
-	scriptArgs, err := parseArgsInScript(scriptPath)
+// applyScriptHeaders adds the script's #BIND:, #WRITABLE: and #FAKEROOT: headers to the run options.
+func applyScriptHeaders(scriptPath string) error {
+	text, err := os.ReadFile(scriptPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read script: %w", err)
 	}
-	if len(scriptArgs) > 0 {
-		utils.PrintDebug("[RUN] Additional script arguments found: %v", scriptArgs)
-		applyScriptArgs(scriptArgs)
+	utils.WarnStray(scriptPath, utils.StrayAnnotations(text, "#BIND", "#WRITABLE", "#FAKEROOT"))
+	headers, err := container.ParseHeaders(utils.ScanAnnotations(text))
+	if err != nil {
+		return fmt.Errorf("%s: %w", scriptPath, err)
 	}
+	runBindPaths = append(headers.Binds, runBindPaths...) // before --bind, so an explicit flag wins
+	runWritableImg = runWritableImg || headers.Writable
+	runFakeroot = runFakeroot || headers.Fakeroot
 	return nil
 }
 
 // resolveDeps parses #DEP dependencies, checks installed overlays, and returns resolved paths.
 // Returns errRunAborted (message already printed) if any dependencies are missing.
 func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (overlays []string, err error) {
-	deps, err := catalog.GetDependenciesFromScript(contentScript)
+	deps, err := utils.ScriptDependencies(contentScript)
 	if err != nil {
 		utils.PrintError("Failed to parse dependencies: %v", err)
 		return nil, errRunAborted
@@ -469,7 +492,7 @@ func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (o
 				missingDeps = append(missingDeps, dep)
 			}
 		} else if solved[i] == dep {
-			normalized := catalog.Normalize(dep)
+			normalized := utils.NormalizeModule(dep)
 			if _, ok := installedOverlays[normalized]; !ok {
 				missingDeps = append(missingDeps, dep)
 			}
@@ -504,7 +527,7 @@ func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (o
 		} else if solved[i] != dep {
 			overlays[i] = solved[i]
 		} else {
-			normalized := catalog.Normalize(dep)
+			normalized := utils.NormalizeModule(dep)
 			if path, ok := installedOverlays[normalized]; ok {
 				overlays[i] = path
 			} else {
@@ -587,7 +610,7 @@ export -f module ml
 	// Auto-bind the script's directory so it's accessible inside the container.
 	// (Scheduler will copy the script to a temp location)
 	scriptDir := filepath.Dir(contentScript)
-	bindPaths := append(append([]string{scriptDir}, configBinds()...), runBindPaths...)
+	bindPaths := append(append([]string{scriptDir}, configBinds()...), expandBinds(runBindPaths)...)
 
 	rs := effectiveResourceSpec(specs)
 	gpuRequested := rs.Gpu != nil && rs.Gpu.Count > 0
@@ -667,7 +690,7 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 		}
 	}
 
-	deps, err := catalog.GetDependenciesFromScript(contentScript)
+	deps, err := utils.ScriptDependencies(contentScript)
 	if projectRun != nil {
 		printProjectDependencies(baseImg, projectRun)
 	} else if err != nil {
@@ -700,7 +723,7 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 				entry.ok = utils.FileExists(p)
 				entry.path = p
 			} else {
-				normalized := catalog.Normalize(dep)
+				normalized := utils.NormalizeModule(dep)
 				entry.path, entry.ok = installedOverlays[normalized]
 			}
 			entries = append(entries, entry)
@@ -984,39 +1007,6 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 	}
 }
 
-// applyScriptArgs parses #CNT arguments and applies them to run options
-func applyScriptArgs(scriptArgs []string) {
-	for _, argLine := range scriptArgs {
-		parts := strings.Fields(argLine)
-		for i := 0; i < len(parts); i++ {
-			arg := parts[i]
-			switch arg {
-			case "-w", "--writable":
-				runWritableImg = true
-			case "-f", "--fakeroot":
-				runFakeroot = true
-			case "--env":
-				if i+1 < len(parts) {
-					i++
-					runEnvSettings = append(runEnvSettings, parts[i])
-				}
-			case "--bind":
-				if i+1 < len(parts) {
-					i++
-					runBindPaths = append(runBindPaths, parts[i])
-				}
-			default:
-				// Handle --flag=VALUE formats
-				if v, ok := strings.CutPrefix(arg, "--env="); ok {
-					runEnvSettings = append(runEnvSettings, v)
-				} else if v, ok := strings.CutPrefix(arg, "--bind="); ok {
-					runBindPaths = append(runBindPaths, v)
-				}
-			}
-		}
-	}
-}
-
 // buildArraySpec reads and validates the array input file, returning an ArraySpec.
 //   - All non-empty lines must shell-split into the same number of tokens.
 //   - Returns nil when --array was not provided.
@@ -1063,53 +1053,6 @@ func buildArraySpec() (*scheduler.ArraySpec, error) {
 		SampleArgs: sampleArgs,
 		BlankLines: blankLines,
 	}, nil
-}
-
-// parseArgsInScript extracts arguments from #CNT comments in the script
-// parseGpuFlag parses --gpu values: "N", "TYPE:N", or "TYPE" (count defaults to 1).
-func parseGpuFlag(s string) (*scheduler.GpuSpec, error) {
-	if before, after, found := strings.Cut(s, ":"); found {
-		// TYPE:N
-		count, err := strconv.Atoi(after)
-		if err != nil || count <= 0 {
-			return nil, fmt.Errorf("invalid GPU count %q (expected TYPE:N, e.g. a100:2)", after)
-		}
-		return &scheduler.GpuSpec{Type: strings.ToLower(before), Count: count}, nil
-	}
-	// bare N or bare TYPE
-	if count, err := strconv.Atoi(s); err == nil {
-		if count <= 0 {
-			return nil, fmt.Errorf("GPU count must be > 0")
-		}
-		return &scheduler.GpuSpec{Count: count}, nil
-	}
-	// TYPE only — default count 1
-	if s == "" {
-		return nil, fmt.Errorf("empty GPU spec")
-	}
-	return &scheduler.GpuSpec{Type: strings.ToLower(s), Count: 1}, nil
-}
-
-func parseArgsInScript(scriptPath string) ([]string, error) {
-	data, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read script: %w", err)
-	}
-
-	args := []string{}
-	lines := strings.Split(string(data), "\n")
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "#CNT") {
-			argLine := strings.TrimSpace(strings.TrimPrefix(line, "#CNT"))
-			if argLine != "" {
-				args = append(args, argLine)
-			}
-		}
-	}
-
-	return args, nil
 }
 
 // getNtasks returns the total number of MPI tasks using the priority chain:
@@ -1243,7 +1186,7 @@ func detectNativeArrayDirective(specs *scheduler.ScriptSpecs) string {
 }
 
 // submitRunJob creates and submits a scheduler job to run the script.
-// contentScript is the bash script containing #DEP/#CNT directives — for HTCondor this is the
+// contentScript is the bash script containing the #DEP and container headers — for HTCondor this is the
 // executable referenced in the .sub file, for other schedulers it equals scriptPath.
 func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPath, contentScript string, specs *scheduler.ScriptSpecs, deps []scheduler.Dependency, containerFlags, scriptArgs []string, arraySpec *scheduler.ArraySpec) error {
 	// Capture separate-output intent before CreateScriptWithSpec overrides Stdout/Stderr to /dev/null

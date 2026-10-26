@@ -8,10 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/store"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // fakeImage is an extracted /.cnt: what an image would yield, without needing
@@ -144,7 +145,7 @@ func TestVendorClosureRefusesIncompleteProvenance(t *testing.T) {
 	root := projectRoot(t)
 	incomplete := false
 	data, dataFiles := recipeArtifact(t, "index/1.0", "echo index\n",
-		meta.Dependency{Name: "mystery/1.0", Type: catalog.TypeApp, Role: meta.RoleApp, Records: "unrecorded"})
+		meta.Dependency{Name: "mystery/1.0", Type: artifact.TypeApp, Role: meta.RoleApp, Records: "unrecorded"})
 	data.ProvenanceComplete = &incomplete
 	image := stageImage(t, data, dataFiles)
 
@@ -394,7 +395,7 @@ func TestMatchPinLooseNameMatchesExistingSatisfyingPin(t *testing.T) {
 	l.Pins["openjdk/17.0.15"] = pinOf("provenance/openjdk--17.0.15@abc")
 	l.Pins["openjdk/17.0.18"] = pinOf("provenance/openjdk--17.0.18@def")
 	l.Pins["openjdk/16.0.2"] = pinOf("provenance/openjdk--16.0.2@ghi")
-	dep, err := catalog.ParseDep("openjdk/17")
+	dep, err := utils.ParseDep("openjdk/17")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +412,7 @@ func TestMatchPinLooseNameMatchesExistingSatisfyingPin(t *testing.T) {
 func TestMatchPinExactNameDoesNotMatchADifferentVersion(t *testing.T) {
 	l := New()
 	l.Pins["star/2.7.10"] = pinOf("provenance/star--2.7.10@abc")
-	dep, err := catalog.ParseDep("star/2.7.11b")
+	dep, err := utils.ParseDep("star/2.7.11b")
 	if err != nil {
 		t.Fatal(err)
 	}

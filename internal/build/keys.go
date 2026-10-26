@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/store"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // generateKeys derives both keys for what this build produced. A locked rebuild
@@ -158,15 +159,15 @@ func (b *BuildObject) dependencyKeys(ctx context.Context) []key.Dep {
 		// no manifest, and records an edge with no keys at all. A locked rebuild
 		// supplies every dependency as a path, so this is its whole edge set.
 		requested, constrained := raw, raw
-		if !catalog.IsPathDep(raw) {
-			parsed, err := catalog.ParseDep(raw)
+		if !utils.IsPathDep(raw) {
+			parsed, err := utils.ParseDep(raw)
 			if err != nil {
 				log.Warn("Skipping an unparsable dependency", "dep", raw, "err", err)
 				continue
 			}
 			requested, constrained = parsed.NameVersion(), parsed.String()
 		}
-		dep := key.Dep{Name: requested, Type: catalog.TypeApp}
+		dep := key.Dep{Name: requested, Type: artifact.TypeApp}
 
 		// Read from what the build mounts: a constraint picks the highest installed
 		// version it admits, so the edge names that one and carries its keys.

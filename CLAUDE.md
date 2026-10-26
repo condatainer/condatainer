@@ -17,9 +17,9 @@ go test -v ./internal/build -run TestParseScriptMetadata
 ## Architecture
 
 - CLI: cobra. `main.go` calls `cmd.Execute()`. One file per subcommand in `cmd/`, delegating to `internal/`.
-- `internal/artifact/`: what an image embeds. Identity, manifests, equivalence comparison.
-- `build/`: name/version to a Conda, Script or Def build. Dependency graphs, remote scripts.
-- `catalog/`: resolves a name to a recipe and a set of names to a build order. Owns the `#KEY:` header tokenizer and the script header readers.
+- `internal/artifact/`: what an image embeds. Identity, manifests, equivalence comparison. The root holds the payload `Type`.
+- `build/`: name/version to a Conda, Script or Def build. Dependency graphs, remote scripts, the `#TYPE:` and `#TARGET:` readers, and the rules a build's `#DEP:` answers to.
+- `catalog/`: recipe sources and their index. Resolves what a person typed to a recipe.
 - `conda/`: the Conda environment mounted at `/cnt_env`.
 - `config/`: layered config (flags > env > user > extra-root > cnt-root > defaults) and data directory search.
 - `settings/`: the registry of config keys. A package declares the keys it reads and reads them through typed handles. Imports only `utils`.
@@ -34,7 +34,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - `scheduler/`: SLURM, PBS, LSF, HTCondor. Detection, directives, translation.
 - `shell/`: the setup in a user's rc files: `PATH`, completion and the `mm` hook, as a marked block.
 - `server/`: dashboard HTTP server. `store/`: immutable overflow store, addressed by name plus key.
-- `toolpath/`: finds a runnable path for a host tool. `utils/`: console output, files, downloads, duration, memory and version parsing. Imports no other condatainer package.
+- `toolpath/`: finds a runnable path for a host tool. `utils/`: console output, files, downloads, duration, memory and version parsing, and the `#KEY: value ## note` header and `name/version` module name parsers. Imports no other condatainer package.
 
 ## Domain rules
 

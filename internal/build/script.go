@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/conda"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/libexec"
@@ -202,7 +202,7 @@ func (b *BuildObject) buildDependencies(ctx context.Context, buildDeps bool) err
 		// Strip any version constraint (e.g. "samtools/1.21>=1.16" → "samtools/1.21")
 		// before passing to NewBuildObject, which expects a plain name/version.
 		preferredNV := dep
-		if parsed, err := catalog.ParseDep(dep); err == nil {
+		if parsed, err := utils.ParseDep(dep); err == nil {
 			preferredNV = parsed.NameVersion()
 		}
 		depObj, err := NewBuildObject(ctx, preferredNV, false, writableImagesDir, false)
@@ -352,7 +352,7 @@ func (b *BuildObject) runBuildScript(ctx context.Context) error {
 // metaDir is a second archive root and may be empty.
 func (b *BuildObject) packOutput(ctx context.Context, metaDir, preparedPath string) error {
 	log := logging.FromContext(ctx)
-	isData := b.spec.Image.Type == catalog.TypeData
+	isData := b.spec.Image.Type == artifact.TypeData
 
 	payloadDir := filepath.Join(b.ws.CntDir, b.spec.Image.Name)
 	if entries, err := os.ReadDir(payloadDir); err != nil || len(entries) == 0 {

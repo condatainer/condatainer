@@ -22,7 +22,7 @@ func TestLayerReadsEveryShape(t *testing.T) {
 	l := layerFromYAML(t, "user", `
 # hand-written
 build:
-  ncpus: 8
+  ncpu: 8
   mem: 16g
 "scheduler.partition": gpu   # flat dotted key
 Autoload_GPU: "1"
@@ -32,8 +32,8 @@ helper:
 channels: conda-forge bioconda
 bind: [/a, /b]
 `)
-	if got := l.GetInt("build.ncpus"); got != 8 {
-		t.Errorf("build.ncpus = %d", got)
+	if got := l.GetInt("build.ncpu"); got != 8 {
+		t.Errorf("build.ncpu = %d", got)
 	}
 	if got := l.GetString("build.mem"); got != "16g" {
 		t.Errorf("build.mem = %q", got)
@@ -56,7 +56,7 @@ bind: [/a, /b]
 	if got := l.GetStringSlice("bind"); !slices.Equal(got, []string{"/a", "/b"}) {
 		t.Errorf("bind = %v", got)
 	}
-	want := []string{"build.ncpus", "build.mem", "scheduler.partition", "autoload_gpu", "nested_run", "helper.notification", "channels", "bind"}
+	want := []string{"build.ncpu", "build.mem", "scheduler.partition", "autoload_gpu", "nested_run", "helper.notification", "channels", "bind"}
 	if got := l.Keys(); !slices.Equal(got, want) {
 		t.Errorf("Keys = %v", got)
 	}
@@ -64,11 +64,11 @@ bind: [/a, /b]
 
 func TestLayerWriteKeepsCommentsAndOrder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	const start = "# mine\nzeta: 1  # keep\nbuild:\n  ncpus: 2  # cores\n  mem: 8g\nalpha: x\n"
+	const start = "# mine\nzeta: 1  # keep\nbuild:\n  ncpu: 2  # cores\n  mem: 8g\nalpha: x\n"
 	if err := os.WriteFile(path, []byte(start), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpdateConfigKey(path, "build.ncpus", 4); err != nil {
+	if err := UpdateConfigKey(path, "build.ncpu", 4); err != nil {
 		t.Fatal(err)
 	}
 	if err := UpdateConfigKey(path, "scheduler.slurm.emit_mem", false); err != nil {
@@ -78,7 +78,7 @@ func TestLayerWriteKeepsCommentsAndOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	want := "# mine\nzeta: 1 # keep\nbuild:\n  ncpus: 4 # cores\nalpha: x\nscheduler:\n  slurm:\n    emit_mem: false\n"
+	want := "# mine\nzeta: 1 # keep\nbuild:\n  ncpu: 4 # cores\nalpha: x\nscheduler:\n  slurm:\n    emit_mem: false\n"
 	if strings.ReplaceAll(string(data), "  # ", " # ") != want {
 		t.Errorf("file =\n%s\nwant\n%s", data, want)
 	}
@@ -100,7 +100,7 @@ func TestDeleteConfigKeyPrunesEmptyParents(t *testing.T) {
 func TestConcurrentWritesDoNotLoseKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	var wg sync.WaitGroup
-	keys := []string{"build.ncpus", "build.time", "autoload_gpu", "channels", "nested_run", "scheduler.account"}
+	keys := []string{"build.ncpu", "build.time", "autoload_gpu", "channels", "nested_run", "scheduler.account"}
 	for _, k := range keys {
 		wg.Add(1)
 		go func() {

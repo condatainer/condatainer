@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 const (
@@ -98,7 +98,7 @@ func Filename(name string, identity meta.KeyRef, prefixChars int) (string, error
 	if prefixChars < DefaultPrefixChars || prefixChars > len(identity.SHA256) {
 		return "", fmt.Errorf("identity prefix length must be between %d and %d", DefaultPrefixChars, len(identity.SHA256))
 	}
-	name = catalog.Normalize(name)
+	name = utils.NormalizeModule(name)
 	if name == "" || strings.ContainsAny(name, `\\`) {
 		return "", fmt.Errorf("invalid overlay name %q", name)
 	}

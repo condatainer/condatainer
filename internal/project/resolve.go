@@ -82,7 +82,7 @@ func LookupInput(dep meta.Dependency, match Match, dirs []string) (store.Candida
 
 	// Any build of the recorded name/version, which is all an app contributes and
 	// is closer to the record than another version would be.
-	name := catalog.Normalize(dep.Name)
+	name := utils.NormalizeModule(dep.Name)
 	report := store.Scan(store.ScanOptions{Dirs: dirs, Name: name})
 	if len(report.Candidates) > 0 {
 		return report.Candidates[0], true
@@ -95,7 +95,7 @@ func LookupInput(dep meta.Dependency, match Match, dirs []string) (store.Candida
 
 // toolName drops the version component, so "samtools/1.21" matches any samtools.
 func toolName(nameVersion string) string {
-	parsed, err := catalog.ParseDep(nameVersion)
+	parsed, err := utils.ParseDep(nameVersion)
 	if err != nil {
 		return nameVersion
 	}
@@ -109,7 +109,7 @@ func newestOf(tool string, dirs []string) (store.Candidate, bool) {
 	var best store.Candidate
 	var bestVersion string
 	for _, candidate := range store.Scan(store.ScanOptions{Dirs: dirs}).Candidates {
-		parsed, err := catalog.ParseDep(candidate.Name)
+		parsed, err := utils.ParseDep(candidate.Name)
 		if err != nil || parsed.Name != tool || parsed.Version == "" {
 			continue
 		}

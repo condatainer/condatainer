@@ -74,12 +74,12 @@ func TmpDirBinds() []string {
 
 // DeduplicateBindPaths resolves host paths, collapses repeats and drops child paths a parent already covers.
 //   - Formats: "/path", "/path:/container", "/path:/container:opts".
-//   - A bind is its host and container path together. When one repeats, the later wins, so an explicit remap or ro replaces an automatic bind.
+//   - A container path is bound once. When one repeats, the later bind wins, whatever its host, so an explicit remap or ro replaces an automatic bind.
 //   - A plain child is dropped only under a parent bound at its own path with no options.
 func DeduplicateBindPaths(paths []string) []string {
 	type bind struct{ host, dest, opts string }
 	var binds []bind
-	index := map[[2]string]int{}
+	index := map[string]int{}
 	for _, raw := range paths {
 		if raw == "" {
 			continue
@@ -99,12 +99,11 @@ func DeduplicateBindPaths(paths []string) []string {
 		if len(parts) == 3 {
 			b.opts = parts[2]
 		}
-		key := [2]string{b.host, b.dest}
-		if i, ok := index[key]; ok {
+		if i, ok := index[b.dest]; ok {
 			binds[i] = b
 			continue
 		}
-		index[key] = len(binds)
+		index[b.dest] = len(binds)
 		binds = append(binds, b)
 	}
 

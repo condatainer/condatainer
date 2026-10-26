@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	artifactcache "github.com/condatainer/condatainer/internal/artifact/cache"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // validRuntime returns a runtime document that passes ValidateRuntime, for a
@@ -17,7 +17,7 @@ func validRuntime() Runtime {
 	return Runtime{
 		SchemaVersion: SchemaVersion,
 		Name:          "samtools/1.23.1",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		Platform:      NativePlatform(),
 		Prefix:        "/cnt/samtools/1.23.1",
 		Env:           []EnvVar{{Key: "SAMTOOLS_HOME", Value: "{prefix}"}},
@@ -29,7 +29,7 @@ func validManifest() Manifest {
 	return Manifest{
 		SchemaVersion: SchemaVersion,
 		Name:          "samtools/1.23.1",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "conda",
 		Platform:      NativePlatform(),
 	}
@@ -102,12 +102,12 @@ func stagedImage(t *testing.T, rt Runtime, m Manifest) string {
 func TestPrefix(t *testing.T) {
 	tests := []struct {
 		name string
-		typ  catalog.Type
+		typ  artifact.Type
 		want string
 	}{
-		{"samtools/1.23.1", catalog.TypeApp, "/cnt/samtools/1.23.1"},
-		{"grch38/star/2.7.11b/gencode47", catalog.TypeData, "/cnt/grch38/star/2.7.11b/gencode47"},
-		{"ubuntu24/r-essential", catalog.TypeOS, ""},
+		{"samtools/1.23.1", artifact.TypeApp, "/cnt/samtools/1.23.1"},
+		{"grch38/star/2.7.11b/gencode47", artifact.TypeData, "/cnt/grch38/star/2.7.11b/gencode47"},
+		{"ubuntu24/r-essential", artifact.TypeOS, ""},
 	}
 	for _, tt := range tests {
 		if got := Prefix(tt.name, tt.typ); got != tt.want {
@@ -170,7 +170,7 @@ func TestStagePayloadKeyRecordsTheKeyInTheStagedManifest(t *testing.T) {
 
 func TestFrozenEnvironmentRefusesAPayloadKey(t *testing.T) {
 	m := validManifest()
-	m.Name, m.Type, m.BuildType = EnvName, catalog.TypeEnv, BuildTypeSnapshot
+	m.Name, m.Type, m.BuildType = EnvName, artifact.TypeEnv, BuildTypeSnapshot
 	m.Keys = Keys{Payload: KeyRef{Scheme: "payload-tree-v1", SHA256: strings.Repeat("ab", 32)}}
 	if err := ValidateManifest(m); err == nil {
 		t.Error("a frozen environment with a payload key validated")

@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/conda"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
@@ -378,7 +378,7 @@ func isRootEligible(path string) bool {
 		return true
 	}
 	rt, err := meta.ReadRuntime(path)
-	return err == nil && rt.Type == catalog.TypeOS
+	return err == nil && rt.Type == artifact.TypeOS
 }
 
 // ensureAtMostOneSif checks that at most one .sif overlay is requested — a
@@ -539,8 +539,8 @@ func orderOverlays(overlays []string) []string {
 	return ordered
 }
 
-// isOsOverlay reports whether path's metadata records Type == catalog.TypeOS.
+// isOsOverlay reports whether path's metadata records Type == artifact.TypeOS.
 func isOsOverlay(path string) bool {
 	rt, err := meta.ReadRuntime(path)
-	return err == nil && rt.Type == catalog.TypeOS
+	return err == nil && rt.Type == artifact.TypeOS
 }

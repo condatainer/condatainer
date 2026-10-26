@@ -118,7 +118,7 @@ func (bg *BuildGraph) resolvePlan(ctx context.Context, roots []string, hidden ma
 	if err != nil {
 		return err
 	}
-	plan, err := cat.Resolve(ctx, roots, InstalledVersions(hidden))
+	plan, err := resolveDeps(ctx, cat, roots, InstalledVersions(hidden))
 	if err != nil {
 		return err
 	}
@@ -196,8 +196,8 @@ func (bg *BuildGraph) dependencyPlan(obj *BuildObject) (map[string]plannedDep, b
 	planned := make(map[string]plannedDep)
 	for _, raw := range obj.Dependencies() {
 		requested, constrained := raw, raw
-		if !catalog.IsPathDep(raw) {
-			parsed, err := catalog.ParseDep(raw)
+		if !utils.IsPathDep(raw) {
+			parsed, err := utils.ParseDep(raw)
 			if err != nil {
 				continue
 			}
@@ -258,7 +258,7 @@ func (bg *BuildGraph) graphDependencies(obj *BuildObject) []string {
 	var out []string
 	for _, raw := range obj.Dependencies() {
 		name := raw
-		if parsed, err := catalog.ParseDep(raw); err == nil {
+		if parsed, err := utils.ParseDep(raw); err == nil {
 			name = parsed.NameVersion()
 		}
 		if depObj, ok := bg.graph[name]; ok && !bg.installedAlready(depObj) {
@@ -370,7 +370,7 @@ func (bg *BuildGraph) runSchedulerStep() error {
 		depIDs := []string{}
 		for _, rawDep := range obj.Dependencies() {
 			dep := rawDep
-			if parsed, err := catalog.ParseDep(rawDep); err == nil {
+			if parsed, err := utils.ParseDep(rawDep); err == nil {
 				dep = parsed.NameVersion()
 			}
 			// Absent from the graph means the resolver satisfied it with an
@@ -455,14 +455,8 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 		}
 	}
 
-	// Derive job name from name/version if not set in script
-	if specs.Control.JobName == "" {
-		name := obj.NameVersion()
-		if idx := strings.LastIndex(name, "/"); idx != -1 {
-			name = name[:idx]
-		}
-		specs.Control.JobName = "cnt-" + name
-	}
+	SetJobName(specs, obj.NameVersion())
+	SetJobTarget(specs)
 
 	// Create job specification
 	jobSpec := &scheduler.JobSpec{

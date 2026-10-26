@@ -59,7 +59,7 @@ func FromForeignRoot(ctx context.Context, targetPrefix, source, imagesDir string
 		}
 	}
 
-	nameVersion := nameFor(catalog.Normalize(filepath.Base(targetPrefix)), opts)
+	nameVersion := nameFor(utils.NormalizeModule(filepath.Base(targetPrefix)), opts)
 	externalTyp := catalog.DeriveType(nameVersion, "", true, "")
 
 	targetDir := tmpRootForExternal(filepath.Dir(targetPrefix), externalTyp, true)

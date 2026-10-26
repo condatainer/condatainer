@@ -5,6 +5,15 @@ What CondaTainer embeds in an image: what it says it is, what loading it does to
 - It reads through `internal/image`, which knows nothing about metadata. The dependency is one way.
 - Both embedded documents are trusted, not verified. Validation checks structure, not truth.
 
+## The type
+
+- `artifact.Type` is `os`, `app`, `data` or `env`. It is the one thing in the package root, so any package can name a type without importing the readers.
+- A recipe declares `app` or `data`. A `.def` is always `os`.
+- An `os` adds to a root that already exists, and any `os` can be the container root, chosen per invocation.
+- `env` is what `overlay freeze` captures. No recipe may declare it.
+- `env` is its own type because a type carries publishing defaults, and an undeclared `os` may be published publicly.
+- It is written "environment" in anything a user reads.
+
 ## Two documents
 
 - `runtime.json` is read on every mount. `manifest.json` is read on demand.
@@ -66,6 +75,7 @@ What CondaTainer embeds in an image: what it says it is, what loading it does to
   - A data dependency contributes its equivalence key.
   - An app or OS named by the artifact contributes name and version.
   - A history-only app or OS contributes nothing.
+  - An app or OS dependency counts as named by the artifact when its slash-separated components occur as a contiguous run of the artifact's name. Components compare as exact strings, never as substrings or versions.
   - Only a data dependency's equivalence key is read, so a build can derive its key before that dependency exists.
 - The manifest freezes each dependency's role, so verification never reapplies a newer policy.
 - A dependency missing a key is unrecorded, and `provenance_complete` becomes false.

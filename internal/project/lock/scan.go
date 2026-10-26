@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -39,12 +38,12 @@ func (k Kind) Pinnable() bool { return k == KindName || k == KindPath }
 // Request is one declaration a project makes, merged across every script that
 // makes it.
 type Request struct {
-	// Key is the canonical pin key: catalog.Dep.String() for a name, and
+	// Key is the canonical pin key: utils.Dep.String() for a name, and
 	// PathPrefix plus the cleaned relative path for a path.
 	Key  string
 	Kind Kind
 	// Dep is the parsed declaration, set for KindName only.
-	Dep catalog.Dep
+	Dep utils.Dep
 	// Path is the cleaned project-relative path, set for the path kinds.
 	Path string
 	// Scripts are the project-relative scripts that declared this, sorted.
@@ -83,7 +82,7 @@ func (r Request) PathCandidates() []string {
 //
 //   - A range is a build-recipe feature. A result should name the exact version it used.
 //   - A range would give one module two keys, and so two possible pins.
-func ConstraintReason(dep catalog.Dep, declaration string) string {
+func ConstraintReason(dep utils.Dep, declaration string) string {
 	if dep.Op == "" {
 		return ""
 	}
@@ -168,8 +167,8 @@ type ScanOptions struct {
 
 // Scan walks a project root and returns what its scripts declare.
 //
-// A declaration counts wherever it is written; position carries no meaning, so
-// the scanner and the runtime read a script the same way.
+// Only a script's header block declares, as at run time, so the scanner and the
+// runtime read a script the same way.
 func Scan(root string, opts ScanOptions) (*ScanResult, error) {
 	skip := map[string]bool{DirName: true}
 	for _, dir := range opts.ExcludeDirs {
@@ -309,20 +308,21 @@ func scanScript(path, rel string, merged map[string]*Request, result *ScanResult
 		return false, nil
 	}
 
-	for _, annotation := range catalog.Select(catalog.ScanAnnotations(text), "#DEP") {
-		if annotation.Value == "" {
+	utils.WarnStray(rel, utils.StrayAnnotations(text, "#DEP"))
+	for _, a := range utils.SelectAnnotations(utils.ScanAnnotations(text), "#DEP") {
+		if a.Value == "" {
 			continue
 		}
-		request, reason := ParseDeclaration(annotation.Value)
+		request, reason := ParseDeclaration(a.Value)
 		if reason != "" {
 			result.Findings = append(result.Findings, Finding{
-				Script: rel, Line: annotation.Line, Text: annotation.Value, Reason: reason})
+				Script: rel, Line: a.Line, Text: a.Value, Reason: reason})
 			continue
 		}
 		have, ok := merged[request.Key]
 		if !ok {
 			request.Scripts = []string{rel}
-			request.first = Finding{Script: rel, Line: annotation.Line, Text: annotation.Value}
+			request.first = Finding{Script: rel, Line: a.Line, Text: a.Value}
 			merged[request.Key] = &request
 			continue
 		}
@@ -338,7 +338,7 @@ func scanScript(path, rel string, merged map[string]*Request, result *ScanResult
 //   - A recipe's #DEP: are build dependencies already in that artifact's provenance, so reading them would make the project pin what it never mounts.
 //   - Comments are stripped first, and both $CNT_BUILD_PREFIX and ${CNT_BUILD_PREFIX} count.
 func isBuildRecipe(text []byte) bool {
-	stripped := string(catalog.StripComments(text))
+	stripped := string(utils.StripComments(text))
 	return strings.Contains(stripped, "$CNT_BUILD_PREFIX") || strings.Contains(stripped, "${CNT_BUILD_PREFIX}")
 }
 
@@ -359,7 +359,10 @@ func ParseDeclaration(value string) (Request, string) {
 		return Request{Key: PathPrefix + clean, Kind: kind, Path: clean}, ""
 	}
 
-	dep, err := catalog.ParseDep(value)
+	if strings.ContainsAny(value, "{}") {
+		return Request{}, "a {placeholder} is filled by a helper script, so a project cannot pin it"
+	}
+	dep, err := utils.ParseDep(value)
 	if err != nil {
 		return Request{}, "not a usable dependency: " + err.Error()
 	}
@@ -372,9 +375,9 @@ func ParseDeclaration(value string) (Request, string) {
 // parseRequest turns a canonical pin key back into the dependency it
 // renders. It is Request.Key's inverse for a named request, and the one place
 // that knows a key is not simply a name.
-func parseRequest(key string) (catalog.Dep, error) {
+func parseRequest(key string) (utils.Dep, error) {
 	if path, ok := strings.CutPrefix(key, PathPrefix); ok {
-		return catalog.Dep{}, fmt.Errorf("%q addresses a path, not a name", path)
+		return utils.Dep{}, fmt.Errorf("%q addresses a path, not a name", path)
 	}
-	return catalog.ParseDep(key)
+	return utils.ParseDep(key)
 }

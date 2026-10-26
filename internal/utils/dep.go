@@ -1,14 +1,14 @@
-package catalog
+package utils
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"strings"
-
-	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // ErrEmptyDep is returned by ParseDep for a blank dependency.
-var ErrEmptyDep = errors.New("catalog: empty dependency")
+var ErrEmptyDep = errors.New("empty dependency")
 
 // Dep is one #DEP: edge. The preferred version is the implicit upper bound, so
 // Min "2.7.0" with Version "2.7.11b" admits [2.7.0, 2.7.11b].
@@ -33,11 +33,11 @@ func (d Dep) NameVersion() string {
 	return d.Name + "/" + d.Version
 }
 
-// Normalize folds the spellings of one module into name/version form, converting = and -- to / and trimming space.
+// NormalizeModule folds the spellings of one module into name/version form, converting = and -- to / and trimming space.
 //   - Constraint suffixes survive.
 //   - A trailing @<identity> survives: @ separates a name from an identity, never a version.
 //   - Exported because it decides what a name is: index keys use this form, so a second implementation elsewhere would make one string resolve two ways.
-func Normalize(nameVersion string) string {
+func NormalizeModule(nameVersion string) string {
 	nv, op, min := splitConstraint(strings.TrimSpace(nameVersion))
 	nv = strings.ReplaceAll(nv, "--", "/")
 	nv = strings.ReplaceAll(nv, "=", "/")
@@ -47,7 +47,7 @@ func Normalize(nameVersion string) string {
 // ParseDep parses a #DEP: value such as "star/2.7.11b>=2.7.0". The last path
 // component is the version, so a template dep keeps its token there.
 func ParseDep(raw string) (Dep, error) {
-	nv, op, min := splitConstraint(Normalize(raw))
+	nv, op, min := splitConstraint(NormalizeModule(raw))
 	if nv == "" {
 		return Dep{}, ErrEmptyDep
 	}
@@ -76,7 +76,7 @@ func (d Dep) Satisfies(version string) bool {
 	if d.Op == "" {
 		return d.Version == "" || versionHasPrefix(version, d.Version)
 	}
-	switch cmp := utils.CompareVersions(version, d.Min); d.Op {
+	switch cmp := CompareVersions(version, d.Min); d.Op {
 	case ">=":
 		if cmp < 0 {
 			return false
@@ -88,7 +88,7 @@ func (d Dep) Satisfies(version string) bool {
 	default:
 		return false
 	}
-	return d.Version == "" || utils.CompareVersions(version, d.Version) <= 0
+	return d.Version == "" || CompareVersions(version, d.Version) <= 0
 }
 
 // versionHasPrefix reports whether every dot-separated component of prefix
@@ -107,4 +107,50 @@ func versionHasPrefix(version, prefix string) bool {
 		}
 	}
 	return true
+}
+
+// IsPathDep reports whether a #DEP: value names an overlay file rather than a module name/version.
+//   - It decides which grammar a dependency is read with: NormalizeModule and ParseDep apply to names only, and a second answer elsewhere would let one string be a name in one place and a path in another.
+//   - The extensions are IsOverlay's plus .sif.
+func IsPathDep(value string) bool {
+	value = strings.TrimSpace(value)
+	return IsOverlay(value) || IsSif(value)
+}
+
+// ScriptDependencies returns the dependencies a script's #DEP: annotations declare, deduplicated.
+//   - A name is normalized, and a path is kept as written.
+//   - Only the header block is read. A #DEP: after the first command is ignored and warned about.
+//   - Only #DEP: counts. A `module load` line names the site's module tree, not an artifact.
+func ScriptDependencies(scriptPath string) ([]string, error) {
+	text, err := os.ReadFile(scriptPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("script not found at %s", scriptPath)
+		}
+		return nil, fmt.Errorf("failed to open script: %w", err)
+	}
+
+	WarnStray(scriptPath, StrayAnnotations(text, "#DEP"))
+	return Dependencies(ScanAnnotations(text)), nil
+}
+
+// Dependencies returns the values of the #DEP: annotations, one name per annotation, deduplicated in the order written.
+//   - A name is normalized, and a path is kept as written. A {KEY} token survives, for a reader that fills it.
+func Dependencies(annotations []Annotation) []string {
+	dependencies := []string{}
+	seen := make(map[string]bool)
+	for _, a := range SelectAnnotations(annotations, "#DEP") {
+		if a.Value == "" {
+			continue
+		}
+		key := a.Value
+		if !IsPathDep(key) {
+			key = NormalizeModule(key)
+		}
+		if !seen[key] {
+			dependencies = append(dependencies, key)
+			seen[key] = true
+		}
+	}
+	return dependencies
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/logging"
@@ -106,17 +105,17 @@ func SingletonBlocked(meta HelperScriptMeta, running []*HelperRun) bool {
 	return meta.Singleton && len(running) > 0
 }
 
-// CheckRequiredOverlays expands {tokens} in requiredTemplate from params and returns the resolved absolute paths.
-//   - An empty template returns nil.
+// CheckRequiredOverlays expands {tokens} in the #DEP: names from params and returns the resolved absolute paths.
+//   - No dependency returns nil.
 //   - In a project a name resolves as `exec -o` does. A pinned artifact absent here names `project restore`.
 //   - Otherwise, or with noProject, a name nothing installed answers is built with `condatainer create`.
 //   - A helper never adds a pin.
-func CheckRequiredOverlays(ctx context.Context, cwd, requiredTemplate string, params map[string]string, noProject bool) ([]string, error) {
-	if requiredTemplate == "" {
+func CheckRequiredOverlays(ctx context.Context, cwd string, deps []string, params map[string]string, noProject bool) ([]string, error) {
+	if len(deps) == 0 {
 		return nil, nil
 	}
 	logger := logging.FromContext(ctx)
-	names := resolveOverlayTemplate(requiredTemplate, params)
+	names := fillDeps(deps, params)
 	if noProject {
 		logger.Info("Checking required overlays")
 		return checkAndInstallNamedOverlays(ctx, names, config.ResolvedDefaultDistro())
@@ -138,7 +137,7 @@ func CheckRequiredOverlays(ctx context.Context, cwd, requiredTemplate string, pa
 	for i, mount := range mounts {
 		if mount.Path == "" {
 			missing = append(missing, names[i])
-		} else if mount.Live && mount.Name != catalog.Normalize(names[i]) {
+		} else if mount.Live && mount.Name != utils.NormalizeModule(names[i]) {
 			logger.Info(fmt.Sprintf("%s -> %s", names[i], mount.Name), "kind", "note")
 		}
 	}
@@ -162,8 +161,8 @@ func CheckRequiredOverlays(ctx context.Context, cwd, requiredTemplate string, pa
 	return out, nil
 }
 
-// CheckHelperPackages verifies that every package in meta.ImgPackages is
-// installed in the conda environment inside envImg. {KEY} tokens in ImgPackages
+// CheckHelperPackages verifies that every package in meta.EnvPackages is
+// installed in the conda environment inside envImg. {KEY} tokens in EnvPackages
 // are substituted from params before checking.
 // Public wrapper around checkPackages so the server can run pre-submission
 // validation without going through PlanRun.

@@ -20,9 +20,9 @@ import (
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image"
 )
 
@@ -40,7 +40,7 @@ func requireSquashfsTools(t *testing.T) {
 // imageSpec describes a test artifact to build.
 type imageSpec struct {
 	name   string
-	typ    catalog.Type
+	typ    artifact.Type
 	arch   string // "" is the native architecture
 	recipe string
 	ext    string // "" is .sqf
@@ -57,7 +57,7 @@ type imageSpec struct {
 func packImage(t *testing.T, s imageSpec) (path string, m meta.Manifest) {
 	t.Helper()
 	if s.typ == "" {
-		s.typ = catalog.TypeApp
+		s.typ = artifact.TypeApp
 	}
 	if s.arch == "" {
 		s.arch = meta.NativeArch()
@@ -83,7 +83,7 @@ func packImage(t *testing.T, s imageSpec) (path string, m meta.Manifest) {
 	// Apptainer definition, an app or data from a script recipe, and the key
 	// schemes refuse the other pairing outright.
 	buildType := meta.BuildTypeScript
-	if s.typ == catalog.TypeOS {
+	if s.typ == artifact.TypeOS {
 		buildType = meta.BuildTypeDef
 	}
 	m = meta.Manifest{

@@ -29,8 +29,8 @@ var (
 		settings.Default(false), settings.Order(3),
 		settings.Help("Submit data builds as scheduler jobs even when the recipe has no scheduler directives."))
 
-	keyNcpus = settings.Int("build.ncpus",
-		settings.Default(config.DefaultNcpus), settings.Min(1), settings.Order(4),
+	keyNcpu = settings.Int("build.ncpu",
+		settings.Default(config.DefaultNcpu), settings.Min(1), settings.Order(4),
 		settings.Help("CPUs for a build job."),
 		settings.Suggest("4", "8", "16", "32"))
 
@@ -62,7 +62,28 @@ var (
 		settings.Validate(validateBlockSize), settings.Accepts(blockSizeAccepts),
 		settings.Help("SquashFS block size of data overlays."),
 		settings.Suggest(BlockSizeCompletions...))
+
+	keyPartition = settings.String("build.partition",
+		settings.Order(10),
+		settings.AllowEmpty(),
+		settings.Help("Partition or queue for build jobs. Empty uses scheduler.partition."),
+		settings.Show(inheritsScheduler("scheduler.partition")))
+
+	keyAccount = settings.String("build.account",
+		settings.Order(11),
+		settings.AllowEmpty(),
+		settings.Help("Account build jobs are submitted under. Empty uses scheduler.account."),
+		settings.Show(inheritsScheduler("scheduler.account")))
 )
+
+func inheritsScheduler(key string) func(string) string {
+	return func(stored string) string {
+		if stored == "" {
+			return "(" + key + ")"
+		}
+		return stored
+	}
+}
 
 // CompressArgs is the mksquashfs compression argument string.
 func CompressArgs() string { return keyCompressArgs.Get() }
@@ -73,6 +94,44 @@ func BlockSize() string { return keyBlockSize.Get() }
 // DataBlockSize is the SquashFS block size of data overlays.
 func DataBlockSize() string { return keyDataBlockSize.Get() }
 
+// JobPartition is the partition build jobs are submitted to: build.partition, else scheduler.partition, else "" for the scheduler's own default.
+func JobPartition() string {
+	if p := keyPartition.Get(); p != "" {
+		return p
+	}
+	return scheduler.Partition()
+}
+
+// JobAccount is the account build jobs are submitted under: build.account, else scheduler.account, else "" for the scheduler's own default.
+func JobAccount() string {
+	if a := keyAccount.Get(); a != "" {
+		return a
+	}
+	return scheduler.Account()
+}
+
+// SetJobTarget points a build job at the configured partition and account.
+// A recipe never names either: it moves between clusters, and the names belong to one.
+func SetJobTarget(specs *scheduler.ScriptSpecs) {
+	specs.Control.Partition = JobPartition()
+	specs.Control.Account = JobAccount()
+}
+
+// jobNamePrefix starts every build job's name, apart from a helper's "cnt-h-".
+const jobNamePrefix = "cnt-b-"
+
+// SetJobName gives a build job the name "cnt-b-" plus the recipe's own #NAME:, or plus the name/version, made valid, when it sets none.
+func SetJobName(specs *scheduler.ScriptSpecs, nameVersion string) {
+	name := specs.Control.JobName
+	if name == "" {
+		name = scheduler.SanitizeJobName(nameVersion)
+	}
+	if !strings.HasPrefix(name, jobNamePrefix) {
+		name = jobNamePrefix + name
+	}
+	specs.Control.JobName = name
+}
+
 // AlwaysSubmitData reports whether data builds are submitted even without scheduler directives.
 func AlwaysSubmitData() bool { return keyAlwaysSubmitData.Get() }
 
@@ -81,7 +140,7 @@ func LogsDir() string { return keyLogsDir.Get() }
 
 // DefaultSpec is the resource request of a build job.
 func DefaultSpec() scheduler.ResourceSpec {
-	return scheduler.ResourceSpec{CpusPerTask: keyNcpus.Get(), MemPerNodeMB: keyMem.Get(), Time: keyTime.Get()}
+	return scheduler.ResourceSpec{CpusPerTask: keyNcpu.Get(), MemPerNodeMB: keyMem.Get(), Time: keyTime.Get()}
 }
 
 // DefaultLogsDir is where build and restore job logs land when build.logs_dir is not set: $SCRATCH/logs when SCRATCH is set, else $HOME/logs.

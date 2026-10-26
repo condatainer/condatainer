@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 func TestParseSourceTakesNameThenURLs(t *testing.T) {
@@ -90,8 +92,8 @@ func TestExpandSubstitutesSourceURLs(t *testing.T) {
 // bytes it served can, through the src= lines.
 func TestSourceLineLeavesTheRecipePreimage(t *testing.T) {
 	const body = "#TYPE:data\n#SOURCE:gtf %s\necho build\n"
-	a := StripComments([]byte(strings.ReplaceAll(body, "%s", "https://example.invalid/a")))
-	b := StripComments([]byte(strings.ReplaceAll(body, "%s", "https://mirror.invalid/a")))
+	a := utils.StripComments([]byte(strings.ReplaceAll(body, "%s", "https://example.invalid/a")))
+	b := utils.StripComments([]byte(strings.ReplaceAll(body, "%s", "https://mirror.invalid/a")))
 	if string(a) != string(b) {
 		t.Errorf("a changed #SOURCE: URL moved the recipe preimage:\n%s\n%s", a, b)
 	}
@@ -176,7 +178,7 @@ func TestDefinitionRefusesSourceAndInput(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := parse(t, "recipes/ubuntu24/thing.def",
-				"Bootstrap: docker\nFrom: ubuntu:24.04\n"+tc.header+"\n")
+				tc.header+"\nBootstrap: docker\nFrom: ubuntu:24.04\n")
 			err := rec.Validate()
 			if err == nil || !strings.Contains(err.Error(), tc.key+":") ||
 				!strings.Contains(err.Error(), "definition") {

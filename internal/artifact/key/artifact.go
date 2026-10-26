@@ -1,8 +1,8 @@
 package key
 
 import (
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // Artifact contains the resolved inputs from which recipe-backed schemes derive
@@ -12,7 +12,7 @@ type Artifact struct {
 	// Name never enters a preimage. ScriptEquivV1 uses it only to classify
 	// dependency roles.
 	Name         string
-	Type         catalog.Type
+	Type         artifact.Type
 	Env          []meta.EnvVar
 	Recipe       []byte
 	Placeholders map[string]string
@@ -44,7 +44,7 @@ func sourceValues(sources []meta.SourceFile) []SourceValue {
 // Dep is one direct build dependency and the keys advertised by its image.
 type Dep struct {
 	Name     string
-	Type     catalog.Type
+	Type     artifact.Type
 	Identity meta.KeyRef
 	Equiv    meta.KeyRef
 	// Role is empty while a build is deciding policy and frozen in a manifest.

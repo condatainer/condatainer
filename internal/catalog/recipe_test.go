@@ -5,6 +5,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/artifact"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 const starRecipe = `#!/usr/bin/env bash
@@ -48,7 +51,7 @@ func TestParseRecipe(t *testing.T) {
 	if r.Name != "grch38/star-gencode" || r.Path != "grch38/star-gencode" {
 		t.Errorf("name/path = %q/%q", r.Name, r.Path)
 	}
-	if r.Type != TypeData {
+	if r.Type != artifact.TypeData {
 		t.Errorf("Type = %q, want data (from the target's slash count)", r.Type)
 	}
 	if !r.IsTemplate {
@@ -61,13 +64,11 @@ func TestParseRecipe(t *testing.T) {
 		t.Errorf("URL = %q", r.URL)
 	}
 
-	// The heredoc's lines count too: position carries no meaning, so a recipe
-	// that writes a job script also declares whatever that script declares.
-	wantDeps := []string{"star/{star_version}", "samtools/1.23.1>=1.10", "not/a/dep"}
+	wantDeps := []string{"star/{star_version}", "samtools/1.23.1>=1.10"}
 	if !slices.Equal(r.Deps, wantDeps) {
 		t.Errorf("Deps = %v, want %v", r.Deps, wantDeps)
 	}
-	wantDirectives := []string{"#SBATCH --cpus-per-task=8", "#SBATCH --mem=64G", "#SBATCH --this-is-not-a-directive"}
+	wantDirectives := []string{"#SBATCH --cpus-per-task=8", "#SBATCH --mem=64G"}
 	if !slices.Equal(r.Directives, wantDirectives) {
 		t.Errorf("Directives = %v, want %v", r.Directives, wantDirectives)
 	}
@@ -83,71 +84,26 @@ func TestParseRecipe(t *testing.T) {
 	}
 }
 
-// Position never disqualifies an annotation. A recipe that writes a job script
-// therefore adopts that script's declarations as its own — the cost of the rule,
-// recorded here so it is a decision rather than a surprise.
-func TestParseRecipeReadsAnnotationsAnywhere(t *testing.T) {
+// Only the header block declares. A recipe that writes a job script in a heredoc
+// declares nothing of that script's, and a key after the first command is ignored.
+func TestParseRecipeReadsTheHeaderOnly(t *testing.T) {
 	r := parse(t, "grch38/star-gencode", starRecipe)
-	if !slices.Contains(r.Deps, "not/a/dep") {
-		t.Errorf("Deps = %v, want the heredoc's #DEP: included", r.Deps)
+	if slices.Contains(r.Deps, "not/a/dep") {
+		t.Errorf("Deps = %v, want the heredoc's #DEP: ignored", r.Deps)
 	}
-	if !slices.Contains(r.Directives, "#SBATCH --this-is-not-a-directive") {
-		t.Errorf("Directives = %v, want the heredoc's #SBATCH included", r.Directives)
+	if slices.Contains(r.Directives, "#SBATCH --this-is-not-a-directive") {
+		t.Errorf("Directives = %v, want the heredoc's #SBATCH ignored", r.Directives)
 	}
 
-	// Nothing ends the annotations, so a key after an executable line is read.
 	below := parse(t, "x/y", "#DESC:kept\nBootstrap: docker\n#URL:below\n")
-	if below.Description != "kept" || below.URL != "below" {
-		t.Errorf("description=%q url=%q, want both read", below.Description, below.URL)
+	if below.Description != "kept" || below.URL != "" {
+		t.Errorf("description=%q url=%q, want only the header read", below.Description, below.URL)
 	}
 
 	// A .def has no shebang and needs no exception.
 	def := parse(t, "ubuntu24/base.def", "#DESC:base\n\nBootstrap: docker\n")
-	if def.Name != "ubuntu24/base" || def.Type != TypeOS || def.Description != "base" {
+	if def.Name != "ubuntu24/base" || def.Type != artifact.TypeOS || def.Description != "base" {
 		t.Errorf("def = %q/%q/%q", def.Name, def.Type, def.Description)
-	}
-}
-
-// Annotations are found wherever they are written, so what qualifies as one is
-// pinned exactly: position never disqualifies a line, and shape always can.
-func TestScanAnnotations(t *testing.T) {
-	tests := []struct {
-		name string
-		text string
-		want []Annotation
-	}{
-		{"a leading annotation", "#DESC: hello\n", []Annotation{{Key: "#DESC", Value: "hello", Line: 1}}},
-		{"one below the first command", "echo hi\n#DEP: star/2.7\n",
-			[]Annotation{{Key: "#DEP", Value: "star/2.7", Line: 2}}},
-		{"one inside a heredoc", "cat <<'EOF'\n#DEP: star/2.7\nEOF\n",
-			[]Annotation{{Key: "#DEP", Value: "star/2.7", Line: 2}}},
-		{"indented", "  \t#DEP: star/2.7\n", []Annotation{{Key: "#DEP", Value: "star/2.7", Line: 1}}},
-		{"a note is kept apart from the value", "#ENV: PATH={prefix}/bin  ## on PATH\n",
-			[]Annotation{{Key: "#ENV", Value: "PATH={prefix}/bin", Note: "on PATH", Line: 1}}},
-		{"a single # is part of the value", "#SOURCE: crx https://example.org/a#v2\n",
-			[]Annotation{{Key: "#SOURCE", Value: "crx https://example.org/a#v2", Line: 1}}},
-		{"## ends the value for any key", "#DEP: star/2.7  ## the aligner\n",
-			[]Annotation{{Key: "#DEP", Value: "star/2.7", Note: "the aligner", Line: 1}}},
-		{"a shebang is not an annotation", "#!/bin/bash\n", nil},
-		{"lower-case prose is not an annotation", "# note: rerun weekly\n", nil},
-		{"a bare key without '#' is not an annotation", "TYPE:app\n", nil},
-		{"a comment with no colon is not an annotation", "#DESC no colon\n", nil},
-		{"a directive is not an annotation", "#SBATCH --time=01:00:00\n", nil},
-		{"CRLF", "#DESC: hello\r\n", []Annotation{{Key: "#DESC", Value: "hello", Line: 1}}},
-		{"empty", "", nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ScanAnnotations([]byte(tt.text))
-			if len(got) != len(tt.want) {
-				t.Fatalf("ScanAnnotations = %#v, want %#v", got, tt.want)
-			}
-			for i := range tt.want {
-				if got[i] != tt.want[i] {
-					t.Errorf("[%d] = %#v, want %#v", i, got[i], tt.want[i])
-				}
-			}
-		})
 	}
 }
 
@@ -166,41 +122,11 @@ func TestDirectivesAreNotAnnotations(t *testing.T) {
 	}
 }
 
-// Both keys hash the comment-stripped recipe, so this is the one derivation the
-// whole design rests on.
-func TestStripComments(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-		want string
-	}{
-		{"the header goes with the rest", "#!/bin/bash\n#DESC:x\necho a\n", "echo a\n"},
-		{"a whole-line comment goes", "echo a\n# note\necho b\n", "echo a\necho b\n"},
-		{"an indented one goes", "echo a\n   \t# note\necho b\n", "echo a\necho b\n"},
-		{"a heredoc's comment goes", "cat <<'EOF'\n#!/bin/bash\nexec x\nEOF\n", "cat <<'EOF'\nexec x\nEOF\n"},
-		{"blank lines stay", "echo a\n\necho b\n", "echo a\n\necho b\n"},
-		{"a trailing comment stays", "make -j2  # parallel\n", "make -j2  # parallel\n"},
-		{"a # inside a string stays", "echo \"a # b\"\n", "echo \"a # b\"\n"},
-		{"a ${x#y} expansion stays", "echo \"${v#pre}\"\n", "echo \"${v#pre}\"\n"},
-		{"no trailing newline", "echo a\n# note", "echo a\n"},
-		{"CRLF", "echo a\r\n# note\r\necho b\r\n", "echo a\r\necho b\r\n"},
-		{"empty", "", ""},
-		{"comments only", "# a\n# b\n", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := string(StripComments([]byte(tt.body))); got != tt.want {
-				t.Errorf("StripComments = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 // Nothing that only describes a recipe may reach a key. Every header item that
 // should is carried by its own record line instead, so the preimage has to be
 // blind to all of them — including the ones tooling rewrites unprompted.
 func TestRecipePreimageIgnoresDescription(t *testing.T) {
-	preimage := func(text string) string { return string(StripComments([]byte(text))) }
+	preimage := func(text string) string { return string(utils.StripComments([]byte(text))) }
 	base := preimage(starRecipe)
 
 	cosmetic := map[string]string{
@@ -297,7 +223,7 @@ func TestValidateRejectsUnknownRedistribute(t *testing.T) {
 func TestRedistributionHeadersLeaveTheDigestAlone(t *testing.T) {
 	plain := []byte("#!/bin/bash\nmake install\n")
 	annotated := []byte("#!/bin/bash\n#LICENSE: MIT\n#REDISTRIBUTE: yes\nmake install\n")
-	if a, b := string(StripComments(plain)), string(StripComments(annotated)); a != b {
+	if a, b := string(utils.StripComments(plain)), string(utils.StripComments(annotated)); a != b {
 		t.Errorf("StripComments differs after annotating:\n%q\n%q", a, b)
 	}
 }

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 func digestOf(s string) string { return Digest([]byte(s)) }
@@ -29,14 +29,14 @@ func keyText(k meta.KeyRef) string { return k.Scheme + " " + k.Digest() }
 func starIndex() Artifact {
 	return Artifact{
 		Name:         "grch38/star/2.7.11b/gencode49-101",
-		Type:         catalog.TypeData,
+		Type:         artifact.TypeData,
 		Env:          []meta.EnvVar{{Key: "STAR_INDEX_DIR", Value: "{prefix}", Note: "for --genomeDir"}},
 		Recipe:       []byte("#DESC:x\nSTAR --runMode genomeGenerate\n"),
 		Placeholders: map[string]string{"star_version": "2.7.11b", "read_length": "101"},
 		Deps: []Dep{
-			{Name: "star/2.7.11b", Type: catalog.TypeApp, Identity: idKey("star id"), Equiv: eqKey("star eq")},
-			{Name: "samtools/1.23.1", Type: catalog.TypeApp, Identity: idKey("sam id"), Equiv: eqKey("sam eq")},
-			{Name: "grch38/gtf-gencode/49", Type: catalog.TypeData, Identity: idKey("gtf id"), Equiv: eqKey("gtf eq")},
+			{Name: "star/2.7.11b", Type: artifact.TypeApp, Identity: idKey("star id"), Equiv: eqKey("star eq")},
+			{Name: "samtools/1.23.1", Type: artifact.TypeApp, Identity: idKey("sam id"), Equiv: eqKey("sam eq")},
+			{Name: "grch38/gtf-gencode/49", Type: artifact.TypeData, Identity: idKey("gtf id"), Equiv: eqKey("gtf eq")},
 		},
 	}
 }
@@ -72,7 +72,7 @@ func Key(r Model) (string, error) {
 // implementations so their contribution rules can be tested field by field.
 func deriveModelsForTest(a Artifact) (Model, Model, error) {
 	switch a.Type {
-	case catalog.TypeOS:
+	case artifact.TypeOS:
 		_, identity, err := deriveDefinitionIdentityV1(a)
 		if err != nil {
 			return Model{}, Model{}, err
@@ -166,9 +166,9 @@ func TestSchemeRulesShareTheirSourceLines(t *testing.T) {
 func TestUnrecordedDependencies(t *testing.T) {
 	a := starIndex()
 	a.Deps = []Dep{
-		{Name: "star/2.7.11b", Type: catalog.TypeApp},           // named, no records
-		{Name: "samtools/1.23.1", Type: catalog.TypeApp},        // history, no records
-		{Name: "grch38/gtf-gencode/49", Type: catalog.TypeData}, // data, no records
+		{Name: "star/2.7.11b", Type: artifact.TypeApp},           // named, no records
+		{Name: "samtools/1.23.1", Type: artifact.TypeApp},        // history, no records
+		{Name: "grch38/gtf-gencode/49", Type: artifact.TypeData}, // data, no records
 	}
 	identity, equiv, err := deriveModelsForTest(a)
 	if err != nil {
@@ -337,11 +337,11 @@ func TestProjectionFollowsTheName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := Dep{Name: tt.dep, Type: catalog.TypeApp, Identity: idKey("x"), Equiv: eqKey("y")}
+			d := Dep{Name: tt.dep, Type: artifact.TypeApp, Identity: idKey("x"), Equiv: eqKey("y")}
 			if got := Role(tt.artifact, d); got != tt.wantRole {
 				t.Errorf("Role = %q, want %q", got, tt.wantRole)
 			}
-			a := Artifact{Name: tt.artifact, Type: catalog.TypeData, Recipe: []byte("echo\n"), Deps: []Dep{d}}
+			a := Artifact{Name: tt.artifact, Type: artifact.TypeData, Recipe: []byte("echo\n"), Deps: []Dep{d}}
 			_, equiv, err := deriveModelsForTest(a)
 			if err != nil {
 				t.Fatal(err)
@@ -359,10 +359,10 @@ func TestProjectionFollowsTheName(t *testing.T) {
 func TestOSDependencyProjectsLikeAnApp(t *testing.T) {
 	a := Artifact{
 		Name:   "grch38/ubuntu24/pytorch/2.9/embeddings",
-		Type:   catalog.TypeData,
+		Type:   artifact.TypeData,
 		Recipe: []byte("echo\n"),
 		Deps: []Dep{
-			{Name: "ubuntu24/pytorch/2.9", Type: catalog.TypeOS, Identity: idKey("os id"), Equiv: eqKey("os eq")},
+			{Name: "ubuntu24/pytorch/2.9", Type: artifact.TypeOS, Identity: idKey("os id"), Equiv: eqKey("os eq")},
 		},
 	}
 	identity, equiv, err := deriveModelsForTest(a)
@@ -379,8 +379,8 @@ func TestOSDependencyProjectsLikeAnApp(t *testing.T) {
 
 func TestSchemeRulesRejectInvalidSubject(t *testing.T) {
 	app := Artifact{
-		Name: "samtools/1.23.1", Type: catalog.TypeApp, Recipe: []byte("echo\n"),
-		Deps: []Dep{{Name: "zlib/1.3", Type: catalog.TypeApp, Identity: idKey("z")}},
+		Name: "samtools/1.23.1", Type: artifact.TypeApp, Recipe: []byte("echo\n"),
+		Deps: []Dep{{Name: "zlib/1.3", Type: artifact.TypeApp, Identity: idKey("z")}},
 	}
 	if _, _, err := deriveModelsForTest(app); err == nil {
 		t.Error("an app was given dependencies")
@@ -391,7 +391,7 @@ func TestSchemeRulesRejectInvalidSubject(t *testing.T) {
 // pair is all-or-nothing, so an image offering one key counts as unrecorded.
 func TestHalfRecordedDependencyIsUnrecorded(t *testing.T) {
 	a := starIndex()
-	a.Deps = []Dep{{Name: "grch38/gtf-gencode/49", Type: catalog.TypeData, Identity: idKey("only identity")}}
+	a.Deps = []Dep{{Name: "grch38/gtf-gencode/49", Type: artifact.TypeData, Identity: idKey("only identity")}}
 
 	identity, equiv, err := deriveModelsForTest(a)
 	if err != nil {
@@ -421,7 +421,7 @@ func TestHalfRecordedDependencyIsUnrecorded(t *testing.T) {
 // substitutes, which is what asking for a tag meant.
 func TestUpstreamMovesIdentityAndNotEquivalence(t *testing.T) {
 	recipe := []byte("Bootstrap: docker\nFrom: ubuntu:24.04\n")
-	january := Artifact{Name: "ubuntu24/os", Type: catalog.TypeOS, Recipe: recipe, From: digestOf("january")}
+	january := Artifact{Name: "ubuntu24/os", Type: artifact.TypeOS, Recipe: recipe, From: digestOf("january")}
 	june := january
 	june.From = digestOf("june")
 
@@ -463,7 +463,7 @@ func TestUpstreamMovesIdentityAndNotEquivalence(t *testing.T) {
 // from a definition with no upstream at all, which writes no line.
 func TestUnresolvedUpstreamIsRecordedAsUnrecorded(t *testing.T) {
 	recipe := []byte("Bootstrap: docker\nFrom: ubuntu:24.04\n")
-	unresolved, _, err := deriveModelsForTest(Artifact{Name: "u/os", Type: catalog.TypeOS, Recipe: recipe, From: meta.Unrecorded})
+	unresolved, _, err := deriveModelsForTest(Artifact{Name: "u/os", Type: artifact.TypeOS, Recipe: recipe, From: meta.Unrecorded})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +471,7 @@ func TestUnresolvedUpstreamIsRecordedAsUnrecorded(t *testing.T) {
 		t.Errorf("identity:\n%s", strings.Join(lines(t, unresolved), "\n"))
 	}
 
-	none, _, err := deriveModelsForTest(Artifact{Name: "u/os", Type: catalog.TypeOS, Recipe: recipe})
+	none, _, err := deriveModelsForTest(Artifact{Name: "u/os", Type: artifact.TypeOS, Recipe: recipe})
 	if err != nil {
 		t.Fatal(err)
 	}

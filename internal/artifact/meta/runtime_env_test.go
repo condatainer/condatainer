@@ -4,14 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 )
 
 func envRuntime(prefix string) Runtime {
 	return Runtime{
 		SchemaVersion: SchemaVersion,
 		Name:          EnvName,
-		Type:          catalog.TypeEnv,
+		Type:          artifact.TypeEnv,
 		Platform:      Platform{Arch: "amd64"},
 		Prefix:        prefix,
 	}

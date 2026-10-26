@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // packArtifact builds a real .sqf carrying a full /.cnt, under whatever filename
@@ -27,7 +27,7 @@ func packArtifact(t *testing.T, filename, name, recipe string) (string, meta.Man
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "script",
 		Platform:      meta.NativePlatform(),
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
@@ -43,7 +43,7 @@ func packArtifact(t *testing.T, filename, name, recipe string) (string, meta.Man
 	if err := meta.StageRuntime(dir, meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		Platform:      meta.NativePlatform(),
 		Prefix:        "/cnt/" + name,
 	}); err != nil {

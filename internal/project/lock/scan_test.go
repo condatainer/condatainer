@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -51,7 +52,7 @@ func find(t *testing.T, result *ScanResult, key string) Request {
 func TestScanFindsDeclarationsAcrossScripts(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "analysis.sh", "#!/bin/bash\n#DEP: star/2.7.11b\n#DEP: cutadapt/5.0\nstar --version\n")
-	write(t, root, "scripts/align.bash", "#DEP: star/2.7.11b\n#DEP: grch38/genome/gencode49\nalign\n")
+	write(t, root, "scripts/align.bash", "#!/bin/bash\n#DEP: star/2.7.11b\n#DEP: grch38/genome/gencode49\nalign\n")
 
 	result := scan(t, root)
 	want := []string{"cutadapt/5.0", "grch38/genome/gencode49", "star/2.7.11b"}
@@ -81,7 +82,7 @@ func TestScanFindsDeclarationsAcrossScripts(t *testing.T) {
 // constrained declaration is a finding that says what to write instead.
 func TestScanRejectsAVersionConstraint(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "run.sh", "#DEP: star/2.7.11b>=2.7.0\nrun\n")
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: star/2.7.11b>=2.7.0\nrun\n")
 
 	result := scan(t, root)
 	if len(result.Requests) != 0 {
@@ -116,7 +117,7 @@ func TestScanReadsTheHeaderOnly(t *testing.T) {
 // A {placeholder} belongs to a helper script, which fills it, so the scan reports it and pins nothing.
 func TestScanReportsAPlaceholderDeclaration(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "helper.sh", "#DEP: igv/{IGV}\nrun\n")
+	write(t, root, "helper.sh", "#!/bin/bash\n#DEP: igv/{IGV}\nrun\n")
 
 	result := scan(t, root)
 	if got := keys(result); len(got) != 0 {
@@ -129,7 +130,7 @@ func TestScanReportsAPlaceholderDeclaration(t *testing.T) {
 
 func TestScanClassifiesPathDeclarations(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "run.sh", "#DEP: ./overlays/tool.sqf\n#DEP: env.img\n#DEP: base.sif\nrun\n")
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: ./overlays/tool.sqf\n#DEP: env.img\n#DEP: base.sif\nrun\n")
 
 	result := scan(t, root)
 	sqf := find(t, result, PathPrefix+"overlays/tool.sqf")
@@ -157,7 +158,7 @@ func TestScanClassifiesPathDeclarations(t *testing.T) {
 // to close one.
 func TestScanTreatsANoteAsAComment(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "run.sh", "#DEP: env.img  ## the scratch environment\nrun\n")
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: env.img  ## the scratch environment\nrun\n")
 
 	result := scan(t, root)
 	if img := find(t, result, PathPrefix+"env.img"); img.Kind != KindWritable {
@@ -173,10 +174,10 @@ func TestScanTreatsANoteAsAComment(t *testing.T) {
 
 func TestScanSkipsGeneratedAndExcludedDirectories(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "keep.sh", "#DEP: star/2.7.11b\nrun\n")
-	write(t, root, ".git/hooks/pre-commit.sh", "#DEP: never/1.0\nrun\n")
-	write(t, root, "cnt-lock/stale.sh", "#DEP: never/2.0\nrun\n")
-	write(t, root, "vendor/dep.sh", "#DEP: never/3.0\nrun\n")
+	write(t, root, "keep.sh", "#!/bin/bash\n#DEP: star/2.7.11b\nrun\n")
+	write(t, root, ".git/hooks/pre-commit.sh", "#!/bin/bash\n#DEP: never/1.0\nrun\n")
+	write(t, root, "cnt-lock/stale.sh", "#!/bin/bash\n#DEP: never/2.0\nrun\n")
+	write(t, root, "vendor/dep.sh", "#!/bin/bash\n#DEP: never/3.0\nrun\n")
 
 	result, err := Scan(root, ScanOptions{ExcludeDirs: []string{"vendor"}})
 	if err != nil {
@@ -187,36 +188,81 @@ func TestScanSkipsGeneratedAndExcludedDirectories(t *testing.T) {
 	}
 }
 
-// Extension only. `run` executes every project script with /bin/bash, so no
-// other shell's script could run here, and a file with no extension is not read
-// at all — sniffing its shebang cost more than it bought.
-func TestScanReadsShellExtensionsOnly(t *testing.T) {
+// A file is a script by its first line and not by its name. Only the interpreter
+// lines `run` accepts count.
+func TestScanReadsFilesByTheirFirstLine(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "a.sh", "#!/usr/bin/env bash\n#DEP: star/2.7.11b\nrun\n")
-	write(t, root, "b.bash", "#DEP: samtools/1.23.1\n")
-	write(t, root, "runner", "#!/usr/bin/env bash\n#DEP: never/1.0\nrun\n")
-	write(t, root, "analyze", "#!/home/josh/venv/bin/python\n#DEP: never/2.0\n")
-	write(t, root, "notes", "#DEP: never/3.0\n")
+	write(t, root, "analyze", "#!/usr/bin/env python3\n#DEP: samtools/1.23.1\n")
+	write(t, root, "b.bash", "#DEP: never/1.0\n")
+	write(t, root, "job.sh", "#!/bin/sh\n#DEP: never/2.0\n")
+	write(t, root, "tool.py", "#!/home/josh/venv/bin/python\n#DEP: never/3.0\n")
 	write(t, root, "data.txt", "#DEP: never/4.0\n")
-	write(t, root, "job.zsh", "#DEP: never/5.0\n")
 
 	got := keys(scan(t, root))
 	want := []string{"samtools/1.23.1", "star/2.7.11b"}
-	if len(got) != len(want) {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("requests = %v, want %v", got, want)
 	}
-	for i, key := range want {
-		if got[i] != key {
-			t.Fatalf("requests = %v, want %v", got, want)
+}
+
+func TestScanAppliesGitignoreAndTheLockIgnoreList(t *testing.T) {
+	root := t.TempDir()
+	script := func(rel, dep string) { write(t, root, rel, "#!/bin/bash\n#DEP: "+dep+"\nrun\n") }
+	script("keep.sh", "keep/1.0")
+	script("venv/bin/a.sh", "never/1.0")
+	script("src/venv/b.sh", "never/2.0")
+	script("src/gen/c.sh", "never/3.0")
+	script("src/gen/keep.sh", "keep/2.0")
+	script("tracked/d.sh", "never/4.0")
+	script("lib/e.sh", "never/5.0")
+	script("lib/skip.sh", "never/6.0")
+	write(t, root, ".gitignore", "venv/\n/tracked\n")
+	write(t, root, "src/.gitignore", "gen/*\n!gen/keep.sh\n")
+	write(t, root, "cnt-lock/ignore", "# kept in git, not in the lock\n/lib\n")
+
+	got := keys(scan(t, root))
+	want := []string{"keep/1.0", "keep/2.0"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("requests = %v, want %v", got, want)
+	}
+}
+
+func TestScanRefusesANegationInTheLockIgnoreList(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "cnt-lock/ignore", "lib\n!lib/keep.sh\n")
+	_, err := Scan(root, ScanOptions{})
+	if !errors.Is(err, ErrIgnoreNegation) || !strings.Contains(err.Error(), ".gitignore") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestIsMemberAsksTheRulesTheScanUses(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"ok.sh", "venv/a.sh", "lib/b.sh", ".hidden/c.sh", "cnt-lock/d.sh", "src/e.sh"} {
+		write(t, root, rel, "#!/bin/bash\n")
+	}
+	write(t, root, ".gitignore", "venv/\n")
+	write(t, root, "cnt-lock/ignore", "/lib\n")
+	for rel, want := range map[string]bool{
+		"ok.sh": true, "src/e.sh": true,
+		"venv/a.sh": false, "lib/b.sh": false, ".hidden/c.sh": false, "cnt-lock/d.sh": false,
+	} {
+		got, err := IsMember(root, filepath.Join(root, rel))
+		if err != nil || got != want {
+			t.Errorf("%s: member %v, %v; want %v", rel, got, err, want)
 		}
+	}
+	if _, err := IsMember(root, filepath.Join(t.TempDir(), "x.sh")); err == nil {
+		t.Error("a script outside the root has no answer")
 	}
 }
 
 // A symlink can point outside the checkout, and a lock describes the checkout.
 func TestScanDoesNotFollowSymlinks(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
-	write(t, outside, "external.sh", "#DEP: never/1.0\nrun\n")
-	write(t, root, "keep.sh", "#DEP: star/2.7.11b\nrun\n")
+	write(t, outside, "external.sh", "#!/bin/bash\n#DEP: never/1.0\nrun\n")
+	write(t, root, "keep.sh", "#!/bin/bash\n#DEP: star/2.7.11b\nrun\n")
 	if err := os.Symlink(filepath.Join(outside, "external.sh"), filepath.Join(root, "linked.sh")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
@@ -237,7 +283,7 @@ func TestScanDoesNotFollowSymlinks(t *testing.T) {
 
 func TestScanReadsTheValueUpToTwoHashes(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "run.sh", "#DEP: star/2.7.11b ## the aligner\nrun\n")
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: star/2.7.11b ## the aligner\nrun\n")
 
 	if got := keys(scan(t, root)); len(got) != 1 || got[0] != "star/2.7.11b" {
 		t.Fatalf("requests = %v", got)
@@ -318,7 +364,7 @@ func mustEval(t *testing.T, path string) string {
 // path — so it is unpinnable like a writable .img rather than lockable.
 func TestScanClassifiesExternalPathsAsUnpinnable(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "run.sh", "#DEP: /shared/lab/genome.sqf\n"+
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: /shared/lab/genome.sqf\n"+
 		"#DEP: ../outside/tool.sqf\n"+
 		"#DEP: overlays/inside.sqf\nrun\n")
 
@@ -341,7 +387,7 @@ func TestScanClassifiesExternalPathsAsUnpinnable(t *testing.T) {
 // well inside the project when read relative to the script that wrote it.
 func TestScanReclassifiesAnEscapeThatStaysInsideViaItsScript(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "steps1/run.sh", "#DEP: ../overlays/tool.sqf\nrun\n")
+	write(t, root, "steps1/run.sh", "#!/bin/bash\n#DEP: ../overlays/tool.sqf\nrun\n")
 
 	result := scan(t, root)
 	tool := find(t, result, PathPrefix+"overlays/tool.sqf")
@@ -357,7 +403,7 @@ func TestScanReclassifiesAnEscapeThatStaysInsideViaItsScript(t *testing.T) {
 // its own directory, so it stays external.
 func TestScanKeepsAnEscapeExternalWhenItsScriptCannotRescueIt(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "steps1/run.sh", "#DEP: ../../outside/tool.sqf\nrun\n")
+	write(t, root, "steps1/run.sh", "#!/bin/bash\n#DEP: ../../outside/tool.sqf\nrun\n")
 
 	result := scan(t, root)
 	tool := find(t, result, PathPrefix+"../../outside/tool.sqf")
@@ -371,8 +417,8 @@ func TestScanKeepsAnEscapeExternalWhenItsScriptCannotRescueIt(t *testing.T) {
 // declaration texts must not end up sharing one identity by accident.
 func TestScanNeverLetsAReclassifiedEscapeCollideWithAnExistingKey(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "run.sh", "#DEP: overlays/tool.sqf\nrun\n")
-	write(t, root, "steps1/run.sh", "#DEP: ../overlays/tool.sqf\nrun\n")
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: overlays/tool.sqf\nrun\n")
+	write(t, root, "steps1/run.sh", "#!/bin/bash\n#DEP: ../overlays/tool.sqf\nrun\n")
 
 	result := scan(t, root)
 	direct := find(t, result, PathPrefix+"overlays/tool.sqf")
@@ -390,7 +436,7 @@ func TestScanNeverLetsAReclassifiedEscapeCollideWithAnExistingKey(t *testing.T) 
 // cannot reproduce. Each names what closes it.
 func TestScanFlagsEveryUnpinnableDeclaration(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "run.sh", "#DEP: env.img\n#DEP: /shared/genome.sqf\nrun\n")
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: env.img\n#DEP: /shared/genome.sqf\nrun\n")
 
 	result := scan(t, root)
 	if len(result.Findings) != 2 {
@@ -413,8 +459,8 @@ func TestScanFlagsEveryUnpinnableDeclaration(t *testing.T) {
 // not about each line that names it.
 func TestScanReportsOneFindingPerUnpinnableDependency(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "a.sh", "#DEP: env.img\nrun\n")
-	write(t, root, "b.sh", "#DEP: env.img\nrun\n")
+	write(t, root, "a.sh", "#!/bin/bash\n#DEP: env.img\nrun\n")
+	write(t, root, "b.sh", "#!/bin/bash\n#DEP: env.img\nrun\n")
 
 	if findings := scan(t, root).Findings; len(findings) != 1 {
 		t.Fatalf("findings = %#v, want one", findings)
@@ -477,9 +523,9 @@ func TestScanReadsAHiddenProjectRoot(t *testing.T) {
 // is what identifies one, and comments are stripped before the check.
 func TestScanSkipsBuildRecipes(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "tool.sh", "#DEP: build-only/9.9\ninstall -d \"$CNT_BUILD_PREFIX/bin\"\n")
-	write(t, root, "env.sh", "#DEP: build-only/8.8\ncp x \"${CNT_BUILD_PREFIX}\"/lib\n")
-	write(t, root, "run.sh", "# built into $CNT_BUILD_PREFIX\n#DEP: real/1.0\n")
+	write(t, root, "tool.sh", "#!/bin/bash\n#DEP: build-only/9.9\ninstall -d \"$CNT_BUILD_PREFIX/bin\"\n")
+	write(t, root, "env.sh", "#!/bin/bash\n#DEP: build-only/8.8\ncp x \"${CNT_BUILD_PREFIX}\"/lib\n")
+	write(t, root, "run.sh", "#!/bin/bash\n# built into $CNT_BUILD_PREFIX\n#DEP: real/1.0\n")
 
 	result := scan(t, root)
 	if got := keys(result); len(got) != 1 || got[0] != "real/1.0" {

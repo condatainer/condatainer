@@ -252,7 +252,7 @@ func TestReconcileDropsStaleAndReportsWhatNeedsPinning(t *testing.T) {
 	l.Pins["star/2.7.11b"] = pinOf(appPath)
 	l.Pins["gone/1.0"] = pinOf(appPath)
 
-	write(t, root, "run.sh", "#DEP: star/2.7.11b\n#DEP: cutadapt/5.0\n#DEP: env.img\nrun\n")
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: star/2.7.11b\n#DEP: cutadapt/5.0\n#DEP: env.img\nrun\n")
 	result := scan(t, root)
 
 	needPin := Reconcile(root, l, result)
@@ -280,7 +280,7 @@ func TestReconcileDropsAnInvalidPin(t *testing.T) {
 
 	l := New()
 	l.Pins["star/2.7.11b"] = pinOf(appPath)
-	write(t, root, "run.sh", "#DEP: star/2.7.11b\nrun\n")
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: star/2.7.11b\nrun\n")
 
 	needPin := Reconcile(root, l, scan(t, root))
 	if _, kept := l.Pins["star/2.7.11b"]; kept {
@@ -511,5 +511,22 @@ func TestApplyEntryRepinsAtANewIdentity(t *testing.T) {
 	}
 	if _, problems := Verify(root, l); len(problems) > 0 {
 		t.Errorf("the lock does not verify after the re-pin:\n%s", problemText(problems))
+	}
+}
+
+// A shorter version prefix names no build. The error lists the installed versions it could mean.
+func TestResolveByNameExplainsAPartialVersion(t *testing.T) {
+	path, _ := packArtifact(t, "star--2.7.11b.sqf", "star/2.7.11b", "#TYPE:app\necho one\n")
+	opts := PinOptions{SearchDirs: []string{filepath.Dir(path)}}
+
+	_, _, err := resolveByName("star/2.7", opts)
+	if !errors.Is(err, ErrNoCandidate) || !strings.Contains(err.Error(), "star/2.7 is not a full version. Installed: star/2.7.11b") {
+		t.Errorf("partial version: %v", err)
+	}
+	if _, _, err := resolveByName("star/3", opts); !errors.Is(err, ErrNoCandidate) || !strings.Contains(err.Error(), "star/3 is not installed") {
+		t.Errorf("unrelated version: %v", err)
+	}
+	if _, _, err := resolveByName("star/2.7.11b", opts); err != nil {
+		t.Errorf("full version: %v", err)
 	}
 }

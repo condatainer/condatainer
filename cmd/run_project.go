@@ -19,6 +19,7 @@ type projectContext struct {
 }
 
 // projectRunContext resolves a script's declarations through its project lock, or reports that there is no project to resolve against.
+//   - A script the project ignores resolves as outside the project: nothing is pinned.
 //   - The project is the nearest ancestor of the current directory holding cnt-lock/.
 //   - The script may live anywhere: declarations resolve against the project root.
 //   - The working directory is left to the script and the scheduler.
@@ -35,11 +36,14 @@ func projectRunContext(ctx context.Context, contentScript string) (*projectConte
 	if err != nil || standing == nil {
 		return nil, err
 	}
-	announceProject(standing.Root)
 	script, err := filepath.Abs(contentScript)
 	if err != nil {
 		return nil, err
 	}
+	if outside, err := outsideProject(standing.Root, script); outside || err != nil {
+		return nil, err
+	}
+	announceProject(standing.Root)
 
 	scanned, err := lock.ScanScript(standing.Root, script)
 	if err != nil {
@@ -64,4 +68,14 @@ func projectRunContext(ctx context.Context, contentScript string) (*projectConte
 		}
 	}
 	return projectRun, nil
+}
+
+// outsideProject reports whether a script is left out of the project's lock, and says so when it is.
+func outsideProject(root, script string) (bool, error) {
+	member, err := lock.IsMember(root, script)
+	if err != nil || member {
+		return false, err
+	}
+	utils.PrintNote("%s is ignored by the project, overlays resolved without lock", script)
+	return true, nil
 }

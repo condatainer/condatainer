@@ -133,26 +133,21 @@ type ScanResult struct {
 //   - Execution reads a script through this rather than through its own parse, so a run and a lock cannot disagree about what the script declares — which is the only reason a lock means anything at run time.
 //   - The script must be inside root.
 func ScanScript(root, script string) (*ScanResult, error) {
-	root, err := filepath.Abs(root)
+	rel, err := scriptRel(root, script)
 	if err != nil {
 		return nil, err
 	}
-	script, err = filepath.Abs(script)
-	if err != nil {
+	if script, err = filepath.Abs(script); err != nil {
 		return nil, err
-	}
-	rel, err := filepath.Rel(root, script)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, fmt.Errorf("%s is not inside %s", script, root)
 	}
 	result := &ScanResult{}
 	merged := map[string]*Request{}
-	scanned, err := scanScript(script, filepath.ToSlash(rel), merged, result)
+	scanned, err := scanScript(script, rel, merged, result)
 	if err != nil {
 		return nil, err
 	}
 	if scanned {
-		result.Scripts = append(result.Scripts, filepath.ToSlash(rel))
+		result.Scripts = append(result.Scripts, rel)
 	}
 	finalize(merged, result)
 	return result, nil
@@ -161,61 +156,31 @@ func ScanScript(root, script string) (*ScanResult, error) {
 // ScanOptions tunes discovery.
 type ScanOptions struct {
 	// ExcludeDirs are additional directory names to skip anywhere in the tree.
-	// cnt-lock and every dot-directory are always skipped.
 	ExcludeDirs []string
 }
 
 // Scan walks a project root and returns what its scripts declare.
 //
-// Only a script's header block declares, as at run time, so the scanner and the
-// runtime read a script the same way.
+//   - A script is any regular file whose first line is an interpreter line `run` accepts, whatever its name.
+//   - Which directories and files are left out is decided by `members`.
+//   - Only a script's header block declares, as at run time, so the scanner and the runtime read a script the same way.
 func Scan(root string, opts ScanOptions) (*ScanResult, error) {
-	skip := map[string]bool{DirName: true}
-	for _, dir := range opts.ExcludeDirs {
-		if dir = strings.TrimSpace(dir); dir != "" {
-			skip[dir] = true
-		}
+	m, err := newMembers(root, opts.ExcludeDirs)
+	if err != nil {
+		return nil, err
 	}
 
 	merged := map[string]*Request{}
 	result := &ScanResult{}
 
-	walk := func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-		if entry.IsDir() {
-			// A dot-directory is tool state, not project source: .git, .venv,
-			// .snakemake, .tox and a local conda env all carry shell scripts of
-			// their own, and a #DEP: in one of those is not this project's
-			// declaration. The root itself is read even when it is hidden.
-			if path != root && (skip[entry.Name()] || strings.HasPrefix(entry.Name(), ".")) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		// A directory symlink is never followed, and a symlinked script is not
-		// read: either can point outside the checkout, and a lock describes the
-		// checkout.
-		if entry.Type()&fs.ModeSymlink != 0 || !entry.Type().IsRegular() {
-			return nil
-		}
-		if !isShellScript(entry.Name()) {
-			return nil
-		}
-		relSlash := filepath.ToSlash(rel)
-		scanned, err := scanScript(path, relSlash, merged, result)
+	err = walkScripts(root, m, func(path, rel string) error {
+		scanned, err := scanScript(path, rel, merged, result)
 		if scanned {
-			result.Scripts = append(result.Scripts, relSlash)
+			result.Scripts = append(result.Scripts, rel)
 		}
 		return err
-	}
-
-	if err := filepath.WalkDir(root, walk); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -285,16 +250,6 @@ func reclassifyEscaped(request *Request, taken map[string]bool) {
 		request.Key = key
 		return
 	}
-}
-
-// isShellScript reports whether a file should be read for declarations.
-// Extension only: `run` executes every project script with /bin/bash.
-func isShellScript(name string) bool {
-	switch strings.ToLower(filepath.Ext(name)) {
-	case ".sh", ".bash":
-		return true
-	}
-	return false
 }
 
 // scanScript reads one script's declarations, reporting whether it was read at
@@ -380,4 +335,35 @@ func parseRequest(key string) (utils.Dep, error) {
 		return utils.Dep{}, fmt.Errorf("%q addresses a path, not a name", path)
 	}
 	return utils.ParseDep(key)
+}
+
+// walkScripts calls visit for every script of the project: a regular file, not a symlink, that the members rules keep and whose first line is an interpreter line `run` accepts.
+//   - A directory symlink is never followed, and a symlinked script is not read: either can point outside the checkout, and a lock describes the checkout.
+func walkScripts(root string, m *members, visit func(path, rel string) error) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		relSlash := filepath.ToSlash(rel)
+		if entry.IsDir() {
+			if m.ignores(relSlash, true) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Type()&fs.ModeSymlink != 0 || !entry.Type().IsRegular() {
+			return nil
+		}
+		if m.ignores(relSlash, false) || utils.CheckShebangFile(path) != nil {
+			return nil
+		}
+		return visit(path, relSlash)
+	})
 }

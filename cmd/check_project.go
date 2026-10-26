@@ -37,6 +37,13 @@ func projectCheck(ctx context.Context, scriptPaths []string, metaDeps []string) 
 		return true, err
 	}
 	script := scriptPaths[0]
+	outside, err := outsideProject(root, script)
+	if err != nil {
+		return true, err
+	}
+	if outside {
+		return false, nil
+	}
 	if checkAutoInstall {
 		// -a installs by name into a shared images directory, which is one
 		// checkout's dependency silently replacing the artifact every other user

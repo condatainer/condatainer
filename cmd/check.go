@@ -388,6 +388,9 @@ func resolveAllScriptPaths(ctx context.Context, args []string) (scriptPaths []st
 				if err := requireTextScript(p); err != nil {
 					return nil, remotePaths, metaDeps, err
 				}
+				if err := requireInterpreterLine(p); err != nil {
+					return nil, remotePaths, metaDeps, err
+				}
 				if !seen[p] {
 					seen[p] = true
 					scriptPaths = append(scriptPaths, p)
@@ -402,6 +405,9 @@ func resolveAllScriptPaths(ctx context.Context, args []string) (scriptPaths []st
 		}
 		if !isTemp && argMetaDeps == nil {
 			if err := requireTextScript(resolved); err != nil {
+				return nil, remotePaths, metaDeps, err
+			}
+			if err := requireInterpreterLine(resolved); err != nil {
 				return nil, remotePaths, metaDeps, err
 			}
 		}
@@ -438,6 +444,14 @@ func requireTextScript(path string) error {
 		return fmt.Errorf("%s is not a text file; to check an overlay, run `condatainer info %s --validate`", path, path)
 	}
 	return fmt.Errorf("%s is not a text file", path)
+}
+
+// requireInterpreterLine refuses a script whose first line is not an interpreter line `run` accepts.
+func requireInterpreterLine(path string) error {
+	if err := utils.CheckShebangFile(path); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
 }
 
 // resolveScriptPath resolves a script path or name to an actual file path.

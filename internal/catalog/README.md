@@ -148,6 +148,7 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - Every format a source serves carries a required `schema_version`: `source.json` and both index files.
   - An index wraps its entries in an object, since a bare object keyed by name has no room for a version.
   - A version this build does not read is refused, and a newer one says to update.
+  - A key a reader does not know is ignored. The version rises only for a change an older reader would misread.
 - The caller owns the cache directory and TTL. The package owns everything inside it.
 
 ## Imports

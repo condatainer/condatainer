@@ -1,7 +1,6 @@
 package catalog
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -200,7 +199,7 @@ const DescriptorSchemaVersion = 1
 
 // ParseDescriptor decodes and validates source.json.
 //   - The schema version is required, and a version this build does not read is rejected.
-//   - An unknown field is rejected, so a misspelled key fails instead of being ignored.
+//   - An unknown field is ignored, so a source can add a key without raising the version.
 //   - The OCI registry is normalized to a registry/repository root.
 func ParseDescriptor(data []byte) (Descriptor, error) {
 	var head struct {
@@ -218,9 +217,7 @@ func ParseDescriptor(data []byte) (Descriptor, error) {
 			head.SchemaVersion, DescriptorSchemaVersion, hint)
 	}
 	var desc Descriptor
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&desc); err != nil {
+	if err := json.Unmarshal(data, &desc); err != nil {
 		return Descriptor{}, fmt.Errorf("catalog: decode source descriptor: %w", err)
 	}
 	if err := ValidSourceURL(desc.Source); err != nil {

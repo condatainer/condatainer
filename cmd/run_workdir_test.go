@@ -7,23 +7,24 @@ import (
 	"github.com/condatainer/condatainer/internal/scheduler"
 )
 
-func TestSetDefaultWorkDir(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
+func TestUseSubmitDir(t *testing.T) {
+	t.Chdir(t.TempDir())
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, tc := range []struct{ name, declared, want string }{
-		{"submission directory when none declared", "", cwd},
-		{"declared directory kept", "/data/run", "/data/run"},
-	} {
-		specs := &scheduler.ScriptSpecs{}
-		specs.Control.WorkDir = tc.declared
-		setDefaultWorkDir(specs)
-		if specs.Control.WorkDir != tc.want {
-			t.Errorf("%s: WorkDir = %q, want %q", tc.name, specs.Control.WorkDir, tc.want)
-		}
+	specs := &scheduler.ScriptSpecs{}
+	if err := useSubmitDir("run.sh", specs); err != nil {
+		t.Fatal(err)
+	}
+	if specs.Control.WorkDir != cwd {
+		t.Errorf("WorkDir = %q, want the submission directory %q", specs.Control.WorkDir, cwd)
+	}
+
+	specs = &scheduler.ScriptSpecs{}
+	specs.Control.WorkDir = "/data/run"
+	if err := useSubmitDir("run.sh", specs); err == nil {
+		t.Error("a script that sets its own working directory was accepted")
 	}
 }

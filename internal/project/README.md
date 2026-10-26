@@ -151,12 +151,15 @@
 - The remedy differs by kind. Freeze a writable `.img`. Copy an external `.sqf` under the project.
 - One finding is reported per dependency, decided after every script is read.
 
-## The project root is the one anchor
+## Where a relative path points
 
-- A relative path in a declaration means relative to the project root, never the working directory.
+- A relative path in a declaration is read from the declaring script's folder first, then from the project root. It is never read from the working directory.
+- Each script gets its own request for a relative path, so `step1/run.sh` and `step2/run.sh` both writing `x.sqf` pin two files.
+- `lock` checks the filesystem to pick the reading. `run` only looks the choice up in the pins.
 - Mounts are resolved to absolute paths, so where a job runs does not matter to them.
-- A job runs where it was submitted from, unless the script names a directory. A project can hold steps in subdirectories, each run from its own.
-- A declared path may also resolve beside its declaring script, as a fallback address. The stored key is always root-relative.
+- A job runs where it was submitted from. A script that names another working directory is refused.
+- A project can hold steps in subdirectories, each run from its own.
+- The stored key is always root-relative, whichever reading answered.
 - Only pinning checks the filesystem for candidates.
 - Reconcile and Resolve check pin membership only, so a fresh checkout resolves before anything is restored.
 - A `name:` request also matches an existing pin whose version it admits, newest first. Two scripts naming one dependency at different precision then agree.

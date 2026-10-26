@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/condatainer/condatainer/internal/project"
@@ -20,11 +19,7 @@ func projectCheck(ctx context.Context, scriptPaths []string, metaDeps []string) 
 	if len(scriptPaths) == 0 || noProjectRequested {
 		return false, nil
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return false, err
-	}
-	standing, err := project.StandingAt(cwd)
+	standing, err := standingProjectHere()
 	if err != nil {
 		return true, err
 	}

@@ -22,6 +22,19 @@ type Standing struct {
 	Lock *lock.Lock
 }
 
+// StandingAtRoot resolves the project rooted exactly at root, or ErrNoProject. Nothing is searched above it.
+func StandingAtRoot(root string) (*Standing, error) {
+	root, err := lock.RootAt(root)
+	if err != nil {
+		return nil, err
+	}
+	current, err := lock.Load(root)
+	if err != nil {
+		return nil, err
+	}
+	return &Standing{Root: root, Lock: current}, nil
+}
+
 // StandingAt resolves the project rooted at or above cwd — walking up through
 // ancestors, so standing anywhere inside a project's tree is recognized, not
 // only at its root — or (nil, nil) when no ancestor has one, the caller's cue

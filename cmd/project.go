@@ -777,7 +777,7 @@ func declaredByAScript(root, request string) bool {
 		return true
 	}
 	for _, candidate := range scanned.Requests {
-		if candidate.Key == request {
+		if slices.Contains(candidate.PathCandidates(), request) {
 			return true
 		}
 	}
@@ -1314,7 +1314,7 @@ func requestsNeedingPin(l *lock.Lock, scanned *lock.ScanResult) []lock.Request {
 		if !request.Kind.Pinnable() {
 			continue
 		}
-		if _, ok := l.Pins[request.Key]; !ok {
+		if _, _, ok := lock.MatchPin(l, request); !ok {
 			out = append(out, request)
 		}
 	}
@@ -1376,7 +1376,7 @@ func reportLockState(result *orchestrate.LockResult, jsonOutput bool) error {
 		for _, request := range scanned.Requests {
 			entry := requestReport{Request: request.Key, Kind: string(request.Kind),
 				Scripts: request.Scripts, Pinnable: request.Kind.Pinnable()}
-			if pin, ok := l.Pins[request.Key]; ok {
+			if _, pin, ok := lock.MatchPin(l, request); ok {
 				entry.Artifact, _ = pin.For(meta.NativeArch())
 			}
 			report.Requests = append(report.Requests, entry)
@@ -1397,9 +1397,9 @@ func reportLockState(result *orchestrate.LockResult, jsonOutput bool) error {
 		utils.PrintMessage("  %s → %s", utils.StyleName("base"), pinAddress(reports[lock.BaseKey], pin))
 	}
 	for _, request := range scanned.Requests {
-		switch pin, ok := l.Pins[request.Key]; {
+		switch key, pin, ok := lock.MatchPin(l, request); {
 		case ok:
-			utils.PrintMessage("  %s → %s", utils.StyleName(request.Key), pinAddress(reports[request.Key], pin))
+			utils.PrintMessage("  %s → %s", utils.StyleName(key), pinAddress(reports[key], pin))
 		case !request.Kind.Pinnable():
 			utils.PrintMessage("  %s → %s", utils.StyleName(request.Key), utils.StyleWarning("cannot be pinned"))
 		}
@@ -1416,6 +1416,17 @@ func reportLockState(result *orchestrate.LockResult, jsonOutput bool) error {
 	}
 	if alternatives {
 		utils.PrintHint("Pin one of those instead with `condatainer project pin <request> <identity>`.")
+	}
+	scriptsOf := make(map[string][]string, len(scanned.Requests))
+	for _, request := range scanned.Requests {
+		scriptsOf[request.Key] = request.Scripts
+	}
+	for _, entry := range pinned {
+		if entry.Shadowed != "" {
+			shadowed, pinnedPath := strings.TrimPrefix(entry.Shadowed, lock.PathPrefix), strings.TrimPrefix(entry.Request, lock.PathPrefix)
+			utils.PrintWarning("%s declares %s, which matches both %s and %s; pinned %s (relative to the script)",
+				strings.Join(scriptsOf[entry.Request], ", "), shadowed, pinnedPath, shadowed, pinnedPath)
+		}
 	}
 	for _, finding := range scanned.Findings {
 		utils.PrintWarning("%s:%d: %s", finding.Script, finding.Line, finding.Reason)

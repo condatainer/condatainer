@@ -20,6 +20,8 @@ func TestSubmittedJobCarriesTheFlagsGiven(t *testing.T) {
 	fs.String("project", "", "")
 	fs.Int("cpu", 0, "")
 
+	projectRootFlag = "/p r"
+	t.Cleanup(func() { projectRootFlag = "" })
 	plain, err := buildMpiRunCommand("/s.sh", forwardedFlagArgs(fs), []string{"a"}, nil, false)
 	if err != nil || !strings.HasSuffix(plain, " run /s.sh 'a'") {
 		t.Fatalf("no flags: %q, %v", plain, err)
@@ -33,7 +35,7 @@ func TestSubmittedJobCarriesTheFlagsGiven(t *testing.T) {
 		}
 	}
 	got, err := buildMpiRunCommand("/s.sh", forwardedFlagArgs(fs), nil, nil, false)
-	want := ` run --bind='/a b:/c' --env='K=it'\''s' --future='x' --writable='true' /s.sh`
+	want := ` run --bind='/a b:/c' --env='K=it'\''s' --future='x' --project='/p r' --writable='true' /s.sh`
 	if err != nil || !strings.HasSuffix(got, want) {
 		t.Fatalf("flags:\n got %q\nwant suffix %q (%v)", got, want, err)
 	}

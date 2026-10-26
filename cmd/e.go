@@ -79,7 +79,7 @@ func init() {
 }
 
 func runE(cmd *cobra.Command, args []string) error {
-	if err := applyProjectRelocation(eProjectDir); err != nil {
+	if err := applyProjectFlag(eProjectDir); err != nil {
 		return err
 	}
 

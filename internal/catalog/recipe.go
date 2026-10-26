@@ -1,13 +1,15 @@
 package catalog
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"runtime"
 	"slices"
 	"strings"
+
+	"github.com/condatainer/condatainer/internal/artifact"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // Entry is what the index records about a recipe: enough to resolve a name and
@@ -15,7 +17,7 @@ import (
 type Entry struct {
 	Name           string              `json:"-"` // the index key
 	Path           string              `json:"path"`
-	Type           Type                `json:"type"`
+	Type           artifact.Type       `json:"type"`
 	Description    string              `json:"description,omitempty"`
 	URL            string              `json:"url,omitempty"`
 	Deps           []string            `json:"deps,omitempty"` // #DEP: order, as written
@@ -175,10 +177,10 @@ func ParseRecipe(path string, r io.Reader) (*Recipe, error) {
 
 	var declared string
 	rec.Directives = scanDirectives(text)
-	for _, annotation := range ScanAnnotations(text) {
-		value, note := annotation.Value, annotation.Note
+	for _, a := range utils.ScanAnnotations(text) {
+		value, note := a.Value, a.Note
 
-		switch annotation.Key {
+		switch a.Key {
 		case "#TYPE":
 			declared = strings.ToLower(value)
 			rec.DeclaredType = declared
@@ -198,7 +200,7 @@ func ParseRecipe(path string, r io.Reader) (*Recipe, error) {
 			rec.TargetTemplate = firstOf(rec.TargetTemplate, value)
 		case "#DEP":
 			if value != "" {
-				rec.Deps = append(rec.Deps, Normalize(value))
+				rec.Deps = append(rec.Deps, utils.NormalizeModule(value))
 			}
 		case "#ENV":
 			if env, ok := parseEnv(value, note); ok {
@@ -234,32 +236,6 @@ func ParseRecipe(path string, r io.Reader) (*Recipe, error) {
 	return rec, nil
 }
 
-// StripComments removes every whole-line comment from a recipe, keeping blank lines
-// and every other byte. It is the recipe preimage both keys hash: what the recipe does.
-//
-//   - Annotations are comments, so they disappear too. Each one that reaches a key
-//     already has its own record line, and hashing the file would re-admit a #PH:
-//     menu that autoupdate grows, a reworded #DESC: or a changed scheduler directive.
-//   - The two keys differ in dependencies, not text.
-//   - Whole-line only: a trailing comment cannot be removed without parsing shell
-//     (`echo "a # b"`, `${v#pre}`). Blank lines are kept, so adding one moves both keys.
-func StripComments(text []byte) []byte {
-	out := make([]byte, 0, len(text))
-	for off := 0; off < len(text); {
-		next := len(text)
-		line := text[off:]
-		if end := bytes.IndexByte(line, '\n'); end >= 0 {
-			line, next = line[:end+1], off+end+1
-		}
-		content := bytes.TrimSuffix(bytes.TrimSuffix(line, []byte("\n")), []byte("\r"))
-		if trimmed := bytes.TrimLeft(content, " \t"); len(trimmed) == 0 || trimmed[0] != '#' {
-			out = append(out, line...)
-		}
-		off = next
-	}
-	return out
-}
-
 // scanDirectives returns every scheduler directive line, verbatim.
 //   - These are not annotations: `#SBATCH --time=01:00:00` has no `#KEY: value` shape, and cutting it on the first colon would split the value.
 //   - They are matched by prefix and handed to the scheduler packages to parse.
@@ -275,14 +251,6 @@ func scanDirectives(text []byte) []string {
 		}
 	}
 	return out
-}
-
-// splitNote separates an annotation value from its ## note.
-func splitNote(s string) (value, note string) {
-	if before, after, ok := strings.Cut(s, "##"); ok {
-		return strings.TrimSpace(before), strings.TrimSpace(after)
-	}
-	return strings.TrimSpace(s), ""
 }
 
 // SourceURL is one #SOURCE: declaration: a name the recipe body refers to as
@@ -389,12 +357,12 @@ func (r *Recipe) Prompts() []string {
 // listing; Validate reads them back here to tell the author.
 func scanMalformedSources(text []byte) []string {
 	var out []string
-	for _, annotation := range ScanAnnotations(text) {
-		if annotation.Key != "#SOURCE" {
+	for _, a := range utils.ScanAnnotations(text) {
+		if a.Key != "#SOURCE" {
 			continue
 		}
-		if _, ok := parseSource(annotation.Value); !ok {
-			out = append(out, annotation.Value)
+		if _, ok := parseSource(a.Value); !ok {
+			out = append(out, a.Value)
 		}
 	}
 	return out

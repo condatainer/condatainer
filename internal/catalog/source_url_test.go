@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 func TestParseSourceTakesNameThenURLs(t *testing.T) {
@@ -90,8 +92,8 @@ func TestExpandSubstitutesSourceURLs(t *testing.T) {
 // bytes it served can, through the src= lines.
 func TestSourceLineLeavesTheRecipePreimage(t *testing.T) {
 	const body = "#TYPE:data\n#SOURCE:gtf %s\necho build\n"
-	a := StripComments([]byte(strings.ReplaceAll(body, "%s", "https://example.invalid/a")))
-	b := StripComments([]byte(strings.ReplaceAll(body, "%s", "https://mirror.invalid/a")))
+	a := utils.StripComments([]byte(strings.ReplaceAll(body, "%s", "https://example.invalid/a")))
+	b := utils.StripComments([]byte(strings.ReplaceAll(body, "%s", "https://mirror.invalid/a")))
 	if string(a) != string(b) {
 		t.Errorf("a changed #SOURCE: URL moved the recipe preimage:\n%s\n%s", a, b)
 	}

@@ -11,9 +11,9 @@ import (
 	artifactcache "github.com/condatainer/condatainer/internal/artifact/cache"
 	"github.com/condatainer/condatainer/internal/artifact/compare"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 var (
@@ -87,7 +87,7 @@ func scan(opts ScanOptions, read artifactReader, cache artifactcache.Access) Rep
 	if !opts.Flat && !opts.Stored {
 		opts.Flat, opts.Stored = true, true
 	}
-	wanted := catalog.Normalize(opts.Name)
+	wanted := utils.NormalizeModule(opts.Name)
 	var report Report
 	for _, root := range dirs {
 		if opts.Flat {
@@ -255,10 +255,10 @@ func resolveReport(name string, q IdentityQuery, report Report) (Candidate, erro
 		}
 	}
 	if len(matches) == 0 {
-		return Candidate{}, fmt.Errorf("%w: %s %s", ErrNotFound, catalog.Normalize(name), queryString(q))
+		return Candidate{}, fmt.Errorf("%w: %s %s", ErrNotFound, utils.NormalizeModule(name), queryString(q))
 	}
 	if len(identities) > 1 {
-		return Candidate{}, fmt.Errorf("%w: %s %s matches %d complete identities", ErrAmbiguous, catalog.Normalize(name), queryString(q), len(identities))
+		return Candidate{}, fmt.Errorf("%w: %s %s matches %d complete identities", ErrAmbiguous, utils.NormalizeModule(name), queryString(q), len(identities))
 	}
 	return matches[0], nil
 }
@@ -274,7 +274,7 @@ func Equivalent(name string, q IdentityQuery, dirs []string) (Report, error) {
 	}
 	report.Candidates = filtered
 	if len(filtered) == 0 {
-		return report, fmt.Errorf("%w: no equivalent candidate for %s", ErrNotFound, catalog.Normalize(name))
+		return report, fmt.Errorf("%w: no equivalent candidate for %s", ErrNotFound, utils.NormalizeModule(name))
 	}
 	return report, nil
 }

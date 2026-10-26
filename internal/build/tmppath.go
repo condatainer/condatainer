@@ -1,7 +1,7 @@
 package build
 
 import (
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -13,8 +13,8 @@ import (
 // tmpRootForType picks the root for a catalog build: the stable writable tmp for
 // data, fast local scratch for everything else. A definition build overrides
 // this once its type is known — see tmpRootForDef.
-func tmpRootForType(typ catalog.Type) string {
-	if typ == catalog.TypeData {
+func tmpRootForType(typ artifact.Type) string {
+	if typ == artifact.TypeData {
 		return config.GetWritableTmpDir()
 	}
 	scratch := utils.GetTmpDir()
@@ -36,11 +36,11 @@ func tmpRootForDef() string {
 // large intermediates beside the target, whose location the user chose; an app
 // and a definition go to fast local scratch, a definition because it must —
 // see tmpRootForDef.
-func tmpRootForExternal(targetDir string, typ catalog.Type, isDef bool) string {
+func tmpRootForExternal(targetDir string, typ artifact.Type, isDef bool) string {
 	if isDef {
 		return tmpRootForDef()
 	}
-	if typ == catalog.TypeData {
+	if typ == artifact.TypeData {
 		return targetDir
 	}
 	scratch := utils.GetTmpDir()

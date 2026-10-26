@@ -288,7 +288,7 @@ func checkAndInstallNamedOverlays(ctx context.Context, names []string, distro st
 				stillMissing = append(stillMissing, name)
 				continue
 			}
-			if resolvedName != catalog.Normalize(name) {
+			if resolvedName != utils.NormalizeModule(name) {
 				logger.Info(fmt.Sprintf("%s -> %s", name, resolvedName), "kind", "note")
 			}
 			found[name] = []string{path}

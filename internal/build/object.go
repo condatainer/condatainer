@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/conda"
@@ -31,7 +32,7 @@ var ErrBuildDirExists = errors.New("build directory already exists")
 var ErrBuildCancelled = errors.New("build cancelled by user")
 
 // BuildType is how a target is built — the shape of its source, nothing more.
-// What the payload *is* (os, app, data, env) is its catalog.Type.
+// What the payload *is* (os, app, data, env) is its artifact.Type.
 //
 // It is meta.BuildType, the type the manifest records. The unset value is "",
 // which SourceSpec.BuildType returns until a source is resolved. There is no
@@ -304,8 +305,8 @@ func (b *BuildObject) setupCondaFields() error {
 // own libraries, so it is always an app contributing only its prefix — there is
 // no recipe to take #ENV: or a description from.
 func (b *BuildObject) setCondaSpec() {
-	b.spec.Image.Type = catalog.TypeApp
-	b.spec.Image.Prefix = meta.Prefix(b.spec.Image.Name, catalog.TypeApp)
+	b.spec.Image.Type = artifact.TypeApp
+	b.spec.Image.Prefix = meta.Prefix(b.spec.Image.Name, artifact.TypeApp)
 	b.spec.Image.Env = nil
 
 	src := &CondaSource{Channels: slices.Clone(conda.Channels())}
@@ -338,7 +339,7 @@ func (b *BuildObject) RequiresScheduler() bool {
 		return false
 	}
 	return scheduler.HasSchedulerSpecs(b.scriptSpecs) ||
-		(AlwaysSubmitData() && b.spec.Image.Type == catalog.TypeData)
+		(AlwaysSubmitData() && b.spec.Image.Type == artifact.TypeData)
 }
 
 // BuildLockInfo holds metadata stored inside a build lock file.
@@ -559,7 +560,7 @@ func (b *BuildObject) GetMissingDependencies() ([]string, error) {
 			}
 			continue
 		}
-		parsed, err := catalog.ParseDep(dep)
+		parsed, err := utils.ParseDep(dep)
 		if err != nil {
 			continue
 		}
@@ -795,7 +796,7 @@ func NewStoreBuildObject(ctx context.Context, nameVersion string, imagesDir stri
 }
 
 func newBuildObject(ctx context.Context, nameVersion string, external bool, imagesDir string, update, store bool) (*BuildObject, error) {
-	normalized := catalog.Normalize(nameVersion)
+	normalized := utils.NormalizeModule(nameVersion)
 
 	// Handle channel annotation (e.g. "bioconda::star/2.7.11b"):
 	// strip the channel prefix for path/naming; keep it for the micromamba spec.
@@ -878,7 +879,7 @@ type sourceOptions struct{ name string }
 // WithName names the artifact, whatever the target path is called. It also
 // overrides a script's #TARGET:.
 func WithName(name string) Option {
-	return func(o *sourceOptions) { o.name = catalog.Normalize(name) }
+	return func(o *sourceOptions) { o.name = utils.NormalizeModule(name) }
 }
 
 func applyOptions(opts []Option) sourceOptions {
@@ -902,14 +903,14 @@ func nameFor(fallback string, opts []Option) string {
 // list, into imagesDir/<nameVersion>.sqf. With WithName, nameVersion only
 // spells the file, verbatim, and the option is the artifact's name.
 func NewCondaObjectWithSource(nameVersion, buildSource, imagesDir string, update bool, opts ...Option) (*BuildObject, error) {
-	normalized := catalog.Normalize(nameVersion)
+	normalized := utils.NormalizeModule(nameVersion)
 	name, fileStem := normalized, strings.ReplaceAll(normalized, "/", "--")
 	if o := applyOptions(opts); o.name != "" {
 		name, fileStem = o.name, nameVersion
 	}
 
 	// A conda environment is an app, so it always gets fast local scratch.
-	tmpDir := tmpRootForType(catalog.TypeApp)
+	tmpDir := tmpRootForType(artifact.TypeApp)
 
 	// Make tmpDir absolute
 	if absDir, err := filepath.Abs(tmpDir); err == nil {
@@ -928,7 +929,7 @@ func NewCondaObjectWithSource(nameVersion, buildSource, imagesDir string, update
 		"targetOverlay", targetOverlay, "cntDir", ws.CntDir)
 
 	base := &BuildObject{
-		spec:        Spec{Image: ImageSpec{Name: name, Type: catalog.TypeApp}},
+		spec:        Spec{Image: ImageSpec{Name: name, Type: artifact.TypeApp}},
 		ws:          ws,
 		tgt:         targetFor(targetOverlay),
 		buildSource: buildSource,
@@ -989,7 +990,7 @@ func (b *BuildObject) captureLocalSourceSpec(isDef bool) {
 //   - A path artifact's filename carries no naming claim.
 func FromExternalSource(ctx context.Context, targetPrefix, source string, isApptainer bool, imagesDir string, update bool, opts ...Option) (*BuildObject, error) {
 	nameVersion := filepath.Base(targetPrefix)
-	nameVersion = catalog.Normalize(nameVersion)
+	nameVersion = utils.NormalizeModule(nameVersion)
 
 	// Determine build type from source file extension
 	isDef := isApptainer || strings.HasSuffix(source, ".def")
@@ -1095,7 +1096,7 @@ func createConcreteType(ctx context.Context, base *BuildObject, tmpDir string) (
 			return nil, err
 		}
 		// A conda environment is self-contained software, whatever its name shape.
-		base.spec.Image.Type = catalog.TypeApp
+		base.spec.Image.Type = artifact.TypeApp
 		base.buildType = BuildTypeConda
 		base.setCondaSpec()
 		return base, nil

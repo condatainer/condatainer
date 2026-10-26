@@ -5,6 +5,15 @@ What CondaTainer embeds in an image: what it says it is, what loading it does to
 - It reads through `internal/image`, which knows nothing about metadata. The dependency is one way.
 - Both embedded documents are trusted, not verified. Validation checks structure, not truth.
 
+## The type
+
+- `artifact.Type` is `os`, `app`, `data` or `env`. It is the one thing in the package root, so any package can name a type without importing the readers.
+- A recipe declares `app` or `data`. A `.def` is always `os`.
+- An `os` adds to a root that already exists, and any `os` can be the container root, chosen per invocation.
+- `env` is what `overlay freeze` captures. No recipe may declare it.
+- `env` is its own type because a type carries publishing defaults, and an undeclared `os` may be published publicly.
+- It is written "environment" in anything a user reads.
+
 ## Two documents
 
 - `runtime.json` is read on every mount. `manifest.json` is read on demand.

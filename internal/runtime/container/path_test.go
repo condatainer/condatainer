@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // A bare env-typed .sqf (no paired .img) must still put /cnt_env/bin on
@@ -48,7 +48,7 @@ func TestBuildPathEnvStillIncludesApp(t *testing.T) {
 	packRuntimeSqf(t, appSqf, meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "myapp/1.0",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		Platform:      meta.NativePlatform(),
 		Prefix:        "/cnt/myapp",
 	})

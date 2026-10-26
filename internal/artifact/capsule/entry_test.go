@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // stageEntry lays down one entry directory the way both a capsule and a lock
@@ -19,7 +19,7 @@ func stageEntry(t *testing.T, parent, name, recipe string) string {
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "script",
 		Platform:      meta.NativePlatform(),
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},

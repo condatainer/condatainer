@@ -139,7 +139,7 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 					ExitWithError("%v", err)
 				}
 				if expanded {
-					utils.PrintNote("Expanding '%s' to '%s'", catalog.Normalize(arg), normalized)
+					utils.PrintNote("Expanding '%s' to '%s'", utils.NormalizeModule(arg), normalized)
 				}
 				normalizedArgs[i] = normalized
 			}
@@ -473,7 +473,7 @@ func resolveTemplateInteractively(ctx context.Context, info *catalog.Entry) (str
 // on one concrete module. A channel-annotated or fully qualified name that resolves
 // nowhere is returned unchanged for the normal Conda fallback.
 func solveCreateName(ctx context.Context, nameVersion string) (string, bool, error) {
-	normalized := catalog.Normalize(nameVersion)
+	normalized := utils.NormalizeModule(nameVersion)
 	if normalized == "" || strings.Contains(normalized, "::") {
 		return normalized, false, nil
 	}
@@ -499,7 +499,7 @@ func solveCreateName(ctx context.Context, nameVersion string) (string, bool, err
 //   - It returns "" when the search fails, so a network hiccup does not block an install, or when name carries its own version.
 //   - A miss on a name with no version is an error: micromamba could not resolve it either, and this fails faster.
 func solveCondaName(name string) (string, error) {
-	dep, err := catalog.ParseDep(name)
+	dep, err := utils.ParseDep(name)
 	if err != nil {
 		return "", nil
 	}
@@ -602,10 +602,10 @@ func resolvePrefix(prefix, name, file string) (resolved, note string, err error)
 		name = scriptTarget(file)
 	}
 	if name != "" {
-		return prefix, "", checkImageDirPrefix(prefix, catalog.Normalize(name))
+		return prefix, "", checkImageDirPrefix(prefix, utils.NormalizeModule(name))
 	}
 	base := filepath.Base(prefix)
-	named := catalog.Normalize(base)
+	named := utils.NormalizeModule(base)
 	if named == base {
 		return prefix, "", nil
 	}
@@ -658,7 +658,7 @@ func prefixJobArgs(absPrefix, absFile string) []string {
 //   - Any depth is allowed: a restore recreates the catalog's own names, and a data image is several levels deep (grch38/star/2.7.11b/gencode47-101).
 //   - `/` becomes `--` in the filename and Normalize turns it back.
 func normalizedTargetName() string {
-	return catalog.Normalize(createName)
+	return utils.NormalizeModule(createName)
 }
 
 // isExternalBuildFile reports whether a file builds through the external-source

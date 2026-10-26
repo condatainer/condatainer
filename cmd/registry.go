@@ -341,7 +341,7 @@ func newRegistryGCCommand(opts *registryOptions) *cobra.Command {
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := catalog.Normalize(firstArg(args))
+			name := utils.NormalizeModule(firstArg(args))
 			if opts.noRecipe {
 				// The recipe index is cached, and a stale one would call a new recipe missing.
 				if err := config.RefreshCatalogCache(); err != nil {
@@ -651,7 +651,7 @@ func findRegistryArtifact(arg string) (registryArtifact, error) {
 	if info, err := os.Stat(arg); err == nil && !info.IsDir() {
 		return registryArtifact{path: arg}, nil
 	}
-	filename := strings.ReplaceAll(catalog.Normalize(arg), "/", "--")
+	filename := strings.ReplaceAll(utils.NormalizeModule(arg), "/", "--")
 	for _, dir := range config.GetImageSearchPaths() {
 		for _, ext := range []string{".sqf"} {
 			candidate := filepath.Join(dir, filename+ext)
@@ -683,15 +683,15 @@ func parseRegistryAddress(spec, arch string) (registry.Address, error) {
 		if err != nil {
 			return registry.Address{}, err
 		}
-		return registry.Address{Name: catalog.Normalize(name), Identity: query.SHA256, Scheme: query.Scheme, Arch: arch}, nil
+		return registry.Address{Name: utils.NormalizeModule(name), Identity: query.SHA256, Scheme: query.Scheme, Arch: arch}, nil
 	}
 	if name, key, ok := strings.Cut(spec, ":eq-"); ok {
-		return registry.Address{Name: catalog.Normalize(name), Equiv: key, Arch: arch}, nil
+		return registry.Address{Name: utils.NormalizeModule(name), Equiv: key, Arch: arch}, nil
 	}
 	if strings.Contains(spec, ":") {
 		return registry.Address{}, fmt.Errorf("%q is not an address; give a name, name@identity or name:eq-key", spec)
 	}
-	return registry.Address{Name: catalog.Normalize(spec), Arch: arch}, nil
+	return registry.Address{Name: utils.NormalizeModule(spec), Arch: arch}, nil
 }
 
 // parseRemoveTarget reads "name" or "name@identity".
@@ -725,7 +725,7 @@ func resolveRegistryArtifact(cmd *cobra.Command, opts *registryOptions, spec str
 			return out, ep, fmt.Errorf("--digest %q is not a sha256:<hex> digest", opts.digest)
 		}
 		if strings.TrimSpace(spec) != "" {
-			out.name = catalog.Normalize(spec)
+			out.name = utils.NormalizeModule(spec)
 			want.Name = out.name
 		}
 		out.desc, out.annotations, err = registry.ResolveArtifact(ep.ctx, base, repo, opts.digest)
@@ -786,7 +786,7 @@ func registryPullDestination(prefix, name, title string) (string, error) {
 	}
 
 	if name == "" {
-		name = catalog.Normalize(title)
+		name = utils.NormalizeModule(title)
 	}
 	if name == "" {
 		return "", fmt.Errorf("cannot choose an install name from this address; use --prefix")

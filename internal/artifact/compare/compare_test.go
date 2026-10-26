@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/conda"
 )
 
@@ -29,7 +29,7 @@ func requireSquashfsTools(t *testing.T) {
 // TestReadsFromARealArchive covers the archive path itself.
 type build struct {
 	name     string
-	typ      catalog.Type
+	typ      artifact.Type
 	arch     string
 	format   meta.BuildType
 	env      []meta.EnvVar
@@ -169,14 +169,14 @@ func depKey(scheme key.Scheme, seed string) meta.KeyRef {
 func starIndex() build {
 	return build{
 		name:   "grch38/star/2.7.11b/gencode49",
-		typ:    catalog.TypeData,
+		typ:    artifact.TypeData,
 		env:    []meta.EnvVar{{Key: "STAR_INDEX", Value: "{prefix}/index", Note: "for --genomeDir"}},
 		recipe: starRecipe,
 		ph:     map[string]string{"gencode_version": "49"},
 		deps: []key.Dep{
-			{Name: "star/2.7.11b", Type: catalog.TypeApp,
+			{Name: "star/2.7.11b", Type: artifact.TypeApp,
 				Identity: depKey(key.ScriptIdentityV1, "star id"), Equiv: depKey(key.ScriptEquivV1, "star eq")},
-			{Name: "samtools/1.23.1", Type: catalog.TypeApp,
+			{Name: "samtools/1.23.1", Type: artifact.TypeApp,
 				Identity: depKey(key.ScriptIdentityV1, "sam id"), Equiv: depKey(key.ScriptEquivV1, "sam eq")},
 		},
 	}
@@ -301,7 +301,7 @@ func TestGates(t *testing.T) {
 
 	t.Run("a different type is never interchangeable", func(t *testing.T) {
 		b := starIndex()
-		b.typ = catalog.TypeApp
+		b.typ = artifact.TypeApp
 		b.deps = nil
 		got := Compare(want, read(t, b))
 		if got.Verdict != Different || !hasField(got.Diffs, "type") {
@@ -382,7 +382,7 @@ func TestCondaVerdicts(t *testing.T) {
 
 	condaApp := func(explicit, environ string) build {
 		return build{
-			name: "cutadapt/5.0", typ: catalog.TypeApp, format: "conda",
+			name: "cutadapt/5.0", typ: artifact.TypeApp, format: "conda",
 			explicit: explicit, environ: environ,
 		}
 	}
@@ -417,7 +417,7 @@ func TestCondaVerdicts(t *testing.T) {
 	// The digests are over different kinds of file, so a match across formats
 	// would be meaningless.
 	t.Run("formats are never compared", func(t *testing.T) {
-		script := build{name: "cutadapt/5.0", typ: catalog.TypeApp, recipe: "echo build\n"}
+		script := build{name: "cutadapt/5.0", typ: artifact.TypeApp, recipe: "echo build\n"}
 		got := Compare(want, read(t, script))
 		if got.Verdict != Different || !hasField(got.Diffs, "build_type") {
 			t.Errorf("verdict = %s, diffs = %v", got.Verdict, got.Diffs)
@@ -442,7 +442,7 @@ func TestReadsFromARealArchive(t *testing.T) {
 
 // An image carrying no keys makes no claim: unverifiable rather than different.
 func TestAnUnkeyedImageIsUnverifiable(t *testing.T) {
-	a := read(t, build{name: "ubuntu24/base", typ: catalog.TypeOS, format: "def"})
+	a := read(t, build{name: "ubuntu24/base", typ: artifact.TypeOS, format: "def"})
 	if got := Compare(a, a); got.Verdict != Unverifiable {
 		t.Errorf("verdict = %s, want unverifiable", got.Verdict)
 	}
@@ -455,7 +455,7 @@ func TestAnUnkeyedImageIsUnverifiable(t *testing.T) {
 // build that still substitutes, and the diff says which.
 func TestDefinitionComparesByDefinitionAndUpstream(t *testing.T) {
 	def := "Bootstrap: docker\nFrom: ubuntu:24.04\n"
-	january := build{name: "ubuntu24/base", typ: catalog.TypeOS, format: "def",
+	january := build{name: "ubuntu24/base", typ: artifact.TypeOS, format: "def",
 		recipe: def, from: "sha256:" + strings.Repeat("a", 64)}
 	june := january
 	june.from = "sha256:" + strings.Repeat("b", 64)

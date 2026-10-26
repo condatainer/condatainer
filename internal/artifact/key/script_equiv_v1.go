@@ -3,6 +3,7 @@ package key
 import (
 	"fmt"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 )
@@ -19,10 +20,10 @@ import (
 //
 // History-only app/OS dependencies are omitted. A data dependency with no equivalence key uses "unrecorded" plus its name. Exact dependency identities never enter, so a dependency with only an equivalence key is enough.
 func deriveScriptEquivV1(a Artifact) (Value, Model, error) {
-	if a.Type != catalog.TypeApp && a.Type != catalog.TypeData {
+	if a.Type != artifact.TypeApp && a.Type != artifact.TypeData {
 		return Value{}, Model{}, fmt.Errorf("%s cannot derive type %s", ScriptEquivV1, a.Type)
 	}
-	if a.Type != catalog.TypeData && len(a.Deps) > 0 {
+	if a.Type != artifact.TypeData && len(a.Deps) > 0 {
 		return Value{}, Model{}, fmt.Errorf("%s %s cannot have dependencies", ScriptEquivV1, a.Type)
 	}
 
@@ -49,12 +50,12 @@ func scriptEquivDependenciesV1(name string, deps []Dep) []DependencyValue {
 		case meta.RoleData:
 			if dep.Equiv.Digest() != "" {
 				out = append(out, DependencyValue{
-					Type:   catalog.TypeData,
+					Type:   artifact.TypeData,
 					Fields: []string{dep.Equiv.Scheme, dep.Equiv.Digest()},
 				})
 			} else {
 				out = append(out, DependencyValue{
-					Type: catalog.TypeData, Fields: []string{meta.Unrecorded, dep.Name},
+					Type: artifact.TypeData, Fields: []string{meta.Unrecorded, dep.Name},
 				})
 			}
 		case meta.RoleApp:
@@ -73,7 +74,7 @@ func scriptEquivDependenciesV1(name string, deps []Dep) []DependencyValue {
 //   - An app or OS contributes by name/version only when its complete component sequence occurs in the artifact name; otherwise it is build history and is omitted from equivalence.
 func Role(name string, dep Dep) string {
 	switch {
-	case dep.Type == catalog.TypeData:
+	case dep.Type == artifact.TypeData:
 		return meta.RoleData
 	case catalog.HasComponents(name, dep.Name):
 		return meta.RoleApp

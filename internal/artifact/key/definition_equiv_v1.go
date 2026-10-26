@@ -3,7 +3,7 @@ package key
 import (
 	"fmt"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 )
 
 // deriveDefinitionEquivV1 answers: "Can this definition-built artifact substitute for the requested artifact?"
@@ -16,7 +16,7 @@ import (
 //
 // Definitions cannot have dependencies. The resolved upstream digest is omitted, so rebuilding the same definition after an upstream update changes identity but keeps equivalence.
 func deriveDefinitionEquivV1(a Artifact) (Value, Model, error) {
-	if a.Type != catalog.TypeOS {
+	if a.Type != artifact.TypeOS {
 		return Value{}, Model{}, fmt.Errorf("%s cannot derive type %s", DefinitionEquivV1, a.Type)
 	}
 	if len(a.Deps) > 0 {

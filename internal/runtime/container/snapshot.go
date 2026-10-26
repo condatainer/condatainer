@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -22,7 +22,7 @@ type SnapshotLookup struct {
 
 // LookupSnapshot finds the env-typed .sqf that pairs with a writable .img. It is the one place this pairing is computed, used to autoload a snapshot at mount time and to find what a bare `overlay freeze` replaces.
 //   - There is one slot, SnapshotPath: the .img's name without a trailing "-<user>", plus .sqf.
-//   - If a file is there and its runtime.json reports catalog.TypeEnv, it is the pair.
+//   - If a file is there and its runtime.json reports artifact.TypeEnv, it is the pair.
 //   - Any other file there is Blocked. The mount path treats it as nothing found, and `overlay freeze` refuses to replace it.
 func LookupSnapshot(imgPath string) SnapshotLookup {
 	slot := SnapshotPath(imgPath)
@@ -30,7 +30,7 @@ func LookupSnapshot(imgPath string) SnapshotLookup {
 		return SnapshotLookup{}
 	}
 	rt, err := meta.ReadRuntime(slot)
-	if err != nil || rt.Type != catalog.TypeEnv {
+	if err != nil || rt.Type != artifact.TypeEnv {
 		return SnapshotLookup{Blocked: slot}
 	}
 	return SnapshotLookup{Path: slot}
@@ -80,5 +80,5 @@ func isEnvSnapshotSqf(path string) bool {
 		return false
 	}
 	rt, err := meta.ReadRuntime(path)
-	return err == nil && rt.Type == catalog.TypeEnv
+	return err == nil && rt.Type == artifact.TypeEnv
 }

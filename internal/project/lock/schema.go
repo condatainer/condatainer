@@ -37,7 +37,7 @@ const FileName = "lock.json"
 const ProvenanceDir = "provenance"
 
 // PathPrefix marks a pin key that addresses an overlay by project path
-// rather than by name. A path request has no catalog.Dep to render, and the
+// rather than by name. A path request has no utils.Dep to render, and the
 // prefix keeps the two kinds of key from ever colliding.
 const PathPrefix = "path:"
 

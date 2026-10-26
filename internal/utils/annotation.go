@@ -1,4 +1,4 @@
-package catalog
+package utils
 
 import "strings"
 
@@ -39,23 +39,23 @@ func ScanAnnotations(text []byte) []Annotation {
 	return out
 }
 
-// Find returns the value of the first annotation with key, and whether one was
+// FindAnnotation returns the value of the first annotation with key, and whether one was
 // present. Most keys are single-valued, and the first wins.
-func Find(annotations []Annotation, key string) (string, bool) {
-	for _, annotation := range annotations {
-		if annotation.Key == key {
-			return annotation.Value, true
+func FindAnnotation(annotations []Annotation, key string) (string, bool) {
+	for _, a := range annotations {
+		if a.Key == key {
+			return a.Value, true
 		}
 	}
 	return "", false
 }
 
-// Select returns every annotation with key, in order.
-func Select(annotations []Annotation, key string) []Annotation {
+// SelectAnnotations returns every annotation with key, in order.
+func SelectAnnotations(annotations []Annotation, key string) []Annotation {
 	var out []Annotation
-	for _, annotation := range annotations {
-		if annotation.Key == key {
-			out = append(out, annotation)
+	for _, a := range annotations {
+		if a.Key == key {
+			out = append(out, a)
 		}
 	}
 	return out
@@ -75,4 +75,12 @@ func cutKey(line string) (key, rest string, ok bool) {
 		}
 	}
 	return "#" + body, rest, true
+}
+
+// splitNote separates an annotation value from its ## note.
+func splitNote(s string) (value, note string) {
+	if before, after, ok := strings.Cut(s, "##"); ok {
+		return strings.TrimSpace(before), strings.TrimSpace(after)
+	}
+	return strings.TrimSpace(s), ""
 }

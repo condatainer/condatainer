@@ -5,7 +5,7 @@ Builds overlay images from Conda packages, recipes or Apptainer definitions.
 ## Two axes
 
 - `BuildType` is how a target is built: Conda, Def or Script.
-- `catalog.Type` is what the payload is. The two are independent, so a script build can be any type.
+- `artifact.Type` is what the payload is. The two are independent, so a script build can be any type.
 - Type only decides where the build works and how the archive is compressed.
 - An `app` or `data` build writes to `$CNT_BUILD_PREFIX`, `/cnt/<name>`. That prefix is recorded in the image, so anything baked into the payload stays valid at run time.
 - An `os` build has no prefix. Its payload is the root filesystem itself.

@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image/producer"
@@ -26,7 +27,7 @@ type Spec struct {
 // loading it does to the environment.
 type ImageSpec struct {
 	Name        string
-	Type        catalog.Type
+	Type        artifact.Type
 	Description string
 	URL         string
 	// Prefix is where the payload goes, /cnt/<name> for app and data and empty
@@ -212,7 +213,7 @@ func buildEnv(spec Spec, opts Options) []string {
 
 	typ := spec.Image.Type
 	if typ == "" {
-		typ = catalog.TypeApp
+		typ = artifact.TypeApp
 	}
 	prefix := spec.Image.Prefix
 	if prefix == "" {

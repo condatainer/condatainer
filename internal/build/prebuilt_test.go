@@ -9,6 +9,7 @@ import (
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
@@ -19,7 +20,7 @@ func prebuiltObject(t *testing.T, recipe []byte, endpoint string) *BuildObject {
 	t.Helper()
 	b := &BuildObject{
 		spec: Spec{
-			Image: ImageSpec{Name: "demo/1", Type: catalog.TypeApp},
+			Image: ImageSpec{Name: "demo/1", Type: artifact.TypeApp},
 			Source: SourceSpec{Script: &ScriptSource{File: SourceFile{
 				Name: meta.RecipeFileName, Data: recipe,
 			}}},
@@ -192,7 +193,7 @@ func TestTryPrebuiltFollowsThePlan(t *testing.T) {
 	}
 }
 
-func planNode(name string, typ catalog.Type, choice prebuiltChoice, deps ...string) *BuildObject {
+func planNode(name string, typ artifact.Type, choice prebuiltChoice, deps ...string) *BuildObject {
 	return &BuildObject{
 		spec:     Spec{Image: ImageSpec{Name: name, Type: typ}, Dependencies: deps},
 		prebuilt: prebuiltPlan{choice: choice},
@@ -201,31 +202,31 @@ func planNode(name string, typ catalog.Type, choice prebuiltChoice, deps ...stri
 
 func TestDependencyPlan(t *testing.T) {
 	key := meta.KeyRef{Scheme: "script-equiv-v1", SHA256: "abc"}
-	keyed := planNode("data/1", catalog.TypeData, prebuiltUndecided)
+	keyed := planNode("data/1", artifact.TypeData, prebuiltUndecided)
 	keyed.plannedEquiv = key
 	bg := &BuildGraph{graph: map[string]*BuildObject{
 		"data/1": keyed,
-		"data/2": planNode("data/2", catalog.TypeData, prebuiltUndecided), // equivalence not derived yet
-		"tool/1": planNode("tool/1", catalog.TypeApp, prebuiltUndecided),
+		"data/2": planNode("data/2", artifact.TypeData, prebuiltUndecided), // equivalence not derived yet
+		"tool/1": planNode("tool/1", artifact.TypeApp, prebuiltUndecided),
 	}}
 
-	planned, ok := bg.dependencyPlan(planNode("top/1", catalog.TypeData, prebuiltUndecided, "data/1", "tool/1"))
-	if !ok || planned["data/1"].Equiv != key || planned["tool/1"].Type != catalog.TypeApp {
+	planned, ok := bg.dependencyPlan(planNode("top/1", artifact.TypeData, prebuiltUndecided, "data/1", "tool/1"))
+	if !ok || planned["data/1"].Equiv != key || planned["tool/1"].Type != artifact.TypeApp {
 		t.Errorf("planned = %+v, ok = %v", planned, ok)
 	}
-	if _, ok := bg.dependencyPlan(planNode("top/1", catalog.TypeData, prebuiltUndecided, "data/2")); ok {
+	if _, ok := bg.dependencyPlan(planNode("top/1", artifact.TypeData, prebuiltUndecided, "data/2")); ok {
 		t.Error("a data dependency with no derived equivalence counted as known")
 	}
-	if _, ok := bg.dependencyPlan(planNode("top/1", catalog.TypeData, prebuiltUndecided, "elsewhere/1")); ok {
+	if _, ok := bg.dependencyPlan(planNode("top/1", artifact.TypeData, prebuiltUndecided, "elsewhere/1")); ok {
 		t.Error("a dependency neither installed nor planned counted as known")
 	}
 }
 
 func TestPruneDependencies(t *testing.T) {
 	build := func(topChoice prebuiltChoice) (*BuildGraph, []*BuildObject, *BuildObject) {
-		tool := planNode("tool/1", catalog.TypeApp, prebuiltUndecided)
-		data := planNode("data/1", catalog.TypeData, prebuiltUndecided)
-		top := planNode("top/1", catalog.TypeData, topChoice, "tool/1", "data/1")
+		tool := planNode("tool/1", artifact.TypeApp, prebuiltUndecided)
+		data := planNode("data/1", artifact.TypeData, prebuiltUndecided)
+		top := planNode("top/1", artifact.TypeData, topChoice, "tool/1", "data/1")
 		graph := map[string]*BuildObject{"tool/1": tool, "data/1": data, "top/1": top}
 		return &BuildGraph{graph: graph}, []*BuildObject{tool, data, top}, top
 	}
@@ -253,10 +254,10 @@ func TestPruneDependencies(t *testing.T) {
 func TestPlannedDependencyEntersEquivalence(t *testing.T) {
 	keyOf := func(sha string) meta.KeyRef {
 		b := prebuiltObject(t, []byte("echo demo\n"), "origin.invalid/lab")
-		b.spec.Image.Type = catalog.TypeData
+		b.spec.Image.Type = artifact.TypeData
 		b.spec.Dependencies = []string{"data/1"}
 		b.plannedDeps = map[string]plannedDep{
-			"data/1": {Name: "data/1", Type: catalog.TypeData, Equiv: meta.KeyRef{Scheme: "script-equiv-v1", SHA256: sha}},
+			"data/1": {Name: "data/1", Type: artifact.TypeData, Equiv: meta.KeyRef{Scheme: "script-equiv-v1", SHA256: sha}},
 		}
 		got, err := b.prebuiltEquivalence(t.Context())
 		if err != nil {

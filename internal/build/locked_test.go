@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/conda"
 )
 
@@ -25,7 +25,7 @@ func lockedManifest(name string) meta.Manifest {
 	return meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "script",
 		Platform:      meta.NativePlatform(),
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
@@ -73,7 +73,7 @@ func TestNewLockedObjectBuildsFromTheVendoredRecipe(t *testing.T) {
 	if len(got.Image.Env) != 1 || got.Image.Env[0].Key != "PATH" {
 		t.Errorf("env = %#v, want the recipe's #ENV:", got.Image.Env)
 	}
-	if got.Image.Prefix != meta.Prefix("star/2.7.11b", catalog.TypeApp) {
+	if got.Image.Prefix != meta.Prefix("star/2.7.11b", artifact.TypeApp) {
 		t.Errorf("prefix = %q", got.Image.Prefix)
 	}
 	if object.ScriptSpecs() == nil || object.ScriptSpecs().Spec.CpusPerTask != 4 {
@@ -109,7 +109,7 @@ func TestNewLockedObjectExpandsATemplateWithTheRecordedPlaceholders(t *testing.T
 	template := "#TYPE: data\n#PH: release: 49,50\n#TARGET: gencode/{release}\necho {release}\n"
 	spec := lockedSpec(t, template)
 	spec.Manifest = lockedManifest("gencode/49")
-	spec.Manifest.Type = catalog.TypeData
+	spec.Manifest.Type = artifact.TypeData
 	spec.Manifest.Source.Placeholders = map[string]string{"release": "49"}
 	spec.Manifest.Source.TargetTemplate = "gencode/{release}"
 	spec.Sources[meta.RecipeFileName] = []byte(template)
@@ -144,7 +144,7 @@ func TestNewLockedObjectMountsDependenciesByPath(t *testing.T) {
 	recipe := "#TYPE: data\n#DEP: grch38/genome/gencode49\necho build\n"
 
 	spec := lockedSpec(t, recipe)
-	spec.Manifest.Type = catalog.TypeData
+	spec.Manifest.Type = artifact.TypeData
 	spec.Deps = []LockedDep{{
 		Name:     "grch38/genome/gencode49",
 		Identity: meta.KeyRef{Scheme: "script.identity.v1", SHA256: strings.Repeat("c", 64)},
@@ -173,7 +173,7 @@ func TestNewLockedObjectMountsDependenciesByPath(t *testing.T) {
 // fails on a key mismatch nobody can explain.
 func TestNewLockedObjectRefusesADependencyCountMismatch(t *testing.T) {
 	spec := lockedSpec(t, "#TYPE: data\n#DEP: grch38/genome/gencode49\necho build\n")
-	spec.Manifest.Type = catalog.TypeData
+	spec.Manifest.Type = artifact.TypeData
 
 	_, err := NewLockedObject(context.Background(), spec)
 	if !errors.Is(err, ErrLockedInvalid) {
@@ -186,7 +186,7 @@ func TestNewLockedObjectRefusesADependencyCountMismatch(t *testing.T) {
 
 func TestNewLockedObjectRefusesAMissingDependencyImage(t *testing.T) {
 	spec := lockedSpec(t, "#TYPE: data\n#DEP: grch38/genome/gencode49\necho build\n")
-	spec.Manifest.Type = catalog.TypeData
+	spec.Manifest.Type = artifact.TypeData
 	spec.Deps = []LockedDep{{Name: "grch38/genome/gencode49", Path: filepath.Join(t.TempDir(), "gone.sqf")}}
 
 	if _, err := NewLockedObject(context.Background(), spec); !errors.Is(err, ErrLockedInvalid) {
@@ -196,7 +196,7 @@ func TestNewLockedObjectRefusesAMissingDependencyImage(t *testing.T) {
 
 func TestNewLockedObjectRefusesARelativeDependencyPath(t *testing.T) {
 	spec := lockedSpec(t, "#TYPE: data\n#DEP: grch38/genome/gencode49\necho build\n")
-	spec.Manifest.Type = catalog.TypeData
+	spec.Manifest.Type = artifact.TypeData
 	spec.Deps = []LockedDep{{Name: "grch38/genome/gencode49", Path: "overlays/genome.sqf"}}
 
 	if _, err := NewLockedObject(context.Background(), spec); !errors.Is(err, ErrLockedInvalid) {
@@ -324,7 +324,7 @@ func TestNewLockedObjectKeepsTheRecordedUpstreamDigest(t *testing.T) {
 	definition := "Bootstrap: docker\nFrom: ubuntu:24.04\n\n%post\n  echo build\n"
 	spec := lockedSpec(t, definition)
 	spec.Manifest.BuildType = "def"
-	spec.Manifest.Type = catalog.TypeOS
+	spec.Manifest.Type = artifact.TypeOS
 	spec.Manifest.Build.From = &meta.From{
 		Bootstrap: "docker", Ref: "ubuntu:24.04", Digest: "sha256:" + strings.Repeat("d", 64),
 	}

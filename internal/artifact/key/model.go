@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 )
 
 // Kind identifies a model's semantic role for validation. It is not serialized;
@@ -56,7 +56,7 @@ type SourceValue struct {
 // elsewhere; here they are opaque space-free tokens, which is what lets identity
 // and equivalence use the same line shape for different content.
 type DependencyValue struct {
-	Type   catalog.Type
+	Type   artifact.Type
 	Fields []string
 }
 
@@ -71,7 +71,7 @@ func (d DependencyValue) text() string {
 // what was built, and the name is what it was called.
 type Model struct {
 	Kind Kind
-	Type catalog.Type
+	Type artifact.Type
 	Env  []EnvValue
 	// Recipe is the digest of the recipe body, empty for a build with no recipe.
 	Recipe string
@@ -260,9 +260,9 @@ func validate(r Model) error {
 
 // validSubjectType reports whether an artifact type can be what a record
 // describes. Every type can.
-func validSubjectType(t catalog.Type) error {
+func validSubjectType(t artifact.Type) error {
 	switch t {
-	case catalog.TypeApp, catalog.TypeData, catalog.TypeOS:
+	case artifact.TypeApp, artifact.TypeData, artifact.TypeOS:
 		return nil
 	default:
 		return fmt.Errorf("%w: unknown type %q", ErrInvalid, t)
@@ -270,9 +270,9 @@ func validSubjectType(t catalog.Type) error {
 }
 
 // validDepType reports whether an artifact type can appear on a dep line.
-func validDepType(t catalog.Type) error {
+func validDepType(t artifact.Type) error {
 	switch t {
-	case catalog.TypeApp, catalog.TypeData, catalog.TypeOS:
+	case artifact.TypeApp, artifact.TypeData, artifact.TypeOS:
 		return nil
 	default:
 		return fmt.Errorf("%w: unknown type %q", ErrInvalid, t)

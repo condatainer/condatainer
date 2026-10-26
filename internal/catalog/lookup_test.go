@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/artifact"
 )
 
 func openFake(t *testing.T) Catalog {
@@ -26,7 +28,7 @@ func TestLookup(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("found=%v err=%v", found, err)
 	}
-	if m.Entry.Type != TypeApp || m.Source.Name != "local" || len(m.Vars) != 0 {
+	if m.Entry.Type != artifact.TypeApp || m.Source.Name != "local" || len(m.Vars) != 0 {
 		t.Errorf("match = %+v", m)
 	}
 

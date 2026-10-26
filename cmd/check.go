@@ -137,7 +137,7 @@ func collectDeps(scriptPaths []string, preSeededDeps []string) ([]string, error)
 
 	// Pre-seed with metadata deps (name/version strings, never overlay paths)
 	for _, dep := range preSeededDeps {
-		key := catalog.Normalize(dep)
+		key := utils.NormalizeModule(dep)
 		if !seen[key] {
 			seen[key] = true
 			deps = append(deps, dep)
@@ -167,7 +167,7 @@ func collectDeps(scriptPaths []string, preSeededDeps []string) ([]string, error)
 				}
 				key = dep
 			} else {
-				key = catalog.Normalize(dep)
+				key = utils.NormalizeModule(dep)
 			}
 			if !seen[key] {
 				seen[key] = true
@@ -450,7 +450,7 @@ func resolveScriptPath(ctx context.Context, scriptPathOrName string) (string, bo
 		return scriptPathOrName, false, nil, nil
 	}
 
-	normalized := catalog.Normalize(scriptPathOrName)
+	normalized := utils.NormalizeModule(scriptPathOrName)
 	utils.PrintDebug("[CHECK] Checking for recipe %s...", normalized)
 
 	cat, err := config.OpenCatalog(ctx)

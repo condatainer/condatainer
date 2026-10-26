@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/logging"
@@ -138,7 +137,7 @@ func CheckRequiredOverlays(ctx context.Context, cwd, requiredTemplate string, pa
 	for i, mount := range mounts {
 		if mount.Path == "" {
 			missing = append(missing, names[i])
-		} else if mount.Live && mount.Name != catalog.Normalize(names[i]) {
+		} else if mount.Live && mount.Name != utils.NormalizeModule(names[i]) {
 			logger.Info(fmt.Sprintf("%s -> %s", names[i], mount.Name), "kind", "note")
 		}
 	}

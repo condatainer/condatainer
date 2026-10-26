@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/condatainer/condatainer/internal/artifact"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // ErrInvalidRecipe reports a recipe that declares something its type may not.
@@ -34,13 +37,13 @@ func IsPathDep(value string) bool {
 //   - A build dependency is a name/version, never a path. A built artifact records
 //     each edge as a name plus a complete identity, and a path supplies neither. That
 //     keeps a project's vendored source closure total.
-func ValidateDeps(name string, typ Type, deps []string) error {
+func ValidateDeps(name string, typ artifact.Type, deps []string) error {
 	if len(deps) == 0 {
 		return nil
 	}
 	var errs []error
 
-	if typ != TypeData {
+	if typ != artifact.TypeData {
 		errs = append(errs, fmt.Errorf("%w: %s is type %s and may not declare #DEP: (%s); only data has build dependencies",
 			ErrInvalidRecipe, name, typ, strings.Join(deps, ", ")))
 	}
@@ -65,8 +68,8 @@ func ValidateDeps(name string, typ Type, deps []string) error {
 // inside star2.7.11b-old. internal/artifact/key.Role uses it: an app or os dependency
 // contributes to equivalence only when this is true, otherwise it is build history.
 func HasComponents(name, dep string) bool {
-	n := strings.Split(Normalize(name), "/")
-	d := strings.Split(Normalize(dep), "/")
+	n := strings.Split(utils.NormalizeModule(name), "/")
+	d := strings.Split(utils.NormalizeModule(dep), "/")
 	if len(d) == 0 || len(d) > len(n) {
 		return false
 	}
@@ -102,7 +105,7 @@ func (r *Recipe) Validate() error {
 
 	if len(r.Arch) > 0 {
 		switch r.Type {
-		case TypeApp, TypeData:
+		case artifact.TypeApp, artifact.TypeData:
 			if problem := archProblem(r.Arch); problem != "" {
 				errs = append(errs, fmt.Errorf("%w: %s declares #ARCH:%s; %s",
 					ErrInvalidRecipe, r.Name, joinArch(r.Arch), problem))
@@ -118,7 +121,7 @@ func (r *Recipe) Validate() error {
 	// be silently ignored.
 	if strings.HasSuffix(r.Path, ".def") {
 		seen := map[string]bool{}
-		for _, a := range ScanAnnotations(r.Text) {
+		for _, a := range utils.ScanAnnotations(r.Text) {
 			if (a.Key == "#SOURCE" || a.Key == "#INPUT") && !seen[a.Key] {
 				seen[a.Key] = true
 				errs = append(errs, fmt.Errorf("%w: %s is a definition and may not declare %s:; only a script recipe fetches sources or asks for input",
@@ -137,13 +140,13 @@ func (r *Recipe) Validate() error {
 	// #TYPE: env is the case this exists for. env is what `overlay freeze`
 	// produces from a writable overlay; no recipe can produce one, and DeriveType
 	// never returns it, so the declaration could only ever have built an app.
-	if r.DeclaredType != "" && Type(r.DeclaredType) != r.Type {
-		if Type(r.DeclaredType) == TypeEnv {
+	if r.DeclaredType != "" && artifact.Type(r.DeclaredType) != r.Type {
+		if artifact.Type(r.DeclaredType) == artifact.TypeEnv {
 			errs = append(errs, fmt.Errorf("%w: %s declares #TYPE:env; env is what `overlay freeze` produces from a writable overlay and cannot be declared by a recipe",
 				ErrInvalidRecipe, r.Name))
 		} else {
 			errs = append(errs, fmt.Errorf("%w: %s declares #TYPE:%s but is %s; a recipe may declare %s or %s",
-				ErrInvalidRecipe, r.Name, r.DeclaredType, r.Type, TypeApp, TypeData))
+				ErrInvalidRecipe, r.Name, r.DeclaredType, r.Type, artifact.TypeApp, artifact.TypeData))
 		}
 	}
 

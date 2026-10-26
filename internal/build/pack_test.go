@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -36,7 +36,7 @@ func withProvisionedLibexec(t *testing.T) {
 
 // newPackObject builds the minimum BuildObject the packer reads: a workspace
 // layout and a Spec complete enough to render both metadata documents.
-func newPackObject(t *testing.T, typ catalog.Type) *BuildObject {
+func newPackObject(t *testing.T, typ artifact.Type) *BuildObject {
 	t.Helper()
 	tmpDir := t.TempDir()
 	name := "samtools/1.21"
@@ -53,7 +53,7 @@ func newPackObject(t *testing.T, typ catalog.Type) *BuildObject {
 // Both documents are staged, since an image carrying only one of them is either
 // unmountable or unexplainable.
 func TestStageMetadataWritesBothDocuments(t *testing.T) {
-	b := newPackObject(t, catalog.TypeApp)
+	b := newPackObject(t, artifact.TypeApp)
 
 	dir, err := stageMetadata(t.Context(), b)
 	if err != nil {
@@ -110,7 +110,7 @@ func TestStageMetadataWritesBothDocuments(t *testing.T) {
 // date tag; a malformed value stops the build.
 func TestStageMetadataTakesSourceDateEpoch(t *testing.T) {
 	t.Setenv(EnvSourceDateEpoch, "1759276800")
-	b := newPackObject(t, catalog.TypeApp)
+	b := newPackObject(t, artifact.TypeApp)
 	dir, err := stageMetadata(t.Context(), b)
 	if err != nil {
 		t.Fatalf("stageMetadata: %v", err)
@@ -128,7 +128,7 @@ func TestStageMetadataTakesSourceDateEpoch(t *testing.T) {
 	}
 
 	t.Setenv(EnvSourceDateEpoch, "yesterday")
-	if _, err := stageMetadata(t.Context(), newPackObject(t, catalog.TypeApp)); err == nil {
+	if _, err := stageMetadata(t.Context(), newPackObject(t, artifact.TypeApp)); err == nil {
 		t.Error("a malformed SOURCE_DATE_EPOCH was accepted")
 	}
 }
@@ -136,7 +136,7 @@ func TestStageMetadataTakesSourceDateEpoch(t *testing.T) {
 // Metadata that would not survive a read back must stop the build while there is
 // still no image, not after one is installed and read back as broken.
 func TestStageMetadataRejectsInvalidMetadata(t *testing.T) {
-	b := newPackObject(t, catalog.TypeApp)
+	b := newPackObject(t, artifact.TypeApp)
 	b.spec.Image.Prefix = "" // an app with no prefix cannot be resolved at load time
 
 	if _, err := stageMetadata(t.Context(), b); err == nil {
@@ -150,7 +150,7 @@ func TestStageMetadataRejectsInvalidMetadata(t *testing.T) {
 // The staged directory has to reach mksquashfs still called .cnt, because
 // mksquashfs names an archive root after its source's basename.
 func TestSquashfsSourcesCarryMetaDirName(t *testing.T) {
-	b := newPackObject(t, catalog.TypeApp)
+	b := newPackObject(t, artifact.TypeApp)
 	metaDir := b.ws.MetaDir
 
 	sources, keepAsDirectory := packSources(b, "/host/build/cnt", metaDir)
@@ -169,7 +169,7 @@ func TestSquashfsSourcesCarryMetaDirName(t *testing.T) {
 // An empty metaDir packs the payload alone, which is what keeps the packer
 // usable for anything that has no metadata to add.
 func TestSquashfsWithoutMetaDirPacksPayloadOnly(t *testing.T) {
-	b := newPackObject(t, catalog.TypeApp)
+	b := newPackObject(t, artifact.TypeApp)
 
 	sources, keepAsDirectory := packSources(b, b.ws.CntDir, "")
 
@@ -189,7 +189,7 @@ func TestPackedImageMetadataIsReadable(t *testing.T) {
 		t.Skip("mksquashfs not available")
 	}
 
-	b := newPackObject(t, catalog.TypeApp)
+	b := newPackObject(t, artifact.TypeApp)
 	payload := filepath.Join(b.ws.CntDir, b.spec.Image.Name, "bin")
 	if err := os.MkdirAll(payload, 0o755); err != nil {
 		t.Fatal(err)
@@ -212,8 +212,8 @@ func TestPackedImageMetadataIsReadable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("meta.ReadManifest on the packed image: %v", err)
 	}
-	if manifest.Name != b.spec.Image.Name || manifest.Type != catalog.TypeApp {
-		t.Errorf("manifest = %+v, want name %q type %q", manifest, b.spec.Image.Name, catalog.TypeApp)
+	if manifest.Name != b.spec.Image.Name || manifest.Type != artifact.TypeApp {
+		t.Errorf("manifest = %+v, want name %q type %q", manifest, b.spec.Image.Name, artifact.TypeApp)
 	}
 	if manifest.BuildType != BuildTypeConda {
 		t.Errorf("build_type = %q, want %q", manifest.BuildType, BuildTypeConda)
@@ -223,7 +223,7 @@ func TestPackedImageMetadataIsReadable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("meta.ReadRuntime on the packed image: %v", err)
 	}
-	if rt.Prefix != meta.Prefix(b.spec.Image.Name, catalog.TypeApp) {
+	if rt.Prefix != meta.Prefix(b.spec.Image.Name, artifact.TypeApp) {
 		t.Errorf("prefix = %q", rt.Prefix)
 	}
 
@@ -250,7 +250,7 @@ func TestPackedImageExcludesBuildScratch(t *testing.T) {
 		t.Skip("mksquashfs not available")
 	}
 
-	b := newPackObject(t, catalog.TypeApp)
+	b := newPackObject(t, artifact.TypeApp)
 	b.buildType = BuildTypeScript
 	if err := os.MkdirAll(filepath.Join(b.ws.CntDir, b.spec.Image.Name), 0o755); err != nil {
 		t.Fatal(err)
@@ -306,7 +306,7 @@ func TestSquashfsProgressFollowsQuietMode(t *testing.T) {
 // a cancelled install leave nothing next to the installed images.
 func TestCondaInstallDoesNotPackOrTouchTarget(t *testing.T) {
 	withProvisionedLibexec(t)
-	b := newPackObject(t, catalog.TypeApp)
+	b := newPackObject(t, artifact.TypeApp)
 	b.buildType = BuildTypeConda
 	b.packageName, b.packageVersion = "samtools", "1.21"
 	b.tgt = targetFor(filepath.Join(t.TempDir(), "images", "samtools--1.21.sqf"))

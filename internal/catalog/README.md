@@ -37,20 +37,6 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - That makes a name mean the same thing for every caller, and stops it resolving differently on different machines.
 - It also means no caller needs to import back into `catalog` to supply them.
 
-## The header boundary
-
-- `ScanAnnotations` is the one place a `#KEY: value ## note` line is tokenized.
-- Recipes, user scripts and project scanning all read through it, so a key means the same everywhere and adding one happens once.
-- Position carries no meaning. There is no header block and nothing bounds the scan.
-- A recipe that writes a job script in a heredoc therefore also declares whatever that script declares. Nothing distinguishes the two without parsing shell.
-- A value ends at the first `##`, which starts a comment. A single `#` is part of the value, so a URL fragment or a colour code survives.
-- Helper scripts read their headers through it too, so one rule decides a value everywhere.
-- An upper-case key keeps prose out: `# note: rerun weekly` is a comment, `#DEP: star/2.7.11b` is a declaration.
-- Scheduler directives are not annotations. `#SBATCH --time=01:00:00` has colons in its value, so they are matched by prefix and handed to the scheduler packages verbatim.
-- `StripComments` is what the keys hash. It removes whole-line comments, so editing a comment moves neither key.
-- A trailing comment cannot be removed without parsing shell, since `echo "a # b"` and `${v#pre}` both carry a `#` that is not one.
-- Neither function touches what is stored or what runs. `/.cnt/recipe` is the original bytes.
-
 ## Validation
 
 - `Recipe.Validate` returns problems and never prints. Nothing here writes to a terminal.
@@ -125,7 +111,7 @@ Resolves a module name to a recipe, and a set of names to a build order.
 - A build's `#DEP:` is a `name/version`, never a path. A running script's may be either.
 - The asymmetry is the point. A running script mounts what it names and records nothing. A build's declaration becomes an edge in an artifact that must mean the same thing on another machine.
 - A path is neither resolvable there nor a key anything can regenerate.
-- `IsPathDep` is the single answer to "is this dependency a path", because this package owns the `Normalize` and `ParseDep` grammar.
+- `IsPathDep` is the single answer to "is this dependency a path", because `utils` owns the `NormalizeModule` and `ParseDep` grammar.
 - Its extension set must stay `utils.IsOverlay`'s, plus `.sif`.
 - A `.sif` is a root-only, literal-path reference, never an overlay. It never stacks and carries no build identity.
 
@@ -142,7 +128,7 @@ Resolves a module name to a recipe, and a set of names to a build order.
 
 ## Invariants worth not breaking
 
-- There is one spelling of a name. `Normalize` decides what a name is, and index keys use that form.
+- There is one spelling of a name. `utils.NormalizeModule` decides what a name is, and index keys use that form.
 - A second implementation elsewhere would make one string resolve two ways. The same holds for `CompareVersions` and constraint satisfaction.
 - The two backends must return identical entries for the same collection. A test builds one on disk, serves it over HTTP and diffs the results. That test is the contract.
 - Every format a source serves carries a required `schema_version`: `source.json` and both index files.

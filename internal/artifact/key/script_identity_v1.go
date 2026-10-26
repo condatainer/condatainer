@@ -3,8 +3,8 @@ package key
 import (
 	"fmt"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // deriveScriptIdentityV1 answers: "Which exact script build is this?"
@@ -19,10 +19,10 @@ import (
 //
 // An unkeyed or half-keyed dependency contributes its name plus "unrecorded". The artifact name and dependency equivalence keys never enter this scheme.
 func deriveScriptIdentityV1(a Artifact) (Value, Model, error) {
-	if a.Type != catalog.TypeApp && a.Type != catalog.TypeData {
+	if a.Type != artifact.TypeApp && a.Type != artifact.TypeData {
 		return Value{}, Model{}, fmt.Errorf("%s cannot derive type %s", ScriptIdentityV1, a.Type)
 	}
-	if a.Type != catalog.TypeData && len(a.Deps) > 0 {
+	if a.Type != artifact.TypeData && len(a.Deps) > 0 {
 		return Value{}, Model{}, fmt.Errorf("%s %s cannot have dependencies", ScriptIdentityV1, a.Type)
 	}
 

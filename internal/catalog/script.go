@@ -14,7 +14,7 @@ func GetDescriptionFromScript(scriptPath string) string {
 	if err != nil {
 		return ""
 	}
-	description, _ := Find(ScanAnnotations(text), "#DESC")
+	description, _ := utils.FindAnnotation(utils.ScanAnnotations(text), "#DESC")
 	return description
 }
 
@@ -32,13 +32,13 @@ func GetDependenciesFromScript(scriptPath string) ([]string, error) {
 
 	dependencies := []string{}
 	seen := make(map[string]bool)
-	for _, annotation := range Select(ScanAnnotations(text), "#DEP") {
-		if annotation.Value == "" {
+	for _, a := range utils.SelectAnnotations(utils.ScanAnnotations(text), "#DEP") {
+		if a.Value == "" {
 			continue
 		}
-		key := annotation.Value
+		key := a.Value
 		if !IsPathDep(key) {
-			key = Normalize(key)
+			key = utils.NormalizeModule(key)
 		}
 		if !seen[key] {
 			dependencies = append(dependencies, key)
@@ -60,8 +60,8 @@ func GetTypeFromScript(scriptPath string) (string, error) {
 		return "", fmt.Errorf("failed to open script: %w", err)
 	}
 
-	for _, annotation := range Select(ScanAnnotations(text), "#TYPE") {
-		value := strings.ToLower(annotation.Value)
+	for _, a := range utils.SelectAnnotations(utils.ScanAnnotations(text), "#TYPE") {
+		value := strings.ToLower(a.Value)
 		if value == "" {
 			continue
 		}
@@ -88,8 +88,8 @@ func GetTargetFromScript(scriptPath string) (string, error) {
 		return "", fmt.Errorf("failed to open script: %w", err)
 	}
 
-	for _, annotation := range Select(ScanAnnotations(text), "#TARGET") {
-		value := strings.TrimSpace(annotation.Value)
+	for _, a := range utils.SelectAnnotations(utils.ScanAnnotations(text), "#TARGET") {
+		value := strings.TrimSpace(a.Value)
 		if value == "" {
 			continue
 		}
@@ -100,7 +100,7 @@ func GetTargetFromScript(scriptPath string) (string, error) {
 		// neither and key.Role splits the name on "/". A stray slash would leave an
 		// empty component, which quietly stops a dependency matching and downgrades
 		// it to build history — the exact misclassification #TARGET: exists to stop.
-		name := strings.Trim(Normalize(value), "/")
+		name := strings.Trim(utils.NormalizeModule(value), "/")
 		if name == "" {
 			continue
 		}

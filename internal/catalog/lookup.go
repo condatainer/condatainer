@@ -22,7 +22,7 @@ type Match struct {
 // either an index key or a full target match, and not found is an outcome rather
 // than an error.
 func (c Catalog) Lookup(ctx context.Context, name string) (*Match, bool, error) {
-	name = Normalize(name)
+	name = utils.NormalizeModule(name)
 	if name == "" {
 		return nil, false, nil
 	}
@@ -62,7 +62,7 @@ func matchTemplates(name string, entries map[string]*Entry, s *Source) *Match {
 //   - It serves completion rather than creation: what could be typed next.
 //   - A name with no version axis has no answer — grch38/star-gencode expands over three placeholders and none of them is "the version" — so it comes back empty and a caller wanting the family uses Enumerate.
 func (c Catalog) Versions(ctx context.Context, name string) ([]string, error) {
-	name = strings.TrimSuffix(Normalize(name), "/")
+	name = strings.TrimSuffix(utils.NormalizeModule(name), "/")
 	if name == "" {
 		return nil, nil
 	}
@@ -123,7 +123,7 @@ func (c Catalog) Open(ctx context.Context, name string, vars map[string]string) 
 		return nil, err
 	}
 	if !found {
-		return nil, fmt.Errorf("%w: %s", ErrNotProvided, Normalize(name))
+		return nil, fmt.Errorf("%w: %s", ErrNotProvided, utils.NormalizeModule(name))
 	}
 
 	data, err := c.ReadPath(ctx, m.Source, m.Entry.Path)

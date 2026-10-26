@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -22,7 +23,7 @@ type Resolved struct {
 //   - It never touches Conda. have and distro are supplied, never derived, so it is reachable from any caller without an import cycle.
 //   - It tries raw as given first, and retries under distro/raw only once that comes up empty: using the name as typed is not a guess, a distro prefix is.
 func (c Catalog) SolveName(ctx context.Context, have Have, distro, raw string) (Resolved, bool, error) {
-	normalized := Normalize(raw)
+	normalized := utils.NormalizeModule(raw)
 	if normalized == "" || strings.Contains(normalized, "::") {
 		return Resolved{}, false, nil
 	}
@@ -41,9 +42,9 @@ func (c Catalog) SolveName(ctx context.Context, have Have, distro, raw string) (
 // name has at most one slash, an os name two). Data never reaches an auto-fill step:
 // past the exact match, a name with more segments than either pool admits is not found.
 func (c Catalog) solveGiven(ctx context.Context, have Have, name string) (Resolved, bool, error) {
-	if dep, err := ParseDep(name); err == nil && have != nil && dep.Version != "" && slices.Contains(have(dep.Name), dep.Version) {
+	if dep, err := utils.ParseDep(name); err == nil && have != nil && dep.Version != "" && slices.Contains(have(dep.Name), dep.Version) {
 		res, _, err := c.lookupExact(ctx, name)
-		res.Name, res.Installed = Normalize(name), dep.Version
+		res.Name, res.Installed = utils.NormalizeModule(name), dep.Version
 		return res, true, err
 	}
 	if res, found, err := c.lookupExact(ctx, name); found || err != nil {
@@ -77,7 +78,7 @@ func (c Catalog) lookupExact(ctx context.Context, name string) (Resolved, bool, 
 	if !found {
 		return Resolved{}, false, nil
 	}
-	return Resolved{Name: Normalize(name), Entry: m.Entry, Source: m.Source, Vars: m.Vars}, true, nil
+	return Resolved{Name: utils.NormalizeModule(name), Entry: m.Entry, Source: m.Source, Vars: m.Vars}, true, nil
 }
 
 // solveApp resolves name as an app, bare ("openjdk") or name/version ("openjdk/17"),
@@ -91,7 +92,7 @@ func (c Catalog) lookupExact(ctx context.Context, name string) (Resolved, bool, 
 //   - Picking the newest is safe: an app's candidates are the same tool at different
 //     times, never a different tool sharing a name prefix.
 func (c Catalog) solveApp(ctx context.Context, have Have, name string) (Resolved, bool, error) {
-	dep, err := ParseDep(name)
+	dep, err := utils.ParseDep(name)
 	if err != nil {
 		return Resolved{}, false, nil
 	}
@@ -101,7 +102,7 @@ func (c Catalog) solveApp(ctx context.Context, have Have, name string) (Resolved
 	if version == "" {
 		fromCatalog = true
 		for key, e := range c.Entries(ctx) {
-			if e.Type != TypeApp {
+			if e.Type != artifact.TypeApp {
 				continue
 			}
 			if rest, ok := strings.CutPrefix(key, dep.Name+"/"); ok && !strings.Contains(rest, "/") {
@@ -149,7 +150,7 @@ func (c Catalog) solveOS(ctx context.Context, have Have, name string) (Resolved,
 	if len(parts) == 3 {
 		versionQuery = parts[2]
 	}
-	dep := Dep{Name: base, Version: versionQuery}
+	dep := utils.Dep{Name: base, Version: versionQuery}
 
 	installed := installedVersion(have, dep)
 	version, fromCatalog := installed, false
@@ -181,7 +182,7 @@ func (c Catalog) solveOS(ctx context.Context, have Have, name string) (Resolved,
 
 // pickNewest returns candidate in place of best when it satisfies dep and
 // outranks whatever best already holds.
-func pickNewest(dep Dep, best, candidate string) string {
+func pickNewest(dep utils.Dep, best, candidate string) string {
 	if dep.Satisfies(candidate) && (best == "" || utils.CompareVersions(candidate, best) > 0) {
 		return candidate
 	}

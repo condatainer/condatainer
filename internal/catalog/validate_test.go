@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/artifact"
 )
 
 // Only data may declare #DEP:. An app is prebuilt and an OS is self-contained.
@@ -165,31 +167,31 @@ func TestHasComponents(t *testing.T) {
 func TestValidateDeps(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		typ     Type
+		typ     artifact.Type
 		deps    []string
 		wantErr []string
 	}{
-		{name: "DataWithNamedDeps", typ: TypeData, deps: []string{"samtools/1.21"}},
-		{name: "NoDepsIsAlwaysFine", typ: TypeApp},
+		{name: "DataWithNamedDeps", typ: artifact.TypeData, deps: []string{"samtools/1.21"}},
+		{name: "NoDepsIsAlwaysFine", typ: artifact.TypeApp},
 		{
-			name: "AppMayNotDependOnAnything", typ: TypeApp, deps: []string{"samtools/1.21"},
+			name: "AppMayNotDependOnAnything", typ: artifact.TypeApp, deps: []string{"samtools/1.21"},
 			wantErr: []string{"only data has build dependencies"},
 		},
 		{
-			name: "OSMayNotDependOnAnything", typ: TypeOS, deps: []string{"samtools/1.21"},
+			name: "OSMayNotDependOnAnything", typ: artifact.TypeOS, deps: []string{"samtools/1.21"},
 			wantErr: []string{"only data has build dependencies"},
 		},
 		{
-			name: "DataMayNotDependOnAPath", typ: TypeData, deps: []string{"overlays/tool.sqf"},
+			name: "DataMayNotDependOnAPath", typ: artifact.TypeData, deps: []string{"overlays/tool.sqf"},
 			wantErr: []string{"not an overlay path"},
 		},
 		{
-			name: "AWritableOverlayIsAPathToo", typ: TypeData, deps: []string{"env.img"},
+			name: "AWritableOverlayIsAPathToo", typ: artifact.TypeData, deps: []string{"env.img"},
 			wantErr: []string{"not an overlay path"},
 		},
 		{
 			// Both rules are reported, so one fix does not reveal the other.
-			name: "AppWithAPathHearsBoth", typ: TypeApp, deps: []string{"env.img"},
+			name: "AppWithAPathHearsBoth", typ: artifact.TypeApp, deps: []string{"env.img"},
 			wantErr: []string{"only data has build dependencies", "not an overlay path"},
 		},
 	} {

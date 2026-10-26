@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/artifact"
 )
 
 // A recipe may restate the type it already has, but a declaration that disagrees
@@ -12,16 +14,16 @@ func TestValidateDeclaredType(t *testing.T) {
 	cases := []struct {
 		name     string
 		declared string
-		typ      Type
+		typ      artifact.Type
 		wantErr  string
 	}{
-		{"agrees/app", "app", TypeApp, ""},
-		{"agrees/data", "data", TypeData, ""},
-		{"a def restating its own type", "os", TypeOS, ""},
-		{"nothing declared", "", TypeApp, ""},
-		{"env is never declarable", "env", TypeApp, "overlay freeze"},
-		{"disagrees", "data", TypeApp, "declares #TYPE:data but is app"},
-		{"nonsense", "container", TypeApp, "declares #TYPE:container"},
+		{"agrees/app", "app", artifact.TypeApp, ""},
+		{"agrees/data", "data", artifact.TypeData, ""},
+		{"a def restating its own type", "os", artifact.TypeOS, ""},
+		{"nothing declared", "", artifact.TypeApp, ""},
+		{"env is never declarable", "env", artifact.TypeApp, "overlay freeze"},
+		{"disagrees", "data", artifact.TypeApp, "declares #TYPE:data but is app"},
+		{"nonsense", "container", artifact.TypeApp, "declares #TYPE:container"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

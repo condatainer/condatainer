@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/image/tool"
 )
 
@@ -25,12 +25,12 @@ const FileName = "manifest.json"
 // path, so it is free to grow. There is no runtime block: that lives in
 // runtime.json and nowhere else.
 type Manifest struct {
-	SchemaVersion int          `json:"schema_version"`
-	Name          string       `json:"name"`
-	Type          catalog.Type `json:"type"`
-	BuildType     BuildType    `json:"build_type"`
-	Description   string       `json:"description,omitempty"`
-	URL           string       `json:"url,omitempty"`
+	SchemaVersion int           `json:"schema_version"`
+	Name          string        `json:"name"`
+	Type          artifact.Type `json:"type"`
+	BuildType     BuildType     `json:"build_type"`
+	Description   string        `json:"description,omitempty"`
+	URL           string        `json:"url,omitempty"`
 	// License is the recipe's #LICENSE:, an SPDX expression kept verbatim and
 	// never parsed. It is published as org.opencontainers.image.licenses.
 	License string `json:"license,omitempty"`
@@ -108,8 +108,8 @@ func (k KeyRef) Empty() bool { return k.Scheme == "" && k.SHA256 == "" }
 // list is adjacency only: following each manifest's own through the capsule
 // reconstructs the graph without a second representation of it.
 type Dependency struct {
-	Name string       `json:"name"`
-	Type catalog.Type `json:"type"`
+	Name string        `json:"name"`
+	Type artifact.Type `json:"type"`
 	// Identity and Equiv are complete keys, scheme and SHA-256 both, so an edge
 	// is held to the same contract as the artifact it points at.
 	Identity KeyRef `json:"identity,omitzero"`
@@ -261,7 +261,7 @@ func (m *Manifest) Normalize() {
 	}
 }
 
-// BuildType is how an artifact was produced, beside catalog.Type, which is what
+// BuildType is how an artifact was produced, beside artifact.Type, which is what
 // the artifact is. internal/build aliases this type and its constants.
 type BuildType string
 
@@ -273,7 +273,7 @@ const (
 	// BuildTypeDef is an Apptainer definition file.
 	BuildTypeDef BuildType = "def"
 	// BuildTypeSnapshot is a writable overlay packed by `overlay freeze`.
-	// ValidateManifest requires it to accompany catalog.TypeEnv and the name
+	// ValidateManifest requires it to accompany artifact.TypeEnv and the name
 	// EnvName.
 	BuildTypeSnapshot BuildType = "snapshot"
 )
@@ -310,7 +310,7 @@ func ValidateManifest(m Manifest) error {
 	}
 
 	switch m.Type {
-	case catalog.TypeOS, catalog.TypeApp, catalog.TypeData, catalog.TypeEnv:
+	case artifact.TypeOS, artifact.TypeApp, artifact.TypeData, artifact.TypeEnv:
 	default:
 		return fmt.Errorf("%w: unknown type %q", ErrInvalid, m.Type)
 	}
@@ -325,9 +325,9 @@ func ValidateManifest(m Manifest) error {
 	// read correctly by whichever rule looked at the field it had — the publishing
 	// rule branches on the build type, the mount rules on the type — so the two
 	// must not be able to disagree.
-	if (m.BuildType == BuildTypeSnapshot) != (m.Type == catalog.TypeEnv) {
+	if (m.BuildType == BuildTypeSnapshot) != (m.Type == artifact.TypeEnv) {
 		return fmt.Errorf("%w: %s is type %q with build type %q; a frozen environment is %q and %q, and nothing else is either",
-			ErrInvalid, m.Name, m.Type, m.BuildType, catalog.TypeEnv, BuildTypeSnapshot)
+			ErrInvalid, m.Name, m.Type, m.BuildType, artifact.TypeEnv, BuildTypeSnapshot)
 	}
 	if m.BuildType == BuildTypeSnapshot && m.Name != EnvName {
 		return fmt.Errorf("%w: a frozen environment is always called %q, not %q",

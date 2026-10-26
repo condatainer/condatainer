@@ -2,6 +2,8 @@ package helper
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/scheduler"
@@ -91,14 +93,18 @@ func ValidateHelperParamConflicts(params []HelperParam) error {
 	return nil
 }
 
-// PrintHelperUsage prints the combined --help text for a helper.
-// versions is the map from ParseHelperScriptMeta().ParamValues; pass nil if unavailable.
-func PrintHelperUsage(scriptName string, params []HelperParam, spec *scheduler.ResourceSpec, versions map[string][]string) {
-	cpus := 0
-	mem := ""
-	timeStr := ""
+// PrintRunFlags prints the flags `helper run` accepts after the helper name, in one list for every help screen.
+//   - spec fills in the defaults of a helper. Nil prints the flags without them.
+func PrintRunFlags(w io.Writer, spec *scheduler.ResourceSpec) {
+	def := func(value string) string {
+		if spec == nil {
+			return ""
+		}
+		return fmt.Sprintf("   (default: %s)", value)
+	}
+	cpus, mem, timeStr := "0", "", ""
 	if spec != nil {
-		cpus = spec.CpusPerTask
+		cpus = fmt.Sprint(spec.CpusPerTask)
 		if mb := spec.GetMemPerNodeMB(); mb > 0 {
 			mem = utils.FormatMemoryMB(mb)
 		}
@@ -106,21 +112,32 @@ func PrintHelperUsage(scriptName string, params []HelperParam, spec *scheduler.R
 			timeStr = utils.FormatDuration(spec.Time)
 		}
 	}
-	fmt.Printf("Usage: condatainer helper %s [flags]\n\n", scriptName)
-	fmt.Println("Resource flags:")
-	fmt.Printf("  -c, --cpu         CPUs per job   (default: %d)\n", cpus)
-	fmt.Printf("  -m, --mem         Memory         (default: %s)\n", mem)
-	fmt.Printf("  -t, --time        Walltime       (default: %s)\n", timeStr)
-	fmt.Println("  -g, --gpu         GPU spec (e.g. a100:1)")
-	fmt.Println("  -e, --env         Writable overlay (.img)")
-	fmt.Println("  -o, --overlay     Additional read-only overlay (repeatable)")
-	fmt.Println("  -w, --cwd <path>  Change working directory (e.g. -w .)")
-	fmt.Println("  -A, --account     Billing/allocation account")
-	fmt.Println("  -p, --partition   Partition/queue")
-	fmt.Println("      --exclude-nodes <a,b>  Nodes the job must not run on (empty for none)")
-	fmt.Println("      --new         Skip reuse prompt, force new instance")
+	fmt.Fprintln(w, "Run Flags:")
+	fmt.Fprintf(w, "  -c, --cpu         CPUs per job%s\n", def(cpus))
+	fmt.Fprintf(w, "  -m, --mem         Memory%s\n", def(mem))
+	fmt.Fprintf(w, "  -t, --time        Walltime%s\n", def(timeStr))
+	fmt.Fprintln(w, "  -g, --gpu         GPU spec (e.g. a100:1)")
+	fmt.Fprintln(w, "  -e, --env         Writable overlay (.img)")
+	fmt.Fprintln(w, "  -o, --overlay     Additional read-only overlay (repeatable)")
+	fmt.Fprintln(w, "  -w, --cwd <path>  Change working directory (e.g. -w .)")
+	fmt.Fprintln(w, "  -A, --account     Billing/allocation account")
+	fmt.Fprintln(w, "  -p, --partition   Partition/queue")
+	fmt.Fprintln(w, "      --exclude-nodes <a,b>  Nodes the job must not run on (empty for none)")
+	fmt.Fprintln(w, "      --new         Skip reuse prompt, force new instance")
+	fmt.Fprintln(w, "      --no-project  Ignore the project lock when resolving the helper's overlays")
+	fmt.Fprintln(w, "      --wait        Stay attached until the app is ready")
+}
+
+// PrintHelperUsage prints the combined --help text for a helper.
+// versions is the map from ParseHelperScriptMeta().ParamValues; pass nil if unavailable.
+func PrintHelperUsage(scriptName string, params []HelperParam, spec *scheduler.ResourceSpec, versions map[string][]string) {
+	fmt.Printf("Usage: condatainer helper run %s [flags]\n\n", scriptName)
+	if spec == nil {
+		spec = &scheduler.ResourceSpec{}
+	}
+	PrintRunFlags(os.Stdout, spec)
 	if len(params) > 0 {
-		fmt.Println("\nHelper-specific flags:")
+		fmt.Println("\nHelper Flags:")
 		for _, p := range params {
 			flags := ""
 			if p.ShortFlag != "" && p.LongFlag != "" {
@@ -147,5 +164,5 @@ func PrintHelperUsage(scriptName string, params []HelperParam, spec *scheduler.R
 			}
 		}
 	}
-	fmt.Printf("\nSaved defaults: condatainer helper %s config [show | set KEY VALUE]\n", scriptName)
+	fmt.Printf("\nSaved defaults: condatainer helper config %s [list | set KEY VALUE]\n", scriptName)
 }

@@ -266,7 +266,7 @@ async function loadHelpers(force) {
 
   _helpersLoading = (async () => {
     try {
-      const r = await fetch('/api/helpers/available' + (force ? '?refresh=1' : ''));
+      const r = await fetch('/api/helpers/installed' + (force ? '?refresh=1' : ''));
       allHelpers = (await r.json()) || [];
       _helpersLoaded = true;
     } catch { allHelpers = []; }
@@ -308,32 +308,6 @@ async function refreshStartHelpers() {
       btn.disabled = false;
       btn.innerHTML = old;
     }
-  }
-}
-
-async function updateHelperScripts() {
-  const btn = gid('start-update-btn');
-  if (btn) btn.disabled = true;
-  _opRunning = true;
-  try {
-    const r = await fetch('/api/helpers/update', { method: 'POST' });
-    if (!r.ok) {
-      const msg = await r.text();
-      showProgressError('Updating helpers', msg || String(r.status));
-      if (btn) btn.disabled = false;
-      _opRunning = false;
-      return;
-    }
-    const { id } = await r.json();
-    openLogProgress('Updating helpers', id, async msg => {
-      if (btn) btn.disabled = false;
-      _opRunning = false;
-      if (msg.ok) await refreshStartHelpers();
-    });
-  } catch (e) {
-    if (btn) btn.disabled = false;
-    _opRunning = false;
-    showProgressError('Updating helpers', String(e));
   }
 }
 
@@ -630,8 +604,9 @@ function renderHelperList(filter) {
     ...helpers.filter(h => !bookmarked.has(h.name)),
   ];
   if (!helpers.length) {
-    list.innerHTML = '<div class="modal-empty">' +
-      (q ? 'No matches.' : 'No helpers found.') + '</div>';
+    list.innerHTML = q
+      ? '<div class="modal-empty">No matches.</div>'
+      : '<div class="modal-empty">No helpers installed. <button class="btn btn-sm" onclick="openHelperManager()">Add helpers</button></div>';
     return;
   }
   list.innerHTML = helpers.map(h => {

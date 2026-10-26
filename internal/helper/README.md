@@ -19,6 +19,32 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
   - They are applied once, in `buildHelperScriptSpecs`.
   - There is no script-header tier. `#NCPU:` and `#MEM:` describe what the workload needs. Account and partition describe the user's own cluster access, which a script cannot know.
 
+## Source index
+
+- An HTTP source lists its helpers in `index/helpers.json`. A directory source has no index, and its helpers are read from their files.
+- Each entry carries `sha256` of the script bytes. A client then tells whether an added copy is current without downloading it.
+- An entry with no `sha256` makes that source's helper index unreadable. A half-read index would report every helper as changed.
+- `description` is optional. A script with no `#DESC:` is searched by name only.
+
+## Added helpers
+
+- A hidden `.installed.json` in each helper-scripts directory records what `add` put there: the source and the hash of the file as added.
+  - A script with no entry is the user's own. An entry whose file is gone is ignored.
+  - `schema_version` is required and matched exactly. A newer one says to update CondaTainer.
+  - A change rewrites the file under a lock, so the CLI and the dashboard changing it at once keep both entries. The lock wait is bounded, since the holder may be on another host.
+- `add` refuses a name already added and a file it did not install, and `--force` replaces either and records it. A hand-copied file equal to the source's copy is only recorded.
+- `--force` is on `add` only. It is the one place a local edit is overwritten, and it is given per name.
+- A download must match the index hash. A mismatch means the index is stale, and nothing is written.
+- `upgrade` replaces a helper in the directory where it was added, and keeps and reports an edited file, a dropped one, and one in a directory the user cannot write.
+- `remove` deletes only what `add` recorded, and lists it and asks first.
+- One name failing never stops the rest. The errors are joined.
+- A copy hidden by a nearer directory is noted by `add` and `upgrade`. `remove` names the copy it uncovers.
+
+## Script copy
+
+- A run executes a copy of the script in its state dir, made at submission. Changing the helper-scripts directory then cannot interrupt a run.
+- The first line must be an allowed interpreter line, and the run executes that interpreter on the copy.
+
 ## Binds
 
 - A `#BIND:` value reaches the wrapper's shell single-quoted, as one word. A space, a quote or a command substitution in it, or in a `#PARAM:` default, is text and never runs.
@@ -53,7 +79,7 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 
 ## Waiting
 
-- `condatainer helper <name>` returns once the job is submitted.
+- `condatainer helper run <name>` returns once the job is submitted.
 - A hidden `_helper_watch` process keeps printing messages and the access URL until `ready`.
 - It writes straight to a terminal the shell may be waiting on, so each batch starts on a new line.
 - Without a terminal, or with `--wait`, the command waits itself. Ctrl+C there detaches and never stops the helper.

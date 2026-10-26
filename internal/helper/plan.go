@@ -256,7 +256,7 @@ func ExecutePlan(ctx context.Context, plan *RunPlan) (string, error) {
 	}
 
 	wrapperPath, err := generateWrapper(
-		helperID, plan.Options.ScriptName, cwd, filepath.Dir(plan.Options.ScriptPath), stateDir,
+		helperID, plan.Options.ScriptName, cwd, plan.Options.ScriptPath, stateDir,
 		plan.Options.Account, plan.Options.Partition, plan.Options.ExcludeNodes,
 		plan.Spec.Time, plan.Params, plan.Spec, plan.Scheduler, plan.ContainerCmd,
 	)

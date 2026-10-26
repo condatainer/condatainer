@@ -28,7 +28,7 @@ import (
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
-const helperAvailableCacheTTL = 30 * time.Second
+const helperInstalledCacheTTL = 30 * time.Second
 
 // flushWriter wraps an http.ResponseWriter and flushes after every Write call.
 type flushWriter struct {
@@ -42,7 +42,7 @@ func (fw flushWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-type helperAvailableEntry struct {
+type helperInstalledEntry struct {
 	Name           string               `json:"name"`
 	Description    string               `json:"description,omitempty"`
 	EnvRequired    bool                 `json:"env_required,omitempty"`
@@ -55,20 +55,20 @@ type helperAvailableEntry struct {
 }
 
 var (
-	helperAvailableCacheMu      sync.Mutex
-	helperAvailableCacheEntries []helperAvailableEntry
-	helperAvailableCacheAt      time.Time
+	helperInstalledCacheMu      sync.Mutex
+	helperInstalledCacheEntries []helperInstalledEntry
+	helperInstalledCacheAt      time.Time
 )
 
-func cachedAvailableHelpers() []helperAvailableEntry {
-	helperAvailableCacheMu.Lock()
-	defer helperAvailableCacheMu.Unlock()
-	if helperAvailableCacheEntries != nil && time.Since(helperAvailableCacheAt) < helperAvailableCacheTTL {
-		return helperAvailableCacheEntries
+func cachedInstalledHelpers() []helperInstalledEntry {
+	helperInstalledCacheMu.Lock()
+	defer helperInstalledCacheMu.Unlock()
+	if helperInstalledCacheEntries != nil && time.Since(helperInstalledCacheAt) < helperInstalledCacheTTL {
+		return helperInstalledCacheEntries
 	}
 
 	seen := make(map[string]bool)
-	var scripts []helperAvailableEntry
+	var scripts []helperInstalledEntry
 
 	for _, dir := range config.GetHelperScriptSearchPaths() {
 		dirEntries, err := os.ReadDir(dir)
@@ -93,7 +93,7 @@ func cachedAvailableHelpers() []helperAvailableEntry {
 			}
 			meta, _ := helper.ParseHelperScriptMeta(scriptPath)
 			params, _ := helper.ParseHelperParams(scriptPath)
-			ent := helperAvailableEntry{
+			ent := helperInstalledEntry{
 				Name:           name,
 				Description:    description,
 				EnvRequired:    meta.EnvRequired,
@@ -110,60 +110,26 @@ func cachedAvailableHelpers() []helperAvailableEntry {
 		}
 	}
 
-	helperAvailableCacheEntries = scripts
-	helperAvailableCacheAt = time.Now()
+	helperInstalledCacheEntries = scripts
+	helperInstalledCacheAt = time.Now()
 	return scripts
 }
 
-func invalidateHelperAvailableCache() {
-	helperAvailableCacheMu.Lock()
-	helperAvailableCacheEntries = nil
-	helperAvailableCacheAt = time.Time{}
-	helperAvailableCacheMu.Unlock()
+func invalidateHelperInstalledCache() {
+	helperInstalledCacheMu.Lock()
+	helperInstalledCacheEntries = nil
+	helperInstalledCacheAt = time.Time{}
+	helperInstalledCacheMu.Unlock()
 }
 
-// handleHelpersAvailable serves GET /api/helpers/available
-func (s *srv) handleHelpersAvailable(w http.ResponseWriter, r *http.Request) {
+// handleHelpersInstalled serves GET /api/helpers/installed: the helpers that can be started.
+func (s *srv) handleHelpersInstalled(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("refresh") == "1" {
-		invalidateHelperAvailableCache()
+		invalidateHelperInstalledCache()
 	}
-	scripts := cachedAvailableHelpers()
+	scripts := cachedInstalledHelpers()
 
 	writeJSON(w, scripts)
-}
-
-// handleHelpersUpdate serves POST /api/helpers/update — syncs helper scripts from remote sources.
-func (s *srv) handleHelpersUpdate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
-	type updateReq struct {
-		Name string `json:"name"`
-	}
-	var req updateReq
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&req)
-	}
-
-	taskID := fmt.Sprintf("helpers-update-%d", time.Now().UnixNano())
-	broker := newSSEBroker()
-	ctx, cancel := context.WithCancel(s.ctx)
-	s.tasks.Store(taskID, &taskEntry{broker: broker, cancel: cancel})
-	writeJSON(w, map[string]string{"id": taskID})
-
-	bw := &brokerWriter{broker}
-	go func() {
-		defer cancel()
-		defer s.scheduleTaskCleanup(taskID)
-
-		if err := helper.UpdateRemoteScripts(ctx, req.Name, "", false, bw); err != nil {
-			broadcastResult(broker, ctx, err)
-			return
-		}
-		invalidateHelperAvailableCache()
-		broadcastDone(broker, nil)
-	}()
 }
 
 // handleHelpersSub routes /api/helpers/{id-or-name}/{action}.

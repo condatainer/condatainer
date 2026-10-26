@@ -5,7 +5,6 @@ import (
 
 	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // deriveScriptEquivV1 answers: "Can this script-built artifact substitute for the requested artifact?"
@@ -76,7 +75,7 @@ func Role(name string, dep Dep) string {
 	switch {
 	case dep.Type == artifact.TypeData:
 		return meta.RoleData
-	case catalog.HasComponents(name, dep.Name):
+	case hasComponents(name, dep.Name):
 		return meta.RoleApp
 	default:
 		return meta.RoleHistory

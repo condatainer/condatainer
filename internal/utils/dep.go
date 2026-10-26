@@ -2,6 +2,8 @@ package utils
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 )
 
@@ -105,4 +107,43 @@ func versionHasPrefix(version, prefix string) bool {
 		}
 	}
 	return true
+}
+
+// IsPathDep reports whether a #DEP: value names an overlay file rather than a module name/version.
+//   - It decides which grammar a dependency is read with: NormalizeModule and ParseDep apply to names only, and a second answer elsewhere would let one string be a name in one place and a path in another.
+//   - The extensions are IsOverlay's plus .sif.
+func IsPathDep(value string) bool {
+	value = strings.TrimSpace(value)
+	return IsOverlay(value) || IsSif(value)
+}
+
+// ScriptDependencies returns the dependencies a script's #DEP: annotations declare, deduplicated.
+//   - A name is normalized, and a path is kept as written.
+//   - An annotation counts wherever it is written.
+//   - Only #DEP: counts. A `module load` line names the site's module tree, not an artifact.
+func ScriptDependencies(scriptPath string) ([]string, error) {
+	text, err := os.ReadFile(scriptPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("script not found at %s", scriptPath)
+		}
+		return nil, fmt.Errorf("failed to open script: %w", err)
+	}
+
+	dependencies := []string{}
+	seen := make(map[string]bool)
+	for _, a := range SelectAnnotations(ScanAnnotations(text), "#DEP") {
+		if a.Value == "" {
+			continue
+		}
+		key := a.Value
+		if !IsPathDep(key) {
+			key = NormalizeModule(key)
+		}
+		if !seen[key] {
+			dependencies = append(dependencies, key)
+			seen[key] = true
+		}
+	}
+	return dependencies, nil
 }

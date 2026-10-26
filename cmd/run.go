@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/image/sif"
@@ -444,7 +443,7 @@ func processEmbeddedArgs(scriptPath string) error {
 // resolveDeps parses #DEP dependencies, checks installed overlays, and returns resolved paths.
 // Returns errRunAborted (message already printed) if any dependencies are missing.
 func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (overlays []string, err error) {
-	deps, err := catalog.GetDependenciesFromScript(contentScript)
+	deps, err := utils.ScriptDependencies(contentScript)
 	if err != nil {
 		utils.PrintError("Failed to parse dependencies: %v", err)
 		return nil, errRunAborted
@@ -667,7 +666,7 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 		}
 	}
 
-	deps, err := catalog.GetDependenciesFromScript(contentScript)
+	deps, err := utils.ScriptDependencies(contentScript)
 	if projectRun != nil {
 		printProjectDependencies(baseImg, projectRun)
 	} else if err != nil {

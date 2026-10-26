@@ -1,27 +1,20 @@
-package catalog
+package build
 
 import (
 	"context"
 	"fmt"
 	"runtime"
-	"slices"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
-// Have reports the versions of a name a caller already has: an image directory
-// for one tool, a modulefile tree for another.
-//
-// It answers with versions, not with a verdict. Deciding whether 1.23.1>=1.10
-// is satisfied is the resolver's, so that both callers apply one rule.
-type Have func(name string) []string
-
-// Node is one module in a build plan.
-type Node struct {
+// depNode is one module in a dependency plan.
+type depNode struct {
 	Dep    utils.Dep
-	Entry  *Entry // nil when no source provides it
-	Source *Source
+	Entry  *catalog.Entry // nil when no source provides it
+	Source *catalog.Source
 	Vars   map[string]string // set when the name came from a template
 
 	// Installed is the version Have reported, when one satisfies the dep.
@@ -30,7 +23,7 @@ type Node struct {
 
 // Name is the module path this node resolves to. The constraint is not part of
 // it: ">=1.16" selected the version, it does not name the module.
-func (n Node) Name() string {
+func (n depNode) Name() string {
 	if n.Entry != nil && !n.Entry.IsTemplate {
 		return n.Entry.Name
 	}
@@ -40,17 +33,17 @@ func (n Node) Name() string {
 	return n.Dep.Name + "/" + n.Dep.Version
 }
 
-// Plan is a build order and the subset of it still to act on.
-type Plan struct {
-	Order   []Node // topological, dependencies first
-	Missing []Node // the nodes the caller must build, pull or hand to a fallback
+// depPlan is a build order and the subset of it still to act on.
+type depPlan struct {
+	Order   []depNode // topological, dependencies first
+	Missing []depNode // the nodes to build, pull or hand to a fallback
 }
 
-// Resolve walks the dependency graph of roots and returns it in build order.
+// resolveDeps walks the dependency graph of roots and returns it in build order.
 //   - It runs over Entry, so a whole tree is computed from the index without fetching a recipe.
-//   - Nodes carry their Type, which is how a caller filters what it cannot build, and a node no source provides carries a nil Entry rather than failing the walk — that is the normal path for a conda package.
-func (c Catalog) Resolve(ctx context.Context, roots []string, have Have) (*Plan, error) {
-	r := &resolver{cat: c, have: have, seen: map[string]bool{}, onStack: map[string]bool{}}
+//   - A node no source provides carries a nil Entry rather than failing the walk — that is the normal path for a conda package.
+func resolveDeps(ctx context.Context, cat catalog.Catalog, roots []string, have catalog.Have) (*depPlan, error) {
+	r := &resolver{cat: cat, have: have, seen: map[string]bool{}, onStack: map[string]bool{}}
 	for _, root := range roots {
 		dep, err := utils.ParseDep(root)
 		if err != nil {
@@ -61,7 +54,7 @@ func (c Catalog) Resolve(ctx context.Context, roots []string, have Have) (*Plan,
 		}
 	}
 
-	plan := &Plan{Order: r.order}
+	plan := &depPlan{Order: r.order}
 	for _, n := range r.order {
 		if n.Installed == "" {
 			plan.Missing = append(plan.Missing, n)
@@ -71,11 +64,11 @@ func (c Catalog) Resolve(ctx context.Context, roots []string, have Have) (*Plan,
 }
 
 type resolver struct {
-	cat     Catalog
-	have    Have
+	cat     catalog.Catalog
+	have    catalog.Have
 	seen    map[string]bool
 	onStack map[string]bool
-	order   []Node
+	order   []depNode
 	stack   []string
 }
 
@@ -84,7 +77,7 @@ type resolver struct {
 // substituted before it has a name at all. parent is the name that depended on
 // this one, empty for a root.
 func (r *resolver) visit(ctx context.Context, dep utils.Dep, vars map[string]string, parent string) error {
-	name := replaceVars(dep.String(), vars)
+	name := catalog.ReplaceVars(dep.String(), vars)
 	dep, err := utils.ParseDep(name)
 	if err != nil {
 		return err
@@ -92,7 +85,7 @@ func (r *resolver) visit(ctx context.Context, dep utils.Dep, vars map[string]str
 	key := dep.Name + "/" + dep.Version
 
 	if r.onStack[key] {
-		return fmt.Errorf("catalog: dependency cycle: %s", strings.Join(append(r.stack, key), " -> "))
+		return fmt.Errorf("dependency cycle: %s", strings.Join(append(r.stack, key), " -> "))
 	}
 	if r.seen[key] {
 		return nil // diamond: already placed, and placed before its dependents
@@ -135,10 +128,10 @@ func (r *resolver) visit(ctx context.Context, dep utils.Dep, vars map[string]str
 // resolveOne picks the version a dep gets and finds what provides it.
 //   - The preferred version wins when it resolves.
 //   - Otherwise the newest installed in range, so a bare #DEP: does not rebuild the moment upstream moves; then the newest available; then nothing provides it, and the caller's fallback picks its own.
-func (r *resolver) resolveOne(ctx context.Context, dep utils.Dep) (Node, error) {
-	node := Node{Dep: dep}
+func (r *resolver) resolveOne(ctx context.Context, dep utils.Dep) (depNode, error) {
+	node := depNode{Dep: dep}
 
-	if v := r.installed(dep); v != "" {
+	if v := r.have.Newest(dep); v != "" {
 		node.Installed = v
 		if dep.Version == "" {
 			node.Dep.Version = v
@@ -162,28 +155,6 @@ func (r *resolver) resolveOne(ctx context.Context, dep utils.Dep) (Node, error) 
 		node.Entry, node.Source, node.Vars = m.Entry, m.Source, m.Vars
 	}
 	return node, nil
-}
-
-// installed returns the newest version the caller has that the dep admits.
-func (r *resolver) installed(dep utils.Dep) string {
-	return installedVersion(r.have, dep)
-}
-
-// installedVersion returns the newest version have reports for dep.Name that
-// dep admits — shared by resolveOne's graph walk and SolveName's own attempt
-// order, so "installed beats newer" is one rule, not two.
-func installedVersion(have Have, dep utils.Dep) string {
-	if have == nil {
-		return ""
-	}
-	candidates := slices.Clone(have(dep.Name))
-	slices.SortStableFunc(candidates, func(a, b string) int { return utils.CompareVersions(b, a) })
-	for _, v := range candidates {
-		if dep.Satisfies(v) {
-			return v
-		}
-	}
-	return ""
 }
 
 // newestAvailable returns the newest version the catalog offers in range.

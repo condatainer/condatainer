@@ -13,7 +13,6 @@ import (
 	"time"
 
 	ui "github.com/condatainer/condatainer/cmd/internal/ui"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/helper"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
@@ -412,7 +411,7 @@ func runHelper(cmd *cobra.Command, args []string) error {
 				name := entry.Name()
 				if !entry.IsDir() && !strings.HasPrefix(name, ".") && !seen[name] {
 					seen[name] = true
-					description := catalog.GetDescriptionFromScript(filepath.Join(dir, name))
+					description := helper.ScriptDescription(filepath.Join(dir, name))
 					scripts = append(scripts, scriptInfo{name, description})
 					if len(name) > maxNameLen {
 						maxNameLen = len(name)

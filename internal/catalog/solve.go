@@ -9,6 +9,28 @@ import (
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
+// Have reports the versions of a name a caller already has: an image directory
+// for one tool, a modulefile tree for another.
+//
+// It answers with versions, not with a verdict. Newest decides whether
+// 1.23.1>=1.10 is satisfied, so that every caller applies one rule.
+type Have func(name string) []string
+
+// Newest returns the newest version h reports for dep.Name that dep admits.
+func (h Have) Newest(dep utils.Dep) string {
+	if h == nil {
+		return ""
+	}
+	candidates := slices.Clone(h(dep.Name))
+	slices.SortStableFunc(candidates, func(a, b string) int { return utils.CompareVersions(b, a) })
+	for _, v := range candidates {
+		if dep.Satisfies(v) {
+			return v
+		}
+	}
+	return ""
+}
+
 // Resolved is what SolveName found for a raw name: the concrete name it
 // means, what the catalog offers for it, and what the caller already has.
 type Resolved struct {
@@ -97,7 +119,7 @@ func (c Catalog) solveApp(ctx context.Context, have Have, name string) (Resolved
 		return Resolved{}, false, nil
 	}
 
-	installed := installedVersion(have, dep)
+	installed := have.Newest(dep)
 	version, fromCatalog := installed, false
 	if version == "" {
 		fromCatalog = true
@@ -152,7 +174,7 @@ func (c Catalog) solveOS(ctx context.Context, have Have, name string) (Resolved,
 	}
 	dep := utils.Dep{Name: base, Version: versionQuery}
 
-	installed := installedVersion(have, dep)
+	installed := have.Newest(dep)
 	version, fromCatalog := installed, false
 	if version == "" {
 		fromCatalog = true
@@ -205,9 +227,9 @@ func ShortForm(distro, name string) string {
 	return name
 }
 
-// HaveFrom adapts a map keyed by installed name/version — an overlay scan, an
+// haveFrom adapts a map keyed by installed name/version — an overlay scan, an
 // index — to Have: the versions present directly below name.
-func HaveFrom[V any](installed map[string]V) Have {
+func haveFrom[V any](installed map[string]V) Have {
 	return func(name string) []string {
 		prefix := name + "/"
 		var out []string
@@ -229,7 +251,7 @@ func HaveFrom[V any](installed map[string]V) Have {
 // nothing installed answers. installed maps each installed name to its copies
 // in search order, as an overlay scan returns it.
 func SolveInstalled(ctx context.Context, installed map[string][]string, distro, raw string) (name, path string, found bool, err error) {
-	res, ok, err := Catalog(nil).SolveName(ctx, HaveFrom(installed), distro, raw)
+	res, ok, err := Catalog(nil).SolveName(ctx, haveFrom(installed), distro, raw)
 	if err != nil || !ok {
 		return "", "", false, err
 	}

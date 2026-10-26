@@ -587,7 +587,7 @@ func scriptTarget(file string) string {
 	if !isExternalBuildFile(file) {
 		return ""
 	}
-	target, _ := catalog.GetTargetFromScript(file)
+	target, _ := build.GetTargetFromScript(file)
 	return target
 }
 

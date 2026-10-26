@@ -1,143 +1,75 @@
 # catalog
 
-Resolves a module name to a recipe, and a set of names to a build order.
+Resolves a module name to a recipe.
 
-- It is a getter and a dependency solver. It never builds, never chooses and never talks to conda.
-- Anything opinionated about what to do with a result stays out. The caller decides.
+- It is a getter and a name solver. It never builds, never chooses and never talks to conda.
+- A caller decides what to do with a result.
 - A collection is a directory or a URL holding `recipes/`, `index/`, `helpers/` and a `source.json` descriptor.
 - Configured sources are ordered, and the first match wins, like `PATH`.
 
 ## The boundary
 
-- Conda is deliberately absent.
-- A name no source provides is not an error. It is the normal path for a conda package.
-- The node comes back with a nil entry and its constraint intact, for the caller's fallback.
-- Nothing pre-solves conda. Micromamba solves against the whole environment, and a second opinion computed beforehand could only agree or be wrong.
+- Conda is absent. A name no source provides is not an error. It comes back with a nil entry and its constraint intact, for the caller's conda fallback.
+- Nothing pre-solves conda. Micromamba solves against the whole environment, and a second opinion could only agree or be wrong.
 - The scheduler is absent too. Recipes read normalized `$NCPU` and `$MEM`, which the scheduler package produces.
-- `build` and the commands import both `catalog` and `scheduler`. `catalog` and `scheduler` never import each other.
+- `catalog` and `scheduler` never import each other. `build` and the commands import both.
+- `catalog` never imports `config`, which imports it to open the recipe sources.
 
 ## Resolving a raw name
 
-- `Lookup` and `Resolve` need an exact index key. `SolveName` extends the same boundary to what a person types: a bare name, a partial version, or a missing distro prefix.
-- It makes two attempts. First `raw` as given. Then `distro/raw`, only once the first came up empty and `raw` has at most one slash.
-- Using the name as typed is not a guess. Prepending a distro is.
-- Each attempt has up to three steps, and stops at the first hit.
-  - A complete module: an exact key, or a template with its placeholder filled. A bare template names a family, not a module, so it falls through.
-  - The app pool, for names with at most one slash.
-  - The os pool, for names with at most two slashes.
-- Installed beats a catalog lookup entirely, not just a newer version. When `have` answers, the catalog is never consulted.
-- That also keeps an overlay resolving after its recipe moved or was dropped. `Resolved.Entry` is nil then.
-- The newest app candidate is safe to pick. An app's candidates are the same tool at different points in time.
-- An os candidate is only a template's own declared version list. An os entry's second component names a different app, never a version of the first.
-- Data gets no autofill.
-- `grch38/genome` runs out of steps. The sibling entries under it (`ucsc`, `ensembl`) are alternative sources, not versions, so comparing them would compare arbitrary strings.
-- A fully typed data name still resolves through the first step. Only the choice among data siblings is refused.
+- `Lookup` needs an exact index key. `SolveName` extends that to what a person types: a bare name, a partial version, or a missing distro prefix.
+- It tries `raw` as given, then `distro/raw` once the first came up empty. Using the name as typed is not a guess. Prepending a distro is.
+- Each attempt stops at the first of three steps: a complete module (an exact key, or a template with its placeholders filled), the app pool, then the os pool.
+- Installed beats a catalog lookup entirely. When `have` answers, the catalog is never consulted, so an overlay keeps resolving after its recipe moved or was dropped.
+- The newest app candidate is safe to pick, because an app's candidates are the same tool at different times.
+- An os candidate is only a template's own declared version list. Its second component names a different app, not a version.
+- Data gets no autofill. Sibling entries under `grch38/genome` are alternative sources, not versions, so comparing them would compare arbitrary strings.
 - A bare distro name has no versions. `create ubuntu24` reports not found instead of guessing.
-- `have` and `distro` are parameters, never ambient state.
-- That makes a name mean the same thing for every caller, and stops it resolving differently on different machines.
-- It also means no caller needs to import back into `catalog` to supply them.
+- `have` and `distro` are parameters, never ambient state, so a name means the same thing for every caller and on every machine.
 
-## Validation
+## Recipes
 
-- `Recipe.Validate` returns problems and never prints. Nothing here writes to a terminal.
-- It runs when a recipe is fetched for a build, not while indexing. One bad recipe stops its own build instead of taking a whole collection out of every listing.
-- `HasComponents` is exported for `internal/artifact/key.Role`. It decides whether an app or os dependency contributes to equivalence.
+- `Recipe.Validate` returns problems and never prints. It runs when a recipe is fetched for a build, not while indexing, so one bad recipe stops its own build instead of taking a collection out of every listing.
 - Nothing lints a near-miss glued version such as `star2.7.11b`. A data dependency's name is often several components deep, and requiring all of it to reappear would false-positive on ordinary compact naming.
+- Expanding a template leaves `Text` alone. `Expand` sets `Rendered`, the copy a build runs. `Text` is what an artifact embeds, so every variant shares one recipe digest, told apart by the recorded placeholder values.
+- Placeholder key order is not stored. It derives from the `#TARGET:` token order. Value order is stored, because `values[0]` is the default offered.
+- A template match is not a wildcard. Names match the declared `#PH:` values, and only an explicit `*` is permissive. A half-filled name determines nothing.
+- Value lists sort once, where the separator is visible. A comma sorts newest first and a pipe keeps the author's order. An HTTP source takes the published values verbatim, since the index records no separator.
 
-## Sources declared by a recipe
+### `#SOURCE:`
 
 - `#SOURCE:` declares a file the build fetches: a name, an optional architecture, and either one URL or `ask:` and a prompt.
-- A URL and a prompt both expand with the template, since a template's source URL is where it varies most.
-- The name is all that survives expansion unchanged. The identity records the fetched digest against it.
-- The architecture is `amd64` or `arm64`, Go's spelling, which artifacts and OCI indexes also use.
-- It is read as a word directly after the name. A URL contains `://` and a prompt starts with `ask:`, so neither can be mistaken for one.
-- Vendors spell architectures too many ways for a placeholder to stand in, so each architecture is a literal line.
-- A name with lines only for other architectures is an error, not an unset `$CNT_BUILD_SRC_<name>`.
-- A name is all qualified or all plain. Mixing them would leave "which wins" to declaration order.
-- `Recipe.Prompts` is the one ordered list of questions: the `#INPUT:` prompts, then each `ask:`.
-- `#INPUT:` answers reach the recipe on stdin and `ask:` answers go to the fetch. Putting the recipe's own first tells them apart by count alone.
-- A malformed `#SOURCE:` is skipped at parse and reported by `Validate`, so one bad recipe cannot hide a collection.
-- At build time it is an error, not a skip. The body would otherwise run against an unset variable.
-- A definition declares neither `#SOURCE:` nor `#INPUT:`. Nothing would fetch the source or read the answer.
-- The header is a comment, so changing a `#SOURCE:` URL moves neither key. Only the bytes it served can, through the recorded digests.
+- A URL and a prompt expand with the template. The name survives expansion unchanged, and the identity records the fetched digest against it.
+- The architecture is `amd64` or `arm64`, Go's spelling. Vendors spell architectures too many ways for a placeholder, so each architecture is a literal line.
+- A name is all qualified or all plain, so "which wins" never depends on declaration order. A name with lines only for other architectures is an error, not an unset variable.
+- `Recipe.Prompts` is one ordered list: the `#INPUT:` prompts, then each `ask:`. Answers split by count alone.
+- A malformed `#SOURCE:` is skipped at parse and reported by `Validate`. At build time it is an error, since the body would otherwise run against an unset variable.
+- A definition declares neither `#SOURCE:` nor `#INPUT:`, because nothing would fetch or read them.
+- The header is a comment, so changing a URL moves no key. Only the bytes it served can, through the recorded digests.
 
-## Decisions that may surprise you
+## Sources
 
-- **A downloaded file skips the cache.**
-  - The cache holds indexes, and a stale one is better than none.
-  - A script is fetched to be installed, so `ReadFresh` returns what is served now or fails.
-- **Sorting happens once, where the separator is visible.**
-  - `#PH:` value lists are ordered by their separator. Comma sorts newest first, pipe keeps the author's order.
-  - `values[0]` is the default offered to users.
-  - A directory source reads the source form and sorts.
-  - An HTTP source reads the published index, which records no separator, so it takes the values verbatim. Re-sorting would silently reorder author-ordered lists.
-  - The generator and this package are pinned to a shared table of cases, not to each other's source.
-- **An unreachable source keeps its place.**
-  - Dropping it would let first-wins promote the next source's recipes, and the build would look normal.
-  - It stays in the list carrying its error. Lookups skip it, and the caller reports it once.
+- A downloaded file skips the cache. The cache holds indexes, where a stale one beats none. A script is fetched to be installed, so `ReadFresh` returns what is served now or fails.
+- An unreachable source keeps its place. Dropping it would let first-wins promote the next source's recipes while the build looks normal.
+  - It stays in the list carrying its error. Lookups skip it and the caller reports it once.
   - A catalog where every source failed is empty, not an error.
-- **A stale index beats a failed fetch.** An expired cache entry with no route out is served with a flag set. That is a compute node, not an error.
-- **A private HTTP source is one read with a token.**
-  - Tested on GitHub's raw host only. The status codes below are GitHub's.
-  - No token on a private repository: 404. A wrong URL gives the same.
-  - A bad token: 401. The read is retried once without it, and a refusal after that is reported as the token's.
-  - A host not in the host table is tried with the standard Bearer scheme.
-  - The cache is keyed by URL. Files are `0600` in `0700` directories.
-- **The selected source owns its registry.**
+- A stale index beats a failed fetch. An expired entry with no route out is served with a flag set. That is a compute node, not an error.
+- A private HTTP source is one read with a token, tested on GitHub's raw host only.
+  - No token on a private repository gives 404, as does a wrong URL. A bad token gives 401, retried once without it, and a refusal after that is reported as the token's.
+  - A host outside the host table is tried with the standard Bearer scheme.
+  - The cache is keyed by URL, with files `0600` in `0700` directories.
+- The selected source owns its registry.
   - `source.json` may declare one OCI `registry` and an `audience`. Push and pull use the same one.
   - A build keeps the exact source that won first-match lookup and tries only its registry.
   - A pulled artifact must match the equivalence key derived from that same recipe before it is installed.
   - An invalid descriptor disables its registry without hiding its recipes.
-- **`>=` is for reuse, not for widening.**
-  - `samtools/1.23.1>=1.10` admits `[1.10, 1.23.1]`. The preferred version is the implicit upper bound.
-  - The lower bound only lets an installed artifact satisfy the dependency. It never reaches a fresh solve.
-  - Handing micromamba a range would let two machines resolve one recipe to different versions.
-- **Installed beats newer.** With no preferred version, the newest installed version in range wins, so a bare `#DEP:` does not rebuild the moment upstream moves.
-- **Placeholder key order is not stored.** It is derivable from the `#TARGET:` token order, so storing it would be a second copy free to drift. Value order is stored, because it picks the default.
-- **Expanding a template leaves `Text` alone.**
-  - `Expand` sets `Rendered`, the substituted copy a build runs.
-  - `Text` stays the template as fetched. It is what an artifact embeds and a rebuild starts from.
-  - Every variant therefore shares one recipe digest, told apart by the placeholder values recorded beside it.
-- **A template match is not a wildcard.** Names match the declared `#PH:` values. Only an explicit `*` is permissive.
-- A half-filled name does not determine its remaining values, so there is no partial fill.
-
-## Build dependencies
-
-- `ValidateDeps` holds both rules a build's `#DEP:` answers to.
-- Its callers are `Recipe.Validate` and `build.FromExternalSource`. Never `run` or `check`.
-- It lives here, not on `Recipe`, because an external build (`create -p -f <script>`) answers to the same rules and has no recipe to parse.
-- Only a `data` recipe may declare a dependency.
-- An `app` is self-contained, and an `os` is self-contained by definition. Producing an index needs the tool that produces it, which is why data has dependencies.
-- A build's `#DEP:` is a `name/version`, never a path. A running script's may be either.
-- The asymmetry is the point. A running script mounts what it names and records nothing. A build's declaration becomes an edge in an artifact that must mean the same thing on another machine.
-- A path is neither resolvable there nor a key anything can regenerate.
-- `IsPathDep` is the single answer to "is this dependency a path", because `utils` owns the `NormalizeModule` and `ParseDep` grammar.
-- Its extension set must stay `utils.IsOverlay`'s, plus `.sif`.
-- A `.sif` is a root-only, literal-path reference, never an overlay. It never stacks and carries no build identity.
-
-## `#TARGET:` names the artifact
-
-- Without a `#PH:` beside it, `#TARGET:` is not a template. It is how an external build gets a name.
-- Without one, the name is the `-p` basename, a single component. `key.Role`'s component match never fires, and every `#DEP:` is silently downgraded to build history.
-- `FromExternalSource` therefore refuses an external script that declares a dependency without one.
-- The name and the file path are separate namespaces. `#TARGET:` fixes `/cnt/<name>` and the role classification. `-p` fixes where the `.sqf` lands.
-- `create --name` beside `-p` sets the name the same way and wins over `#TARGET:`.
-- With either, `-p` directly in an images directory must spell the name's own filename. With neither, the `-p` basename is the name, normalized first.
-- A path-addressed artifact's filename therefore carries no naming claim. It is matched by manifest name alone.
-- A flat or store scan still requires the filename to encode the name, because there the filename is the address.
 
 ## Invariants worth not breaking
 
-- There is one spelling of a name. `utils.NormalizeModule` decides what a name is, and index keys use that form.
-- A second implementation elsewhere would make one string resolve two ways. The same holds for `CompareVersions` and constraint satisfaction.
-- The two backends must return identical entries for the same collection. A test builds one on disk, serves it over HTTP and diffs the results. That test is the contract.
+- There is one spelling of a name. `utils.NormalizeModule` decides it, and index keys use that form. A second implementation would make one string resolve two ways, and the same holds for `CompareVersions`.
+- The two source backends must return identical entries for the same collection. A test builds one on disk, serves it over HTTP and diffs the results. That test is the contract.
 - Every format a source serves carries a required `schema_version`: `source.json` and both index files.
   - An index wraps its entries in an object, since a bare object keyed by name has no room for a version.
   - A version this build does not read is refused, and a newer one says to update.
   - A key a reader does not know is ignored. The version rises only for a change an older reader would misread.
 - The caller owns the cache directory and TTL. The package owns everything inside it.
-
-## Imports
-
-- `catalog` imports `utils` for the generic parsers, including the version comparator.
-- It never imports `config`, which imports it to open the recipe sources.

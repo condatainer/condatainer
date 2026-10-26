@@ -688,7 +688,7 @@ func (b *BuildObject) parseDependencies() error {
 	if b.spec.Dependencies != nil {
 		return nil
 	}
-	deps, err := catalog.GetDependenciesFromScript(b.buildSource)
+	deps, err := utils.ScriptDependencies(b.buildSource)
 	if err != nil {
 		return fmt.Errorf("failed to parse dependencies: %w", err)
 	}
@@ -999,20 +999,20 @@ func FromExternalSource(ctx context.Context, targetPrefix, source string, isAppt
 	var target string
 	var deps []string
 	if isShell {
-		parsedType, err := catalog.GetTypeFromScript(source)
+		parsedType, err := GetTypeFromScript(source)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse external build type: %w", err)
 		}
 		externalType = parsedType
 
-		if deps, err = catalog.GetDependenciesFromScript(source); err != nil {
+		if deps, err = utils.ScriptDependencies(source); err != nil {
 			return nil, fmt.Errorf("failed to parse external build dependencies: %w", err)
 		}
 	}
 	// A definition declares its name the same way; a remote URI has no file to read.
 	if isShell || strings.HasSuffix(source, ".def") {
 		var err error
-		if target, err = catalog.GetTargetFromScript(source); err != nil {
+		if target, err = GetTargetFromScript(source); err != nil {
 			return nil, fmt.Errorf("failed to parse external build target: %w", err)
 		}
 	}
@@ -1027,7 +1027,7 @@ func FromExternalSource(ctx context.Context, targetPrefix, source string, isAppt
 
 	// The same rules a catalog recipe answers to: only data may depend on
 	// anything, and an edge is a name/version rather than an overlay path.
-	if err := catalog.ValidateDeps(nameVersion, externalTyp, deps); err != nil {
+	if err := validateDeps(nameVersion, externalTyp, deps); err != nil {
 		return nil, err
 	}
 	// Checked after the type, so an app declaring #DEP: hears the more
@@ -1199,7 +1199,7 @@ func resolveBuildSource(ctx context.Context, base *BuildObject, tmpDir string) (
 	}
 	// Validation happens here rather than while indexing, so one bad recipe stops
 	// its own build instead of taking a whole collection out of every listing.
-	if err := recipe.Validate(); err != nil {
+	if err := validateRecipe(recipe); err != nil {
 		return false, false, err
 	}
 	if err := recipe.BuildableOn(meta.NativeArch()); err != nil {

@@ -1,4 +1,4 @@
-package catalog
+package build
 
 import (
 	"fmt"
@@ -7,46 +7,6 @@ import (
 
 	"github.com/condatainer/condatainer/internal/utils"
 )
-
-// GetDescriptionFromScript returns a script's first #DESC: value, or "".
-func GetDescriptionFromScript(scriptPath string) string {
-	text, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return ""
-	}
-	description, _ := utils.FindAnnotation(utils.ScanAnnotations(text), "#DESC")
-	return description
-}
-
-// GetDependenciesFromScript returns the dependencies a script's #DEP: annotations declare, normalized and deduplicated.
-//   - An annotation counts wherever it is written.
-//   - Only #DEP: counts. A `module load` line names the site's module tree, not an artifact.
-func GetDependenciesFromScript(scriptPath string) ([]string, error) {
-	if !utils.FileExists(scriptPath) {
-		return nil, fmt.Errorf("build script not found at %s", scriptPath)
-	}
-	text, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open script: %w", err)
-	}
-
-	dependencies := []string{}
-	seen := make(map[string]bool)
-	for _, a := range utils.SelectAnnotations(utils.ScanAnnotations(text), "#DEP") {
-		if a.Value == "" {
-			continue
-		}
-		key := a.Value
-		if !IsPathDep(key) {
-			key = utils.NormalizeModule(key)
-		}
-		if !seen[key] {
-			dependencies = append(dependencies, key)
-			seen[key] = true
-		}
-	}
-	return dependencies, nil
-}
 
 // GetTypeFromScript returns the payload type an external build script declares with #TYPE:.
 //   - Only "app" and "data" are accepted, as in DeriveType. #TYPE: means the same to a recipe and to a script.

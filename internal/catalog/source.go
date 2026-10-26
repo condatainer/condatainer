@@ -186,7 +186,7 @@ func (s *Source) loadDescriptor(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	desc, err := ParseDescriptor(data)
+	desc, err := parseDescriptor(data)
 	if err != nil {
 		s.DescriptorErr = err
 		return
@@ -197,11 +197,11 @@ func (s *Source) loadDescriptor(ctx context.Context) {
 // DescriptorSchemaVersion is the source.json format this build reads.
 const DescriptorSchemaVersion = 1
 
-// ParseDescriptor decodes and validates source.json.
+// parseDescriptor decodes and validates source.json.
 //   - The schema version is required, and a version this build does not read is rejected.
 //   - An unknown field is ignored, so a source can add a key without raising the version.
 //   - The OCI registry is normalized to a registry/repository root.
-func ParseDescriptor(data []byte) (Descriptor, error) {
+func parseDescriptor(data []byte) (Descriptor, error) {
 	var head struct {
 		SchemaVersion int `json:"schema_version"`
 	}

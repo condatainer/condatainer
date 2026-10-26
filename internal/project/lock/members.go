@@ -129,15 +129,3 @@ func scriptRel(root, script string) (string, error) {
 	}
 	return filepath.ToSlash(rel), nil
 }
-
-// hasInterpreterLine reports whether a file's first line names an interpreter `run` accepts.
-func hasInterpreterLine(file string) bool {
-	f, err := os.Open(file)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	head := make([]byte, 512)
-	n, _ := f.Read(head)
-	return utils.CheckShebang(head[:n]) == nil
-}

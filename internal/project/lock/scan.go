@@ -197,7 +197,7 @@ func Scan(root string, opts ScanOptions) (*ScanResult, error) {
 		if entry.Type()&fs.ModeSymlink != 0 || !entry.Type().IsRegular() {
 			return nil
 		}
-		if m.ignores(relSlash, false) || !hasInterpreterLine(path) {
+		if m.ignores(relSlash, false) || utils.CheckShebangFile(path) != nil {
 			return nil
 		}
 		scanned, err := scanScript(path, relSlash, merged, result)

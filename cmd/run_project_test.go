@@ -26,6 +26,18 @@ func TestProjectRunContextIgnoresANonProjectScript(t *testing.T) {
 	}
 }
 
+// A script the lock ignore list leaves out resolves its declarations as a script outside the project.
+func TestProjectRunContextIgnoresAScriptTheProjectIgnores(t *testing.T) {
+	root := newProject(t)
+	writeScript(t, root, "legacy/run.sh", "#DEP: star/2.7.11b\nrun\n")
+	writeScript(t, root, lock.DirName+"/ignore", "/legacy\n")
+
+	got, err := projectRunContext(context.Background(), filepath.Join(root, "legacy/run.sh"))
+	if err != nil || got != nil {
+		t.Fatalf("context = %#v, %v; want none", got, err)
+	}
+}
+
 // The project is the current directory, so naming a project's script from
 // outside resolves by name exactly as an unlocked script does. This is what
 // replaced --no-project: `cd` elsewhere is the opt-out.

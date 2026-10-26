@@ -359,6 +359,9 @@ func ParseDeclaration(value string) (Request, string) {
 		return Request{Key: PathPrefix + clean, Kind: kind, Path: clean}, ""
 	}
 
+	if strings.ContainsAny(value, "{}") {
+		return Request{}, "a {placeholder} is filled by a helper script, so a project cannot pin it"
+	}
 	dep, err := utils.ParseDep(value)
 	if err != nil {
 		return Request{}, "not a usable dependency: " + err.Error()

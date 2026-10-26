@@ -21,13 +21,13 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 
 ## Overlays
 
-- `#REQUIRED_OVERLAYS:` order is the overlay order. The last name is topmost and wins file conflicts.
+- The `#DEP:` lines are the overlays to load, one per line, and their order is the overlay order. The last name is topmost and wins file conflicts.
 - Standing in a project, a name resolves as `exec -o` does, and a helper never adds a pin.
 - A name nothing installed answers is built as it is outside a project.
 - A pinned artifact absent on this machine is refused with a pointer to `project restore`.
 - A named overlay is a fixed requirement. It is built without a prompt.
 - Names resolve against what is installed before anything is built, so a satisfied name costs no network call.
-- `#IMG_PACKAGES:` is two requirements: the packages are installed, and a writable form exists to install into.
+- `#ENV_PACKAGES:` is two requirements: the packages are installed, and a writable form exists to install into.
   - A bare `.sqf` snapshot can satisfy the first. It cannot satisfy the second, so the plan refuses it and guided creation runs.
   - Guided creation still mounts the paired snapshot during the install. Only the difference lands in the new `.img`.
 - The package check reads the `.img` and its paired snapshot together.
@@ -100,10 +100,10 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
   - A project's presence already changes overlay resolution, so creating one could break the launch.
 - Dedup is by content and recency is the file mtime. A repeat bumps the mtime.
   - The bump uses `UTIME_NOW`, not `os.Chtimes`, so any member of a group-writable `cnt-lock/` can do it.
-- What is offered back is what the user chose: the `-o` overlays and the params behind `#REQUIRED_OVERLAYS:`.
+- What is offered back is what the user chose: the `-o` overlays and the params behind the `#DEP:` names.
   - The params are not stored. They are recovered by matching the recorded names against the helper's current template.
   - `r/4.4.3` against `r/{POSIT_R}` gives `POSIT_R=4.4.3`, so the same version is restored.
-  - `#IMG_PACKAGES:` params are never recorded or recovered. They control the env overlay's content.
+  - `#ENV_PACKAGES:` params are never recorded or recovered. They control the env overlay's content.
   - A bare required name such as `rstudio-server` is recorded as declared, so it still follows the latest.
 - A run with no added overlays and no recoverable param has nothing to offer, so it is skipped.
 - Reuse is offered, never applied silently. The CLI offers the newest on a fresh start. The web UI has an "Overlay history" button, enabled only when there is something to reuse, that opens a list to choose from.

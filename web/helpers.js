@@ -787,7 +787,7 @@ function selectHelper(name, overrides) {
 
   // Keep a user-selected env overlay when switching helpers; auto-resolve only
   // when the field is blank.
-  if (selectedHelper.img_required) {
+  if (selectedHelper.env_required) {
     gid('ov-pkgs').placeholder = 'additional packages';
   }
   if (gid('cfg-overlay').value) {
@@ -831,7 +831,7 @@ gid('cfg-overlay').addEventListener('input', function () {
 
   const notice  = gid('ov-notice');
   const startBtn = gid('start-btn');
-  const required = !!(selectedHelper && selectedHelper.img_required);
+  const required = !!(selectedHelper && selectedHelper.env_required);
 
   if (!hasOverlay && selectedHelper) {
     notice.classList.add('visible');
@@ -1161,7 +1161,7 @@ function toggleOverlayCreate() {
   }
 }
 
-// Renders token inputs (comboboxes/text) driven by img_packages {KEY} tokens.
+// Renders token inputs (comboboxes/text) driven by env_packages {KEY} tokens.
 function renderOverlayCreateForm() {
   _ovTokenKeys = [];
   const wrap = gid('ov-token-wrap');
@@ -1171,13 +1171,13 @@ function renderOverlayCreateForm() {
     prevWrap.style.display = 'none';
     return;
   }
-  if (!selectedHelper.img_packages) {
+  if (!selectedHelper.env_packages) {
     wrap.innerHTML = '';
     prevWrap.style.display = 'none';
     return;
   }
 
-  const tokens = extractTokens(selectedHelper.img_packages);
+  const tokens = extractTokens(selectedHelper.env_packages);
   _ovTokenKeys = tokens;
 
   if (!tokens.length) {
@@ -1237,7 +1237,7 @@ function extractTokens(tmpl) {
 
 function updateOvPreview() {
   if (!selectedHelper) return;
-  let s = selectedHelper.img_packages || '';
+  let s = selectedHelper.env_packages || '';
   _ovTokenKeys.forEach(k => {
     const el       = gid('ovtok-' + k);
     const v        = el ? (el.dataset.value !== undefined ? el.dataset.value : el.value) : '';
@@ -1389,16 +1389,16 @@ async function createOverlay() {
     }
   }
 
-  // Resolve {KEY} tokens in img_packages; empty → fall back to placeholder (default).
+  // Resolve {KEY} tokens in env_packages; empty → fall back to placeholder (default).
   const params = _collectParams();
-  let basePkgs = selectedHelper?.img_packages || '';
+  let basePkgs = selectedHelper?.env_packages || '';
   _ovTokenKeys.forEach(k => {
     const el       = gid('ovtok-' + k);
     const v        = el ? (el.dataset.value !== undefined ? el.dataset.value : el.value) : '';
     const fallback = el ? (el.placeholder || ('{' + k + '}')) : ('{' + k + '}');
     basePkgs = basePkgs.replaceAll('{' + k + '}', v || fallback);
   });
-  // Also resolve helper params ({KEY} in img_packages that come from #PARAM:)
+  // Also resolve helper params ({KEY} in env_packages that come from #PARAM:)
   for (const [k, v] of Object.entries(params)) {
     basePkgs = basePkgs.replaceAll('{' + k + '}', v);
   }
@@ -1410,7 +1410,7 @@ async function createOverlay() {
     cwd:              gid('cfg-cwd').value.trim(),
     base_packages:    basePkgs,
     extra_packages:   extraPkgs,
-    post_install_cmd: selectedHelper?.post_install_cmd || '',
+    post_install_cmd: selectedHelper?.env_post_install || '',
   };
 
   const createUseBtn = gid('ov-create-btn');
@@ -1455,7 +1455,7 @@ async function createOverlay() {
 /* ── Start helper job ────────────────────── */
 async function startHelper() {
   if (!selectedHelper) return;
-  if (selectedHelper.img_required && !gid('cfg-overlay').value) return;
+  if (selectedHelper.env_required && !gid('cfg-overlay').value) return;
   // Validate required params
   let hasEmpty = false;
   _helperParamKeys.forEach(key => {
@@ -1634,7 +1634,7 @@ function renderModuleChips() {
       params[p.key] = _helperSavedConfig[p.key.toLowerCase()] || p.default || (vals[0] || '');
     }
   });
-  const requiredNames = (selectedHelper?.required_overlays || '').trim().split(/\s+/).filter(Boolean);
+  const requiredNames = (selectedHelper?.deps || []);
   const requiredResolved = requiredNames.map(name => {
     let resolved = name;
     Object.entries(params).forEach(([k, v]) => { resolved = resolved.replaceAll('{' + k + '}', v); });

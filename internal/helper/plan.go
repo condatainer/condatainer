@@ -62,7 +62,7 @@ type ErrEnvInUse struct {
 	Path string
 }
 
-// ErrMissingPackages is returned by PlanRun when #IMG_PACKAGES: specs are not
+// ErrMissingPackages is returned by PlanRun when #ENV_PACKAGES: specs are not
 // satisfied in the conda environment inside EnvImg. VersionChoices is non-nil
 // when a missing package had an unresolved version token with a #VALUE: list,
 // which the UI should prompt for before installing.
@@ -174,7 +174,7 @@ func PlanRun(ctx context.Context, opts RunOptions) (*RunPlan, error) {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	namedOverlays, err := CheckRequiredOverlays(ctx, cwd, meta.RequiredOverlays, params, opts.NoProject)
+	namedOverlays, err := CheckRequiredOverlays(ctx, cwd, meta.Deps, params, opts.NoProject)
 	if err != nil {
 		return nil, err
 	}
@@ -182,14 +182,14 @@ func PlanRun(ctx context.Context, opts RunOptions) (*RunPlan, error) {
 		opts.Overlays = append(append([]string(nil), namedOverlays...), opts.Overlays...)
 	}
 
-	// #IMG_PACKAGES: needs a writable form, not just installed packages — a
+	// #ENV_PACKAGES: needs a writable form, not just installed packages — a
 	// resolved env.sqf alone (ResolveEnvOverlayInDir's read-only fallback)
 	// does not satisfy it.
-	if meta.ImgRequired && !utils.IsImg(opts.EnvImg) {
+	if meta.EnvRequired && !utils.IsImg(opts.EnvImg) {
 		if utils.IsSqf(opts.EnvImg) {
 			return nil, fmt.Errorf("helper requires a writable overlay; %s is a read-only snapshot — run `overlay create` to continue from it, or pass --env explicitly", opts.EnvImg)
 		}
-		return nil, fmt.Errorf("helper requires a writable overlay (#IMG_PACKAGES set) — create one and pass --env or set EnvImg")
+		return nil, fmt.Errorf("helper requires a writable overlay (#ENV_PACKAGES set) — create one and pass --env or set EnvImg")
 	}
 
 	if err := CheckHelperPackages(meta, opts.EnvImg, params); err != nil {
@@ -316,5 +316,5 @@ func recordSharedUsage(cwd string, plan *RunPlan, overlays []string) {
 		return
 	}
 	_ = RecordUsed(standing.Root, plan.Options.ScriptName, filepath.ToSlash(location),
-		resolveOverlayTemplate(plan.Meta.RequiredOverlays, plan.Params), overlays)
+		fillDeps(plan.Meta.Deps, plan.Params), overlays)
 }

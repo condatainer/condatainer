@@ -699,7 +699,7 @@ func runHelper(cmd *cobra.Command, args []string) error {
 	// A resolved env.sqf (no .img yet) does not count as writable, so this
 	// still runs the wizard — CreateCondaOverlay itself is snapshot-aware, so
 	// installing here does not duplicate what the snapshot already has.
-	if meta.ImgPackages != "" && !utils.IsImg(opts.EnvImg) {
+	if meta.EnvPackages != "" && !utils.IsImg(opts.EnvImg) {
 		created, err := ui.GuidedOverlayCreate(ctx, opts.ScriptName, meta, opts.Params, versions, opts.CWD)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {

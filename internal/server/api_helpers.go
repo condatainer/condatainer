@@ -43,15 +43,15 @@ func (fw flushWriter) Write(p []byte) (int, error) {
 }
 
 type helperAvailableEntry struct {
-	Name             string               `json:"name"`
-	Description      string               `json:"description,omitempty"`
-	ImgRequired      bool                 `json:"img_required,omitempty"`
-	ImgPackages      string               `json:"img_packages,omitempty"`
-	PostInstallCmd   string               `json:"post_install_cmd,omitempty"`
-	RequiredOverlays string               `json:"required_overlays,omitempty"`
-	Singleton        bool                 `json:"singleton,omitempty"`
-	Params           []helper.HelperParam `json:"params,omitempty"`
-	ParamValues      map[string][]string  `json:"param_values,omitempty"`
+	Name           string               `json:"name"`
+	Description    string               `json:"description,omitempty"`
+	EnvRequired    bool                 `json:"env_required,omitempty"`
+	EnvPackages    string               `json:"env_packages,omitempty"`
+	EnvPostInstall string               `json:"env_post_install,omitempty"`
+	Deps           []string             `json:"deps,omitempty"`
+	Singleton      bool                 `json:"singleton,omitempty"`
+	Params         []helper.HelperParam `json:"params,omitempty"`
+	ParamValues    map[string][]string  `json:"param_values,omitempty"`
 }
 
 var (
@@ -96,15 +96,15 @@ func cachedAvailableHelpers() []helperAvailableEntry {
 			ent := helperAvailableEntry{
 				Name:           name,
 				Description:    description,
-				ImgRequired:    meta.ImgRequired,
-				ImgPackages:    meta.ImgPackages,
-				PostInstallCmd: meta.PostInstallCmd,
+				EnvRequired:    meta.EnvRequired,
+				EnvPackages:    meta.EnvPackages,
+				EnvPostInstall: meta.EnvPostInstall,
 				Singleton:      meta.Singleton,
 				Params:         params,
 				ParamValues:    meta.ParamValues,
 			}
-			if meta.RequiredOverlays != "" {
-				ent.RequiredOverlays = meta.RequiredOverlays
+			if len(meta.Deps) > 0 {
+				ent.Deps = meta.Deps
 			}
 			scripts = append(scripts, ent)
 		}
@@ -422,7 +422,7 @@ func (s *srv) handleHelperReuse(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 	meta, _ := helper.ParseHelperScriptMeta(scriptPath)
-	used, err := helper.ListReusable(standing.Root, name, filepath.ToSlash(location), meta.RequiredOverlays)
+	used, err := helper.ListReusable(standing.Root, name, filepath.ToSlash(location), meta.Deps)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

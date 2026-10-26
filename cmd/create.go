@@ -467,7 +467,7 @@ func resolveTemplateInteractively(ctx context.Context, info *catalog.Entry) (str
 	return concrete, nil
 }
 
-// solveCreateName resolves a create argument as load resolves #REQUIRED_OVERLAYS:
+// solveCreateName resolves a create argument as load resolves a helper's #DEP: names
 // catalog.SolveName against what is installed, then anaconda.org's package index, so
 // "r", "rstudio-server" and a bare or partial Conda name like "openjdk/17" each land
 // on one concrete module. A channel-annotated or fully qualified name that resolves

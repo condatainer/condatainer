@@ -113,6 +113,20 @@ func TestScanReadsTheHeaderOnly(t *testing.T) {
 	}
 }
 
+// A {placeholder} belongs to a helper script, which fills it, so the scan reports it and pins nothing.
+func TestScanReportsAPlaceholderDeclaration(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "helper.sh", "#DEP: igv/{IGV}\nrun\n")
+
+	result := scan(t, root)
+	if got := keys(result); len(got) != 0 {
+		t.Errorf("requests = %v, want none", got)
+	}
+	if len(result.Findings) != 1 || !strings.Contains(result.Findings[0].Reason, "placeholder") {
+		t.Errorf("findings = %#v, want one naming the placeholder", result.Findings)
+	}
+}
+
 func TestScanClassifiesPathDeclarations(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "run.sh", "#DEP: ./overlays/tool.sqf\n#DEP: env.img\n#DEP: base.sif\nrun\n")

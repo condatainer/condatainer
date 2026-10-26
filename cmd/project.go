@@ -619,7 +619,7 @@ func pinReports(l *lock.Lock, verified *lock.Verified) []pinReport {
 // which decides whether the pin is manual.
 //
 //   - It is derived once, at pin time, and recorded: `project lock` sweeps pins the scan no longer produces.
-//   - Artifacts reach a project without a #DEP: (a helper's #REQUIRED_OVERLAYS:, a frozen environment).
+//   - Artifacts reach a project without a #DEP: (a helper's #DEP:, a frozen environment).
 //   - A scan that cannot run answers "declared", so the pin stays sweepable and a later lock can correct it.
 func declaredByAScript(root, request string) bool {
 	scanned, err := lock.Scan(root, lock.ScanOptions{})

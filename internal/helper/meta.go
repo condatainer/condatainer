@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -97,7 +96,7 @@ func ParseHelperParams(scriptPath string) ([]HelperParam, error) {
 		return nil, err
 	}
 	var params []HelperParam
-	for _, a := range catalog.Select(catalog.ScanAnnotations(data), "#PARAM") {
+	for _, a := range utils.SelectAnnotations(utils.ScanAnnotations(data), "#PARAM") {
 		if a.Value == "" {
 			continue
 		}
@@ -211,10 +210,10 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 
 	meta := HelperScriptMeta{ParamValues: make(map[string][]string)}
 	var problems []error
-	reject := func(a catalog.Annotation, want string) {
+	reject := func(a utils.Annotation, want string) {
 		problems = append(problems, fmt.Errorf("%s on line %d: %q is not %s", a.Key, a.Line, a.Value, want))
 	}
-	for _, a := range catalog.ScanAnnotations(data) {
+	for _, a := range utils.ScanAnnotations(data) {
 		switch a.Key {
 		case "#NCPU":
 			if a.Value == "" {
@@ -266,7 +265,7 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 			key, spec, ok := strings.Cut(a.Value, "=")
 			if ok && strings.TrimSpace(key) != "" {
 				// An empty spec yields a nil list: the param simply has no choices.
-				meta.ParamValues[strings.TrimSpace(key)] = catalog.ParseValues(spec)
+				meta.ParamValues[strings.TrimSpace(key)] = utils.ParseValueList(spec)
 			}
 		}
 	}

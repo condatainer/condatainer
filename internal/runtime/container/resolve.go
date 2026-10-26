@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -88,7 +87,7 @@ func ResolveOverlayPaths(inputs []string) ([]string, error) {
 			continue
 		}
 
-		dep, err := catalog.ParseDep(pathToResolve)
+		dep, err := utils.ParseDep(pathToResolve)
 		if err != nil {
 			return nil, fmt.Errorf("invalid overlay specification %q", entry)
 		}

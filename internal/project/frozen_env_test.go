@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/helperhistory"
 	"github.com/condatainer/condatainer/internal/project/lock"
 )
@@ -30,7 +30,7 @@ func packEnvSqf(t *testing.T, path string) {
 	rt := meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          meta.EnvName,
-		Type:          catalog.TypeEnv,
+		Type:          artifact.TypeEnv,
 		Platform:      meta.NativePlatform(),
 		Prefix:        meta.EnvPrefix,
 	}

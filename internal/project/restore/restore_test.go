@@ -20,7 +20,7 @@ import (
 // one as adopted. This is the ordinary re-run, and it must touch no build.
 func TestRunAdoptsWithoutBuilding(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
@@ -48,7 +48,7 @@ func TestRunAdoptsWithoutBuilding(t *testing.T) {
 // An equivalent adoption is reported as a substitution, with both identities.
 func TestRunReportsAnEquivalentAdoption(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
@@ -89,7 +89,7 @@ func TestRunStopsOnAPlanningProblem(t *testing.T) {
 // build cannot perform, and --no-prebuilt is how a caller asks to build from source.
 func TestRunFailsAFetchRatherThanRebuildingSilently(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
@@ -116,7 +116,7 @@ func TestRunFailsAFetchRatherThanRebuildingSilently(t *testing.T) {
 // A cancelled context stops the loop rather than running the next build.
 func TestRunHonoursCancellation(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
@@ -132,8 +132,8 @@ func TestRunHonoursCancellation(t *testing.T) {
 // Edge order is the contract: a rebuild re-derives its edges from what it
 // mounts, so the paths must arrive in the manifest's own order.
 func TestDependencyPathsFollowManifestOrder(t *testing.T) {
-	first := artifact(t, "aaa/1.0", "echo a\n")
-	second := artifact(t, "zzz/1.0", "echo z\n")
+	first := newArtifact(t, "aaa/1.0", "echo a\n")
+	second := newArtifact(t, "zzz/1.0", "echo z\n")
 	entry := &lock.Entry{Manifest: meta.Manifest{
 		Name:         "index/1.0",
 		Dependencies: []meta.Dependency{edge(second), edge(first)},
@@ -158,7 +158,7 @@ func TestDependencyPathsFollowManifestOrder(t *testing.T) {
 // Nothing is resolved by name: a dependency that was not restored first is an
 // error, never a lookup.
 func TestDependencyPathsRefuseAnUnrestoredDependency(t *testing.T) {
-	dep := artifact(t, "zlib/1.3", "echo zlib\n")
+	dep := newArtifact(t, "zlib/1.3", "echo zlib\n")
 	entry := &lock.Entry{Manifest: meta.Manifest{
 		Name: "index/1.0", Dependencies: []meta.Dependency{edge(dep)},
 	}}
@@ -235,7 +235,7 @@ func TestPlaceAtRefusesANonRegularDestination(t *testing.T) {
 func TestAnswersMakeAnInteractiveRebuildPlannable(t *testing.T) {
 	root := projectRoot(t)
 	recipe := "#INPUT: which release?\nread -r a\n"
-	app := artifact(t, "star/2.7.11b", recipe)
+	app := newArtifact(t, "star/2.7.11b", recipe)
 	app.Source.RequiresInput = true
 	appPath := vendor(t, root, app, recipe)
 
@@ -257,7 +257,7 @@ func TestAnswersMakeAnInteractiveRebuildPlannable(t *testing.T) {
 func TestRebuildUsesTheVendoredSources(t *testing.T) {
 	root := projectRoot(t)
 	recipe := "#TYPE: app\necho star\n"
-	app := artifact(t, "star/2.7.11b", recipe)
+	app := newArtifact(t, "star/2.7.11b", recipe)
 	appPath := vendor(t, root, app, recipe)
 
 	verified, problems := lock.Verify(root, mustLock(appPath))
@@ -384,9 +384,9 @@ func TestTransientRootRemoveWithoutUse(t *testing.T) {
 // reported blocked rather than failed: one cause, named once.
 func TestRunBlocksADependentRatherThanFailingIt(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
-	index := artifact(t, "grch38/star-index", "echo index\n", edge(app))
+	index := newArtifact(t, "grch38/star-index", "echo index\n", edge(app))
 	indexPath := vendor(t, root, index, "echo index\n")
 
 	l := lock.New()
@@ -472,7 +472,7 @@ func TestCondaSourcesLeaveOtherBuildTypesAlone(t *testing.T) {
 // directory is named for the artifact in it rather than randomly.
 func TestTransientStagingIsNamedForTheArtifact(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "samtools/1.21", "echo samtools\n")
+	dep := newArtifact(t, "samtools/1.21", "echo samtools\n")
 	depPath := vendor(t, root, dep, "echo samtools\n")
 
 	entry, problems := func() (*lock.Entry, []lock.Problem) {

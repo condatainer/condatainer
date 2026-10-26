@@ -7,8 +7,8 @@ import (
 
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // Architectures a manifest is published for. A tag and the architecture
@@ -64,7 +64,7 @@ const digestPrefix = "sha256:"
 // EncodeName spells an artifact name as the first part of its tags. Every segment
 // must match the name grammar, so a doubled separator is refused.
 func EncodeName(name string) (string, error) {
-	normalized := catalog.Normalize(name)
+	normalized := utils.NormalizeModule(name)
 	if normalized == "" || strings.ContainsAny(normalized, ":@") {
 		return "", fmt.Errorf("registry name %q is empty or carries a selector", name)
 	}

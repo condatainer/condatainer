@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 func TestActivationScriptEmptyWithNothingToActivate(t *testing.T) {
@@ -24,7 +24,7 @@ func TestActivationScriptNoneSourcesNothing(t *testing.T) {
 	packRuntimeSqf(t, appSqf, meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "myapp/1.0",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		Platform:      meta.NativePlatform(),
 		Prefix:        "/cnt/myapp",
 	})
@@ -41,7 +41,7 @@ func TestActivationScriptEnvSourcesOnlyCntEnv(t *testing.T) {
 	packRuntimeSqf(t, appSqf, meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "myapp/1.0",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		Platform:      meta.NativePlatform(),
 		Prefix:        "/cnt/myapp",
 	})
@@ -62,7 +62,7 @@ func TestActivationScriptIncludesAppPrefixAndEnv(t *testing.T) {
 	packRuntimeSqf(t, appSqf, meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "myapp/1.0",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		Platform:      meta.NativePlatform(),
 		Prefix:        "/cnt/myapp",
 	})
@@ -144,11 +144,11 @@ func TestActivationScriptRunsWithScopedPrefix(t *testing.T) {
 	appASqf := filepath.Join(dir, "appA.sqf")
 	appBSqf := filepath.Join(dir, "appB.sqf")
 	packRuntimeSqf(t, appASqf, meta.Runtime{
-		SchemaVersion: meta.SchemaVersion, Name: "appA/1.0", Type: catalog.TypeApp,
+		SchemaVersion: meta.SchemaVersion, Name: "appA/1.0", Type: artifact.TypeApp,
 		Platform: meta.NativePlatform(), Prefix: appAPrefix,
 	})
 	packRuntimeSqf(t, appBSqf, meta.Runtime{
-		SchemaVersion: meta.SchemaVersion, Name: "appB/1.0", Type: catalog.TypeApp,
+		SchemaVersion: meta.SchemaVersion, Name: "appB/1.0", Type: artifact.TypeApp,
 		Platform: meta.NativePlatform(), Prefix: appBPrefix,
 	})
 

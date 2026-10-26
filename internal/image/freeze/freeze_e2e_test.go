@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // readManifest pulls the embedded manifest back out of a frozen artifact,
@@ -53,8 +53,8 @@ mkdir opt`)
 	if m.Name != meta.EnvName {
 		t.Errorf("name = %q, want %q", m.Name, meta.EnvName)
 	}
-	if m.Type != catalog.TypeEnv {
-		t.Errorf("type = %q, want %q", m.Type, catalog.TypeEnv)
+	if m.Type != artifact.TypeEnv {
+		t.Errorf("type = %q, want %q", m.Type, artifact.TypeEnv)
 	}
 	if m.BuildType != meta.BuildTypeSnapshot {
 		t.Errorf("build_type = %q, want %q", m.BuildType, meta.BuildTypeSnapshot)

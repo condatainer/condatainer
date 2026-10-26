@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/conda"
 )
 
@@ -18,7 +18,7 @@ func TestScriptSchemesHaveCanonicalPreimages(t *testing.T) {
 	m := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "data/1/star/1",
-		Type:          catalog.TypeData,
+		Type:          artifact.TypeData,
 		BuildType:     "script",
 		Platform:      meta.NativePlatform(),
 		Source: meta.Source{
@@ -26,9 +26,9 @@ func TestScriptSchemesHaveCanonicalPreimages(t *testing.T) {
 			Placeholders: map[string]string{"v": "1"},
 		},
 		Dependencies: []meta.Dependency{
-			{Name: "star/1", Type: catalog.TypeApp, Identity: starID, Equiv: starEq, Role: meta.RoleApp},
-			{Name: "samtools/1", Type: catalog.TypeApp, Identity: samID, Equiv: samEq, Role: meta.RoleHistory},
-			{Name: "genome/1", Type: catalog.TypeData, Identity: genomeID, Equiv: genomeEq, Role: meta.RoleData},
+			{Name: "star/1", Type: artifact.TypeApp, Identity: starID, Equiv: starEq, Role: meta.RoleApp},
+			{Name: "samtools/1", Type: artifact.TypeApp, Identity: samID, Equiv: samEq, Role: meta.RoleHistory},
+			{Name: "genome/1", Type: artifact.TypeData, Identity: genomeID, Equiv: genomeEq, Role: meta.RoleData},
 		},
 	}
 
@@ -75,7 +75,7 @@ func TestDefinitionSchemesHaveCanonicalPreimages(t *testing.T) {
 	m := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "ubuntu24/base",
-		Type:          catalog.TypeOS,
+		Type:          artifact.TypeOS,
 		BuildType:     "def",
 		Platform:      meta.NativePlatform(),
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
@@ -105,7 +105,7 @@ func TestCondaSchemesHashStoredExportsDirectly(t *testing.T) {
 	m := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "pkg/1.0",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "conda",
 		Platform:      meta.NativePlatform(),
 		Source: meta.Source{Files: []string{
@@ -135,7 +135,7 @@ func TestVerifyRejectsOldAndUnknownSchemes(t *testing.T) {
 	base := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "tool/1",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "script",
 		Platform:      meta.NativePlatform(),
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},

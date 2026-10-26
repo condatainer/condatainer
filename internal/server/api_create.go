@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // createExecutable returns the binary to run for install tasks.
@@ -50,7 +50,7 @@ func (s *srv) handleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid name", http.StatusBadRequest)
 		return
 	}
-	name := catalog.Normalize(raw)
+	name := utils.NormalizeModule(raw)
 
 	exe, err := createExecutable()
 	if err != nil {

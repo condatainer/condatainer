@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	artifactcache "github.com/condatainer/condatainer/internal/artifact/cache"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
@@ -261,7 +262,7 @@ func scanOverlaysByDir(dirs []string, query *SearchQuery) []DirOverlays {
 				continue
 			}
 			nameVersion := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-			normalized := strings.ToLower(catalog.Normalize(nameVersion))
+			normalized := strings.ToLower(utils.NormalizeModule(nameVersion))
 			overlayPath := filepath.Join(imageDir, entry.Name())
 			runtime, runtimeErr := meta.ReadRuntimeWithCache(overlayPath, cacheBatch)
 			presentation := presentListOverlay(nameVersion, runtime, runtimeErr == nil)
@@ -335,9 +336,9 @@ func presentListOverlay(encodedName string, runtime meta.Runtime, recorded bool)
 			name = decoded
 		}
 		switch runtime.Type {
-		case catalog.TypeData:
+		case artifact.TypeData:
 			return listPresentation{name: name, data: true}
-		case catalog.TypeOS:
+		case artifact.TypeOS:
 			return listPresentation{name: name, version: "(system app)"}
 		default:
 			if base, version, ok := strings.Cut(name, "/"); ok {

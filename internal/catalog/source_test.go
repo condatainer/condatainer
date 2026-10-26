@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/condatainer/condatainer/internal/artifact"
 )
 
 // fakeSource writes a minimal collection: a descriptor, two recipes, and the
@@ -77,10 +79,10 @@ func TestOpenDirSource(t *testing.T) {
 	if got := slices.Sorted(maps.Keys(entries)); !slices.Equal(got, want) {
 		t.Errorf("entries = %v, want %v (README.md skipped)", got, want)
 	}
-	if e := entries["ubuntu24/base"]; e.Type != TypeOS || e.Path != "recipes/ubuntu24/base.def" {
+	if e := entries["ubuntu24/base"]; e.Type != artifact.TypeOS || e.Path != "recipes/ubuntu24/base.def" {
 		t.Errorf("base entry = %+v", e)
 	}
-	if e := entries["grch38/star-gencode"]; !e.IsTemplate || e.Type != TypeData {
+	if e := entries["grch38/star-gencode"]; !e.IsTemplate || e.Type != artifact.TypeData {
 		t.Errorf("template entry = %+v", e)
 	}
 }

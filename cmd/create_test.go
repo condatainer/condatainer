@@ -13,6 +13,7 @@ import (
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
+	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -180,7 +181,7 @@ func TestNormalizedTargetNameKeepsDepth(t *testing.T) {
 			t.Errorf("normalizedTargetName() = %q, want %q", got, want)
 		}
 		// / becomes -- on the way to a filename, and back on the way in.
-		roundTrip := catalog.Normalize(strings.ReplaceAll(got, "/", "--"))
+		roundTrip := utils.NormalizeModule(strings.ReplaceAll(got, "/", "--"))
 		if roundTrip != want {
 			t.Errorf("round trip through filename = %q, want %q", roundTrip, want)
 		}

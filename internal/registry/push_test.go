@@ -10,16 +10,16 @@ import (
 
 	"github.com/opencontainers/go-digest"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 func TestAudienceAccepts(t *testing.T) {
 	yes, no := true, false
-	manifest := func(typ catalog.Type, buildType meta.BuildType) meta.Manifest {
+	manifest := func(typ artifact.Type, buildType meta.BuildType) meta.Manifest {
 		return meta.Manifest{Name: "x/1.0", Type: typ, BuildType: buildType}
 	}
-	declaring := func(typ catalog.Type, buildType meta.BuildType, answer *bool) meta.Manifest {
+	declaring := func(typ artifact.Type, buildType meta.BuildType, answer *bool) meta.Manifest {
 		m := manifest(typ, buildType)
 		m.Redistribute = answer
 		return m
@@ -31,27 +31,27 @@ func TestAudienceAccepts(t *testing.T) {
 		wantErr  bool
 	}{
 		// Undeclared: the type default stands in for an unanswered question.
-		{"apt packages from a public distribution", Public, manifest(catalog.TypeOS, meta.BuildTypeScript), false},
-		{"public reference data", Public, manifest(catalog.TypeData, meta.BuildTypeScript), false},
-		{"an app redistributes someone else's binaries", Public, manifest(catalog.TypeApp, meta.BuildTypeScript), true},
+		{"apt packages from a public distribution", Public, manifest(artifact.TypeOS, meta.BuildTypeScript), false},
+		{"public reference data", Public, manifest(artifact.TypeData, meta.BuildTypeScript), false},
+		{"an app redistributes someone else's binaries", Public, manifest(artifact.TypeApp, meta.BuildTypeScript), true},
 
 		// A Conda build embeds no recipe, so it can never carry the declaration
 		// the app default would demand. Gating it would refuse it forever.
-		{"a Conda app cannot declare, so it is not asked", Public, manifest(catalog.TypeApp, meta.BuildTypeConda), false},
-		{"a Conda build of a permitted type", Public, manifest(catalog.TypeData, meta.BuildTypeConda), false},
+		{"a Conda app cannot declare, so it is not asked", Public, manifest(artifact.TypeApp, meta.BuildTypeConda), false},
+		{"a Conda build of a permitted type", Public, manifest(artifact.TypeData, meta.BuildTypeConda), false},
 
 		// Declared: the recipe answers and the type default does not apply.
-		{"a declared app publishes", Public, declaring(catalog.TypeApp, meta.BuildTypeScript, &yes), false},
-		{"a refusal beats a permissive type", Public, declaring(catalog.TypeData, meta.BuildTypeScript, &no), true},
-		{"a refusal beats the Conda exemption", Public, declaring(catalog.TypeApp, meta.BuildTypeConda, &no), true},
+		{"a declared app publishes", Public, declaring(artifact.TypeApp, meta.BuildTypeScript, &yes), false},
+		{"a refusal beats a permissive type", Public, declaring(artifact.TypeData, meta.BuildTypeScript, &no), true},
+		{"a refusal beats the Conda exemption", Public, declaring(artifact.TypeApp, meta.BuildTypeConda, &no), true},
 
 		// A snapshot embeds no recipe, so it can carry no declaration — the same
 		// mechanical reason a Conda build is exempt.
-		{"a snapshot publishes with nothing to declare in", Public, manifest(catalog.TypeEnv, meta.BuildTypeSnapshot), false},
+		{"a snapshot publishes with nothing to declare in", Public, manifest(artifact.TypeEnv, meta.BuildTypeSnapshot), false},
 
-		{"a restricted endpoint takes an app", Restricted, manifest(catalog.TypeApp, meta.BuildTypeScript), false},
-		{"a restricted endpoint takes a Conda build", Restricted, manifest(catalog.TypeApp, meta.BuildTypeConda), false},
-		{"a restricted endpoint takes a refused artifact", Restricted, declaring(catalog.TypeApp, meta.BuildTypeScript, &no), false},
+		{"a restricted endpoint takes an app", Restricted, manifest(artifact.TypeApp, meta.BuildTypeScript), false},
+		{"a restricted endpoint takes a Conda build", Restricted, manifest(artifact.TypeApp, meta.BuildTypeConda), false},
+		{"a restricted endpoint takes a refused artifact", Restricted, declaring(artifact.TypeApp, meta.BuildTypeScript, &no), false},
 	}
 	for _, tt := range tests {
 		if err := tt.audience.Accepts(tt.m); (err != nil) != tt.wantErr {
@@ -64,7 +64,7 @@ func TestAudienceAccepts(t *testing.T) {
 // The refusal must name both ways out, or a user reads it as "CondaTainer will
 // not publish apps" and stops.
 func TestAudienceRefusalNamesBothRemedies(t *testing.T) {
-	err := Public.Accepts(meta.Manifest{Name: "star/2.7.11b", Type: catalog.TypeApp, BuildType: meta.BuildTypeScript})
+	err := Public.Accepts(meta.Manifest{Name: "star/2.7.11b", Type: artifact.TypeApp, BuildType: meta.BuildTypeScript})
 	if err == nil {
 		t.Fatal("an undeclared app must be refused at a public endpoint")
 	}
@@ -118,7 +118,7 @@ func tagsOf(t *testing.T, m meta.Manifest) Tags {
 // audience must not be treated as private.
 func TestPublishDefaultsToPublic(t *testing.T) {
 	requireSquashfsTools(t)
-	source, _ := packImage(t, imageSpec{name: "hello/1.0", typ: catalog.TypeApp, recipe: "#!/bin/bash\n"})
+	source, _ := packImage(t, imageSpec{name: "hello/1.0", typ: artifact.TypeApp, recipe: "#!/bin/bash\n"})
 	f := newFakeRegistry(t)
 
 	_, err := Publish(context.Background(), f.request(source))
@@ -135,7 +135,7 @@ func TestPublishDefaultsToPublic(t *testing.T) {
 func TestPublishAndPullRoundTrip(t *testing.T) {
 	requireSquashfsTools(t)
 	source, m := packImage(t, imageSpec{
-		name: "grch38/genome/gencode49", typ: catalog.TypeData, recipe: "#!/bin/bash\nbuild index\n",
+		name: "grch38/genome/gencode49", typ: artifact.TypeData, recipe: "#!/bin/bash\nbuild index\n",
 	})
 	f := newFakeRegistry(t)
 	ctx := context.Background()
@@ -166,7 +166,7 @@ func TestPublishAndPullRoundTrip(t *testing.T) {
 func TestPublishRefusesAnArtifactWithNoKeys(t *testing.T) {
 	requireSquashfsTools(t)
 	source, _ := packImage(t, imageSpec{
-		name: "ubuntu24/build-essential", typ: catalog.TypeOS, recipe: "#!/bin/bash\n", noKeys: true,
+		name: "ubuntu24/build-essential", typ: artifact.TypeOS, recipe: "#!/bin/bash\n", noKeys: true,
 	})
 	f := newFakeRegistry(t)
 
@@ -183,7 +183,7 @@ func TestPublishRefusesAnArtifactWithNoKeys(t *testing.T) {
 func TestPublishRefusesKeysThatDoNotRegenerate(t *testing.T) {
 	requireSquashfsTools(t)
 	source, _ := packImage(t, imageSpec{
-		name: "ubuntu24/build-essential", typ: catalog.TypeOS, recipe: "#!/bin/bash\n",
+		name: "ubuntu24/build-essential", typ: artifact.TypeOS, recipe: "#!/bin/bash\n",
 		tamper: func(m *meta.Manifest) { m.Keys.Identity.SHA256 = strings.Repeat("f", 64) },
 	})
 	f := newFakeRegistry(t)
@@ -201,7 +201,7 @@ func TestPublishRefusesKeysThatDoNotRegenerate(t *testing.T) {
 func TestPublishRefusesAnArchitectureNothingIsPublishedFor(t *testing.T) {
 	requireSquashfsTools(t)
 	source, _ := packImage(t, imageSpec{
-		name: "hello/1.0", typ: catalog.TypeData, arch: "s390x", recipe: "#!/bin/bash\n",
+		name: "hello/1.0", typ: artifact.TypeData, arch: "s390x", recipe: "#!/bin/bash\n",
 	})
 	f := newFakeRegistry(t)
 
@@ -218,7 +218,7 @@ func TestPublishRefusesAnArchitectureNothingIsPublishedFor(t *testing.T) {
 func TestPublishWritesEveryTag(t *testing.T) {
 	requireSquashfsTools(t)
 	source, m := packImage(t, imageSpec{
-		name: "grch38/genome/gencode49", typ: catalog.TypeData, recipe: "#!/bin/bash\n",
+		name: "grch38/genome/gencode49", typ: artifact.TypeData, recipe: "#!/bin/bash\n",
 	})
 	f := newFakeRegistry(t)
 	ctx := context.Background()
@@ -255,7 +255,7 @@ func TestPublishWritesEveryTag(t *testing.T) {
 func TestPublishOfAPublishedBuildUploadsNothing(t *testing.T) {
 	requireSquashfsTools(t)
 	source, m := packImage(t, imageSpec{
-		name: "grch38/genome/gencode49", typ: catalog.TypeData, recipe: "#!/bin/bash\n",
+		name: "grch38/genome/gencode49", typ: artifact.TypeData, recipe: "#!/bin/bash\n",
 	})
 	f := newFakeRegistry(t)
 	ctx := context.Background()
@@ -383,7 +383,7 @@ func TestPublishLeavesAnotherArchitectureAlone(t *testing.T) {
 func TestPublishTagsANoarchArtifact(t *testing.T) {
 	requireSquashfsTools(t)
 	source, m := packImage(t, imageSpec{
-		name: "grch38/genome/gencode49", typ: catalog.TypeData,
+		name: "grch38/genome/gencode49", typ: artifact.TypeData,
 		arch: meta.ArchNone, recipe: "#!/bin/bash\n",
 	})
 	f := newFakeRegistry(t)
@@ -483,7 +483,7 @@ func TestPushRefusesNoTags(t *testing.T) {
 func TestPublishSourceOverridesTheRecordedCollection(t *testing.T) {
 	requireSquashfsTools(t)
 	source, m := packImage(t, imageSpec{
-		name: "star/2.7.11b", typ: catalog.TypeApp, recipe: "#!/bin/bash\nbuild\n",
+		name: "star/2.7.11b", typ: artifact.TypeApp, recipe: "#!/bin/bash\nbuild\n",
 	})
 	ctx := context.Background()
 	nameTag, err := NameTag(m.Name, m.Platform.Arch)
@@ -532,7 +532,7 @@ func TestPublishKeepsTheSourceAnnotationUsable(t *testing.T) {
 
 	// A caller that names one and gets it wrong is told.
 	clean, _ := packImage(t, imageSpec{
-		name: "star/2.7.11b", typ: catalog.TypeApp, recipe: "#!/bin/bash\nbuild\n",
+		name: "star/2.7.11b", typ: artifact.TypeApp, recipe: "#!/bin/bash\nbuild\n",
 	})
 	f := newFakeRegistry(t)
 	req := f.request(clean)
@@ -546,7 +546,7 @@ func TestPublishKeepsTheSourceAnnotationUsable(t *testing.T) {
 	// a descriptor that predates the check is not a reason to block distribution.
 	// The annotation is simply absent.
 	dirty, m := packImage(t, imageSpec{
-		name: "star/2.7.11b", typ: catalog.TypeApp, recipe: "#!/bin/bash\nbuild\n",
+		name: "star/2.7.11b", typ: artifact.TypeApp, recipe: "#!/bin/bash\nbuild\n",
 		tamper: func(m *meta.Manifest) { m.Build.Source = "not a url" },
 	})
 	g := newFakeRegistry(t)
@@ -570,7 +570,7 @@ func TestPublishKeepsTheSourceAnnotationUsable(t *testing.T) {
 func TestPublishStopsWhenTheConfirmationIsDeclined(t *testing.T) {
 	requireSquashfsTools(t)
 	source, m := packImage(t, imageSpec{
-		name: "grch38/genome/gencode49", typ: catalog.TypeData, recipe: "#!/bin/bash\nbuild index\n",
+		name: "grch38/genome/gencode49", typ: artifact.TypeData, recipe: "#!/bin/bash\nbuild index\n",
 	})
 	f := newFakeRegistry(t)
 	ctx := context.Background()

@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/image/sif"
 	"github.com/condatainer/condatainer/internal/image/squashfs"
 	"github.com/condatainer/condatainer/internal/image/tool"
@@ -106,8 +106,8 @@ func (v EnvVar) Resolved(prefix string) string {
 
 // Prefix returns the install prefix an image of this name and type gets. It is
 // empty for os, which applies at the container root.
-func Prefix(name string, typ catalog.Type) string {
-	if typ == catalog.TypeOS {
+func Prefix(name string, typ artifact.Type) string {
+	if typ == artifact.TypeOS {
 		return ""
 	}
 	return "/cnt/" + strings.Trim(name, "/")
@@ -115,9 +115,9 @@ func Prefix(name string, typ catalog.Type) string {
 
 // normalizeType maps an absent type to app. An unrecognized one is left as it
 // stands, for ValidateManifest and ValidateRuntime to refuse.
-func normalizeType(typ catalog.Type) catalog.Type {
+func normalizeType(typ artifact.Type) artifact.Type {
 	if typ == "" {
-		return catalog.TypeApp
+		return artifact.TypeApp
 	}
 	return typ
 }

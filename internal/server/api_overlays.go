@@ -14,8 +14,8 @@ import (
 
 	"log/slog"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/image/ext3"
 	"github.com/condatainer/condatainer/internal/logging"
@@ -216,7 +216,7 @@ func (s *srv) handleOverlaysList(w http.ResponseWriter, r *http.Request) {
 			Name:   name,
 			Path:   path,
 			Size:   size,
-			Type:   string(catalog.TypeApp),
+			Type:   string(artifact.TypeApp),
 			Format: strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
 		}
 		if rt, err := meta.ReadRuntime(path); err == nil {

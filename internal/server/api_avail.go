@@ -98,7 +98,7 @@ func (s *srv) handleAvail(w http.ResponseWriter, r *http.Request) {
 // pre-install info for one recipe: interactive prompts, scheduler directives,
 // and whether the name would fall back to a conda install.
 func (s *srv) handleAvailInspect(w http.ResponseWriter, r *http.Request) {
-	name := catalog.Normalize(r.URL.Query().Get("name"))
+	name := utils.NormalizeModule(r.URL.Query().Get("name"))
 	if name == "" {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return

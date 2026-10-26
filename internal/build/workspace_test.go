@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/image/producer"
 )
 
@@ -67,15 +67,15 @@ func expect(name, root, target string, isDef bool) wantPaths {
 
 func TestCondaConstructorPaths(t *testing.T) {
 	dir := t.TempDir()
-	const module = "samtools/1.23.1"
+	const name = "samtools/1.23.1"
 
-	b, err := NewCondaObjectWithSource(module, "", dir, false)
+	b, err := NewCondaObjectWithSource(name, "", dir, false)
 	if err != nil {
 		t.Fatalf("NewCondaObjectWithSource: %v", err)
 	}
-	checkPaths(t, b, expect(module, b.ws.BaseRoot, filepath.Join(dir, "samtools--1.23.1.sqf"), false))
+	checkPaths(t, b, expect(name, b.ws.BaseRoot, filepath.Join(dir, "samtools--1.23.1.sqf"), false))
 
-	if b.spec.Image.Type != catalog.TypeApp {
+	if b.spec.Image.Type != artifact.TypeApp {
 		t.Errorf("type = %q, want app", b.spec.Image.Type)
 	}
 }
@@ -115,12 +115,12 @@ func TestRetargetMovesEveryPath(t *testing.T) {
 	const name = "grch38/genome/gencode"
 
 	b := &BuildObject{
-		spec: Spec{Image: ImageSpec{Name: name, Type: catalog.TypeApp}},
+		spec: Spec{Image: ImageSpec{Name: name, Type: artifact.TypeApp}},
 		ws:   workspaceFor(name, dir, false),
 	}
 
 	// data re-sites to the stable shared root rather than fast local scratch.
-	b.spec.Image.Type = catalog.TypeData
+	b.spec.Image.Type = artifact.TypeData
 	b.retargetWorkspace()
 
 	if b.ws.BaseRoot == dir {

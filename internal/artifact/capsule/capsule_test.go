@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // staged reads a dependency's /.cnt straight from ImagePath, standing in for
@@ -31,7 +31,7 @@ func depImage(t *testing.T, name string, files map[string]string, inherited map[
 	manifest := meta.Manifest{
 		SchemaVersion:      meta.SchemaVersion,
 		Name:               name,
-		Type:               catalog.TypeData,
+		Type:               artifact.TypeData,
 		BuildType:          "script",
 		Platform:           meta.NativePlatform(),
 		Source:             meta.Source{Files: []string{meta.RecipeFileName}},
@@ -52,7 +52,7 @@ func depImage(t *testing.T, name string, files map[string]string, inherited map[
 	if err := meta.StageRuntime(cnt, meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeData,
+		Type:          artifact.TypeData,
 		Platform:      meta.NativePlatform(),
 		Prefix:        "/cnt/" + name,
 	}); err != nil {

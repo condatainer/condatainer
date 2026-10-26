@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -16,13 +16,13 @@ import (
 func TestAlwaysSubmitDataAppliesToNamedDataBuildsOnly(t *testing.T) {
 	settingstest.Override(t, "build.always_submit_data", "true")
 
-	named := func(typ catalog.Type) *BuildObject {
+	named := func(typ artifact.Type) *BuildObject {
 		return &BuildObject{submitJob: true, spec: Spec{Image: ImageSpec{Name: "demo/1", Type: typ}}}
 	}
-	if !named(catalog.TypeData).RequiresScheduler() {
+	if !named(artifact.TypeData).RequiresScheduler() {
 		t.Error("a named data build is not submitted under always_submit_data")
 	}
-	if named(catalog.TypeApp).RequiresScheduler() {
+	if named(artifact.TypeApp).RequiresScheduler() {
 		t.Error("an app build is submitted under always_submit_data")
 	}
 

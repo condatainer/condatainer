@@ -7,15 +7,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 func snapshotManifest() meta.Manifest {
 	return meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          meta.EnvName,
-		Type:          catalog.TypeEnv,
+		Type:          artifact.TypeEnv,
 		BuildType:     meta.BuildTypeSnapshot,
 		Platform:      meta.Platform{Arch: "amd64"},
 	}

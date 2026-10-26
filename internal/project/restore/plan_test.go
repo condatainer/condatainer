@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/store"
 )
@@ -24,13 +24,13 @@ func projectRoot(t *testing.T) string {
 	return root
 }
 
-// artifact builds a manifest whose keys its recipe really derives, so the plan
+// newArtifact builds a manifest whose keys its recipe really derives, so the plan
 // runs over a closure that verifies rather than a stub.
-func artifact(t *testing.T, name, recipe string, deps ...meta.Dependency) meta.Manifest {
+func newArtifact(t *testing.T, name, recipe string, deps ...meta.Dependency) meta.Manifest {
 	t.Helper()
-	typ := catalog.TypeApp
+	typ := artifact.TypeApp
 	if len(deps) > 0 {
-		typ = catalog.TypeData
+		typ = artifact.TypeData
 	}
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
@@ -71,7 +71,7 @@ func frozenEnv(t *testing.T, root string) string {
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          meta.EnvName,
-		Type:          catalog.TypeEnv,
+		Type:          artifact.TypeEnv,
 		BuildType:     meta.BuildTypeSnapshot,
 		Platform:      meta.Platform{OS: "linux", Arch: meta.NativeArch()},
 		Keys:          meta.Keys{Identity: ref, Equiv: ref},
@@ -170,7 +170,7 @@ func steps(plan *Plan) map[string]Step {
 
 func TestComputeAdoptsWhatIsAlreadyPresent(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
@@ -195,7 +195,7 @@ func TestComputeAdoptsWhatIsAlreadyPresent(t *testing.T) {
 // A recorded prebuilt is preferred to a build, and --no-prebuilt suppresses it.
 func TestComputeChoosesFetchOrBuild(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
@@ -221,7 +221,7 @@ func TestComputeChoosesFetchOrBuild(t *testing.T) {
 // Without an remote there is nowhere to fetch from, so a miss is a rebuild.
 func TestComputeBuildsWhenNoOriginIsRecorded(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
@@ -235,9 +235,9 @@ func TestComputeBuildsWhenNoOriginIsRecorded(t *testing.T) {
 // Dependencies come first, and a closure-only node is planned but not direct.
 func TestComputeOrdersDependenciesFirst(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "zlib/1.3", "echo zlib\n")
+	dep := newArtifact(t, "zlib/1.3", "echo zlib\n")
 	depPath := vendor(t, root, dep, "echo zlib\n")
-	data := artifact(t, "index/1.0", "echo index\n", edge(dep))
+	data := newArtifact(t, "index/1.0", "echo index\n", edge(dep))
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
@@ -264,9 +264,9 @@ func TestComputeOrdersDependenciesFirst(t *testing.T) {
 // A present dependency is adopted even when its dependent must be rebuilt.
 func TestComputeMixesAdoptionAndRebuild(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "zlib/1.3", "echo zlib\n")
+	dep := newArtifact(t, "zlib/1.3", "echo zlib\n")
 	vendor(t, root, dep, "echo zlib\n")
-	data := artifact(t, "index/1.0", "echo index\n", edge(dep))
+	data := newArtifact(t, "index/1.0", "echo index\n", edge(dep))
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
@@ -290,7 +290,7 @@ func TestComputeMixesAdoptionAndRebuild(t *testing.T) {
 func archArtifact(t *testing.T, name, arch string, deps ...meta.Dependency) (meta.Manifest, string) {
 	t.Helper()
 	recipe := "echo " + name + " " + arch + "\n"
-	manifest := artifact(t, name, recipe, deps...)
+	manifest := newArtifact(t, name, recipe, deps...)
 	manifest.Platform.Arch = arch
 	derived, err := key.Generate(manifest, key.Sources{meta.RecipeFileName: []byte(recipe)})
 	if err != nil {
@@ -402,7 +402,7 @@ func TestComputeRefusesToRebuildOverAForeignTool(t *testing.T) {
 // before anything starts.
 func TestComputeReportsInteractiveRebuilds(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	app.Source.RequiresInput = true
 	derived, err := key.Generate(app, key.Sources{meta.RecipeFileName: []byte("echo star\n")})
 	if err != nil {
@@ -439,11 +439,11 @@ func TestComputeStopsOnAnInvalidLock(t *testing.T) {
 // A diamond is planned once, with both parents depending on it.
 func TestComputePlansADiamondOnce(t *testing.T) {
 	root := projectRoot(t)
-	shared := artifact(t, "zlib/1.3", "echo zlib\n")
+	shared := newArtifact(t, "zlib/1.3", "echo zlib\n")
 	sharedPath := vendor(t, root, shared, "echo zlib\n")
-	left := artifact(t, "index/1.0", "echo index\n", edge(shared))
+	left := newArtifact(t, "index/1.0", "echo index\n", edge(shared))
 	leftPath := vendor(t, root, left, "echo index\n")
-	right := artifact(t, "other/1.0", "echo other\n", edge(shared))
+	right := newArtifact(t, "other/1.0", "echo other\n", edge(shared))
 	rightPath := vendor(t, root, right, "echo other\n")
 
 	l := lock.New()
@@ -466,9 +466,9 @@ func TestComputePlansADiamondOnce(t *testing.T) {
 // select one artifact. Each direct step answers exactly one request.
 func TestComputeGivesEachDirectStepOneRequest(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
-	other := artifact(t, "cutadapt/5.0", "echo cutadapt\n")
+	other := newArtifact(t, "cutadapt/5.0", "echo cutadapt\n")
 	otherPath := vendor(t, root, other, "echo cutadapt\n")
 
 	l := lock.New()
@@ -493,7 +493,7 @@ func TestComputeGivesEachDirectStepOneRequest(t *testing.T) {
 // is adopted, and the plan says which identity it actually got.
 func TestComputeAdoptsAnEquivalentSubstituteByDefault(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
@@ -524,7 +524,7 @@ func TestComputeAdoptsAnEquivalentSubstituteByDefault(t *testing.T) {
 // MatchIdentity refuses the substitute and plans to produce the exact build.
 func TestComputeRefusesASubstituteUnderMatchIdentity(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
@@ -549,7 +549,7 @@ func TestComputeRefusesASubstituteUnderMatchIdentity(t *testing.T) {
 // An exact hit is never reported as a substitution, in either mode.
 func TestComputeLeavesFoundEmptyForAnExactHit(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "star/2.7.11b", "echo star\n")
+	app := newArtifact(t, "star/2.7.11b", "echo star\n")
 	appPath := vendor(t, root, app, "echo star\n")
 
 	l := lock.New()
@@ -569,7 +569,7 @@ func TestComputeLeavesFoundEmptyForAnExactHit(t *testing.T) {
 // path stays empty and the script still fails at mount time.
 func TestComputePlansAPathSelectionAtItsProjectDestination(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "tool/1.0", "echo tool\n")
+	app := newArtifact(t, "tool/1.0", "echo tool\n")
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
@@ -595,7 +595,7 @@ func TestComputePlansAPathSelectionAtItsProjectDestination(t *testing.T) {
 // A project path already holding the right artifact is adopted in place.
 func TestComputeAdoptsAnExistingProjectPath(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "tool/1.0", "echo tool\n")
+	app := newArtifact(t, "tool/1.0", "echo tool\n")
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
@@ -619,7 +619,7 @@ func TestComputeAdoptsAnExistingProjectPath(t *testing.T) {
 // something the lock does not name is refused before anything is acquired.
 func TestComputeRefusesToOverwriteAProjectPath(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "tool/1.0", "echo tool\n")
+	app := newArtifact(t, "tool/1.0", "echo tool\n")
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
@@ -654,7 +654,7 @@ func TestComputeRefusesToOverwriteAProjectPath(t *testing.T) {
 // Nothing is being replaced when the path already holds the locked artifact.
 func TestComputeReportsNoReplacementWhenAdopting(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "tool/1.0", "echo tool\n")
+	app := newArtifact(t, "tool/1.0", "echo tool\n")
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
@@ -670,7 +670,7 @@ func TestComputeReportsNoReplacementWhenAdopting(t *testing.T) {
 // Two paths pinning one artifact are two files to produce.
 func TestComputePlansEachProjectDestinationSeparately(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "tool/1.0", "echo tool\n")
+	app := newArtifact(t, "tool/1.0", "echo tool\n")
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
@@ -689,7 +689,7 @@ func TestComputePlansEachProjectDestinationSeparately(t *testing.T) {
 // One artifact cannot be both store-addressed and pinned to a project path.
 func TestComputeRefusesAnArtifactSelectedBothWays(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "tool/1.0", "echo tool\n")
+	app := newArtifact(t, "tool/1.0", "echo tool\n")
 	appPath := vendor(t, root, app, "echo tool\n")
 
 	l := lock.New()
@@ -709,9 +709,9 @@ func TestComputeRefusesAnArtifactSelectedBothWays(t *testing.T) {
 // still goes to the store — only the root itself is project-owned.
 func TestComputeKeepsAPathRootsChildrenStoreBound(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "zlib/1.3", "echo zlib\n")
+	dep := newArtifact(t, "zlib/1.3", "echo zlib\n")
 	depPath := vendor(t, root, dep, "echo zlib\n")
-	data := artifact(t, "index/1.0", "echo index\n", edge(dep))
+	data := newArtifact(t, "index/1.0", "echo index\n", edge(dep))
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
@@ -754,9 +754,9 @@ func presentAt(path string, manifest meta.Manifest) lookupAtFunc {
 // opens it, so acquiring it would be pure waste.
 func TestComputeSkipsAClosureInputNothingNeeds(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "samtools/1.21", "echo old\n")
+	dep := newArtifact(t, "samtools/1.21", "echo old\n")
 	vendor(t, root, dep, "echo old\n")
-	data := artifact(t, "index/1.0", "echo index\n", edge(dep))
+	data := newArtifact(t, "index/1.0", "echo index\n", edge(dep))
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
@@ -777,9 +777,9 @@ func TestComputeSkipsAClosureInputNothingNeeds(t *testing.T) {
 // The same input is planned once its dependent actually has to be built.
 func TestComputeKeepsAClosureInputABuildNeeds(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "samtools/1.21", "echo old\n")
+	dep := newArtifact(t, "samtools/1.21", "echo old\n")
 	depPath := vendor(t, root, dep, "echo old\n")
-	data := artifact(t, "index/1.0", "echo index\n", edge(dep))
+	data := newArtifact(t, "index/1.0", "echo index\n", edge(dep))
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
@@ -798,10 +798,10 @@ func TestComputeKeepsAClosureInputABuildNeeds(t *testing.T) {
 // refuse a restore for being built for another architecture.
 func TestComputeIgnoresProblemsFromAPrunedInput(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "samtools/1.21", "echo old\n")
+	dep := newArtifact(t, "samtools/1.21", "echo old\n")
 	dep.Platform.Arch = "s390x"
 	vendor(t, root, dep, "echo old\n")
-	data := artifact(t, "index/1.0", "echo index\n", edge(dep))
+	data := newArtifact(t, "index/1.0", "echo index\n", edge(dep))
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
@@ -817,9 +817,9 @@ func TestComputeIgnoresProblemsFromAPrunedInput(t *testing.T) {
 // does not drag them in either.
 func TestComputeDoesNotMaterializeInputsForAFetch(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "samtools/1.21", "echo old\n")
+	dep := newArtifact(t, "samtools/1.21", "echo old\n")
 	vendor(t, root, dep, "echo old\n")
-	data := artifact(t, "index/1.0", "echo index\n", edge(dep))
+	data := newArtifact(t, "index/1.0", "echo index\n", edge(dep))
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
@@ -839,9 +839,9 @@ func TestComputeDoesNotMaterializeInputsForAFetch(t *testing.T) {
 // what may stand in is whatever leaves the dependent's equivalence unchanged.
 func TestComputeResolvesABuildInputByItsEdgeRole(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "samtools/1.21", "echo samtools\n")
+	dep := newArtifact(t, "samtools/1.21", "echo samtools\n")
 	vendor(t, root, dep, "echo samtools\n")
-	data := artifact(t, "grch38/index", "echo index\n", history(dep))
+	data := newArtifact(t, "grch38/index", "echo index\n", history(dep))
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
@@ -876,9 +876,9 @@ func TestComputeResolvesABuildInputByItsEdgeRole(t *testing.T) {
 // asked for it by name, so the edge's latitude does not apply.
 func TestComputeResolvesASelectionByItsOwnKeys(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "samtools/1.21", "echo samtools\n")
+	dep := newArtifact(t, "samtools/1.21", "echo samtools\n")
 	depPath := vendor(t, root, dep, "echo samtools\n")
-	data := artifact(t, "grch38/index", "echo index\n", history(dep))
+	data := newArtifact(t, "grch38/index", "echo index\n", history(dep))
 	dataPath := vendor(t, root, data, "echo index\n")
 
 	l := lock.New()
@@ -906,11 +906,11 @@ func TestComputeResolvesASelectionByItsOwnKeys(t *testing.T) {
 // dependency is always RoleData, which key generation enforces.
 func TestInboundEdgesKeepsTheStrictestRole(t *testing.T) {
 	root := projectRoot(t)
-	shared := artifact(t, "star/2.7.11b", "echo star\n")
+	shared := newArtifact(t, "star/2.7.11b", "echo star\n")
 	vendor(t, root, shared, "echo star\n")
-	loose := artifact(t, "grch38/star-gencode49", "echo loose\n", history(shared))
+	loose := newArtifact(t, "grch38/star-gencode49", "echo loose\n", history(shared))
 	vendor(t, root, loose, "echo loose\n")
-	strict := artifact(t, "star/2.7.11b/index", "echo strict\n", edge(shared))
+	strict := newArtifact(t, "star/2.7.11b/index", "echo strict\n", edge(shared))
 	vendor(t, root, strict, "echo strict\n")
 
 	l := lock.New()
@@ -944,9 +944,9 @@ func history(manifest meta.Manifest) meta.Dependency {
 // already run.
 func TestComputePutsTheBaseStepFirst(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "aaa/1.0", "echo aaa\n")
+	app := newArtifact(t, "aaa/1.0", "echo aaa\n")
 	appPath := vendor(t, root, app, "echo aaa\n")
-	base := artifact(t, "ubuntu24/base", "echo base\n")
+	base := newArtifact(t, "ubuntu24/base", "echo base\n")
 	basePath := vendor(t, root, base, "echo base\n")
 
 	l := lock.New()
@@ -967,9 +967,9 @@ func TestComputePutsTheBaseStepFirst(t *testing.T) {
 // resolve its own root the way an unrestricted restore does.
 func TestComputeKeepsTheBaseUnderOnly(t *testing.T) {
 	root := projectRoot(t)
-	app := artifact(t, "aaa/1.0", "echo aaa\n")
+	app := newArtifact(t, "aaa/1.0", "echo aaa\n")
 	appPath := vendor(t, root, app, "echo aaa\n")
-	base := artifact(t, "ubuntu24/base", "echo base\n")
+	base := newArtifact(t, "ubuntu24/base", "echo base\n")
 	basePath := vendor(t, root, base, "echo base\n")
 
 	l := lock.New()
@@ -989,11 +989,11 @@ func TestComputeKeepsTheBaseUnderOnly(t *testing.T) {
 // what that artifact needs to be built.
 func TestComputeRestrictsToOneArtifactAndItsClosure(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "zlib/1.3", "echo zlib\n")
+	dep := newArtifact(t, "zlib/1.3", "echo zlib\n")
 	depPath := vendor(t, root, dep, "echo zlib\n")
-	wanted := artifact(t, "index/1.0", "echo index\n", edge(dep))
+	wanted := newArtifact(t, "index/1.0", "echo index\n", edge(dep))
 	wantedPath := vendor(t, root, wanted, "echo index\n")
-	other := artifact(t, "samtools/1.23.1", "echo samtools\n")
+	other := newArtifact(t, "samtools/1.23.1", "echo samtools\n")
 	otherPath := vendor(t, root, other, "echo samtools\n")
 
 	l := lock.New()
@@ -1020,9 +1020,9 @@ func TestComputeRestrictsToOneArtifactAndItsClosure(t *testing.T) {
 // restore covers says nothing about what its members are.
 func TestComputeKeepsDirectnessUnderOnly(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "zlib/1.3", "echo zlib\n")
+	dep := newArtifact(t, "zlib/1.3", "echo zlib\n")
 	depPath := vendor(t, root, dep, "echo zlib\n")
-	wanted := artifact(t, "index/1.0", "echo index\n", edge(dep))
+	wanted := newArtifact(t, "index/1.0", "echo index\n", edge(dep))
 	wantedPath := vendor(t, root, wanted, "echo index\n")
 
 	l := lock.New()
@@ -1037,7 +1037,7 @@ func TestComputeKeepsDirectnessUnderOnly(t *testing.T) {
 
 func TestComputeRefusesAnOnlyItDoesNotCover(t *testing.T) {
 	root := projectRoot(t)
-	wanted := artifact(t, "index/1.0", "echo index\n")
+	wanted := newArtifact(t, "index/1.0", "echo index\n")
 	wantedPath := vendor(t, root, wanted, "echo index\n")
 
 	l := lock.New()
@@ -1055,9 +1055,9 @@ func TestComputeRefusesAnOnlyItDoesNotCover(t *testing.T) {
 // A problem belonging to an artifact --only excluded is not this restore's.
 func TestComputeDropsProblemsFromOutsideOnly(t *testing.T) {
 	root := projectRoot(t)
-	wanted := artifact(t, "index/1.0", "echo index\n")
+	wanted := newArtifact(t, "index/1.0", "echo index\n")
 	wantedPath := vendor(t, root, wanted, "echo index\n")
-	interactive := artifact(t, "genome/1.0", "echo genome\n")
+	interactive := newArtifact(t, "genome/1.0", "echo genome\n")
 	interactive.Source.RequiresInput = true
 	interactivePath := vendor(t, root, interactive, "echo genome\n")
 
@@ -1091,11 +1091,11 @@ func stepsFor(plan *Plan, artifact string) []Step {
 // built first, so build order alone would decide it backwards.
 func TestComputeGivesTheFlatNameToTheSelectionNotTheBuildDependency(t *testing.T) {
 	root := projectRoot(t)
-	older := artifact(t, "samtools/1.23.1", "echo older\n")
+	older := newArtifact(t, "samtools/1.23.1", "echo older\n")
 	olderPath := vendor(t, root, older, "echo older\n")
-	genome := artifact(t, "grch38/genome", "echo genome\n", edge(older))
+	genome := newArtifact(t, "grch38/genome", "echo genome\n", edge(older))
 	genomePath := vendor(t, root, genome, "echo genome\n")
-	selected := artifact(t, "samtools/1.23.1", "echo selected\n")
+	selected := newArtifact(t, "samtools/1.23.1", "echo selected\n")
 	selectedPath := vendor(t, root, selected, "echo selected\n")
 
 	l := lock.New()
@@ -1122,9 +1122,9 @@ func TestComputeGivesTheFlatNameToTheSelectionNotTheBuildDependency(t *testing.T
 // Nothing else claims the name, so the dependency is entitled to it.
 func TestComputeLeavesAnUncontestedBuildDependencyFlat(t *testing.T) {
 	root := projectRoot(t)
-	dep := artifact(t, "zlib/1.3", "echo zlib\n")
+	dep := newArtifact(t, "zlib/1.3", "echo zlib\n")
 	depPath := vendor(t, root, dep, "echo zlib\n")
-	genome := artifact(t, "grch38/genome", "echo genome\n", edge(dep))
+	genome := newArtifact(t, "grch38/genome", "echo genome\n", edge(dep))
 	genomePath := vendor(t, root, genome, "echo genome\n")
 
 	l := lock.New()
@@ -1139,11 +1139,11 @@ func TestComputeLeavesAnUncontestedBuildDependencyFlat(t *testing.T) {
 // A discarded build dependency is never installed, so it has no name to yield.
 func TestComputeLeavesADiscardedBuildDependencyUnmarked(t *testing.T) {
 	root := projectRoot(t)
-	older := artifact(t, "samtools/1.23.1", "echo older\n")
+	older := newArtifact(t, "samtools/1.23.1", "echo older\n")
 	olderPath := vendor(t, root, older, "echo older\n")
-	genome := artifact(t, "grch38/genome", "echo genome\n", edge(older))
+	genome := newArtifact(t, "grch38/genome", "echo genome\n", edge(older))
 	genomePath := vendor(t, root, genome, "echo genome\n")
-	selected := artifact(t, "samtools/1.23.1", "echo selected\n")
+	selected := newArtifact(t, "samtools/1.23.1", "echo selected\n")
 	selectedPath := vendor(t, root, selected, "echo selected\n")
 
 	l := lock.New()

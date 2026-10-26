@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/artifact"
 )
 
 func TestValidateManifestAcceptsEachType(t *testing.T) {
-	for _, typ := range []catalog.Type{catalog.TypeApp, catalog.TypeData, catalog.TypeOS} {
+	for _, typ := range []artifact.Type{artifact.TypeApp, artifact.TypeData, artifact.TypeOS} {
 		m := validManifest()
 		m.Type = typ
 		if err := ValidateManifest(m); err != nil {
@@ -62,7 +62,7 @@ func TestValidateManifestRejects(t *testing.T) {
 		}, ErrInvalid},
 		{"snapshot tools with Apptainer", func(m *Manifest) {
 			m.BuildType = BuildTypeSnapshot
-			m.Type = catalog.TypeEnv
+			m.Type = artifact.TypeEnv
 			m.Name = EnvName
 			m.Build.Tools = BuildTools{
 				Condatainer: Tool{Version: "1.4.2"},

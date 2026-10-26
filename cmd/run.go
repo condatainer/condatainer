@@ -469,7 +469,7 @@ func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (o
 				missingDeps = append(missingDeps, dep)
 			}
 		} else if solved[i] == dep {
-			normalized := catalog.Normalize(dep)
+			normalized := utils.NormalizeModule(dep)
 			if _, ok := installedOverlays[normalized]; !ok {
 				missingDeps = append(missingDeps, dep)
 			}
@@ -504,7 +504,7 @@ func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (o
 		} else if solved[i] != dep {
 			overlays[i] = solved[i]
 		} else {
-			normalized := catalog.Normalize(dep)
+			normalized := utils.NormalizeModule(dep)
 			if path, ok := installedOverlays[normalized]; ok {
 				overlays[i] = path
 			} else {
@@ -700,7 +700,7 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 				entry.ok = utils.FileExists(p)
 				entry.path = p
 			} else {
-				normalized := catalog.Normalize(dep)
+				normalized := utils.NormalizeModule(dep)
 				entry.path, entry.ok = installedOverlays[normalized]
 			}
 			entries = append(entries, entry)

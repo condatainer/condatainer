@@ -197,7 +197,7 @@ func (bg *BuildGraph) dependencyPlan(obj *BuildObject) (map[string]plannedDep, b
 	for _, raw := range obj.Dependencies() {
 		requested, constrained := raw, raw
 		if !catalog.IsPathDep(raw) {
-			parsed, err := catalog.ParseDep(raw)
+			parsed, err := utils.ParseDep(raw)
 			if err != nil {
 				continue
 			}
@@ -258,7 +258,7 @@ func (bg *BuildGraph) graphDependencies(obj *BuildObject) []string {
 	var out []string
 	for _, raw := range obj.Dependencies() {
 		name := raw
-		if parsed, err := catalog.ParseDep(raw); err == nil {
+		if parsed, err := utils.ParseDep(raw); err == nil {
 			name = parsed.NameVersion()
 		}
 		if depObj, ok := bg.graph[name]; ok && !bg.installedAlready(depObj) {
@@ -370,7 +370,7 @@ func (bg *BuildGraph) runSchedulerStep() error {
 		depIDs := []string{}
 		for _, rawDep := range obj.Dependencies() {
 			dep := rawDep
-			if parsed, err := catalog.ParseDep(rawDep); err == nil {
+			if parsed, err := utils.ParseDep(rawDep); err == nil {
 				dep = parsed.NameVersion()
 			}
 			// Absent from the graph means the resolver satisfied it with an

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/conda"
 )
 
@@ -33,7 +33,7 @@ func TestBuildProvenanceStaysOutOfEveryKey(t *testing.T) {
 			manifest: meta.Manifest{
 				SchemaVersion: meta.SchemaVersion,
 				Name:          "tool/1",
-				Type:          catalog.TypeApp,
+				Type:          artifact.TypeApp,
 				BuildType:     "script",
 				Platform:      meta.NativePlatform(),
 				Source:        meta.Source{Files: []string{meta.RecipeFileName}},
@@ -45,12 +45,12 @@ func TestBuildProvenanceStaysOutOfEveryKey(t *testing.T) {
 			manifest: meta.Manifest{
 				SchemaVersion: meta.SchemaVersion,
 				Name:          "grch38/index/1",
-				Type:          catalog.TypeData,
+				Type:          artifact.TypeData,
 				BuildType:     "script",
 				Platform:      meta.NativePlatform(),
 				Source:        meta.Source{Files: []string{meta.RecipeFileName}},
 				Dependencies: []meta.Dependency{
-					{Name: "star/1", Type: catalog.TypeApp, Role: meta.RoleApp,
+					{Name: "star/1", Type: artifact.TypeApp, Role: meta.RoleApp,
 						Identity: idKey("star id"), Equiv: eqKey("star eq")},
 				},
 			},
@@ -61,7 +61,7 @@ func TestBuildProvenanceStaysOutOfEveryKey(t *testing.T) {
 			manifest: meta.Manifest{
 				SchemaVersion: meta.SchemaVersion,
 				Name:          "ubuntu24/base",
-				Type:          catalog.TypeOS,
+				Type:          artifact.TypeOS,
 				BuildType:     "def",
 				Platform:      meta.NativePlatform(),
 				Source:        meta.Source{Files: []string{meta.RecipeFileName}},
@@ -77,7 +77,7 @@ func TestBuildProvenanceStaysOutOfEveryKey(t *testing.T) {
 			manifest: meta.Manifest{
 				SchemaVersion: meta.SchemaVersion,
 				Name:          "pkg/1.0",
-				Type:          catalog.TypeApp,
+				Type:          artifact.TypeApp,
 				BuildType:     "conda",
 				Platform:      meta.NativePlatform(),
 				Source: meta.Source{Files: []string{
@@ -139,12 +139,12 @@ func TestDependencySchemeReachesTheKey(t *testing.T) {
 	base := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "grch38/index/1",
-		Type:          catalog.TypeData,
+		Type:          artifact.TypeData,
 		BuildType:     "script",
 		Platform:      meta.NativePlatform(),
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
 		Dependencies: []meta.Dependency{
-			{Name: "genome/1", Type: catalog.TypeData, Role: meta.RoleData,
+			{Name: "genome/1", Type: artifact.TypeData, Role: meta.RoleData,
 				Identity: idKey("genome id"), Equiv: eqKey("genome eq")},
 		},
 	}
@@ -158,7 +158,7 @@ func TestDependencySchemeReachesTheKey(t *testing.T) {
 	// Same digests, different schemes. Nothing else moves.
 	reschemed := base
 	reschemed.Dependencies = []meta.Dependency{{
-		Name: "genome/1", Type: catalog.TypeData, Role: meta.RoleData,
+		Name: "genome/1", Type: artifact.TypeData, Role: meta.RoleData,
 		Identity: meta.KeyRef{Scheme: string(CondaExplicitV1), SHA256: idKey("genome id").SHA256},
 		Equiv:    meta.KeyRef{Scheme: string(CondaEnvironmentV1), SHA256: eqKey("genome eq").SHA256},
 	}}

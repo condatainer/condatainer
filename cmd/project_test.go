@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/project/restore"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
@@ -52,7 +52,7 @@ func vendorArtifact(t *testing.T, root, name, recipe string) string {
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "script",
 		// This host, in uname form: a fixture claiming another architecture
 		// would be refused by restore's platform check before anything else.

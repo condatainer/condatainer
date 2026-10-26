@@ -8,13 +8,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/store"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 func projectRoot(t *testing.T) string {
@@ -37,7 +38,7 @@ func vendorFor(t *testing.T, root, name, recipe, arch string) (string, meta.Mani
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "script",
 		Platform:      meta.Platform{OS: "linux", Arch: arch},
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
@@ -179,7 +180,7 @@ func TestResolveLiveResolvesALooseNameWhenEnabled(t *testing.T) {
 	})
 
 	l := lock.New()
-	requests := []lock.Request{{Key: "samtools", Kind: lock.KindName, Dep: catalog.Dep{Name: "samtools"}}}
+	requests := []lock.Request{{Key: "samtools", Kind: lock.KindName, Dep: utils.Dep{Name: "samtools"}}}
 
 	got, err := Resolve(context.Background(), root, l, requests,
 		ResolveOptions{lookup: absent, LiveResolve: true, SearchDirs: []string{imagesDir}})
@@ -209,7 +210,7 @@ func TestResolveRefusesALooseNameWhenLiveResolveDisabled(t *testing.T) {
 	}
 
 	l := lock.New()
-	requests := []lock.Request{{Key: "samtools", Kind: lock.KindName, Dep: catalog.Dep{Name: "samtools"}}}
+	requests := []lock.Request{{Key: "samtools", Kind: lock.KindName, Dep: utils.Dep{Name: "samtools"}}}
 
 	got, err := Resolve(context.Background(), root, l, requests,
 		ResolveOptions{lookup: absent, SearchDirs: []string{imagesDir}})

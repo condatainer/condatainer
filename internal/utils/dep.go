@@ -1,14 +1,12 @@
-package catalog
+package utils
 
 import (
 	"errors"
 	"strings"
-
-	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // ErrEmptyDep is returned by ParseDep for a blank dependency.
-var ErrEmptyDep = errors.New("catalog: empty dependency")
+var ErrEmptyDep = errors.New("empty dependency")
 
 // Dep is one #DEP: edge. The preferred version is the implicit upper bound, so
 // Min "2.7.0" with Version "2.7.11b" admits [2.7.0, 2.7.11b].
@@ -33,11 +31,11 @@ func (d Dep) NameVersion() string {
 	return d.Name + "/" + d.Version
 }
 
-// Normalize folds the spellings of one module into name/version form, converting = and -- to / and trimming space.
+// NormalizeModule folds the spellings of one module into name/version form, converting = and -- to / and trimming space.
 //   - Constraint suffixes survive.
 //   - A trailing @<identity> survives: @ separates a name from an identity, never a version.
 //   - Exported because it decides what a name is: index keys use this form, so a second implementation elsewhere would make one string resolve two ways.
-func Normalize(nameVersion string) string {
+func NormalizeModule(nameVersion string) string {
 	nv, op, min := splitConstraint(strings.TrimSpace(nameVersion))
 	nv = strings.ReplaceAll(nv, "--", "/")
 	nv = strings.ReplaceAll(nv, "=", "/")
@@ -47,7 +45,7 @@ func Normalize(nameVersion string) string {
 // ParseDep parses a #DEP: value such as "star/2.7.11b>=2.7.0". The last path
 // component is the version, so a template dep keeps its token there.
 func ParseDep(raw string) (Dep, error) {
-	nv, op, min := splitConstraint(Normalize(raw))
+	nv, op, min := splitConstraint(NormalizeModule(raw))
 	if nv == "" {
 		return Dep{}, ErrEmptyDep
 	}
@@ -76,7 +74,7 @@ func (d Dep) Satisfies(version string) bool {
 	if d.Op == "" {
 		return d.Version == "" || versionHasPrefix(version, d.Version)
 	}
-	switch cmp := utils.CompareVersions(version, d.Min); d.Op {
+	switch cmp := CompareVersions(version, d.Min); d.Op {
 	case ">=":
 		if cmp < 0 {
 			return false
@@ -88,7 +86,7 @@ func (d Dep) Satisfies(version string) bool {
 	default:
 		return false
 	}
-	return d.Version == "" || utils.CompareVersions(version, d.Version) <= 0
+	return d.Version == "" || CompareVersions(version, d.Version) <= 0
 }
 
 // versionHasPrefix reports whether every dot-separated component of prefix

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
@@ -202,20 +202,20 @@ func TestOrderOverlaysOsFirst(t *testing.T) {
 
 	osA := filepath.Join(dir, "os-a.sqf")
 	packRuntimeSqf(t, osA, meta.Runtime{
-		SchemaVersion: meta.SchemaVersion, Name: "ubuntu24", Type: catalog.TypeOS, Platform: meta.NativePlatform(),
+		SchemaVersion: meta.SchemaVersion, Name: "ubuntu24", Type: artifact.TypeOS, Platform: meta.NativePlatform(),
 	})
 	osB := filepath.Join(dir, "os-b.sqf")
 	packRuntimeSqf(t, osB, meta.Runtime{
-		SchemaVersion: meta.SchemaVersion, Name: "cuda-libs", Type: catalog.TypeOS, Platform: meta.NativePlatform(),
+		SchemaVersion: meta.SchemaVersion, Name: "cuda-libs", Type: artifact.TypeOS, Platform: meta.NativePlatform(),
 	})
 	appA := filepath.Join(dir, "samtools--1.22.sqf")
 	packRuntimeSqf(t, appA, meta.Runtime{
-		SchemaVersion: meta.SchemaVersion, Name: "samtools/1.22", Type: catalog.TypeApp,
+		SchemaVersion: meta.SchemaVersion, Name: "samtools/1.22", Type: artifact.TypeApp,
 		Platform: meta.NativePlatform(), Prefix: "/cnt/samtools/1.22",
 	})
 	appB := filepath.Join(dir, "bcftools--1.20.sqf")
 	packRuntimeSqf(t, appB, meta.Runtime{
-		SchemaVersion: meta.SchemaVersion, Name: "bcftools/1.20", Type: catalog.TypeApp,
+		SchemaVersion: meta.SchemaVersion, Name: "bcftools/1.20", Type: artifact.TypeApp,
 		Platform: meta.NativePlatform(), Prefix: "/cnt/bcftools/1.20",
 	})
 	envSqf := filepath.Join(dir, "env.sqf")
@@ -346,7 +346,7 @@ func TestSelectRootSifWinsRegardlessOfPosition(t *testing.T) {
 
 	osSqf := filepath.Join(dir, "cuda-libs.sqf")
 	packRuntimeSqf(t, osSqf, meta.Runtime{
-		SchemaVersion: meta.SchemaVersion, Name: "cuda-libs", Type: catalog.TypeOS, Platform: meta.NativePlatform(),
+		SchemaVersion: meta.SchemaVersion, Name: "cuda-libs", Type: artifact.TypeOS, Platform: meta.NativePlatform(),
 	})
 	sif := filepath.Join(dir, "foreign.sif")
 	if err := os.WriteFile(sif, []byte("not a real sif, just needs the extension"), 0o644); err != nil {
@@ -396,11 +396,11 @@ func TestIsRootEligibleReadsRealMetadata(t *testing.T) {
 
 	osSqf := filepath.Join(dir, "os.sqf")
 	packRuntimeSqf(t, osSqf, meta.Runtime{
-		SchemaVersion: meta.SchemaVersion, Name: "ubuntu24", Type: catalog.TypeOS, Platform: meta.NativePlatform(),
+		SchemaVersion: meta.SchemaVersion, Name: "ubuntu24", Type: artifact.TypeOS, Platform: meta.NativePlatform(),
 	})
 	appSqf := filepath.Join(dir, "samtools--1.22.sqf")
 	packRuntimeSqf(t, appSqf, meta.Runtime{
-		SchemaVersion: meta.SchemaVersion, Name: "samtools/1.22", Type: catalog.TypeApp,
+		SchemaVersion: meta.SchemaVersion, Name: "samtools/1.22", Type: artifact.TypeApp,
 		Platform: meta.NativePlatform(), Prefix: "/cnt/samtools/1.22",
 	})
 

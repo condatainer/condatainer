@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
@@ -66,7 +67,7 @@ func TestSpecManifest(t *testing.T) {
 	spec := Spec{
 		Image: ImageSpec{
 			Name:        "samtools/1.23.1",
-			Type:        catalog.TypeApp,
+			Type:        artifact.TypeApp,
 			Description: "SAMtools alignment toolkit",
 			URL:         "https://www.htslib.org/",
 		},
@@ -79,7 +80,7 @@ func TestSpecManifest(t *testing.T) {
 	if m.SchemaVersion != meta.SchemaVersion {
 		t.Errorf("schema = %d", m.SchemaVersion)
 	}
-	if m.Name != "samtools/1.23.1" || m.Type != catalog.TypeApp {
+	if m.Name != "samtools/1.23.1" || m.Type != artifact.TypeApp {
 		t.Errorf("identity = %q/%q", m.Name, m.Type)
 	}
 	if m.BuildType != "script" {
@@ -119,7 +120,7 @@ func TestSpecMetadataCannotCarryAnswers(t *testing.T) {
 	const secret = "s3cret-license-key"
 
 	spec := Spec{
-		Image:  ImageSpec{Name: "tool/1.0", Type: catalog.TypeApp, Prefix: "/cnt/tool/1.0"},
+		Image:  ImageSpec{Name: "tool/1.0", Type: artifact.TypeApp, Prefix: "/cnt/tool/1.0"},
 		Source: SourceSpec{Script: &ScriptSource{Prompts: []string{"License key:"}}},
 	}
 	manifest, err := meta.MarshalManifest(spec.Manifest())
@@ -163,7 +164,7 @@ func TestEnvFromRecipeKeepsPrefixToken(t *testing.T) {
 	if env[0].Note != "install root" {
 		t.Errorf("note = %q", env[0].Note)
 	}
-	if got := env[1].Resolved(meta.Prefix("samtools/1.23.1", catalog.TypeApp)); got != "/cnt/samtools/1.23.1/bin" {
+	if got := env[1].Resolved(meta.Prefix("samtools/1.23.1", artifact.TypeApp)); got != "/cnt/samtools/1.23.1/bin" {
 		t.Errorf("resolved = %q", got)
 	}
 }
@@ -267,7 +268,7 @@ func TestResolvedSpecDependencies(t *testing.T) {
 			t.Fatalf("NewBuildObject: %v", err)
 		}
 		spec := obj.Spec()
-		if spec.Image.Type != catalog.TypeData {
+		if spec.Image.Type != artifact.TypeData {
 			t.Fatalf("type = %q, want data", spec.Image.Type)
 		}
 		if len(spec.Dependencies) != 1 || spec.Dependencies[0] != "samtools/1.23.1" {
@@ -306,7 +307,7 @@ func TestResolvedSpecForCondaFallback(t *testing.T) {
 		t.Errorf("package = %+v", got)
 	}
 	// A conda environment is self-contained software whatever its name shape.
-	if spec.Image.Type != catalog.TypeApp {
+	if spec.Image.Type != artifact.TypeApp {
 		t.Errorf("type = %q, want app", spec.Image.Type)
 	}
 	if err := meta.ValidateManifest(obj.Manifest()); err != nil {
@@ -336,7 +337,7 @@ func envMap(t *testing.T, settings []string) map[string]string {
 
 func TestBuildEnvFromSpec(t *testing.T) {
 	spec := Spec{
-		Image:  ImageSpec{Name: "samtools/1.23.1", Type: catalog.TypeApp, Prefix: "/cnt/samtools/1.23.1"},
+		Image:  ImageSpec{Name: "samtools/1.23.1", Type: artifact.TypeApp, Prefix: "/cnt/samtools/1.23.1"},
 		Source: SourceSpec{Script: &ScriptSource{}},
 	}
 
@@ -367,7 +368,7 @@ func TestBuildEnvFromSpec(t *testing.T) {
 func TestBuildEnvPrefixMatchesRuntime(t *testing.T) {
 	for _, name := range []string{"samtools/1.23.1", "grch38/star/2.7.11b/gencode47"} {
 		spec := Spec{
-			Image:  ImageSpec{Name: name, Type: catalog.TypeApp, Prefix: meta.Prefix(name, catalog.TypeApp)},
+			Image:  ImageSpec{Name: name, Type: artifact.TypeApp, Prefix: meta.Prefix(name, artifact.TypeApp)},
 			Source: SourceSpec{Script: &ScriptSource{}},
 		}
 		env := envMap(t, buildEnv(spec, Options{}))
@@ -398,7 +399,7 @@ func TestBuildEnvNameIsCompleteAndUnsplit(t *testing.T) {
 		"grch38/star/2.7.11b/gencode47-101",
 		"ubuntu24/base",
 	} {
-		spec := Spec{Image: ImageSpec{Name: name, Type: catalog.TypeApp}}
+		spec := Spec{Image: ImageSpec{Name: name, Type: artifact.TypeApp}}
 		env := envMap(t, buildEnv(spec, Options{}))
 		if env["CNT_BUILD_NAME"] != name {
 			t.Errorf("CNT_BUILD_NAME = %q, want the complete name %q", env["CNT_BUILD_NAME"], name)
@@ -485,7 +486,7 @@ func TestResolvedNonTemplateSourceBlock(t *testing.T) {
 // the answer.
 func TestSourceBlockRecordsOnlyThatInputIsNeeded(t *testing.T) {
 	spec := Spec{
-		Image: ImageSpec{Name: "vendor/tool/1.0", Type: catalog.TypeApp, Prefix: "/cnt/vendor/tool/1.0"},
+		Image: ImageSpec{Name: "vendor/tool/1.0", Type: artifact.TypeApp, Prefix: "/cnt/vendor/tool/1.0"},
 		Source: SourceSpec{
 			Script:        &ScriptSource{Prompts: []string{"paste the licence key"}},
 			RequiresInput: true,
@@ -533,7 +534,7 @@ func TestCondaSpecCapturesChannels(t *testing.T) {
 // entirely rather than appearing empty.
 func TestNonCondaManifestHasNoBuildBlock(t *testing.T) {
 	spec := Spec{
-		Image:  ImageSpec{Name: "samtools/1.23.1", Type: catalog.TypeApp, Prefix: "/cnt/samtools/1.23.1"},
+		Image:  ImageSpec{Name: "samtools/1.23.1", Type: artifact.TypeApp, Prefix: "/cnt/samtools/1.23.1"},
 		Source: SourceSpec{Script: &ScriptSource{}},
 	}
 	data, err := meta.MarshalManifest(spec.Manifest())
@@ -548,7 +549,7 @@ func TestNonCondaManifestHasNoBuildBlock(t *testing.T) {
 // The manifest names exactly the files that were staged, so a reader never has
 // to probe for what an image carries.
 func TestManifestNamesOnlyStagedSources(t *testing.T) {
-	b := newPackObject(t, catalog.TypeApp)
+	b := newPackObject(t, artifact.TypeApp)
 	if got := b.Manifest().Source.Files; len(got) != 0 {
 		t.Errorf("files = %v before anything was captured", got)
 	}
@@ -628,7 +629,7 @@ func TestRecipeBuildRecordsKeys(t *testing.T) {
 // resolved before the build — which is what lets a SIF carry its own keys.
 func TestOSIsKeyedByItsDefinition(t *testing.T) {
 	upstream := "sha256:" + strings.Repeat("a", 64)
-	b := newPackObject(t, catalog.TypeOS)
+	b := newPackObject(t, artifact.TypeOS)
 	b.spec.Source = SourceSpec{Definition: &DefinitionSource{
 		File: SourceFile{Name: meta.RecipeFileName, Data: []byte("Bootstrap: docker\nFrom: ubuntu:24.04\n")},
 		From: &meta.From{Bootstrap: "docker", Ref: "ubuntu:24.04", Digest: upstream},
@@ -652,7 +653,7 @@ func TestOSIsKeyedByItsDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity := derived.IdentityModel
-	if identity.Type != catalog.TypeOS {
+	if identity.Type != artifact.TypeOS {
 		t.Errorf("type = %q, want os", identity.Type)
 	}
 	if identity.From != upstream {
@@ -668,7 +669,7 @@ func TestOSIsKeyedByItsDefinition(t *testing.T) {
 // A Conda app writes no records: everything one could hold is ruled out for it,
 // so the manifest names the exports themselves and hashing them gives the keys.
 func TestCondaKeysNameTheExports(t *testing.T) {
-	b := newPackObject(t, catalog.TypeApp)
+	b := newPackObject(t, artifact.TypeApp)
 	explicit := []byte("@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/linux-64/bzip2-1.0.8-hda65f42_9.conda\n")
 	environment := []byte("channels:\n  - conda-forge\ndependencies:\n  - bzip2=1.0.8\n")
 	b.embedSource(SourceFile{Name: conda.ExplicitFileName, Data: explicit})
@@ -696,7 +697,7 @@ func TestCondaKeysNameTheExports(t *testing.T) {
 // A capture that failed leaves no keys rather than a claim about a file the
 // image does not carry.
 func TestCondaWithoutExportsRecordsNoKeys(t *testing.T) {
-	b := newPackObject(t, catalog.TypeApp)
+	b := newPackObject(t, artifact.TypeApp)
 	if err := b.deriveKeys(context.Background()); err != nil {
 		t.Fatalf("deriveKeys: %v", err)
 	}
@@ -721,7 +722,7 @@ func TestDataBuildComposesACapsule(t *testing.T) {
 	depManifest := meta.Manifest{
 		SchemaVersion:      meta.SchemaVersion,
 		Name:               "grch38/gtf/49",
-		Type:               catalog.TypeData,
+		Type:               artifact.TypeData,
 		BuildType:          "script",
 		Platform:           meta.NativePlatform(),
 		Source:             meta.Source{Files: []string{meta.RecipeFileName}},
@@ -736,7 +737,7 @@ func TestDataBuildComposesACapsule(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := meta.StageRuntime(depMeta, meta.Runtime{
-		SchemaVersion: meta.SchemaVersion, Name: "grch38/gtf/49", Type: catalog.TypeData,
+		SchemaVersion: meta.SchemaVersion, Name: "grch38/gtf/49", Type: artifact.TypeData,
 		Platform: meta.NativePlatform(), Prefix: "/cnt/grch38/gtf/49",
 	}); err != nil {
 		t.Fatal(err)
@@ -747,7 +748,7 @@ func TestDataBuildComposesACapsule(t *testing.T) {
 	inheritedRecipe := []byte("echo genome\n")
 	inheritedManifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
-		Name:          "grch38/genome", Type: catalog.TypeData, BuildType: "script",
+		Name:          "grch38/genome", Type: artifact.TypeData, BuildType: "script",
 		Platform: meta.NativePlatform(),
 		Source:   meta.Source{Files: []string{meta.RecipeFileName}},
 	}
@@ -806,7 +807,7 @@ func TestDataBuildComposesACapsule(t *testing.T) {
 		t.Fatalf("dependencies = %+v", m.Dependencies)
 	}
 	dep := m.Dependencies[0]
-	if dep.Name != "grch38/gtf/49" || dep.Type != catalog.TypeData || dep.Role != meta.RoleData {
+	if dep.Name != "grch38/gtf/49" || dep.Type != artifact.TypeData || dep.Role != meta.RoleData {
 		t.Errorf("dependency = %+v", dep)
 	}
 	if dep.Records == meta.Unrecorded {
@@ -906,7 +907,7 @@ func TestSpecManifestCarriesRedistribution(t *testing.T) {
 	spec := Spec{
 		Image: ImageSpec{
 			Name:         "samtools/1.23.1",
-			Type:         catalog.TypeApp,
+			Type:         artifact.TypeApp,
 			License:      "MIT",
 			Redistribute: &yes,
 		},

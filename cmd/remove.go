@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	artifactcache "github.com/condatainer/condatainer/internal/artifact/cache"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -196,7 +195,7 @@ func performDelete(cmd *cobra.Command, names []string, showListing ...bool) erro
 	seen := make(map[string]bool)
 	var valid []string
 	for _, name := range names {
-		norm := catalog.Normalize(name)
+		norm := utils.NormalizeModule(name)
 		if seen[norm] {
 			continue
 		}

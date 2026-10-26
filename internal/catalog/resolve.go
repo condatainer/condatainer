@@ -19,7 +19,7 @@ type Have func(name string) []string
 
 // Node is one module in a build plan.
 type Node struct {
-	Dep    Dep
+	Dep    utils.Dep
 	Entry  *Entry // nil when no source provides it
 	Source *Source
 	Vars   map[string]string // set when the name came from a template
@@ -52,7 +52,7 @@ type Plan struct {
 func (c Catalog) Resolve(ctx context.Context, roots []string, have Have) (*Plan, error) {
 	r := &resolver{cat: c, have: have, seen: map[string]bool{}, onStack: map[string]bool{}}
 	for _, root := range roots {
-		dep, err := ParseDep(root)
+		dep, err := utils.ParseDep(root)
 		if err != nil {
 			return nil, err
 		}
@@ -83,9 +83,9 @@ type resolver struct {
 // order. vars carries the parent's expansion, since a template dep is
 // substituted before it has a name at all. parent is the name that depended on
 // this one, empty for a root.
-func (r *resolver) visit(ctx context.Context, dep Dep, vars map[string]string, parent string) error {
+func (r *resolver) visit(ctx context.Context, dep utils.Dep, vars map[string]string, parent string) error {
 	name := replaceVars(dep.String(), vars)
-	dep, err := ParseDep(name)
+	dep, err := utils.ParseDep(name)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func (r *resolver) visit(ctx context.Context, dep Dep, vars map[string]string, p
 	r.onStack[key], r.stack = true, append(r.stack, key)
 	if node.Entry != nil && node.Installed == "" {
 		for _, raw := range node.Entry.Deps {
-			child, err := ParseDep(raw)
+			child, err := utils.ParseDep(raw)
 			if err != nil {
 				return err
 			}
@@ -135,7 +135,7 @@ func (r *resolver) visit(ctx context.Context, dep Dep, vars map[string]string, p
 // resolveOne picks the version a dep gets and finds what provides it.
 //   - The preferred version wins when it resolves.
 //   - Otherwise the newest installed in range, so a bare #DEP: does not rebuild the moment upstream moves; then the newest available; then nothing provides it, and the caller's fallback picks its own.
-func (r *resolver) resolveOne(ctx context.Context, dep Dep) (Node, error) {
+func (r *resolver) resolveOne(ctx context.Context, dep utils.Dep) (Node, error) {
 	node := Node{Dep: dep}
 
 	if v := r.installed(dep); v != "" {
@@ -165,14 +165,14 @@ func (r *resolver) resolveOne(ctx context.Context, dep Dep) (Node, error) {
 }
 
 // installed returns the newest version the caller has that the dep admits.
-func (r *resolver) installed(dep Dep) string {
+func (r *resolver) installed(dep utils.Dep) string {
 	return installedVersion(r.have, dep)
 }
 
 // installedVersion returns the newest version have reports for dep.Name that
 // dep admits — shared by resolveOne's graph walk and SolveName's own attempt
 // order, so "installed beats newer" is one rule, not two.
-func installedVersion(have Have, dep Dep) string {
+func installedVersion(have Have, dep utils.Dep) string {
 	if have == nil {
 		return ""
 	}
@@ -187,7 +187,7 @@ func installedVersion(have Have, dep Dep) string {
 }
 
 // newestAvailable returns the newest version the catalog offers in range.
-func (r *resolver) newestAvailable(ctx context.Context, dep Dep) string {
+func (r *resolver) newestAvailable(ctx context.Context, dep utils.Dep) string {
 	versions, err := r.cat.Versions(ctx, dep.Name)
 	if err != nil {
 		return ""

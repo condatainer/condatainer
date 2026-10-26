@@ -12,7 +12,6 @@ import (
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/compare"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -497,7 +496,7 @@ func MatchPin(l *Lock, request Request) (key string, entry PinEntry, ok bool) {
 	}
 	bestKey, bestEntry, bestVersion := "", PinEntry{}, ""
 	for key, entry := range l.Pins {
-		dep, err := catalog.ParseDep(key)
+		dep, err := utils.ParseDep(key)
 		if err != nil || dep.Name != request.Dep.Name || !request.Dep.Satisfies(dep.Version) {
 			continue
 		}

@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/capsule"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
-	"github.com/condatainer/condatainer/internal/catalog"
 )
 
 // packArtifact builds a real .sqf under whatever filename the caller asks for.
@@ -29,7 +29,7 @@ func packArtifact(t *testing.T, filename, name, recipe string) (string, meta.Man
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "script",
 		Platform:      meta.NativePlatform(),
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},
@@ -45,7 +45,7 @@ func packArtifact(t *testing.T, filename, name, recipe string) (string, meta.Man
 	if err := meta.StageRuntime(dir, meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          name,
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		Platform:      meta.NativePlatform(),
 		Prefix:        "/cnt/" + name,
 	}); err != nil {
@@ -136,7 +136,7 @@ func TestCandidateFromPathRefusesAnUnkeyedArtifact(t *testing.T) {
 	if err := meta.StageRuntime(dir, meta.Runtime{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "testdata/combined/1.0",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		Platform:      meta.NativePlatform(),
 		Prefix:        "/cnt/testdata/combined/1.0",
 	}); err != nil {
@@ -175,7 +175,7 @@ func TestAnEntryStagedIntoALockReadsBackAsAnImagesOwn(t *testing.T) {
 	manifest := meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "zlib/1.3",
-		Type:          catalog.TypeApp,
+		Type:          artifact.TypeApp,
 		BuildType:     "script",
 		Platform:      meta.NativePlatform(),
 		Source:        meta.Source{Files: []string{meta.RecipeFileName}},

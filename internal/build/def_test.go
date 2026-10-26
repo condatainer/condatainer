@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 func TestSynthesizeDefFromURI(t *testing.T) {
@@ -28,7 +30,7 @@ func TestSynthesizeDefFromURI(t *testing.T) {
 			t.Fatalf("read def: %v", err)
 		}
 		const want = "bootstrap: docker\nfrom: ubuntu:22.04\n\n"
-		if got := string(catalog.StripComments(data)); got != want {
+		if got := string(utils.StripComments(data)); got != want {
 			t.Errorf("stripped def = %q, want %q", got, want)
 		}
 		if !strings.Contains(string(data), "docker://ubuntu:22.04") {
@@ -58,7 +60,7 @@ func TestCopyMetaIntoSandbox(t *testing.T) {
 	if err := meta.StageManifest(metaDir, meta.Manifest{
 		SchemaVersion: meta.SchemaVersion,
 		Name:          "ubuntu24/base",
-		Type:          catalog.TypeOS,
+		Type:          artifact.TypeOS,
 		BuildType:     "def",
 		Platform:      meta.NativePlatform(),
 	}); err != nil {
@@ -106,8 +108,8 @@ func TestSynthesizedDefCarriesMetadata(t *testing.T) {
 	if recipe.URL != uri {
 		t.Errorf("url = %q, want %q", recipe.URL, uri)
 	}
-	if recipe.Type != catalog.TypeOS {
-		t.Errorf("type = %q, want %q — a bare image is a root layer, not an app", recipe.Type, catalog.TypeOS)
+	if recipe.Type != artifact.TypeOS {
+		t.Errorf("type = %q, want %q — a bare image is a root layer, not an app", recipe.Type, artifact.TypeOS)
 	}
 
 	// The directives still have to be readable — Apptainer parses a def header

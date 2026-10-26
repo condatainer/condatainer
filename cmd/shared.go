@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/catalog"
@@ -229,7 +230,7 @@ func normalizeFilters(filters []string) []string {
 		if trimmed == "" {
 			continue
 		}
-		normalized = append(normalized, strings.ToLower(catalog.Normalize(trimmed)))
+		normalized = append(normalized, strings.ToLower(utils.NormalizeModule(trimmed)))
 	}
 	return normalized
 }
@@ -631,7 +632,7 @@ func addDistroAliasChoices(installed map[string]string, choices map[string]struc
 // never claimed.
 func isOSOverlay(overlayPath string) bool {
 	rt, err := meta.ReadRuntime(overlayPath)
-	return err == nil && rt.Type == catalog.TypeOS
+	return err == nil && rt.Type == artifact.TypeOS
 }
 
 // isAppOverlay checks if an overlay path is considered an "app" overlay

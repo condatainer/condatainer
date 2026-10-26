@@ -315,7 +315,7 @@ var configGetCmd = &cobra.Command{
 
 ` + configLayersHelp,
 	Example: `  condatainer config get host_apptainer
-  condatainer config get build.ncpus
+  condatainer config get build.ncpu
   condatainer config get sources
   condatainer config get sources -l cnt-root`,
 	Args:              cobra.ExactArgs(1),
@@ -372,7 +372,7 @@ Time format (for build.time):
 
 ` + configLayersHelp,
 	Example: `  condatainer config set host_apptainer /usr/bin/apptainer
-  condatainer config set build.ncpus 8
+  condatainer config set build.ncpu 8
   condatainer config set build.time 02:00:00
   condatainer config set scheduler.submit_job false`,
 	Args:              cobra.ExactArgs(2),

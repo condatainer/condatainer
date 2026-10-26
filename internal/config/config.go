@@ -39,8 +39,8 @@ type Config struct {
 	SkipPrebuilt bool
 }
 
-// DefaultNcpus is the build.ncpus default, which callers that cannot import build fall back to.
-const DefaultNcpus = 4
+// DefaultNcpu is the build.ncpu default, which callers that cannot import build fall back to.
+const DefaultNcpu = 4
 
 // Global holds the singleton configuration instance
 var Global Config

@@ -374,3 +374,17 @@ func TestExternalSourceRefusesAPathDependency(t *testing.T) {
 		t.Errorf("refusal does not name the rule: %v", err)
 	}
 }
+
+// A build reads the resource headers like a run script does. A container header means
+// nothing to a build, so it is ignored.
+func TestParseScriptMetadata_ResourceHeaders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "recipe.sh")
+	text := "#!/bin/bash\n#NCPU: 8\n#MEM: 16G\n#TIME: 3h\n#BIND: /a:/b\n#WRITABLE:\n#FAKEROOT:\necho hi\n"
+	if err := os.WriteFile(path, []byte(text), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b := &BuildObject{spec: Spec{Image: ImageSpec{Name: "foo/bar"}}, buildSource: path}
+	if err := b.parseScriptMetadata(context.Background()); err != nil || b.effectiveNcpus() != 8 {
+		t.Fatalf("ncpus=%d err=%v, want 8 and no error", b.effectiveNcpus(), err)
+	}
+}

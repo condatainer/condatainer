@@ -14,7 +14,7 @@ import (
 // EnvPrefix starts the name of every variable that overrides a key.
 const EnvPrefix = "CNT_CONFIG_"
 
-// EnvName returns the variable that overrides key: "build.ncpus" is CNT_CONFIG_BUILD_NCPUS.
+// EnvName returns the variable that overrides key: "build.ncpu" is CNT_CONFIG_BUILD_NCPU.
 func EnvName(key string) string {
 	return EnvPrefix + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
 }

@@ -328,6 +328,7 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 			specs.ProxyVia = host
 		}
 	}
+	build.SetJobTarget(specs)
 
 	// A destination is part of the job's name so two of them do not write one
 	// log, which OverrideOutput derives from it.

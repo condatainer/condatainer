@@ -225,8 +225,8 @@ func TestPackScriptAlwaysBudgetsCpus(t *testing.T) {
 		given int
 		want  string
 	}{
-		{"unset falls back to the build default", 0, fmt.Sprintf("-processors %d", config.DefaultNcpus)},
-		{"negative falls back too", -1, fmt.Sprintf("-processors %d", config.DefaultNcpus)},
+		{"unset falls back to the build default", 0, fmt.Sprintf("-processors %d", config.DefaultNcpu)},
+		{"negative falls back too", -1, fmt.Sprintf("-processors %d", config.DefaultNcpu)},
 		{"a budget is honoured", 8, "-processors 8"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

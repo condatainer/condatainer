@@ -43,7 +43,7 @@ var (
 		settings.Help("Partition or queue to submit to. Empty uses the scheduler's own default."),
 		settings.Show(schedulerDefault))
 
-	keyNcpus = settings.Int("scheduler.ncpus",
+	keyNcpu = settings.Int("scheduler.ncpu",
 		settings.Order(6),
 		settings.Default(1), settings.Min(1),
 		settings.Help("CPUs for a job that has no scheduler directives of its own."))
@@ -202,5 +202,5 @@ func ProxyPerJob() bool { return keyProxyPerJob.Get() }
 
 // DefaultSpec is the resource request for a job that has no scheduler directives of its own.
 func DefaultSpec() ResourceSpec {
-	return ResourceSpec{CpusPerTask: keyNcpus.Get(), MemPerNodeMB: keyMem.Get(), Time: keyTime.Get()}
+	return ResourceSpec{CpusPerTask: keyNcpu.Get(), MemPerNodeMB: keyMem.Get(), Time: keyTime.Get()}
 }

@@ -464,6 +464,8 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 		specs.Control.JobName = "cnt-" + name
 	}
 
+	SetJobTarget(specs)
+
 	// Create job specification
 	jobSpec := &scheduler.JobSpec{
 		Name:           obj.NameVersion(),

@@ -286,12 +286,12 @@ func protect(img string) (func(), error) {
 
 // processors is how many compressor threads the pack may use.
 //   - Never zero and never omitted: without -processors mksquashfs takes every core on the machine.
-//   - A freeze budgets them as a build does (build.ncpus).
+//   - A freeze budgets them as a build does (build.ncpu).
 func processors(n int) int {
 	if n > 0 {
 		return n
 	}
-	return config.DefaultNcpus
+	return config.DefaultNcpu
 }
 
 // packScript renders the mksquashfs invocation. -no-xattrs for the reason

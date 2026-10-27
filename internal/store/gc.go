@@ -19,7 +19,7 @@ import (
 )
 
 // ErrUnscoped reports a destructive GC that named no store to act on.
-var ErrUnscoped = errors.New("gc --apply requires a store to act on")
+var ErrUnscoped = errors.New("deleting requires a store to act on")
 
 // StagingGrace is how long an abandoned .part file is left before GC reports
 // it. Fixed rather than configurable: it is crash recovery, not retention
@@ -90,7 +90,7 @@ type GCOptions struct {
 //   - Every uncertainty retains: an entry that cannot be opened, locked, stat'd or validated stays.
 func GC(opts GCOptions) (*GCReport, error) {
 	if opts.Apply && len(opts.Dirs) == 0 {
-		return nil, fmt.Errorf("%w: name one with --dir or --layer", ErrUnscoped)
+		return nil, fmt.Errorf("%w: name one with --layer", ErrUnscoped)
 	}
 	grace := opts.Grace
 	if grace <= 0 {

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -46,7 +45,6 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().BoolVarP(&listRemove, "remove", "r", false, "Remove listed overlays after confirmation (used with search terms)")
 	listCmd.Flags().BoolVarP(&listExact, "exact", "e", false, "Force exact full-name match even for a single term")
-	listCmd.Flags().StringP("dir", "D", "", "Limit to a specific image directory (substring match)")
 	listCmd.Flags().StringP("layer", "l", "", "Limit to a data layer: u/user, r/cnt-root, e/extra-root")
 	listCmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
@@ -457,37 +455,4 @@ func readOverlayDescription(overlayPath string) string {
 		return ""
 	}
 	return rt.Description
-}
-
-// filterImageDirs filters dirs according to dirFilter:
-//   - empty          → return all
-//   - no leading /   → substring match ("scratch" matches "/scratch/user/images")
-//   - starts with /  → exact match, unless it contains * or ? (wildcard via filepath.Match)
-func filterImageDirs(dirs []string, dirFilter string) []string {
-	if dirFilter == "" {
-		return dirs
-	}
-	var out []string
-	for _, d := range dirs {
-		if matchDirFilter(d, dirFilter) {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-func matchDirFilter(dir, filter string) bool {
-	if !strings.HasPrefix(filter, "/") {
-		return strings.Contains(dir, filter)
-	}
-	if strings.ContainsAny(filter, "*?") {
-		// filepath.Match only matches within a single path component (* won't cross /).
-		// Convert to regex so * matches across slashes: /scratch/* → ^/scratch/.*$
-		pattern := "^" + regexp.QuoteMeta(filter) + "$"
-		pattern = strings.ReplaceAll(pattern, `\*`, `.*`)
-		pattern = strings.ReplaceAll(pattern, `\?`, `.`)
-		matched, _ := regexp.MatchString(pattern, dir)
-		return matched
-	}
-	return dir == filter
 }

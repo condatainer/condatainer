@@ -53,3 +53,19 @@ func TestTypeFromBin(t *testing.T) {
 		}
 	}
 }
+
+func TestProxyPerJobNamesTheJobKinds(t *testing.T) {
+	for _, kind := range []string{ProxyCreate, ProxyHelper, ProxyRun} {
+		if ProxyPerJob(kind) {
+			t.Errorf("%s gets a proxy by default", kind)
+		}
+	}
+	settingstest.OverrideList(t, "scheduler.proxy_per_job", ProxyCreate, ProxyRun)
+	if !ProxyPerJob(ProxyCreate) || !ProxyPerJob(ProxyRun) || ProxyPerJob(ProxyHelper) {
+		t.Error("only the named kinds get a proxy")
+	}
+	settingstest.OverrideList(t, "scheduler.proxy_per_job", ProxyAll)
+	if !ProxyPerJob(ProxyCreate) || !ProxyPerJob(ProxyHelper) || !ProxyPerJob(ProxyRun) {
+		t.Error("all names every kind")
+	}
+}

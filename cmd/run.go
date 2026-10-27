@@ -1260,7 +1260,7 @@ func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPa
 		return err
 	}
 
-	if scheduler.ProxyPerJob() {
+	if scheduler.ProxyPerJob(scheduler.ProxyRun) {
 		if h, err2 := os.Hostname(); err2 == nil && h != "" {
 			specs.ProxyVia = h
 		}

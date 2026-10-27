@@ -162,10 +162,10 @@ func checkRoot(ctx context.Context, cwd string) error {
 const stopGraceSecs = 30
 
 // buildCondatainerCmd builds the `condatainer exec` line the wrapper runs on the compute node.
-//   - Order: --stop-grace, the overlays, -w, --gpu, a bind of the executable, --pwd, then the script.
+//   - Order: --stop-grace, the overlays, -w, --load-gpu, a bind of the executable, --pwd, then the script.
 //   - It uses `exec`, not `e`, so nothing is autoloaded.
 //   - The script runs through its own shebang.
-//   - A GPU request in spec forces --gpu, even with autoload_gpu off.
+//   - A GPU request in spec forces --load-gpu, even with autoload_gpu off.
 func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -195,10 +195,10 @@ func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string,
 
 	// Script declared a GPU requirement: force detection past autoload_gpu:false.
 	if spec != nil && spec.Gpu != nil && spec.Gpu.Count > 0 {
-		parts = append(parts, "--gpu")
+		parts = append(parts, "--load-gpu")
 	}
 
-	// Bind condatainer binary so helpers can call _server_ready/_server_message inside.
+	// Bind condatainer binary so helpers can call _helper ready and _helper message inside.
 	parts = append(parts, "--bind", shellQuote(exe+":/usr/local/bin/condatainer"))
 
 	// Extra binds from #BIND: headers, single-quoted: the wrapper's shell never sees a value, and
@@ -493,14 +493,14 @@ func buildHelperCommandBody(id, name, cwd, stateDir string, walltime time.Durati
 	// shows where it ran. Headless, a child process also holds the lock file for as long as
 	// this wrapper lives, so the wrapper's liveness is visible from every host.
 	if sched == nil {
-		fmt.Fprintln(&sb, `condatainer _helper_hold "$CNT_HELPER_STATE_DIR/lock" $$ &`)
-		fmt.Fprintln(&sb, `condatainer _server_started`)
+		fmt.Fprintln(&sb, `condatainer _helper hold "$CNT_HELPER_STATE_DIR/lock" $$ &`)
+		fmt.Fprintln(&sb, `condatainer _helper started`)
 	} else {
-		fmt.Fprintf(&sb, "condatainer _server_started --node \"%s\"\n", sched.NodeNameEnvExpr())
+		fmt.Fprintf(&sb, "condatainer _helper started --node \"%s\"\n", sched.NodeNameEnvExpr())
 	}
 
 	// Free port (resolved on the compute node, not the login node)
-	fmt.Fprintln(&sb, `export CNT_HELPER_PORT=$(condatainer _pick_port)`)
+	fmt.Fprintln(&sb, `export CNT_HELPER_PORT=$(condatainer _helper pick-port)`)
 
 	// Bind address: 0.0.0.0 only for helper.connect=direct.
 	if bindAll {
@@ -516,7 +516,7 @@ func buildHelperCommandBody(id, name, cwd, stateDir string, walltime time.Durati
 	// CNT_HELPER_TMPDIR is always cleaned up: headless uses rm -rf on the resolved path;
 	// scheduler uses the shell variable so it works for both the scheduler-assigned dir
 	// and the /tmp fallback (scheduler-assigned dirs being wiped twice is harmless).
-	cleanupTrap := `condatainer _server_done --exit-code 130`
+	cleanupTrap := `condatainer _helper done --exit-code 130`
 	if sched == nil {
 		parentDir := utils.GetTmpDir()
 		jobTmpDir := filepath.Join(parentDir, id)
@@ -575,7 +575,7 @@ func buildHelperCommandBody(id, name, cwd, stateDir string, walltime time.Durati
 	if sched == nil {
 		fmt.Fprintln(&sb, `kill -KILL -$_cnt_watchdog_pid 2>/dev/null`)
 	}
-	fmt.Fprintln(&sb, `condatainer _server_done --exit-code $_cnt_exit`)
+	fmt.Fprintln(&sb, `condatainer _helper done --exit-code $_cnt_exit`)
 	if sched == nil {
 		parentDir := utils.GetTmpDir()
 		jobTmpDir := filepath.Join(parentDir, id)
@@ -655,7 +655,7 @@ func buildHelperScriptSpecs(name, cwd, account, partition string, excludeNodes [
 		},
 		HasDirectives: spec != nil,
 	}
-	if scheduler.ProxyPerJob() {
+	if scheduler.ProxyPerJob(scheduler.ProxyHelper) {
 		if h, err := os.Hostname(); err == nil && h != "" {
 			ss.ProxyVia = h
 		}

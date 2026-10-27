@@ -48,6 +48,7 @@ Immutable overflow below each images root. A flat overlay keeps the only bare-na
 - Age is `max(atime, mtime, ctime)`, and the report names which decided.
   - A refreshed atime from a backup or indexer only retains an entry.
   - A `noatime` mount leaves the other two to answer.
-- The grace is `store_gc_grace` in days, default 30, overridable with `--grace`. It is per invocation, so `--apply` requires `--dir` or `--layer`.
+- The grace is `store_gc_grace` in days, default 30. `--grace` overrides it.
+- Deleting requires `--layer`, because the grace and the stores are per invocation.
 - Abandoned `.part` files use a fixed 24-hour window. That is crash recovery, and it only asks whether a producer could still be writing.
 - Reachability is never consulted. A manifest edge is not liveness, and no build dependency is ever installed, so every entry was asked for.

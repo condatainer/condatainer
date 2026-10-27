@@ -100,7 +100,7 @@ func newStoreGCCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().IntVar(&graceDay, "grace", 0, "Age in days below which nothing is collectable (default: store_gc_grace)")
+	cmd.Flags().IntVar(&graceDay, "grace", 0, "Days below which nothing is collected (0 uses store_gc_grace)")
 	cmd.Flags().StringVarP(&layer, "layer", "l", "", "Limit to a layer: "+layerChoices)
 	jsonFlag(cmd.Flags(), &jsonOut)
 	cmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck

@@ -78,7 +78,7 @@ func TestRegisteredKeyNames(t *testing.T) {
 		"scheduler.mem CNT_CONFIG_SCHEDULER_MEM",
 		"scheduler.ncpu CNT_CONFIG_SCHEDULER_NCPU",
 		"scheduler.partition CNT_CONFIG_SCHEDULER_PARTITION",
-		"scheduler.proxy_perjob CNT_CONFIG_SCHEDULER_PROXY_PERJOB",
+		"scheduler.proxy_per_job CNT_CONFIG_SCHEDULER_PROXY_PER_JOB",
 		"scheduler.slurm.emit_mem CNT_CONFIG_SCHEDULER_SLURM_EMIT_MEM",
 		"scheduler.submit_job CNT_CONFIG_SCHEDULER_SUBMIT_JOB",
 		"scheduler.time CNT_CONFIG_SCHEDULER_TIME",

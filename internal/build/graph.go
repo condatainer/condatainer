@@ -449,7 +449,7 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 		effRS := EffectiveResourceSpec(nil)
 		specs = &scheduler.ScriptSpecs{Spec: effRS}
 	}
-	if scheduler.ProxyPerJob() {
+	if scheduler.ProxyPerJob(scheduler.ProxyCreate) {
 		if h, err := os.Hostname(); err == nil && h != "" {
 			specs.ProxyVia = h
 		}

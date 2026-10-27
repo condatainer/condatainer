@@ -1,0 +1,169 @@
+---
+title: Quick Start
+description: Create software and data as overlays, run them, and run a script as a job.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+CondaTainer runs the commands inside a **container**: an isolated Linux system that brings its own software while still having access to host files. This software runs within the container.
+
+A CondaTainer container is built from **overlay** images. An overlay is a single file containing a specific tool, dataset, or Conda environment. You can combine overlays to create the exact container you need.
+
+This guide will walk you through finding, creating, and running overlays, and submitting scripts as jobs.
+
+## Find an overlay source
+
+CondaTainer creates overlays from two primary sources:
+
+- **Conda packages**: Packages from configured Conda channels (defaults are `conda-forge` and `bioconda`). Use `condatainer search` to look up packages, or search on [anaconda.org](https://anaconda.org).
+- **[Recipes](../advanced/custom_recipe.mdx)**: Build instructions for software and data which are not available through Conda (e.g. genome index). Use `condatainer avail` to list available recipes.
+
+```bash
+condatainer avail grch38      # List recipes with "grch38" in the name
+condatainer search samtools   # Search for Conda package versions of samtools
+```
+
+Recipes come from **[recipe sources](../advanced/custom_source.mdx)**. The public collection [cnt](https://github.com/condatainer/cnt) is always available by default. Research groups can also add its own custom recipe source.
+
+## Create an overlay
+
+Create by name, with or without a version:
+
+```bash
+condatainer create samtools/1.22   # Exact version
+condatainer create openjdk/17      # Newest 17.x release
+condatainer create samtools        # Newest available version
+```
+
+When creating an overlay, CondaTainer searches for the package in this order:
+
+1. Search the **recipe sources** by name, and pick the newest version that matches.
+2. If no recipe is found, search the **Conda channels** by name, and pick the newest version that matches.
+
+**Key Benefits:**
+
+- **Saves Inodes**: A cluster limits the number of files, and one Conda environment can hold 10k+; as an overlay, it counts as one.
+- **Scheduler Integration**: CondaTainer will automatically submit the heavy build recipe as a scheduler job.
+
+## Run with overlays
+
+`condatainer exec` starts a container with the overlays with `-o`, and runs a command in it:
+
+```bash
+condatainer exec -o samtools/1.22 samtools --version
+```
+
+Leave out the command to get a Bash shell inside the container:
+
+```bash
+# On host machine
+$ condatainer exec -o samtools/1.22 -o bcftools/1.22
+
+# Inside the container shell
+> samtools --version
+> exit
+```
+
+## Run a script
+
+Add a `#DEP:` line for each overlay the script needs, beside its scheduler directives:
+
+<Tabs syncKey="scheduler">
+  <TabItem label="Slurm">
+    ```bash title="sort.sh"
+    #!/bin/bash
+    #SBATCH --cpus-per-task=4
+    #SBATCH --mem=8G
+    #SBATCH --time=1:00:00
+
+    #DEP: samtools/1.22
+
+    samtools sort -@ 4 -o sorted.bam input.bam
+    ```
+  </TabItem>
+  <TabItem label="PBS">
+    ```bash title="sort.sh"
+    #!/bin/bash
+    #PBS -l select=1:ncpus=4:mem=8gb
+    #PBS -l walltime=1:00:00
+
+    #DEP: samtools/1.22
+
+    samtools sort -@ 4 -o sorted.bam input.bam
+    ```
+  </TabItem>
+  <TabItem label="LSF">
+    ```bash title="sort.sh"
+    #!/bin/bash
+    #BSUB -n 4
+    #BSUB -R "span[hosts=1] rusage[mem=2048]"
+    #BSUB -W 1:00
+
+    #DEP: samtools/1.22
+
+    samtools sort -@ 4 -o sorted.bam input.bam
+    ```
+  </TabItem>
+  <TabItem label="CondaTainer">
+    ```bash title="sort.sh"
+    #!/bin/bash
+    #NCPU: 4
+    #MEM: 8G
+    #TIME: 1h
+
+    #DEP: samtools/1.22
+
+    samtools sort -@ 4 -o sorted.bam input.bam
+    ```
+
+    These headers work on every supported scheduler. See [Scheduler](../guides/scheduler.mdx#important-resource-flags).
+  </TabItem>
+</Tabs>
+
+Before running the script, you can ensure all required overlays are built:
+
+```bash
+# Creates any missing overlays specified by #DEP:
+condatainer check -a sort.sh
+
+# Starts the script inside a container with its required overlays
+condatainer run sort.sh
+```
+
+- `check -a` creates missing `#DEP:` overlays.
+- `run` executes the script inside a container loaded with those overlays.
+- With scheduler directives, `run` submits the script as a job and returns. Without them, or on a machine with no scheduler, it runs right away.
+
+### Scripts in Other Languages
+
+The first line of the script picks the program that runs it, as on any Linux system:
+
+```python title="count.py"
+#!/bin/env python3
+#DEP: samtools/1.22
+
+import subprocess
+subprocess.run(["samtools", "--version"])
+```
+
+- Use `#!/bin/bash` for bash, or `#!/bin/env <program>` for another language, such as `python3` or `Rscript`.
+- The script needs no executable permission. Run it with `condatainer run count.py`.
+- The program must exist inside the container, in the base image or in an overlay listed by `#DEP:`. A program that is missing stops the script when it starts.
+- Any other first line, or none, is refused before anything runs.
+- `#DEP:` and the other headers work in any language whose comments start with `#`.
+
+## List and remove overlays
+
+`list` shows what is installed. `avail` shows what you can create.
+
+```bash
+condatainer list                 # everything installed, by directory
+condatainer list samtools        # names containing "samtools"
+condatainer list samtools 1.22   # names containing both
+```
+
+Use `remove` to delete overlays you no longer need:
+
+```bash
+condatainer remove samtools/1.22
+```

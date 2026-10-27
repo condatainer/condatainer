@@ -1,0 +1,81 @@
+---
+import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter';
+import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
+import SidebarSublist from '@astrojs/starlight/components/SidebarSublist.astro';
+
+const { sidebar, toc } = Astro.locals.starlightRoute;
+
+// Starlight puts a page-title entry first, and nests headings deeper than the
+// minimum level under it. Both are lifted out so the list holds only headings.
+const items = (toc?.items ?? []).flatMap((item) =>
+	item.slug === '_top' ? item.children : [item],
+);
+---
+
+<SidebarPersister>
+	<SidebarSublist sublist={sidebar} />
+</SidebarPersister>
+
+<div class="md:sl-hidden">
+	<MobileMenuFooter />
+</div>
+
+{items.length > 0 && <script type="application/json" id="sidebar-toc-data" set:html={JSON.stringify(items)} />}
+
+<script>
+	interface Item {
+		slug: string;
+		text: string;
+		children: Item[];
+	}
+
+	const dataEl = document.getElementById('sidebar-toc-data');
+	const current = document.querySelector('#starlight__sidebar a[aria-current="page"]');
+
+	function render(items: Item[]): HTMLUListElement {
+		const ul = document.createElement('ul');
+		ul.className = 'sidebar-toc';
+		for (const item of items) {
+			const li = document.createElement('li');
+			const a = document.createElement('a');
+			a.href = `#${item.slug}`;
+			a.textContent = item.text;
+			li.append(a);
+			if (item.children.length > 0) li.append(render(item.children));
+			ul.append(li);
+		}
+		return ul;
+	}
+
+	if (dataEl && current) {
+		const list = render(JSON.parse(dataEl.textContent || '[]'));
+		current.after(list);
+
+		// Marks the last heading that has scrolled past the top of the page.
+		const links = [...list.querySelectorAll<HTMLAnchorElement>('a')];
+		const headings = links.map((a) => document.getElementById(a.hash.slice(1)));
+		let active: HTMLAnchorElement | null = null;
+		let queued = false;
+
+		const update = () => {
+			queued = false;
+			const offset = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+			let next: HTMLAnchorElement | null = null;
+			headings.forEach((h, i) => {
+				if (h && h.getBoundingClientRect().top <= offset + 1) next = links[i];
+			});
+			if (next === active) return;
+			active?.classList.remove('is-active');
+			next?.classList.add('is-active');
+			active = next;
+		};
+
+		addEventListener('scroll', () => {
+			if (!queued) {
+				queued = true;
+				requestAnimationFrame(update);
+			}
+		});
+		update();
+	}
+</script>

@@ -6,24 +6,24 @@
 
 **CondaTainer** is a rootless CLI that packages *tools*, *data*, and *Conda environments* into portable images that run seamlessly on HPC.
 
-- **Modular**: Pack Conda environments and data as individual images that work together.
-- **Reproducible**: Push and pull from OCI registries to guarantee exact versions per project.
-- **Web-App Ready**: Launch *RStudio*, *code-server*, and *VNC* with one command.
-- **NetworkFS Friendly**: Pack thousands of files into single images and stage on fast node-local paths.
-- **Scheduler Native**: Integrates out-of-the-box with HPC workload managers like Slurm.
+- **Modular**: Conda environments and data as separate images that work together.
+- **Reproducible**: Pin exact versions per project and share them through OCI registries.
+- **Web-App Ready**: Run *RStudio*, *code-server* and *VNC* on compute nodes from a dashboard.
+- **NetworkFS Friendly**: Thousands of files become one image, staged on node-local disk.
+- **Scheduler Native**: Works with HPC schedulers such as Slurm.
 
 > [!NOTE]
-> *Slurm* is the primary, tested scheduler. *PBS*, *LSF*, *HTCondor* are experimental, bug reports are welcome!
+> *Slurm* is the primary, tested scheduler. *PBS* and *LSF* are experimental, bug reports are welcome!
 >
 > For `qsub`, only **PBS Pro** (OpenPBS) is supported. Torque and SGE are not supported.
 
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/condatainer/condatainer/main/assets/install.sh | bash
+curl -fsSL https://install.condatainer.org | bash
 ```
 
-You will be prompted to confirm the installation path (defaults to `$SCRATCH/condatainer/` or `$HOME/condatainer/`). The script run configuration and ask for installing missing tools and the shell update.
+The script asks where to install (default `$SCRATCH/condatainer/`, else `$HOME/condatainer/`), whether to set up your shell, and whether to download the toolchain.
 
 ## Quick Start
 
@@ -44,12 +44,19 @@ Declare what a script needs with `#DEP:` and its resources with `#SBATCH`, then 
 #DEP:salmon/1.10.2
 #DEP:grch38/salmon/1.10.2/gencode47-k31
 
-salmon quant -i $SALMON_INDEX_DIR -l A -r reads.fq -p $NCPUS -o quants
+salmon quant -i $SALMON_INDEX_DIR -l A -r reads.fq -p $NCPU -o quants
 ```
 
 ```bash
 condatainer check -a script.sh     # Install missing dependencies
 condatainer run script.sh          # Submit it to the scheduler
+```
+
+Run a web app on a compute node from the dashboard:
+
+```bash
+# Start the dashboard on the login node, then add and start a helper in it
+condatainer server start
 ```
 
 Lock a project, share it, and restore it elsewhere:

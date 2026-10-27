@@ -1,0 +1,350 @@
+---
+title: Project
+description: Pin the exact overlays a project's scripts use, restore them on another machine, and publish them.
+---
+
+import { FileTree } from '@astrojs/starlight/components';
+import ProjectDiagram from '../../../assets/project.svg';
+
+Reproducibility requires the same environment and reference datasets. The `condatainer project` enables this by tracking the specific overlays your scripts rely on.
+
+The records are stored in a `cnt-lock/` directory committed alongside the code in Git. The overlays can be published to a **container registry** (e.g., GitHub Packages at `ghcr.io`). On a new machine, users clone the Git repository and restore the overlays from the registry or rebuild them on demand.
+
+<ProjectDiagram />
+
+## Try the Example
+
+The [project-example-salmon-airway](https://github.com/condatainer/project-example-salmon-airway) repository contains a complete RNA-seq workflow. It downloads reads from SRA, trims them with fastp, quantifies them with Salmon, and aggregates the counts into an R object. For downstream, two Quarto documents process the aggregated results.
+
+First, clone the project and preview what a restore operation will do:
+
+```bash
+git clone https://github.com/condatainer/project-example-salmon-airway
+cd project-example-salmon-airway
+condatainer project restore --dry-run
+```
+
+Next, run the `restore` command to make all required overlays available on the current machine:
+
+```bash
+condatainer project restore
+```
+
+When run from within the repository, `condatainer project restore` searches upward for the `cnt-lock/` directory to discover all pinned overlays. If a pinned overlay is available in the remote container registry, `restore` downloads it directly; otherwise, CondaTainer builds it locally from the locked recipe.
+
+Now you can run the workflow from the project folder:
+
+```bash
+DL=$(condatainer run --array metadata/samples.txt src/00_download.sh)
+TRIM=$(condatainer run --array metadata/samples.txt --afterok "$DL" src/01_trim.sh)
+QUANT=$(condatainer run --array metadata/samples.txt --afterok "$TRIM" src/02_quant.sh)
+condatainer run --afterok "$QUANT" src/03_collect.sh metadata/samples.txt
+```
+
+**How this works:**
+
+- Each script uses the overlays pinned in the `cnt-lock/` directory.
+- The `--array` launches one task for every line in `samples.txt`. The script receives the line's contents as positional arguments (`$1`, `$2`, etc.).
+- The `--afterok` ensures each step only starts after the previous one completes successfully (see [Scheduler](scheduler.mdx).
+
+:::tip
+Compute nodes on some clusters are completely blocked from the internet. If this is the case, you need to run the download step on the login node, one sample at a time:
+
+```bash
+while read -r sample _; do
+    condatainer run --no-submit src/00_download.sh "$sample"
+done < metadata/samples.txt
+```
+
+Because downloads can take a long time, it is highly recommended to run this loop inside `tmux` or `screen`. This ensures the download continues if your SSH connection drops.
+:::
+
+Once the pipeline finishes, you can launch RStudio Server using a [helper](helper.mdx) to analyze the data. The restored `env.sqf` already contains the necessary R packages for the Quarto reports.
+
+Because RStudio requires a writable layer, create a writable overlay next to `env.sqf` before launching (see [Environment Overlay](environments.md)):
+
+```bash
+condatainer overlay create --sparse -s 5g env.img
+condatainer helper run rstudio-server -w -r 4.4
+```
+
+## Building a Project from Scratch
+
+This section deconstructs the example above to show exactly how the `cnt-lock/` directory and `env.sqf` file are created. You can follow the same steps for your own projects.
+
+<FileTree>
+
+- project-example-salmon-airway/
+  - metadata/
+    - samples.txt one sample per line
+  - src/
+    - 00_download.sh
+    - 01_trim.sh
+    - 02_quant.sh
+    - 03_collect.sh
+    - overlay/
+      - r-collect.yml recipe for a local overlay
+      - r-collect.sqf built from the recipe
+  - analysis/
+    - package.R R packages the documents need
+    - 01_qc.qmd trimming and mapping summary
+    - 02_deseq2.qmd differential expression
+  - env.sqf the snapshot
+  - **cnt-lock/** commit this with the code
+
+</FileTree>
+
+Each step is a bash script, which declares the overlays using `#DEP:` comments. These can be exact `name/version`, or paths to local overlays. A path is looked up beside the script first, then from the project folder:
+
+```bash title="00_download.sh" tabs="scripts"
+#!/bin/bash
+#NCPU: 4
+#MEM: 8G
+#TIME: 2:00:00
+
+#DEP: parallel-fastq-dump/0.6.7
+#DEP: fastqc/0.12.1
+```
+
+```bash title="01_trim.sh" tabs="scripts"
+#!/bin/bash
+#NCPU: 4
+#MEM: 8G
+#TIME: 1:00:00
+
+#DEP: fastp/1.1.0
+#DEP: fastqc/0.12.1
+```
+
+```bash title="02_quant.sh" tabs="scripts"
+#!/bin/bash
+#NCPU: 8
+#MEM: 24G
+#TIME: 1:00:00
+
+#DEP: salmon/2.7.0
+#DEP: grch38/salmon/2.7.0/gencode47-decoy-k31
+```
+
+```bash title="03_collect.sh" tabs="scripts"
+#!/bin/bash
+#NCPU: 1
+#MEM: 8G
+#TIME: 0:30:00
+
+#DEP: src/overlay/r-collect.sqf
+#DEP: grch38/gtf/gencode/47
+```
+
+### Start Clean
+
+To see how this works from the ground up, let's remove the overlays installed by the `restore` command, as well as the lock directory itself:
+
+```bash
+condatainer rm fastp/1.1.0 fastqc/0.12.1 parallel-fastq-dump/0.6.7 \
+    salmon/2.7.0 grch38/salmon/2.7.0/gencode47-decoy-k31 grch38/gtf/gencode/47
+rm -r cnt-lock src/overlay/r-collect.sqf env.sqf
+```
+
+### Install the Overlays
+
+In typical development, you create overlays as needed and declare them with `#DEP:` in your scripts. 
+
+However, when starting from an existing set of scripts, `condatainer check` can scan the scripts and build missing overlays:
+
+```bash
+condatainer check src/      # Check the overlays status
+condatainer check src/ -a   # Install missing overlays
+```
+
+- If you run `check -a` in a folder that already contains a `cnt-lock/`, the command will fail. This prevents accidental drift from locked versions. See [Lock the Project](#lock-the-project) below for how to update locked projects.
+- If a `#DEP:` points to a local `.sqf` file (like `r-collect.sqf`), CondaTainer builds it using the adjacent recipe file.
+
+Once the overlays are built, you can run the pipeline scripts just as we did in the example.
+
+### Set Up the Interactive Environment
+
+The Quarto documents in `analysis/` require several R packages. Create a project-wide writable [environment overlay](environments.md) to install and test them:
+
+```bash
+condatainer overlay create --sparse -s 10g env.img
+condatainer helper run rstudio-server -w -r 4.4
+```
+
+- You can also use the [web dashboard](helper.mdx) to start a helper job.
+- The helper automatically detects `env.img` in your project folder and mounts it in writable mode.
+- Inside RStudio, run `analysis/package.R` once to install the necessary packages into `env.img`.
+
+:::tip[Install Binary R Packages]
+To speed up R package installation, add `--write-rprofile yes` when starting the helper:
+
+```bash
+condatainer helper run rstudio-server -w -r 4.4 --write-rprofile yes
+```
+
+This generates or updates `.Rprofile` in your project folder to configure R to download pre-compiled binaries from Posit Public Package Manager (P3M).
+:::
+
+### Freeze the Environment
+
+Once the environment is stable, compress `env.img` into a read-only SquashFS snapshot:
+
+```bash
+condatainer overlay freeze env.img
+```
+
+- This command generates `env.sqf` and removes the original `env.img` (pass `--keep` to retain it).
+- Because environments cannot be reconstructed from scratch, preserving `env.sqf` is essential for reproducibility.
+
+### Lock the Project
+
+To ensure the same environment can be restored in the future, record the project's dependencies using `lock` and `pin`:
+
+```bash
+condatainer project lock
+condatainer project pin env.sqf
+condatainer project validate
+```
+
+- `lock` scans and records `#DEP:` overlays, creating `cnt-lock/` if missing. A `#DEP:` needs a full version, such as `salmon/2.7.0`. A shorter one, such as `salmon/2`, fails and lists the installed versions.
+- Use `pin` to record overlays that are not declared via `#DEP:`, such as `env.sqf`.
+- The `cnt-lock/` folder contains only text-based lockfiles and recipes that are safe to commit to Git.
+- `condatainer project validate` confirms that all dependencies are accounted for and match your scripts.
+
+#### Choose Which Scripts Are Locked
+
+`lock` reads every file in the project whose first line is `#!/bin/bash` or `#!/bin/env <program>`, whatever the file is called. A Python or R analysis script counts.
+
+- Files and folders that `.gitignore` ignores are skipped, so a `venv/` or `node_modules/` is never read.
+- Folders whose names start with a dot, and symbolic links, are skipped.
+- `run` resolves the `#DEP:` of a script skipped by `.gitignore`, a dot folder or the list below by name. Nothing is pinned for it.
+
+To keep a script in Git but out of the lock, list it with `project ignore`:
+
+```bash
+condatainer project ignore old_scripts/  # A folder
+condatainer project ignore 'tmp/*.py'    # Quote a wildcard, or the shell expands it first
+condatainer project ignore --list        # Show the list
+condatainer project ignore --remove old_scripts/
+```
+
+- A path is relative to the current folder. A leading `/` means the project root.
+- The list is the file `cnt-lock/ignore`. Commit it with the lock, so everyone scans the same scripts.
+- A path that `.gitignore` already ignores is not added.
+
+#### Updating a Locked Project
+
+If you modify `#DEP:` declarations in your scripts, run `condatainer project lock` again. It automatically adds pins for newly added dependencies and cleans up pins that are no longer referenced.
+
+When a project is locked, `condatainer check -a` is disabled to prevent accidental modifications. To add a tools in bulk, run `check` with `--no-project` first, and then re-lock:
+
+```bash
+condatainer check src/ -a --no-project
+condatainer project lock
+```
+
+### Publish to a Registry
+
+Because compiling software and fetching large reference datasets takes time, and snapshots (`env.sqf`) cannot be rebuilt, you need to publish overlays to a container registry.
+
+First, specify your target registry:
+
+```bash
+condatainer project registry set ghcr.io/my-lab/salmon-airway
+```
+
+Next, log in using an authentication token that has write permissions:
+
+```bash
+printf '%s\n' "$TOKEN" | condatainer registry login ghcr.io -u "$USER" --password-stdin
+```
+
+Finally, preview the upload, and then push the overlays:
+
+```bash
+condatainer project registry push --dry-run
+condatainer project registry push
+```
+
+:::caution[GHCR Package Visibility]
+GitHub Container Registry (GHCR) often defaults new packages to "Private", even if the underlying code repository is public. 
+
+To make it public: navigate to the package on GitHub → **Package settings** → **Change visibility** → **Public**.
+
+If you intend to keep the package private, every collaborator must generate a read-access token and run `condatainer registry login ghcr.io` before they can `restore` the project.
+:::
+
+Once the final lock is committed and the code is pushed to GitHub, any collaborator can perfectly recreate your environment by following the steps in the [Try the Example](#try-the-example) section.
+
+### Audience
+
+The `--audience` flag dictates what types of software are permitted to be published to the registry. It **does not** control registry visibility.
+
+```bash
+condatainer project registry set ghcr.io/my-lab/salmon-airway/cnt --audience restricted
+```
+
+- **`public` (Default):** App overlays built from recipes are refused unless `#REDISTRIBUTE: yes`.
+- **`restricted`:** Overlays of any redistribution status are allowed. Private registries only.
+
+### What Gets Pushed
+
+All pins go into the single repository you set, and each build is filed by name and architecture in its tag, such as `samtools--1.22__amd64`. It is a single package, so on GHCR its visibility is set once.
+
+```bash
+condatainer project registry push --dry-run  # Show the plan, upload nothing
+condatainer project registry push --all      # Also push pins served by a recipe source
+condatainer project registry unset           # Forget the destination
+```
+
+- By default, a pin that a configured [recipe source](../advanced/custom_source.mdx) already serves at that exact build is skipped. Use `--all` to push all overlays.
+- A snapshot (`env.sqf`) needs to be pushed too. It cannot be rebuilt, so this copy is the only one.
+- Every pushed build also keeps a tag with its identity hash (`<name>__<identity>__<architecture>`). Re-pinning a tool and pushing again does not prevent an older Git commit from restoring its specific build.
+- [Log in](../advanced/custom_source.mdx#log-in-to-a-registry) with a token that has write permissions before pushing. Collaborators need read permissions to restore from private repositories.
+
+### Remove Old Overlays
+
+Each push adds builds, and the registry keeps the old ones. To remove what the current lock no longer pins:
+
+```bash
+condatainer project registry gc                 # Remove what the lock no longer pins
+condatainer project registry gc --git-history   # Also keep what earlier commits pin
+```
+
+- Everything the lock in your project folder pins stays. Everything else in the repository is removed.
+- An older commit can no longer download a removed overlay. `--git-history` keeps what earlier commits on the current branch pin. It needs a full clone.
+- The project must pass `condatainer project validate`, and the login needs permission to delete. See [Remove Overlays](../advanced/custom_source.mdx#remove-overlays).
+
+## Where a Project's Overlays Live
+
+To save disk space and eliminate redundant software installations, CondaTainer does not make isolated, duplicated copies of overlays inside every project folder. Instead, it organizes overlays into shared [layers](layers.md) where they are filed by name. Multiple projects can reuse the same shared overlay.
+
+However, when restoring a project, a dependency might share the same package name as an existing overlay but require a different build [identity](identity.md). CondaTainer solves this gracefully:
+
+- **Plain Name Slot:** When you run `condatainer project restore`, it installs the pinned overlay under its standard name (e.g., `samtools/1.22`) as long as that name is free.
+- **The Store (Side-by-Side Coexistence):** If another build already occupies that plain name, `restore` places the pinned build into [the store](layers.md#the-store) (`store/name@identity`).
+- **Garbage Collection:** Periodic store cleanups (`condatainer store gc`) evaluate file access times and grace periods. If an overlay in the store is removed, running `condatainer project restore` will re-download or rebuild it.
+
+To inspect which builds your project currently pins and where they are located on your system:
+
+```bash
+condatainer project list               # Summary of pinned overlays and status
+condatainer store list --all --detail  # Detailed view of all builds in the store
+```
+
+## Strictness and Matching
+
+When an overlay is pinned, CondaTainer records two distinct keys (See [Identity and Equivalence](./identity.md)):
+
+- **Identity**: A unique hash representing one exact, specific build.
+- **Equivalence**: A hash that groups together builds that differ only in superficial ways (changes that are guaranteed not to affect the scientific result).
+
+By default, CondaTainer accepts equivalent builds. If you want to enforce absolute strictness, requiring the exact bit-for-bit build:
+
+```bash
+condatainer project set-match identity
+```
+
+- When set to `identity`, `restore` insists on fetching or rebuilding the exact build. Commands like `run` and `exec` refuse to execute if only an "equivalent" build is found on the system.
+- This configuration is saved in the `cnt-lock/` folder and should be committed to Git.
+- You can revert to the default behavior at any time by running `condatainer project set-match equivalence`.

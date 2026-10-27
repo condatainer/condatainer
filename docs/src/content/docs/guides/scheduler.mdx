@@ -1,0 +1,336 @@
+---
+title: Scheduler
+description: Set resources, pass arguments, run arrays and chain jobs with condatainer run.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import SchedulerDiagram from '../../../assets/scheduler.svg';
+
+The `condatainer run` command allows you to submit scripts as jobs to HPC cluster's scheduler. This guide covers how to request resources, pass arguments, execute job arrays over multiple inputs, and chain dependent jobs together.
+
+## Understanding the Scheduler
+
+If you're new to high-performance computing (HPC), here's a quick overview of how a cluster works:
+
+- **Login Node**: The shared machine you connect to initially. It's meant for lightweight tasks like submitting jobs and managing files, not for running heavy analysis.
+- **Compute Nodes**: The dedicated machines where your actual work runs.
+- **Scheduler**: The software (like Slurm, PBS, or LSF) that manages the compute nodes, deciding when and where each job should run based on available resources.
+- **Job**: A script packaged with a specific set of required resources. You submit the job, the scheduler queues it, and it begins executing once the resources are free.
+- **Directives**: Instructions that tell the scheduler what resources your job needs, commonly as special script comments.
+
+<SchedulerDiagram />
+
+Here is an example of a script requesting 4 CPUs, 8 GB of memory, and 1 hour:
+
+<Tabs syncKey="scheduler">
+  <TabItem label="Slurm">
+    ```bash
+    #SBATCH --cpus-per-task=4
+    #SBATCH --mem=8G
+    #SBATCH --time=1:00:00
+    ```
+  </TabItem>
+  <TabItem label="PBS">
+    ```bash
+    #PBS -l select=1:ncpus=4:mem=8gb
+    #PBS -l walltime=1:00:00
+    ```
+  </TabItem>
+  <TabItem label="LSF">
+    ```bash
+    #BSUB -n 4
+    #BSUB -R "span[hosts=1] rusage[mem=2048]"
+    #BSUB -W 1:00
+    ```
+  </TabItem>
+  <TabItem label="CondaTainer">
+    ```bash
+    #NCPU: 4
+    #MEM: 8G
+    #TIME: 1h
+    ```
+  </TabItem>
+</Tabs>
+
+When you execute `condatainer run`, CondaTainer parses these directives and headers.
+
+- If a scheduler is detected, it submits the script as a job and prints the resulting job ID.
+- If no scheduler is found (or if the script asks for no resources), it executes the script immediately on the current machine.
+
+## Overriding Resources
+
+While resources are typically defined inside the script via headers or directives, you can easily override them for a specific run using command-line flags:
+
+```bash
+condatainer run -c 8 -m 32G -t 4h analysis.sh
+condatainer run -g a100:2 gpu_job.sh
+```
+
+### Important Resource Flags
+
+Each scheduler uses different directive syntax, but `condatainer run` standardizes the command-line flags across all of them:
+
+<Tabs syncKey="scheduler">
+  <TabItem label="Slurm">
+    | Resource | Directive | `run` flag |
+    |---|---|---|
+    | CPUs | `#SBATCH --cpus-per-task=4` | `-c 4` |
+    | Memory | `#SBATCH --mem=8G` | `-m 8G` |
+    | Time | `#SBATCH --time=1:00:00` | `-t 1h` |
+    | GPUs | `#SBATCH --gpus-per-node=a100:2` | `-g a100:2` |
+    | Partition | `#SBATCH --partition=gpu` | `-p gpu` |
+    | Account | `#SBATCH --account=lab` | `-A lab` |
+    | Job name | `#SBATCH --job-name=quant` | `-n quant` |
+    | Stdout | `#SBATCH --output=quant.log` | `-o quant.log` |
+    | Stderr | `#SBATCH --error=quant.err` | `-e quant.err` |
+  </TabItem>
+  <TabItem label="PBS">
+    | Resource | Directive | `run` flag |
+    |---|---|---|
+    | CPUs, memory, GPUs | `#PBS -l select=1:ncpus=4:mem=8gb:ngpus=2` | `-c 4`, `-m 8G`, `-g 2` |
+    | Time | `#PBS -l walltime=1:00:00` | `-t 1h` |
+    | Queue | `#PBS -q gpu` | `-p gpu` |
+    | Account | `#PBS -A lab` | `-A lab` |
+    | Job name | `#PBS -N quant` | `-n quant` |
+    | Stdout | `#PBS -o quant.log` | `-o quant.log` |
+    | Stderr | `#PBS -e quant.err` | `-e quant.err` |
+
+    CondaTainer sends PBS only the GPU count, so a GPU model in `-g` is ignored. A `select` resource that CondaTainer does not recognize, such as `gpu_id=gpu0`, is kept.
+  </TabItem>
+  <TabItem label="LSF">
+    | Resource | Directive | `run` flag |
+    |---|---|---|
+    | CPUs | `#BSUB -n 4` | `-c 4` |
+    | Memory | `#BSUB -R "span[hosts=1] rusage[mem=2048]"` | `-m 8G` |
+    | Time | `#BSUB -W 1:00` | `-t 1h` |
+    | GPUs | `#BSUB -gpu "num=2:gmodel=a100"` | `-g a100:2` |
+    | Queue | `#BSUB -q gpu` | `-p gpu` |
+    | Project | `#BSUB -P lab` | `-A lab` |
+    | Job name | `#BSUB -J quant` | `-n quant` |
+    | Stdout | `#BSUB -o quant.log` | `-o quant.log` |
+    | Stderr | `#BSUB -e quant.err` | `-e quant.err` |
+
+    `span[hosts=1]` keeps all the cores on one node. Without it, LSF can spread them.
+  </TabItem>
+  <TabItem label="CondaTainer">
+    | Resource | Header | `run` flag |
+    |---|---|---|
+    | CPUs | `#NCPU: 4` | `-c 4` |
+    | Memory | `#MEM: 8G` | `-m 8G` |
+    | Time | `#TIME: 1h` | `-t 1h` |
+    | GPUs | `#GPU: a100:2` | `-g a100:2` |
+    | Partition | `#PARTITION: gpu` | `-p gpu` |
+    | Account | `#ACCOUNT: lab` | `-A lab` |
+    | Job name | `#NAME: quant` | `-n quant` |
+    | Stdout | `#OUTPUT: quant.log` | `-o quant.log` |
+    | Stderr | `#ERROR: quant.err` | `-e quant.err` |
+
+    - A bare `#MEM:` number is in GB, and a bare `#TIME:` number is in hours. `#TIME:` also reads `01:30:00`.
+    - `#GPU:` takes a count (`2`), a type (`a100`) or both (`a100:2`). PBS ignores the type.
+    - A relative `#OUTPUT:` or `#ERROR:` path starts from the directory you submit from.
+    - Write the headers in the comment lines at the top of the script. If the script also has this cluster's scheduler directives, only those are read.
+  </TabItem>
+</Tabs>
+
+:::note
+CondaTainer translates another scheduler's directives to this cluster's scheduler, such as `#SBATCH` lines on a PBS cluster. The partition and account are not translated, so set them with `-p` and `-A`.
+
+Only one set of directives in a script is read, in this order:
+
+1. This cluster's scheduler directives.
+2. The CondaTainer headers, such as `#NCPU:`.
+3. Another scheduler's directives.
+:::
+
+### Standardized Environment Variables
+
+When your script runs through `condatainer run`, these variables hold the resources of the job:
+
+| Variable | Value |
+|---|---|
+| `$NCPU` | CPUs allocated to the job |
+| `$MEM` | Memory of the job in MB |
+| `$MEM_GB` | Memory of the job in GB |
+
+An [MPI job](../advanced/mpi.mdx) runs several copies of the program at once. Each copy gets these values for itself, not for the whole job.
+
+```bash
+samtools sort -@ "$NCPU" -o sorted.bam input.bam
+```
+
+CondaTainer can also translate generic resource directives between schedulers.
+
+## Run Execution Options
+
+You can control exactly how `condatainer run` behaves using the following flags:
+
+```bash
+# Dry Run: Show what would happen without actually submitting or running anything
+condatainer run --dry-run analysis.sh   
+
+# Local Execution: Force the script to run locally, ignoring scheduler directives
+condatainer run --no-submit analysis.sh   
+```
+
+Any values provided after the script name are passed directly into the script as positional arguments (`$1`, `$2`, etc.):
+
+```bash
+condatainer run sort.sh /data/raw/sample1.bam results/sample1/
+```
+
+## Job Arrays
+
+A **job array** allows you to submit many similar jobs simultaneously. Each job in the array executes the same script but processes its own unique input. The scheduler manages them independently, allowing them to run concurrently across multiple compute nodes.
+
+Instead of writing complex array logic in your script, you can use the `--array` flag. CondaTainer reads an input text file where each line represents a single job, and the words on that line are passed as arguments to the script:
+
+```text title="samples.txt"
+sample1 condition_A
+sample2 condition_B
+sample3 condition_C
+```
+
+When submitted, this file spawns three separate jobs:
+
+| Job | Input Line | Argument `$1` | Argument `$2` |
+|---|---|---|---|
+| 1 | `sample1 condition_A` | `sample1` | `condition_A` |
+| 2 | `sample2 condition_B` | `sample2` | `condition_B` |
+| 3 | `sample3 condition_C` | `sample3` | `condition_C` |
+
+- Every line must contain the same number of arguments. A quoted string counts as one.
+- Blank lines are refused.
+
+The script reads them as positinal arguments `$1`, `$2`:
+
+<Tabs syncKey="scheduler">
+  <TabItem label="Slurm">
+    ```bash title="quant.sh"
+    #!/bin/bash
+    #SBATCH --cpus-per-task=4
+    #SBATCH --mem=8G
+    #SBATCH --time=1:00:00
+
+    #DEP: salmon/2.7.0
+    #DEP: grch38/salmon/2.7.0/gencode47-k31
+
+    # $1 is the sample, $2 the condition
+    salmon quant -i "$SALMON_INDEX_DIR" -p "$NCPU" -l A \
+      -r "reads/${1}.fq" -o "quants/${1}_${2}"
+    ```
+  </TabItem>
+  <TabItem label="PBS">
+    ```bash title="quant.sh"
+    #!/bin/bash
+    #PBS -l select=1:ncpus=4:mem=8gb
+    #PBS -l walltime=1:00:00
+
+    #DEP: salmon/2.7.0
+    #DEP: grch38/salmon/2.7.0/gencode47-k31
+
+    # $1 is the sample, $2 the condition
+    salmon quant -i "$SALMON_INDEX_DIR" -p "$NCPU" -l A \
+      -r "reads/${1}.fq" -o "quants/${1}_${2}"
+    ```
+  </TabItem>
+  <TabItem label="LSF">
+    ```bash title="quant.sh"
+    #!/bin/bash
+    #BSUB -n 4
+    #BSUB -R "span[hosts=1] rusage[mem=2048]"
+    #BSUB -W 1:00
+
+    #DEP: salmon/2.7.0
+    #DEP: grch38/salmon/2.7.0/gencode47-k31
+
+    # $1 is the sample, $2 the condition
+    salmon quant -i "$SALMON_INDEX_DIR" -p "$NCPU" -l A \
+      -r "reads/${1}.fq" -o "quants/${1}_${2}"
+    ```
+  </TabItem>
+  <TabItem label="CondaTainer">
+    ```bash title="quant.sh"
+    #!/bin/bash
+    #NCPU: 4
+    #MEM: 8G
+    #TIME: 1h
+
+    #DEP: salmon/2.7.0
+    #DEP: grch38/salmon/2.7.0/gencode47-k31
+
+    # $1 is the sample, $2 the condition
+    salmon quant -i "$SALMON_INDEX_DIR" -p "$NCPU" -l A \
+      -r "reads/${1}.fq" -o "quants/${1}_${2}"
+    ```
+  </TabItem>
+</Tabs>
+
+### Running Arrays
+
+```bash
+# Submit the array
+condatainer run --array samples.txt quant.sh
+
+# Limit the array so a maximum of 4 jobs run concurrently
+condatainer run --array samples.txt --array-limit 4 quant.sh   
+
+# Preview the arguments for each job without submitting
+condatainer run --dry-run --array samples.txt quant.sh         
+```
+
+- Any manual positional arguments provided on the command line will be appended **after** the array's line arguments.
+- Arrays must be submitted to a scheduler; they cannot be executed locally.
+- The script cannot contain its own array directive.
+
+## Job Chaining (Dependencies)
+
+**Job chaining** allows you to configure a job so that it waits for a previous job to finish before starting. This feature enables you to build multi-step pipelines directly from bash scripts, without needing complex workflow engines like Nextflow or Snakemake.
+
+Because `run` strictly outputs the job ID to standard output, you can easily capture it in a variable and pass it to the next step:
+
+```bash
+JOB_ID=$(condatainer run step1.sh)
+condatainer run --afterok "$JOB_ID" step2.sh
+```
+
+| Flag | Condition for the next job to start |
+|---|---|
+| `--afterok <ids>` | The previous jobs completed successfully without errors. |
+| `--afternotok <ids>` | The previous jobs failed. |
+| `--afterany <ids>` | The previous jobs finished, regardless of success or failure. |
+
+- Give several IDs separated by colons: `--afterok 123:456`.
+- With an array, the next job waits for every job in the array.
+
+For example, a pipeline over every sample in `samples.txt`: trim, align and quantify each, then one job that collects the results:
+
+```bash
+TRIM=$(condatainer run --array samples.txt trim.sh)
+ALIGN=$(condatainer run --array samples.txt --afterok "$TRIM" align.sh)
+QUANT=$(condatainer run --array samples.txt --afterok "$ALIGN" quant.sh)
+condatainer run --afterok "$QUANT" collect.sh samples.txt
+```
+
+## Container Headers
+
+Just as you use `#DEP:` to define overlays, these headers set `condatainer run` options inside the script:
+
+```bash
+#!/bin/bash
+#DEP: bcftools/1.22
+#BIND: /data:/data
+
+bcftools view /data/input.vcf | head
+```
+
+| Header | Effect |
+|---|---|
+| `#BIND: HOST:CONTAINER` | Make a host directory available inside. Repeat the line for more. `$VAR` expands when the job starts. |
+| `#WRITABLE:` | Mount `.img` overlays as writable. |
+| `#FAKEROOT:` | Appear as root inside the container. |
+
+- `#WRITABLE:` and `#FAKEROOT:` take no value. Any value other than `true` is an error.
+- A `--bind` on the command line to the same container path replaces the script's `#BIND:`.
+- To set an environment variable, write `export MYVAR=value` in the script, which already runs inside the container, or pass `--env MYVAR=value`.
+- These headers follow the same rule as the others: they go in the comment lines at the top of the script.
+- They work in any language whose comments start with `#`. See [Scripts in Other Languages](../get_started/quick_start.mdx#scripts-in-other-languages).

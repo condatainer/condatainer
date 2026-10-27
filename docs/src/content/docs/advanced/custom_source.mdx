@@ -1,0 +1,288 @@
+---
+title: Custom Recipe Source
+description: Serve custom build recipes from a local directory or remote URL, configure private access, and publish prebuilt overlays to a registry.
+---
+
+import { FileTree } from '@astrojs/starlight/components';
+
+A **recipe source** is a structured collection of build recipes and helper scripts that `condatainer create` and `condatainer avail` search. The default public source is `cnt`. You can add your own custom sources to share scripts across a lab, provide internal overlay collections.
+
+For how to write individual recipe scripts, see [Custom Build Recipe](custom_recipe.mdx).
+
+## Lay Out a Source
+
+A source is a directory containing recipe files under a `recipes/` folder, and optionally helper scripts under `helpers/`:
+
+<FileTree>
+
+- lab-recipes/
+  - recipes/
+    - rpvg-template builds rpvg/1.0, rpvg/0.9, etc.
+    - myproj/
+      - gtf/
+        - 47 builds myproj/gtf/47 (data overlay)
+  - helpers/
+    - my-service a [helper script](custom_helper.mdx)
+  - source.json optional description and registry settings
+  - index/ needed when served over HTTP
+
+</FileTree>
+
+### Recipe Path and `#TARGET:`
+
+The **name** of an overlay is defined in one of two ways:
+
+```bash title="recipes/myproj/gtf/47" tabs="name"
+#!/bin/bash
+#DESC: GENCODE release 47 annotation GTF
+
+# ... build commands ...
+```
+
+```bash title="recipes/rpvg-template" tabs="name"
+#!/bin/bash
+#DESC: Pangenome graph read alignment and inference tool {version}
+#TARGET: rpvg/{version}
+#PH: version:1.0,0.9
+
+# ... build commands ...
+```
+
+- **A plain recipe** builds one overlay. Its relative path under `recipes/` defines its **name**: `recipes/myproj/gtf/47` builds `myproj/gtf/47`.
+- **A template** builds one overlay for each combination of placeholder values.
+  - `#PH:` declares the placeholders and their allowed values (e.g., `version:1.0,0.9`).
+  - `#TARGET:` defines the target **name** pattern using `{placeholder}` substitutions (e.g., `rpvg/{version}`).
+  - **Creating from a template:**
+    - If you run `condatainer create rpvg-template`, CondaTainer prompts you to fill in each placeholder.
+    - Alternatively, you can directly provide the filled target name (e.g., `condatainer create rpvg/1.0`).
+- Every placeholder declared in `#PH:` must appear in `#TARGET:`. No two recipes in a source may share the same `#TARGET:`.
+- An overlay with three or more name components (such as `myproj/gtf/47`) is automatically classified as a data overlay. Others are app overlays. `#TYPE:` sets the type explicitly.
+
+## Add a Source
+
+To register a local directory as a recipe source, provide an alias name and its path:
+
+```bash
+condatainer config source add lab /shared/lab/recipes
+```
+
+CondaTainer validates the directory first; nothing is saved unless its recipes can be read successfully. Once added, you can search and build from it:
+
+```bash
+condatainer config source list
+condatainer avail --source lab
+condatainer create --source lab rpvg/1.0
+```
+
+```text
+#  NAME  URL                      LAYER    ACCESS
+1  lab   /shared/lab/recipes      user     private
+2  cnt   https://raw.githubusercontent.com/condatainer/cnt/main   default  public
+```
+
+- `--source <name>` limits searches or builds to that specific source. Repeat it to search multiple sources in the order given.
+- A recipe in your custom source with the same name as one in `cnt` takes precedence, because the first match is used.
+
+## Search Order and Layers
+
+When resolving a recipe, CondaTainer searches sources in this order, and the first match wins:
+
+1. **[Layers](../guides/layers.md):** `user` layer first, then `extra-root`, then `cnt-root`.
+2. **Order within a layer:** The configured order in that layer's source list.
+3. **Default source:** `cnt` is searched last, unless explicitly reordered in a layer.
+
+Manage source ordering using these commands:
+
+```bash
+condatainer config source add lab /shared/lab/recipes --first  # Place first in its layer
+condatainer config source move lab --before site               # Reorder within the layer
+condatainer config source remove lab                           # Remove a source
+```
+
+The `-l` flag chooses the layer: `user` (default), `extra-root` for a shared lab group, or `cnt-root` for a site installation. See [Group Install](../deployment/group_install.md).
+
+## Serve Over HTTP
+
+A directory source works when users share a cluster filesystem. To share recipes remotely, host the source directory on any web server or GitHub repository:
+
+```bash
+condatainer config source add lab https://recipes.example.org/lab
+```
+
+- The URL points to the root directory that contains `recipes/`.
+- A source served over HTTP requires an `index/` directory with `index/recipes.json`. This index lists every recipe along with its path, type, and description. It is generated rather than written by hand.
+  - Both index files are an object with `"schema_version": 1` and the entries under `"recipes"` (or `"helpers"` in `index/helpers.json`). A file without the version is refused.
+  - The public `cnt` repository generates its index with `scripts/generate_recipe_index.py` and verifies recipes with `scripts/validate_recipes.py`.
+- Remote indices are cached locally for `metadata_cache_ttl` days (1 day by default). Run `condatainer update` to refresh them immediately.
+- A source that serves helper scripts also needs `index/helpers.json`. See [Share Helpers](#share-helpers).
+
+## Share Helpers
+
+A source can offer [helper scripts](custom_helper.mdx) beside its recipes. Put each script in `helpers/`.
+
+Users list what the configured sources offer, and add the helpers they want:
+
+```bash
+condatainer helper avail                     # List the helpers the sources offer
+condatainer helper add code-server           # Into the first layer you can write to
+condatainer helper add code-server -l user   # Into one layer
+condatainer helper upgrade                   # Bring added helpers up to date
+```
+
+- Every file directly in `helpers/` is offered, except names that start with a dot. `add` refuses a file whose first line is not an allowed interpreter line, listed in [Custom Helper](custom_helper.mdx#add-a-helper).
+- When two sources offer the same name, the earlier source in the [search order](#search-order-and-layers) wins.
+- `add` copies the script into a `helper-scripts/` directory and records it there. A name that is already added is refused, and `upgrade` replaces it with the newer version.
+- In `index/helpers.json`, each entry has the `path` of the script and the `sha256` of its bytes, so a client can tell whether an added copy is current without downloading it. A `description`, taken from the script's `#DESC:`, is optional. An entry without `sha256` makes that source's helper index unreadable: it offers no helpers, and its recipes still work.
+- `condatainer helper path` prints the directories.
+
+## Private Sources
+
+A source can be restricted so only authorized users can access it:
+
+- **Filesystem directory:** Protected by standard filesystem permissions. Grant group read access to share it with your team.
+- **HTTP URL:** If the URL requires an authorization token, CondaTainer prompts for it interactively when adding the source. The token is saved in `credentials.json` within that layer.
+
+To add an authenticated source in automated scripts, pass the token on standard input:
+
+```bash
+printf '%s\n' "$RECIPE_TOKEN" | \
+  condatainer config source add lab https://recipes.example.org/lab --token-stdin
+```
+
+- If the source needed a token and its `source.json` declares a registry, `add` also asks for a registry token. With `--token-stdin`, each line answers one prompt: the recipe token first, then the registry token.
+- A token saved in a layer other than `user` is asked for only after you confirm the layer. With `--token-stdin`, add `-y` to confirm.
+- `condatainer config source remove` removes the source and its saved token.
+
+## Describe the Source (`source.json`)
+
+An optional `source.json` file in the root directory describes the source and configures registry integration:
+
+```json
+{
+  "schema_version": 1,
+  "source": "https://github.com/my-lab/recipes",
+  "default_distro": "ubuntu24",
+  "oci": {
+    "registry": "ghcr.io/my-lab/recipes",
+    "audience": "restricted"
+  }
+}
+```
+
+- `schema_version`: Required. The format version of this file, currently `1`. It changes only when an older CondaTainer would misread the file. A key CondaTainer does not know is ignored.
+- `source`: The recipe repository URL, recorded in the provenance metadata of every overlay built from this source.
+- `default_distro`: The default OS overlay that containers run on, built from the recipe `<default_distro>/base.def`. The first source in the search order that names one supplies the user's `default_distro` setting the first time it is needed.
+- `oci.registry`: The repository, such as `ghcr.io/my-lab/cnt`, that stores prebuilt overlay images (`.sqf`). On Docker Hub it is `docker.io/<user>/<repo>`.
+- `oci.audience`: Either `public` or `restricted`. Sets what a push is permitted to publish there (see [What May Be Published](#what-may-be-published)).
+
+## Publish Prebuilt Overlays
+
+Building complex overlays from recipes can take time. Publish built overlays to a container registry so other users of the source download them instantly.
+
+1. Set `oci.registry` in `source.json`. Use `"audience": "restricted"` for a private registry. On Docker Hub, write it as `docker.io/<user>/<repo>`.
+2. [Log in](#log-in-to-a-registry) with a token that has write permissions.
+3. Build the overlay from the source and push it:
+
+```bash
+condatainer create --source lab rpvg/1.0
+condatainer registry push rpvg/1.0
+```
+
+Now, running `condatainer create --source lab rpvg/1.0` on another machine downloads the prebuilt overlay image directly. Use `--no-prebuilt` to force a local build from source instead.
+
+- The push automatically targets the registry in `source.json` of the source the overlay was built from. `--source <name>` names a source, and `--registry <repository>` names any repository.
+- A push lists the tags it will write before it uploads anything.
+- If the overlay was built from another source's recipes, the push warns you. A GHCR package links to one code repository.
+- A snapshot (a frozen environment packed with `overlay freeze`) belongs to its project. A push to a source's registry refuses it. Use [`project registry push`](../guides/project.mdx#publish-to-a-registry).
+- Newly published packages on GitHub Container Registry (GHCR) may default to private. If you want it public, change package visibility to public in GitHub's settings.
+
+### Log In to a Registry
+
+```bash
+printf '%s\n' "$TOKEN" | condatainer registry login ghcr.io -u "$USER" --password-stdin
+# One repository only
+condatainer registry login ghcr.io/my-lab/recipes -u "$USER" --password-stdin
+condatainer registry list            # List configured registries
+condatainer registry logout ghcr.io  # Logout specific url
+```
+
+- `-l` chooses the config layer that keeps the login: `user` (default), `extra-root` or `cnt-root`. Everyone who reads that layer finds it.
+- A credential is looked up in this order:
+  1. A login saved by `registry login`.
+  2. A registry token saved when the source was added with `config source add`.
+  3. `GITHUB_TOKEN`, for `ghcr.io` only.
+  4. No credential.
+- A download that a credential refuses moves on to the next one, with a warning. A push never moves on, and names the credential that was refused.
+- On GHCR, a token needs the `write:packages` scope to push and `read:packages` to download from a private package.
+
+### Names and Tags
+
+All of a source's overlays go into the one repository set in `oci.registry`. A tag is a label that points at one published copy of an overlay.
+
+`registry push star/2.7.11b` writes these tags for the machine's architecture, here `amd64`:
+
+| Tag | Points at |
+|---|---|
+| `star--2.7.11b__amd64` | The build the name serves now. A pull by name takes it. |
+| `star--2.7.11b__9f2c1ab4d3e8__amd64` | This exact build, named by the first 12 characters of its identity. |
+| `star--2.7.11b__eq-e90d3b7714cf__amd64` | The newest build made from this recipe. `create` takes it, so a recipe finds its prebuilt overlay. Only overlays built from a script or an Apptainer definition get it. |
+
+The architecture ends every tag: `amd64`, `arm64`, or `noarch` for an overlay that runs anywhere.
+
+```bash
+# List every tag
+condatainer registry tags --source lab
+# Print the digest, download nothing
+condatainer registry resolve star/2.7.11b --source lab
+# Install the build the name serves, or one exact build
+condatainer registry pull star/2.7.11b --source lab
+condatainer registry pull star/2.7.11b@9f2c1ab --source lab
+```
+
+- `--source lab` uses the registry of the configured source `lab`. `--registry <repository>` takes any repository.
+- A pull takes the machine's architecture, then `noarch`. `resolve --arch arm64` prints the digest for another architecture.
+- Pushing a build that is already published uploads nothing. It writes the tags that are missing, so a push that stopped part way is finished by running it again.
+- Pushing a different build of the same name moves the name tag to it, after asking. The older build keeps its build tag.
+- Each architecture has its own tags. Pushing one never changes another.
+- A snapshot has no name tag. Pull it by its identity, to a path you choose: `registry pull env@<identity> --prefix ./env.sqf`.
+
+### Remove Overlays
+
+A registry keeps every published build until you remove it. Three forms clean up a source's repository:
+
+```bash
+condatainer registry remove star/2.7.11b@9f2c1ab --source lab  # One build
+condatainer registry remove star/2.7.11b --source lab          # Every build of the name
+condatainer registry gc --source lab                           # Builds no name installs
+```
+
+- Each command lists what it will remove before it removes anything.
+- `remove` and `gc` need `--source`. A project's own registry is cleaned with [`project registry gc`](../guides/project.mdx#remove-old-overlays).
+- Removing the build a name serves moves the name, and the equivalence tag, to the newest other build.
+- `gc` keeps a build while a name serves it or it is the newest made from its recipe, and removes the rest. `gc star/2.7.11b` limits it to one name. `--arch` limits `remove` to one architecture.
+- `gc --no-recipe` also removes every build of a name the source has no recipe for. It refreshes the source's recipe list first, and stops if the list cannot be read or is empty.
+- A project that pins a removed build can no longer download it. It rebuilds the overlay from the recipe it stores, unless the overlay is a snapshot.
+- Removing needs a login that may delete: the `delete:packages` scope on GHCR, or an access token with Read, Write and Delete permission on Docker Hub.
+- GHCR keeps the last tagged version of a package. To remove it, delete the package in GitHub's package settings.
+- A registry that does not allow deleting says so. Remove in its own console.
+
+### Registry Limits
+
+- GHCR limits how large one upload part may be and how fast requests may arrive. CondaTainer uploads a large overlay in several parts. When the registry asks it to slow down, it waits, and does not give up or build locally.
+- Docker Hub counts each overlay you pull against its [pull limit](https://docs.docker.com/docker-hub/usage/pulls/): 100 per 6 hours without a login, 200 with a free login.
+- A registry that does not allow deleting reports it when you run `remove` or `gc`. Remove in the registry's own console.
+
+### What May Be Published
+
+A push is checked against who can pull from the registry. A source declares it as `audience` in `source.json`: `public` (default) or `restricted`. For a repository named with `--registry`, `--audience` does the same. It cannot override a source's own. It does not read or change a package's visibility on GitHub.
+
+| Overlay | `public` | `restricted` |
+|---|---|---|
+| Recipe with `#REDISTRIBUTE: no` | Refused | Accepted |
+| Recipe with `#REDISTRIBUTE: yes` | Accepted | Accepted |
+| App recipe with no `#REDISTRIBUTE:` | Refused | Accepted |
+| Data, OS, Conda or frozen environment | Accepted | Accepted |
+
+- No flag overrides a refusal. Change the recipe's header, or push to a `restricted` registry.
+- `#LICENSE: MIT` records an SPDX licence expression but is never used to decide anything.
+- To publish a project's overlays, see [Publish to a Registry](../guides/project.mdx#publish-to-a-registry).

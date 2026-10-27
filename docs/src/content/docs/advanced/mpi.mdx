@@ -1,0 +1,157 @@
+---
+title: MPI
+description: Run a script as several cooperating MPI processes across one or more nodes.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+:::caution[Experimental]
+MPI support is experimental. Expect rough edges, and report problems on GitHub.
+:::
+
+## Understanding MPI
+
+Most jobs need one machine and several threads. A Python, R or shell script that is too slow can use more CPU cores of the same node, and [Scheduler](../guides/scheduler.mdx) covers that with `-c`.
+
+Some problems are too big for one node: they need more memory than any single node has, or they are still too slow with every core of one node. Such a program has to be spread over several nodes. Separate nodes cannot share memory, so the program runs as several copies that send messages to each other over the network.
+
+- **Node**: one physical machine of the cluster.
+- **Rank**: one running copy of the program. Each rank has its own memory and its own CPUs, and ranks can sit on different nodes. Slurm call a rank a **task**, as in `--ntasks-per-node`.
+- **CPUs per rank**: the threads one rank can use.
+- **MPI** (Message Passing Interface): the standard way ranks send messages to each other. Only a program written for it can use several ranks, for example one that uses `mpi4py`.
+- **`mpiexec`**: the command that starts all the ranks of an MPI program.
+
+A job with 2 nodes, 4 ranks per node and 2 CPUs per rank runs on 2 machines, with 4 ranks on each, so 8 in total. Each rank can use up to 2 threads.
+
+## Request Ranks
+
+A job asks for ranks with scheduler directives in the script, where they are called tasks. `condatainer run` has no flag for the number of ranks.
+
+<Tabs syncKey="scheduler">
+  <TabItem label="Slurm">
+    ```bash title="simulate.sh"
+    #!/bin/bash
+    #SBATCH --nodes=2
+    #SBATCH --ntasks-per-node=4
+    #SBATCH --cpus-per-task=2
+    #SBATCH --mem-per-cpu=1G
+    #SBATCH --time=1:00:00
+
+    #DEP: env.img
+
+    python simulate.py
+    ```
+  </TabItem>
+  <TabItem label="PBS">
+    ```bash title="simulate.sh"
+    #!/bin/bash
+    #PBS -l select=2:ncpus=8:mpiprocs=4:mem=8gb
+    #PBS -l walltime=1:00:00
+
+    #DEP: env.img
+
+    python simulate.py
+    ```
+  </TabItem>
+  <TabItem label="LSF">
+    ```bash title="simulate.sh"
+    #!/bin/bash
+    #BSUB -n 8
+    #BSUB -R "span[ptile=4] affinity[cores(2)] rusage[mem=2048]"
+    #BSUB -W 1:00
+
+    #DEP: env.img
+
+    python simulate.py
+    ```
+  </TabItem>
+</Tabs>
+
+Each version asks for 2 nodes with 4 ranks each, so 8 ranks in total. Every rank has 2 CPUs and 2 GB of memory.
+
+- A job with more than one rank is an MPI job.
+- Every rank gets the same number of CPUs and the same memory. A request that cannot be described that way, such as PBS chunks with different CPUs per rank, is refused.
+- A script whose directives CondaTainer cannot read is refused too. Submit it with the scheduler's own command instead.
+
+## MPI on the Host
+
+`condatainer run` starts the ranks with the host's `mpiexec`. Load your MPI module before you submit, so `mpiexec` is on your `PATH`:
+
+```bash
+module load openmpi/4.1.5
+condatainer run --dry-run simulate.sh
+```
+
+```text
+Resource specs:
+  MPI Ranks:  8
+  Nodes:      2
+  Ranks/Node: 4
+  CPU/Rank:   2
+  Mem/Rank:   2 GB
+  Time:       01:00:00
+  mpiexec:    /path/to/openmpi/4.1.5/bin/mpiexec
+```
+
+- The dry run shows the ranks and the `mpiexec` it found.
+- If `mpiexec` is not on your `PATH`, the submission is refused with `needs mpiexec, which is not on PATH`.
+- The job runs `mpiexec -n 8 condatainer run simulate.sh`. Every rank starts its own container with the overlays from `#DEP:`, and runs the whole script.
+
+## MPI in the Container
+
+Each rank runs your script in its own container, and the MPI library inside it talks to the host's `mpiexec`. The two must be the **same MPI**, with the **same major and minor version**, so install the host's MPI into an [environment overlay](../guides/environments.md), an image file that holds a Conda environment:
+
+```bash
+module load openmpi/4.1.5  # The MPI you run with
+mpiexec --version          # The host's version, for example 4.1.5
+condatainer overlay create env.img -- mpi4py openmpi=4.1
+```
+
+- Match the host's major and minor version, such as `openmpi=4.1` for a host with 4.1.5.
+- Install `openmpi` for Open MPI and `mpich` for MPICH.
+
+`env.img` is writable, so you can add packages to it later. For an environment that never changes, build a read-only overlay from the same packages instead, and write `#DEP: mpi.sqf` in the script:
+
+```bash
+condatainer create -p mpi mpi4py openmpi=4.1
+```
+
+### Test the Setup
+
+Submit a small script with the directives from [Request Ranks](#request-ranks) and this body:
+
+```bash title="hello.sh"
+#!/bin/bash
+#DEP: env.img
+
+python - <<'EOF'
+from mpi4py import MPI
+
+comm = MPI.COMM_WORLD
+print(f"rank {comm.Get_rank()} of {comm.Get_size()} on {MPI.Get_processor_name()}")
+EOF
+```
+
+```text
+rank 0 of 8 on node01
+rank 5 of 8 on node02
+...
+```
+
+- Each rank prints its own number out of the total, here 8.
+- If every line says `rank 0 of 1`, the MPI in the environment does not match the host's. Reinstall it with the host's major and minor version.
+- A cluster with InfiniBand or Omni-Path needs an MPI built to use it. If ranks on different nodes cannot connect, ask your cluster administrator which interconnect libraries to add to the environment.
+
+## Variables in the Script
+
+Each rank sees these variables:
+
+| Variable | Value |
+|---|---|
+| `$NRANK` | Total number of ranks |
+| `$NNODE` | Number of nodes |
+| `$NRANK_PER_NODE` | Ranks per node, when known |
+| `$NCPU`, `$OMP_NUM_THREADS` | CPUs per rank |
+| `$MEM`, `$MEM_GB` | Memory per rank, in MB and in GB |
+
+`$NCPU` is the CPUs of one rank, not of the whole job. A rank that also uses threads should start `$NCPU` of them.

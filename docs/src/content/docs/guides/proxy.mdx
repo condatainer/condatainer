@@ -1,0 +1,66 @@
+---
+title: Proxy
+description: Provide internet access to compute nodes through the login node.
+---
+
+import ProxyDiagram from '../../../assets/proxy.svg';
+
+On some HPC clusters, compute nodes are isolated from the public internet. Therefore, workflows that need network access, such as downloading reference data or running `pip install` during interactive exploration, will fail when executed as cluster jobs.
+
+CondaTainer solves this by running a **proxy** on the login node and routing outbound network traffic from your compute nodes through it.
+
+<ProxyDiagram />
+
+## Shared Proxy
+
+A shared proxy runs as a background service on the login node. Once started, it can route traffic for all running jobs.
+
+```bash
+condatainer proxy start            # Starts the proxy on a free port
+condatainer proxy start -p 13200   # Starts the proxy on a specific port
+condatainer proxy status           # Checks if the proxy is active and shows address
+condatainer proxy stop             # Stops the proxy service
+```
+
+**Key details:**
+- Once started, the proxy remains active and serves any job you submit.
+- **Process Lingering:** Many clusters automatically terminate user processes when you log out. `condatainer proxy start` attempts to enable `loginctl` lingering so the proxy survives SSH disconnects.
+
+**Prerequisites:**
+- **Network reachability:** The port on the login node must be accessible from the cluster's compute nodes.
+- **Passwordless SSH:** Passwordless SSH connection between nodes on the cluster.
+
+## Per-Job Proxy
+
+If you prefer an isolated proxy that only runs during the lifetime of a specific task, you can use a **per-job proxy**. The job starts its own tunnel back to the login node, and the tunnel shuts down when the job completes.
+
+Choose which jobs get one with the `scheduler.proxy_per_job` [setting](config.md). It is empty by default, so no job gets a proxy.
+
+| Value | Jobs that get a proxy |
+|---|---|
+| `create` | `condatainer create` and `condatainer project restore` |
+| `run` | `condatainer run` |
+| `helper` | `condatainer helper run` |
+| `all` | All of the above |
+
+```bash
+condatainer config append scheduler.proxy_per_job all   # every kind of job
+condatainer config append scheduler.proxy_per_job run   # one kind; repeat to add more
+```
+
+**Requirement:** Passwordless SSH connection from compute nodes back to the login node.
+
+## Using the Proxy in Commands
+
+For commands: `condatainer run` and `condatainer exec`, CondaTainer automatically configures standard proxy environment variables inside the container: `http_proxy`, `https_proxy`, `all_proxy`, `no_proxy` and their upper-case forms.
+
+Any tools running inside the container (including package managers like `pip` and `curl`) will pick up these variables automatically.
+
+If you want to use proxy outside of CondaTainer:
+
+```bash
+condatainer proxy start --via <login-node>
+source <(condatainer proxy export)
+```
+
+`proxy export` prints nothing when no proxy is active.

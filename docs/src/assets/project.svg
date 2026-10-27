@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 260" role="img" aria-labelledby="pj-title pj-desc" font-family="inherit">
+  <title id="pj-title">How a project reaches a fresh machine</title>
+  <desc id="pj-desc">The dev machine sends the code and the cnt-lock folder to a git repository such as GitHub with git push, and the overlays to a container registry such as GHCR with project registry push. A fresh machine gets the code from the git repository with git clone, and the overlays from the registry with project restore.</desc>
+  <style>
+    .pj-box { fill: var(--sl-color-gray-6, #f1f2f6); stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1.5; }
+    .pj-app { fill: var(--sl-color-accent-low, #dde4ff); stroke: var(--sl-color-accent, #4a63d6); stroke-width: 1.5; }
+    .pj-strong { fill: var(--sl-color-white, #14161c); font-size: 16px; font-weight: 600; }
+    .pj-small { fill: var(--sl-color-gray-3, #5c606d); font-size: 13px; }
+    .pj-label { fill: var(--sl-color-gray-3, #5c606d); font-size: 13px; paint-order: stroke; stroke: var(--sl-color-bg, #fff); stroke-width: 5px; stroke-linejoin: round; }
+    .pj-code { fill: none; stroke: var(--sl-color-blue, #3a6fd8); stroke-width: 2; }
+    .pj-code-head { fill: var(--sl-color-blue, #3a6fd8); }
+    .pj-overlay { fill: none; stroke: var(--sl-color-green, #2e9e5b); stroke-width: 2; }
+    .pj-overlay-head { fill: var(--sl-color-green, #2e9e5b); }
+  </style>
+  <defs>
+    <marker id="pj-code-arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="pj-code-head"/>
+    </marker>
+    <marker id="pj-overlay-arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="pj-overlay-head"/>
+    </marker>
+  </defs>
+
+  <!-- sites -->
+  <rect class="pj-box" x="60" y="16" width="200" height="64" rx="10"/>
+  <text class="pj-strong" x="160" y="43" text-anchor="middle">Git repo</text>
+  <text class="pj-small" x="160" y="63" text-anchor="middle">e.g. GitHub: the code</text>
+  <rect class="pj-box" x="380" y="16" width="200" height="64" rx="10"/>
+  <text class="pj-strong" x="480" y="43" text-anchor="middle">Container registry</text>
+  <text class="pj-small" x="480" y="63" text-anchor="middle">e.g. GHCR: the overlays</text>
+
+  <!-- machines -->
+  <rect class="pj-app" x="60" y="180" width="200" height="64" rx="10"/>
+  <text class="pj-strong" x="160" y="207" text-anchor="middle">Dev machine</text>
+  <text class="pj-small" x="160" y="227" text-anchor="middle">scripts and overlays</text>
+  <rect class="pj-app" x="380" y="180" width="200" height="64" rx="10"/>
+  <text class="pj-strong" x="480" y="207" text-anchor="middle">Fresh machine</text>
+  <text class="pj-small" x="480" y="227" text-anchor="middle">nothing installed yet</text>
+
+  <!-- dev machine pushes -->
+  <path class="pj-code" d="M110 180 V84" marker-end="url(#pj-code-arrowhead)"/>
+  <text class="pj-label" x="102" y="136" text-anchor="end">git push</text>
+  <path class="pj-overlay" d="M230 180 L410 84" marker-end="url(#pj-overlay-arrowhead)"/>
+  <text class="pj-label" x="278" y="152" text-anchor="end">project registry push</text>
+
+  <!-- fresh machine pulls -->
+  <path class="pj-code" d="M230 80 L410 176" marker-end="url(#pj-code-arrowhead)"/>
+  <text class="pj-label" x="368" y="152">git clone</text>
+  <path class="pj-overlay" d="M530 80 V176" marker-end="url(#pj-overlay-arrowhead)"/>
+  <text class="pj-label" x="538" y="136">project restore</text>
+</svg>

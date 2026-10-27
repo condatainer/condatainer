@@ -1,0 +1,134 @@
+---
+title: Concept
+description: Understand how CondaTainer uses overlays to build reproducible containers.
+---
+
+import OverlayDiagram from '../../../assets/overlay.svg';
+
+A reproducible analysis relies on the same code with consistent software and reference data. CondaTainer achieves this by packing each tool, dataset, or Conda environment into a modular, reusable file called an **overlay**.
+
+By combining these building blocks, you can quickly assemble exactly what you need.
+
+- **Built once:** Every project can reuse the same overlay.
+- **Combined as needed:** List required overlays, and CondaTainer runs them together.
+- **Pinned:** Using the same names and versions guarantees identical software and data every time.
+
+## Overlays and Containers
+
+Your commands run inside a **container**: an isolated Linux system that brings its own software while still allowing access to your files. CondaTainer builds this container on the fly by stacking the overlays you specify.
+
+### Overlays are just files
+
+An overlay has two formats:
+
+| File | Layer Type | Use Case |
+|---|---|---|
+| **`.sqf`** | Read-only & compressed | Immutable snapshots |
+| **`.img`** | Writable | Active workspaces for installing packages. |
+
+Once an `.sqf` is built, it never changes. To update it, you build a new one.
+
+In contrast, an `.img` can change; it is the layer you use when you need to keep adding packages.
+
+### Merging layers (OverlayFS)
+
+CondaTainer uses **overlay file system (overlayFS)** to merge multiple layers into one unified directory tree. For a program running inside the container, all the files appear together.
+
+<OverlayDiagram />
+
+- **Stacking:** Each layer contains specific files (e.g., an operating system, a tool, a dataset).
+- **Masking:** If two layers contain a file at the exact same path, the layer higher up in the stack "wins" and hides the lower one.
+- **Immutability:** Lower layers are **read-only**. Any changes you make are saved only to the topmost **writable** layer (if one is present).
+
+Every layer of a container is one overlay.
+
+## Types of Overlays
+
+CondaTainer categorizes overlays into four types, each serving a distinct purpose:
+
+| Kind | Purpose | File Format |
+|---|---|---|
+| **OS** | A base Linux system (e.g. Ubuntu) | `.sqf` |
+| **App** | Software (e.g. samtools)  | `.sqf` |
+| **Data** | Any data (a genome, an index) | `.sqf` |
+| **Environment** | A writable workspace for installing packages | `.img` |
+
+**OS overlays** provide the base Linux utilities and root filesystem that the container needs to run. You can stack them (e.g., adding an R OS overlay on top of an Ubuntu OS overlay). However, do not mix OS overlays built on different Linux distributions (e.g., Ubuntu 24.04 and 22.04), which can cause errors.
+
+**App overlays** have their `bin` directory automatically added to the container's `PATH`, meaning you can run their commands directly by name.
+
+**Data overlays** automatically set **environment variables** pointing to their contents. You can see these variables by running `condatainer info <overlay>`.
+
+**[Environment overlays](environments.md)** are the only writable layers. Any new packages you install land here. Once you are finished experimenting, you can **freeze** an environment, converting its current state into an immutable `.sqf` **snapshot**.
+
+OS, App and Data overlays are together called **[module overlays](overlays.md)**. They are all read-only. The environment overlay, and the `env.sqf` snapshot you freeze from it, are not module overlays.
+
+## Overlay Names
+
+An OS, App or Data overlay is referred to by name, such as `samtools/1.22`. The number of parts in the name sets its default kind:
+
+| Kind | Name | Example |
+|---|---|---|
+| **OS** | `<distro>/<name>[/<version>]` | `ubuntu24/base`, `ubuntu24/r/4.4.3` |
+| **App** | `<name>/<version>` | `samtools/1.22` |
+| **Data** | `<collection>/<datatype>/<version>` (three or more parts) | `grch38/salmon/2.7.0/gencode47-k31` |
+
+An environment overlay has no name. Give its file, such as `env.img`.
+
+- **Omit the distro of an OS overlay.** `default_distro` fills it in: with `ubuntu24`, `r-build-essential` means `ubuntu24/r-build-essential`.
+- **Omit the version of an app.** A missing or partial version picks the newest match: `samtools` or `openjdk/17`. Write a data name in full.
+
+Valid separators are `/`, `--` and `=`. CondaTainer translates each to `/`, so `samtools=1.22` means `samtools/1.22`.
+
+A recipe can state its kind explicitly. See [Custom Build Recipe](../advanced/custom_recipe.mdx).
+
+## Prefixes and Stacking Order
+
+To prevent file conflicts when combining multiple tools, CondaTainer isolates them using **prefixes** dedicated directories where each overlay's files reside.
+
+### Prefixes
+
+| Kind | Prefix | Example |
+|---|---|---|
+| **OS** | None (Root) | Files start from `/` (the whole system) |
+| **App** / **Data** | `/cnt/<name>` | Samtools 1.24 lives at `/cnt/samtools/1.24/` |
+| **Environment** | `/cnt_env` | Always `/cnt_env`, regardless of the name |
+
+Because each app and data overlay has a unique prefix, stacking them never overwrites or hides the files of another. 
+
+All environments claim the `/cnt_env` prefix, so CondaTainer only allows one environment overlay at a time.
+
+### The Stack
+
+When you run a command, CondaTainer stacks the specified overlays from bottom to top in a specific order:
+
+1. **OS overlay (Base):** Sits at the very bottom as the container's root. If you don't specify one, CondaTainer uses `default_distro` from config (e.g., `ubuntu24/base`).
+2. **Additional OS overlays:** Placed directly above the base, if you named any.
+3. **App and Data overlays:** Stacked in the exact order you specify them on the command line.
+4. **Environment overlay:** Always placed at the very top (so it can be writable), regardless of where you put it in your command.
+
+### Which overlay wins? (PATH precedence)
+
+The order in which you specify app overlays determines their order in the container's `PATH`. **The overlay you name last comes first on `PATH`**, meaning its commands will override others. (`e` is short for `exec`).
+
+For example, Trim Galore 0.6.11 includes Cutadapt 5.2 (on 2026-10-07). If you need Cutadapt 5.0, you can simply stack `cutadapt/5.0` after `trim-galore`, without having to rebuild the overlays!
+
+```bash
+# Using the built-in Cutadapt 5.2
+condatainer e trim-galore/0.6.11 -- which cutadapt
+# /cnt/trim-galore/0.6.11/bin/cutadapt
+
+# Overriding with Cutadapt 5.0
+condatainer e trim-galore/0.6.11 cutadapt/5.0 -- which cutadapt
+# /cnt/cutadapt/5.0/bin/cutadapt
+```
+
+You can verify the `PATH` order yourself. Notice how `cutadapt/5.0` moves to the front when listed last:
+
+```bash
+condatainer e trim-galore/0.6.11 cutadapt/5.0 -- bash -c 'echo $PATH'
+# ...:/cnt/cutadapt/5.0/bin:/cnt/trim-galore/0.6.11/bin:/usr/local/...
+
+condatainer e cutadapt/5.0 trim-galore/0.6.11 -- bash -c 'echo $PATH'
+# ...:/cnt/trim-galore/0.6.11/bin:/cnt/cutadapt/5.0/bin:/usr/local/...
+```

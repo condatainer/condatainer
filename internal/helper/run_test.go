@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -147,6 +148,41 @@ func TestGenerateWrapperHeadlessExportsResources(t *testing.T) {
 	for _, want := range []string{"export NCPU=4\n", "export CNT_NCPU=4\n", "export MEM=8192\n", "export OMP_NUM_THREADS=4\n"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("job.sh lacks %q:\n%s", want, data)
+		}
+	}
+}
+
+// A flag nobody routed is one the job might silently drop.
+func TestEveryRunFlagHasARoute(t *testing.T) {
+	var out strings.Builder
+	PrintRunFlags(&out, nil)
+	printed := map[string]bool{}
+	for _, m := range regexp.MustCompile(`--([a-z][a-z-]*)`).FindAllStringSubmatch(out.String(), -1) {
+		printed[m[1]] = true
+		if _, ok := RunFlagRoutes[m[1]]; !ok {
+			t.Errorf("--%s has no entry in RunFlagRoutes: say where it takes effect", m[1])
+		}
+	}
+	for name := range RunFlagRoutes {
+		if !printed[name] {
+			t.Errorf("RunFlagRoutes lists --%s, which helper run does not print", name)
+		}
+	}
+}
+
+// A launch that ignores the project makes the job's exec ignore it too.
+func TestRunPassesNoProjectToExec(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "demo")
+	if err := os.WriteFile(script, []byte("#!/bin/bash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, noProject := range []bool{false, true} {
+		cmd, err := buildCondatainerCmd(RunOptions{ScriptPath: script, NoProject: noProject}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(cmd, " --no-project"); got != noProject {
+			t.Errorf("NoProject=%v: command %q has --no-project = %v", noProject, cmd, got)
 		}
 	}
 }

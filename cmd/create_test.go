@@ -80,6 +80,21 @@ func TestSolveCreateNameExactThenBaseThenConda(t *testing.T) {
 // ensure that every compress option declared in config is registered as a
 // flag on the create command.  This guards against drift when new options are
 // added.
+// A flag nobody classified is one a submitted build might silently drop.
+func TestEveryCreateFlagHasAJobRule(t *testing.T) {
+	createCmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
+		// Cobra adds help itself, when a command first runs.
+		if _, ok := createJobRules[f.Name]; !ok && !compFlagNames[f.Name] && f.Name != "help" {
+			t.Errorf("--%s has no entry in createJobRules: say whether a submitted build repeats it", f.Name)
+		}
+	})
+	for name := range createJobRules {
+		if createCmd.LocalFlags().Lookup(name) == nil {
+			t.Errorf("createJobRules lists --%s, which create does not have", name)
+		}
+	}
+}
+
 func TestCreateFlagsForCompressOptions(t *testing.T) {
 	for _, opt := range build.CompressOptions {
 		if createCmd.Flags().Lookup(opt.Name) == nil {

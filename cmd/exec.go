@@ -74,7 +74,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse arguments - treat all positional args as commands
-	commandFinal, apptainerFlags := ParseCommandArgs("exec")
+	commandFinal, apptainerFlags := ParseCommandArgs(cmd)
 
 	// Use overlays from -o flag
 	overlayFinal := execFlags.Overlays

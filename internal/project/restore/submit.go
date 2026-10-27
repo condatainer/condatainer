@@ -377,6 +377,9 @@ func restoreCommand(root string, step Step, opts Options) string {
 	if opts.KeepBuildDeps {
 		cmd.WriteString(" --keep-build-deps")
 	}
+	if opts.Replace {
+		cmd.WriteString(" --replace")
+	}
 	return cmd.String()
 }
 

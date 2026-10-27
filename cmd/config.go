@@ -64,6 +64,14 @@ func modifyArrayConfig(key string, modify func([]string) []string) (string, erro
 	return layer, config.UpdateConfigKey(configPath, key, updated)
 }
 
+// parseArrayValue validates one element of an array key and returns its stored form.
+func parseArrayValue(key, value string) string {
+	if k, ok := settings.Lookup(key); ok && isArrayKey(key) {
+		return parseRegistered(k, value)
+	}
+	return value
+}
+
 func arrayKeyCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) == 0 {
 		var keys []string
@@ -362,9 +370,11 @@ var configGetCmd = &cobra.Command{
 }
 
 var configSetCmd = &cobra.Command{
-	Use:   "set [flags] <key> <value>",
+	Use:   "set [flags] <key> <value>...",
 	Short: "Set a configuration value",
 	Long: `Set a configuration value and save it to a config file.
+
+An array key takes one or more values and they replace the whole list.
 
 Time format (for build.time):
   - Go style:  2h, 30m, 1h30m, 90s
@@ -374,19 +384,27 @@ Time format (for build.time):
 	Example: `  condatainer config set host_apptainer /usr/bin/apptainer
   condatainer config set build.ncpu 8
   condatainer config set build.time 02:00:00
-  condatainer config set scheduler.submit_job false`,
-	Args:              cobra.ExactArgs(2),
+  condatainer config set scheduler.submit_job false
+  condatainer config set scheduler.exclude_nodes node1 node2`,
+	Args:              cobra.MinimumNArgs(2),
 	ValidArgsFunction: configSetKeysCompletion,
 	Run: func(cmd *cobra.Command, args []string) {
 		key := args[0]
-		value := args[1]
-		if strings.TrimSpace(value) == "" {
-			ExitWithError("value cannot be empty")
+		values := args[1:]
+		for _, v := range values {
+			if strings.TrimSpace(v) == "" {
+				ExitWithError("value cannot be empty")
+			}
 		}
 
 		refuseSourcesKey(key)
 		if k, ok := settings.Lookup(key); ok {
-			value = parseRegistered(k, value)
+			if !isArrayKey(key) && len(values) > 1 {
+				ExitWithError("'%s' takes one value", key)
+			}
+			for i := range values {
+				values[i] = parseRegistered(k, values[i])
+			}
 		} else if refuseOldName(key) {
 			os.Exit(ExitCodeError)
 		} else {
@@ -396,17 +414,12 @@ Time format (for build.time):
 		}
 
 		// A default distro must name a recipe that some source actually provides.
+		value := values[0]
 		if key == "default_distro" {
 			if !recipeExists(cmd.Context(), value+"/base") {
 				utils.PrintError("No recipe %s/base in any configured source", value)
 				os.Exit(ExitCodeError)
 			}
-		}
-
-		// Array keys require append/prepend/remove subcommands
-		if isArrayKey(key) {
-			utils.PrintError("'%s' is an array setting. Use append/prepend/remove subcommands.", key)
-			os.Exit(ExitCodeError)
 		}
 
 		configPath, layerType, fellBackFrom, err := config.ResolveWritableConfigPathVerbose(setLayer)
@@ -416,11 +429,23 @@ Time format (for build.time):
 		if fellBackFrom != "" {
 			utils.PrintWarning("%s config is read-only; saving to your user config instead (applies only to you).", fellBackFrom)
 		}
-		if err := config.UpdateConfigKey(configPath, key, value); err != nil {
+		var stored any = value
+		var replaced string
+		if isArrayKey(key) {
+			stored = values
+			replaced = strings.Join(config.ReadConfigSliceKey(configPath, key), ", ")
+			value = strings.Join(values, ", ")
+		} else {
+			replaced = config.ReadConfigKey(configPath, key)
+		}
+		if err := config.UpdateConfigKey(configPath, key, stored); err != nil {
 			ExitWithError("Failed to save config: %v", err)
 		}
 
 		utils.PrintMessage("Set %s = %s (%s layer)", key, value, utils.StyleName(layerType))
+		if replaced != "" && replaced != value {
+			utils.PrintMessage("Replaced %s", replaced)
+		}
 	},
 }
 
@@ -673,6 +698,7 @@ var configAppendCmd = &cobra.Command{
 		if strings.TrimSpace(value) == "" {
 			ExitWithError("value cannot be empty")
 		}
+		value = parseArrayValue(key, value)
 		moved := false
 		layer, err := modifyArrayConfig(key, func(cur []string) []string {
 			out := make([]string, 0, len(cur))
@@ -711,6 +737,7 @@ var configPrependCmd = &cobra.Command{
 		if strings.TrimSpace(value) == "" {
 			ExitWithError("value cannot be empty")
 		}
+		value = parseArrayValue(key, value)
 		moved := false
 		layer, err := modifyArrayConfig(key, func(cur []string) []string {
 			out := make([]string, 0, len(cur))

@@ -27,14 +27,11 @@ import (
 // Search / filter helpers shared by avail, list, and remove
 // ============================================================================
 
-// searchManualURL points to the CLI manual page with the full search rules.
-const searchManualURL = "https://condatainer.readthedocs.io/en/latest/manuals/condatainer.html"
-
 // searchSyntaxHint is the concise search-syntax note shared by the avail and
 // list help text.
 const searchSyntaxHint = `Search terms:
 - Match by substring. Several terms must all match (AND).
-- Wildcards (*, ?) and regex also work. Full rules: ` + searchManualURL
+- Wildcards (*, ?) and regex also work.`
 
 // formatDescription wraps prose at word boundaries and indents every line.
 // Long individual words are left intact rather than split.

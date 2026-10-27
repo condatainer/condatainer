@@ -65,15 +65,12 @@ var schedulerCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(schedulerCmd)
 	schedulerCmd.Flags().BoolVarP(&schedulerShowPartitions, "partitions", "p", false, "Show per-partition resource limits")
-	schedulerCmd.Flags().BoolP("queue", "Q", false, "Show per-queue resource limits (alias for -p)")
 	schedulerCmd.Flags().Bool("cpu", false, "Show only CPU-only partitions (no GPUs)")
 	schedulerCmd.Flags().Bool("gpu", false, "Show only GPU partitions")
 	schedulerCmd.MarkFlagsMutuallyExclusive("cpu", "gpu")
 }
 
 func runScheduler(cmd *cobra.Command, args []string) {
-	ResolveFlagAlias(cmd, "partitions", "queue")
-
 	// --cpu and --gpu are mutually exclusive, so at most one can be set here.
 	cpuOnly, _ := cmd.Flags().GetBool("cpu")
 	gpuOnly, _ := cmd.Flags().GetBool("gpu")

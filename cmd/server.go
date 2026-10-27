@@ -289,10 +289,10 @@ func init() {
 	rootCmd.AddCommand(serverCmd)
 	serverCmd.AddCommand(serverStartCmd, serverStopCmd, serverStatusCmd, serverRestartCmd)
 
-	serverStartCmd.Flags().IntVarP(&serverStartPort, "port", "p", 0, "Port to listen on (saved to config for reuse)")
+	serverStartCmd.Flags().IntVarP(&serverStartPort, "port", "p", 0, "Port to listen on (remembered for the next start)")
 	serverStartCmd.Flags().BoolVar(&serverStartDaemon, "daemon", false, "Keep running after SSH logout")
 	serverStopCmd.Flags().StringVarP(&serverStopNodeFlag, "node", "n", "", "Login node to stop (partial match, e.g. login2)")
-	serverRestartCmd.Flags().IntVarP(&serverRestartPort, "port", "p", 0, "Restart on a different port (saved to config for reuse)")
+	serverRestartCmd.Flags().IntVarP(&serverRestartPort, "port", "p", 0, "Restart on a different port (remembered for the next start)")
 	serverRestartCmd.Flags().BoolVar(&serverRestartDaemon, "daemon", false, "Keep running after SSH logout (default: keep current mode)")
 }
 

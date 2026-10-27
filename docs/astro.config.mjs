@@ -32,7 +32,7 @@ export default defineConfig({
 			favicon: '/favicon.png',
 			head: [{ tag: 'script', content: readFileSync(new URL('./plugins/code-tabs/client.js', import.meta.url), 'utf8') }],
 			customCss: ['./src/styles/custom.css'],
-				components: { Header: './src/components/Header.astro', Hero: './src/components/Hero.astro' },
+				components: { Header: './src/components/Header.astro', Hero: './src/components/Hero.astro', Footer: './src/components/Footer.astro' },
 			plugins: [sidebarToc({ minHeadingLevel: 2, maxHeadingLevel: 3 })],
 			expressiveCode: { defaultProps: { frame: 'code' }, frames: { extractFileNameFromCode: false } },
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/condatainer/condatainer' }],

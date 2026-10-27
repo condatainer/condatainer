@@ -47,8 +47,8 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 
 ## Binds
 
-- A `#BIND:` value reaches the wrapper's shell single-quoted, as one word. A space, a quote or a command substitution in it, or in a `#PARAM:` default, is text and never runs.
-- `exec` expands `$VAR` and `${VAR}` when the container starts, on the node the job runs on.
+- A `#BIND:` value reaches the wrapper's shell as one word. Only `$VAR` and `${VAR}` in it expand, on the node the job runs on.
+- A space, a quote or a command substitution in it, or in a `#PARAM:` default, is text and never runs.
 - A source under `$CNT_HELPER_STATE_DIR` is created before submission, since the state directory is known on the login node.
 
 ## Overlays

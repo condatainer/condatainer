@@ -109,7 +109,7 @@ var helperListCmd = &cobra.Command{
 ` + searchSyntaxHint,
 	Example: `  condatainer helper list
   condatainer helper list server
-  condatainer helper list -l user --description`,
+  condatainer helper list -l user --desc`,
 	SilenceUsage: true,
 	RunE:         runHelperList,
 }
@@ -138,7 +138,7 @@ func init() {
 	helperUpgradeCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "Limit to a layer: "+layerChoices+" (default: every layer)")
 	helperListCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "Limit to a layer: "+layerChoices)
 	helperListCmd.Flags().BoolVarP(&helperListOne, "one", "1", false, "One entry per line (disable multi-column layout)")
-	helperListCmd.Flags().BoolVar(&helperListDescription, "description", false, "Show the description of each helper")
+	helperListCmd.Flags().BoolVar(&helperListDescription, "desc", false, "Show the description of each helper")
 	helperAddCmd.Flags().BoolVar(&helperForce, "force", false, "Replace a file add did not install, or an edited one, and record it")
 }
 
@@ -345,7 +345,7 @@ func runHelperList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// printHelpers prints a directory's helpers in columns or, with --description, one per entry.
+// printHelpers prints a directory's helpers in columns or, with --desc, one per entry.
 func printHelpers(scripts []helper.ListedScript, width int) {
 	var plain, styled []string
 	for _, s := range scripts {

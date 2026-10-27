@@ -297,16 +297,11 @@ func TestValidateRejectsAfterTheKind(t *testing.T) {
 	}
 }
 
-func TestListEnvSplitsOnPipeOrColon(t *testing.T) {
+func TestListEnvSplitsOnPipe(t *testing.T) {
 	use(t)
-	t.Setenv(EnvName("test.chan"), "a:b")
-	if got := tChan.Get(); !slices.Equal(got, []string{"a", "b"}) {
-		t.Errorf("colon: %v", got)
-	}
 	t.Setenv(EnvName("test.chan"), "a:b|c")
-	SetLayers(nil)
 	if got := tChan.Get(); !slices.Equal(got, []string{"a:b", "c"}) {
-		t.Errorf("pipe wins: %v", got)
+		t.Errorf("pipe splits, colon stays: %v", got)
 	}
 }
 

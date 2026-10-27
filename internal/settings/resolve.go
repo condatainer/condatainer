@@ -267,12 +267,8 @@ func (k *Key) splitEnv(text string) []string {
 	if k.opts.split != nil {
 		return k.opts.split(text)
 	}
-	sep := ":"
-	if strings.Contains(text, "|") {
-		sep = "|"
-	}
 	var out []string
-	for _, e := range strings.Split(text, sep) {
+	for _, e := range strings.Split(text, "|") {
 		if e = strings.TrimSpace(e); e != "" {
 			out = append(out, e)
 		}

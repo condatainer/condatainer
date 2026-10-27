@@ -312,7 +312,7 @@ func (h *HTCondorScheduler) parseRuntimeConfig(directives []string) (RuntimeConf
 
 // parseResourceSpec consumes compute resource directives from the directive list.
 //   - Returns a populated ResourceSpec and any remaining (unrecognized) directives.
-//   - Returns nil ResourceSpec on parse error (passthrough mode).
+//   - Returns nil ResourceSpec on parse error (unparsed).
 func (h *HTCondorScheduler) parseResourceSpec(directives []string) (*ResourceSpec, []string) {
 	defaults := GetSpecDefaults()
 	rs := &ResourceSpec{

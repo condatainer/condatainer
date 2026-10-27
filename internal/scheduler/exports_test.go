@@ -92,7 +92,7 @@ func TestHTCondorScriptExportsResourceVars(t *testing.T) {
 	}
 }
 
-// A passthrough script has no spec to export.
+// An unparsed script has no spec to export.
 func TestScriptsWithoutSpecExportNothing(t *testing.T) {
 	jobSpec := &JobSpec{Name: "none", Command: "echo hi", Specs: &ScriptSpecs{RemainingFlags: []string{}}, Metadata: map[string]string{}}
 	path, err := newTestPbsScheduler().CreateScriptWithSpec(jobSpec, t.TempDir())

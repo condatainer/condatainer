@@ -13,9 +13,9 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - Parsing has two stages.
   - Job control (name, output, partition) is critical, and an error stops it.
   - Resource geometry is best effort.
-- **Passthrough.** When geometry cannot be resolved, the directives are forwarded untouched.
-  - Callers tell the three states apart: no directives, parsed, passthrough.
-- Some SLURM directives have no place in the geometry and force passthrough, for example `--gpus-per-socket` and `--distribution`.
+- **Unparsed.** When geometry cannot be resolved, `run`, builds and restore refuse the script, since there is nothing to regenerate it from.
+  - Callers tell the three states apart: no directives, parsed, unparsed.
+- Some SLURM directives have no place in the geometry and leave the script unparsed, for example `--gpus-per-socket` and `--distribution`.
 - `RawFlags` keeps every original directive. Only what is not absorbed goes to `RemainingFlags`.
 
 ## Resource priority
@@ -57,7 +57,7 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
   - `NCPUS` is not used: PBS sets it to the CPUs of the first chunk, so one name would mean two things.
 - Every job script exports the variables, written by one helper for all four schedulers.
   - Each is exported under its short name and as `CNT_<name>`. `OMP_NUM_THREADS` has no copy.
-  - A job with no parsed spec, in passthrough, exports nothing.
+  - A job with no parsed spec exports nothing.
 - `CurrentJobResources` reads the `CNT_` copies first, so a user's own `NCPU` cannot change what is read. Only then does it ask the active scheduler.
   - The exports describe the job as submitted. A job that a script inside it submits by hand inherits them.
   - An `srun` or `mpiexec` step inherits them too, and a step with another shape reads the job's values.
@@ -79,9 +79,9 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
   - Memory is the same per CPU in every chunk, or the same per node in every chunk, or absent from all of them. Memory in some chunks only is rejected.
 - A select resource outside `ncpus`, `mpiprocs`, `ompthreads`, `mem` and `ngpus` is kept as written, in the same order, and written into every chunk.
   - Site resources such as `gpu_id` or a GPU model mean nothing to another scheduler, so only PBS writes them.
-  - Chunks that differ in them, or a part that is not `key=value`, make the script passthrough.
+  - Chunks that differ in them, or a part that is not `key=value`, leave the script unparsed.
 - `ompthreads` is the CPUs per rank, written in every chunk with more than one rank.
-  - A read value that differs has no field in the spec, so the script is passthrough.
+  - A read value that differs has no field in the spec, so the script is unparsed.
   - A script that wants other thread counts sets `OMP_NUM_THREADS` in its body.
 - A PBS time is `[[HH:]MM:]SS`, so a bare number is seconds and `1:30` is a minute and a half.
 - LSF `-W` takes minutes and `HH:MM`, so the two have separate parsers.

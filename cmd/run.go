@@ -253,10 +253,9 @@ func runScript(cmd *cobra.Command, args []string) error {
 
 	// CLI -c/-m/-t/-g resource overrides (highest priority, only when spec is parsed)
 	if scriptSpecs != nil && scriptSpecs.Spec == nil && scriptSpecs.HasDirectives {
-		// Script is in passthrough mode — resource directives could not be fully parsed.
-		// Overrides cannot be applied; warn if the user specified any.
+		// The resource directives could not be fully parsed, so overrides cannot be applied; warn if the user specified any.
 		if runCPU > 0 || runMem != "" || runTime != "" || runGPU != "" {
-			utils.PrintWarning("Resource overrides (-c/-m/-t/-g) have no effect in passthrough mode; edit the script directives directly")
+			utils.PrintWarning("Resource overrides (-c/-m/-t/-g) have no effect: the script's directives could not be parsed; edit them in the script")
 		}
 	} else if scriptSpecs != nil && scriptSpecs.Spec != nil {
 		override := &scheduler.ResourceSpec{}
@@ -324,10 +323,10 @@ func runScript(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Passthrough mode: resource directives could not be parsed; condatainer cannot safely
-	// regenerate the scheduler script. Reject submission and direct the user to submit manually.
-	if scheduler.IsPassthrough(scriptSpecs) {
-		ExitWithError("script %q has scheduler directives that could not be fully parsed (passthrough mode); please submit it manually", originScriptPath)
+	// Resource directives that could not be parsed leave nothing to regenerate the scheduler script from.
+	// Reject submission and direct the user to submit manually.
+	if scheduler.IsUnparsed(scriptSpecs) {
+		ExitWithError("script %q has scheduler directives that could not be fully parsed; please submit it manually", originScriptPath)
 	}
 
 	// Blank lines in the array input file are only warned about in dry-run; error here
@@ -597,7 +596,7 @@ func effectiveResourceSpec(specs *scheduler.ScriptSpecs) *scheduler.ResourceSpec
 }
 
 // resourceEnvSettings derives NNODE, NRANK, NCPU, MEM and the other resource variables from scheduler specs and returns them as KEY=VALUE strings suitable for EnvSettings.
-//   - In passthrough mode (Spec == nil) it falls back to live job resources.
+//   - When the script's directives could not be parsed (Spec == nil) it falls back to live job resources.
 //   - Applies priority chain: JobResources > ScriptSpec > Defaults.
 func resourceEnvSettings(specs *scheduler.ScriptSpecs) []string {
 	if specs == nil || specs.Spec == nil {
@@ -845,9 +844,9 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 		}
 		if hostType != scheduler.SchedulerUnknown && specs.ScriptType != hostType {
 			fmt.Printf("Resource specs: %s\n",
-				utils.StyleError(fmt.Sprintf("(passthrough — %s directives cannot be translated to %s)", specs.ScriptType, hostType)))
+				utils.StyleError(fmt.Sprintf("(not parsed — %s directives cannot be translated to %s)", specs.ScriptType, hostType)))
 		} else {
-			fmt.Printf("Resource specs: %s\n", utils.StyleWarning("(passthrough — directives not parsed)"))
+			fmt.Printf("Resource specs: %s\n", utils.StyleWarning("(not parsed — directives could not be read)"))
 		}
 	} else if specs != nil && specs.Spec != nil {
 		rs := effectiveResourceSpec(specs)
@@ -1030,9 +1029,9 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 		fmt.Printf("Action: Would run locally (in job)\n")
 	} else if config.IsInsideContainer() {
 		fmt.Printf("Action: Would run locally (in container)\n")
-	} else if scheduler.IsPassthrough(specs) {
+	} else if scheduler.IsUnparsed(specs) {
 		fmt.Printf("Action: %s\n",
-			"Would fail — directives not fully parsed (passthrough mode); please submit it manually")
+			"Would fail — directives not fully parsed; please submit it manually")
 	} else if scheduler.Enabled() && scheduler.HasSchedulerSpecs(specs) {
 		sched := scheduler.ActiveScheduler()
 		if sched == nil {
@@ -1094,7 +1093,7 @@ func buildArraySpec() (*scheduler.ArraySpec, error) {
 }
 
 // getNtasks returns the total number of MPI tasks using the priority chain:
-// JobResources > ScriptSpec > Defaults. (Skip in passthrough mode)
+// JobResources > ScriptSpec > Defaults. (Skipped when the directives could not be parsed)
 func getNtasks(specs *scheduler.ScriptSpecs) int {
 	if specs == nil || specs.Spec == nil {
 		return 1

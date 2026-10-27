@@ -103,7 +103,6 @@ function jobCardHTML(j, stableJobIds) {
   const overlay = j.env_overlay || '';
   const url     = j.access_url || j.external_url || '';
   const stableURL = stableJobIds[j.name] === j.id ? stableHelperURL(j, url) : '';
-  const copyURL = stableURL || url;
   const lastMsg = j.last_message || '';
   const id      = escHtml(j.id);
   return (
@@ -126,7 +125,7 @@ function jobCardHTML(j, stableJobIds) {
             '<a class="jc-link" href="' + escHtml(url) + '" target="_blank" title="' + escHtml(url) + '">' +
               '<span class="jc-link-text">' + escHtml(url) + '</span><span class="jc-link-ext">↗</span>' +
             '</a>' +
-            '<button class="btn btn-sm jc-icon-btn" onclick="copyStr(\'' + escHtml(copyURL) + '\',this)" title="' + escHtml(stableURL ? 'Copy stable URL' : 'Copy URL') + '">' + iconSvg('content_copy') + '</button>' +
+            '<button class="btn btn-sm jc-icon-btn" onclick="copyStr(\'' + escHtml(url) + '\',this)" title="Copy URL">' + iconSvg('content_copy') + '</button>' +
             (stableURL
               ? '<a class="btn btn-sm jc-icon-btn" href="' + escHtml(stableURL) + '" target="_blank" title="' + escHtml(stableURL) + '">' + iconSvg('link_2') + '</a>'
               : '') +
@@ -238,7 +237,7 @@ function openDetail(id) {
   if (job.runner) meta += '<span class="d-key">Runner</span><span class="d-val">' + escHtml(job.runner) + '</span>';
   if (job.job_id) meta += '<span class="d-key">Job ID</span><span class="d-val">' + escHtml(job.job_id) + '</span>';
   meta += '<span class="d-key">Started</span><span class="d-val">' + (job.started_at ? fmtDate(job.started_at) : '—') + '</span>';
-  if (job.node) meta += '<span class="d-key">Node</span><span class="d-val" title="' + escHtml(job.node) + '">' + escHtml(shortNode(job.node)) + '</span>';
+  if (job.node) meta += '<span class="d-key">Node</span><span class="d-val">' + escHtml(job.node) + '</span>';
   if (job.port > 0) {
     const bindAddr = (job.connect === 'direct' ? '0.0.0.0' : '127.0.0.1') + ':' + job.port;
     meta += '<span class="d-key">Bind</span><span class="d-val">' + escHtml(bindAddr) + '</span>';

@@ -4,6 +4,8 @@
 <a href="#condatainer"><img src="assets/logo_cnt.svg" height="70" alt="CondaTainer Logo"></a>
 </div>
 
+[![Docs](https://img.shields.io/badge/docs-docs.condatainer.org-blue)](https://docs.condatainer.org) [![Go Reference](https://pkg.go.dev/badge/github.com/condatainer/condatainer.svg)](https://pkg.go.dev/github.com/condatainer/condatainer) [![GitHub Release](https://img.shields.io/github/v/release/condatainer/condatainer)](https://github.com/condatainer/condatainer/releases)
+
 **CondaTainer** is a rootless CLI that packages *tools*, *data*, and *Conda environments* into portable images that run seamlessly on HPC.
 
 - **Modular**: Conda environments and data as separate images that work together.
@@ -23,11 +25,11 @@
 curl -fsSL https://install.condatainer.org | bash
 ```
 
-The script asks where to install (default `$SCRATCH/condatainer/`, else `$HOME/condatainer/`), whether to set up your shell, and whether to download the toolchain.
+The script asks where to install (default `$SCRATCH/condatainer/`, else `$HOME/condatainer/`), whether to set up your shell, and whether to download the toolchain. See [Installation](https://docs.condatainer.org/get_started/installation/) for group and site installs.
 
 ## Quick Start
 
-Find, install and use a tool. Default recipes come from the [cnt](https://github.com/condatainer/cnt) collection:
+[Find, install and use a tool](https://docs.condatainer.org/get_started/quick_start/). Default recipes come from the [cnt](https://github.com/condatainer/cnt) collection:
 
 ```bash
 condatainer avail                  # List available recipes
@@ -35,7 +37,7 @@ condatainer create salmon/1.10.2   # Install one
 condatainer exec -o salmon/1.10.2 salmon --version
 ```
 
-Declare what a script needs with `#DEP:` and its resources with `#SBATCH`, then install and run it:
+Declare what a script needs with `#DEP:` and its resources with `#SBATCH`, then install and run it ([Scheduler](https://docs.condatainer.org/guides/scheduler/)):
 
 ```bash
 #!/bin/bash
@@ -52,14 +54,14 @@ condatainer check -a script.sh     # Install missing dependencies
 condatainer run script.sh          # Submit it to the scheduler
 ```
 
-Run a web app on a compute node from the dashboard:
+Run a web app on a compute node from the dashboard ([Helper](https://docs.condatainer.org/guides/helper/)):
 
 ```bash
 # Start the dashboard on the login node, then add and start a helper in it
 condatainer server start
 ```
 
-Lock a project, share it, and restore it elsewhere:
+Lock a project, share it, and restore it elsewhere ([Project](https://docs.condatainer.org/guides/project/)):
 
 ```bash
 condatainer project lock                                   # Pin every #DEP: to an exact artifact

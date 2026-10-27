@@ -63,18 +63,18 @@ func newStoreAddCmd() *cobra.Command {
 			}
 			if candidate.Path != source && candidate.Layout == store.LayoutStored &&
 				candidate.Root == dir {
-				utils.PrintSuccess("Added %s", candidate.Path)
+				utils.PrintSuccess("Added %s%s", candidate.Path, config.LayerNote(candidate.Path))
 			} else {
 				// Begin adopted a copy that was already installed, which may be in
 				// another directory entirely. Say where, so "nothing was written"
 				// is never read as "installed here".
-				utils.PrintSuccess("Already installed at %s", candidate.Path)
+				utils.PrintSuccess("Already installed at %s%s", candidate.Path, config.LayerNote(candidate.Path))
 			}
 			utils.PrintMessage("  %s  %s", utils.StyleName(candidate.Name), store.FormatKeyRef(candidate.Identity))
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&layer, "layer", "l", "", "Add to this data layer: u/user, r/cnt-root, e/extra-root")
+	cmd.Flags().StringVarP(&layer, "layer", "l", "", "Add to this layer: "+layerChoices)
 	cmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 			return []string{"user", "cnt-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp

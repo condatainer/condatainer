@@ -133,10 +133,10 @@ func init() {
 		c.Flags().StringArrayVarP(&helperSources, "source", "s", nil, "Use only this configured source, in flag order (repeatable)")
 		c.RegisterFlagCompletionFunc("source", sourceHandleCompletion) //nolint:errcheck
 	}
-	helperAddCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "Layer to add to: u/user, r/cnt-root, e/extra-root (default: the furthest writable layer)")
-	helperRemoveCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "Layer to remove from: u/user, r/cnt-root, e/extra-root (default: the nearest added copy)")
-	helperUpgradeCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "Limit to a layer: u/user, r/cnt-root, e/extra-root (default: every layer)")
-	helperListCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "Limit to a data layer: u/user, r/cnt-root, e/extra-root")
+	helperAddCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "Layer to add to: "+layerChoices+" (default: the furthest writable layer)")
+	helperRemoveCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "Layer to remove from: "+layerChoices+" (default: the nearest added copy)")
+	helperUpgradeCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "Limit to a layer: "+layerChoices+" (default: every layer)")
+	helperListCmd.Flags().StringVarP(&helperLayer, "layer", "l", "", "Limit to a layer: "+layerChoices)
 	helperListCmd.Flags().BoolVarP(&helperListOne, "one", "1", false, "One entry per line (disable multi-column layout)")
 	helperListCmd.Flags().BoolVar(&helperListDescription, "description", false, "Show the description of each helper")
 	helperAddCmd.Flags().BoolVar(&helperForce, "force", false, "Replace a file add did not install, or an edited one, and record it")
@@ -220,7 +220,7 @@ func runHelperRemove(cmd *cobra.Command, args []string) error {
 		utils.PrintWarning("%v", planErr)
 	}
 	for _, item := range items {
-		fmt.Printf("  remove  %s\n", item.Path)
+		fmt.Printf("  remove  %s%s\n", item.Path, config.LayerNote(item.Path))
 	}
 	if !utils.ShouldAnswerYes() {
 		if !utils.IsInteractiveShell() {

@@ -36,7 +36,7 @@ var removeCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(removeCmd)
-	removeCmd.Flags().StringP("layer", "l", "", "Limit to a data layer: u/user, r/cnt-root, e/extra-root")
+	removeCmd.Flags().StringP("layer", "l", "", "Limit to a layer: "+layerChoices)
 	removeCmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 			return []string{"user", "cnt-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp
@@ -276,7 +276,7 @@ func performDelete(cmd *cobra.Command, names []string, showListing ...bool) erro
 			continue
 		}
 		artifactcache.Forget(overlayPath)
-		utils.PrintSuccess("Overlay %s removed.", name)
+		utils.PrintSuccess("Overlay %s removed%s.", name, config.LayerNote(overlayPath))
 		envPath := overlayPath + ".env"
 		if utils.FileExists(envPath) {
 			if err := os.Remove(envPath); err != nil {
@@ -338,7 +338,7 @@ func removeExternalOverlays(cmd *cobra.Command, paths []string) error {
 			continue
 		}
 		artifactcache.Forget(p)
-		utils.PrintSuccess("Overlay %s removed.", filepath.Base(p))
+		utils.PrintSuccess("Overlay %s removed%s.", filepath.Base(p), config.LayerNote(p))
 		envPath := p + ".env"
 		if utils.FileExists(envPath) {
 			if err := os.Remove(envPath); err != nil {

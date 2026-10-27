@@ -683,7 +683,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 	defaultPath := filepath.Join(cwd, "env.img")
 
 	utils.PrintMessage("%s requires a writable overlay (conda environment).", helperName)
-	utils.PrintMessage("No overlay specified with -e/--env.")
+	utils.PrintMessage("No overlay specified with -e/--env-img.")
 
 	imgPath, err := promptDefault(ctx, "[?] Overlay path", defaultPath)
 	if err != nil {

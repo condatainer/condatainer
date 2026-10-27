@@ -243,7 +243,7 @@ func parsePostScriptHelperFlags(args []string) (postScriptHelperFlags, []string,
 				}
 				flags.gpuSet = true
 				flags.gpu = v
-			case "--env":
+			case "--env-img":
 				v, err := valueFor(name, &i, val, hasVal)
 				if err != nil {
 					return flags, nil, err

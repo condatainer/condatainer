@@ -55,7 +55,7 @@ func init() {
 	eCmd.Flags().BoolVarP(&eNoAutoload, "no-autoload", "n", false, "Disable auto-loading env.img from current directory")
 	eCmd.Flags().BoolVarP(&eFakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
 	eCmd.Flags().StringVar(&eActivation, "activation", "all", "Which activate.d scripts to source before the command: all, env, or none")
-	eCmd.Flags().StringSliceVar(&eEnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
+	eCmd.Flags().StringArrayVar(&eEnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
 	eCmd.Flags().StringSliceVar(&eBindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
 	RegisterProjectFlags(eCmd, &eProjectDir)
 

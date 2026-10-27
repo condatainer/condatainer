@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
@@ -34,8 +35,8 @@ func newStoreRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			utils.PrintSuccess("Removed %s (%s)", removed.Path,
-				store.FormatKeyRef(removed.Identity))
+			utils.PrintSuccess("Removed %s (%s)%s", removed.Path,
+				store.FormatKeyRef(removed.Identity), config.LayerNote(removed.Path))
 			return nil
 		},
 	}
@@ -94,13 +95,13 @@ func newStoreGCCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			utils.PrintSuccess("Removed %d entrie(s), %s freed.",
-				len(removed.Collectable), utils.FormatSize(removed.Reclaimable))
+			utils.PrintSuccess("Removed %d entrie(s), %s freed%s.",
+				len(removed.Collectable), utils.FormatSize(removed.Reclaimable), config.LayerNote(collectablePaths(removed)...))
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&graceDay, "grace", 0, "Age in days below which nothing is collectable (default: store_gc_grace)")
-	cmd.Flags().StringVarP(&layer, "layer", "l", "", "Limit to a data layer: u/user, r/cnt-root, e/extra-root")
+	cmd.Flags().StringVarP(&layer, "layer", "l", "", "Limit to a layer: "+layerChoices)
 	jsonFlag(cmd.Flags(), &jsonOut)
 	cmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
@@ -142,6 +143,15 @@ func printGCReport(report *store.GCReport) {
 			len(report.Retained), utils.FormatDuration(report.Grace))
 		return
 	}
-	utils.PrintSuccess("%d entrie(s) collectable, %s reclaimable.",
-		len(report.Collectable), utils.FormatSize(report.Reclaimable))
+	utils.PrintSuccess("%d entrie(s) collectable, %s reclaimable%s.",
+		len(report.Collectable), utils.FormatSize(report.Reclaimable), config.LayerNote(collectablePaths(report)...))
+}
+
+// collectablePaths lists the paths of the entries a gc run found.
+func collectablePaths(report *store.GCReport) []string {
+	paths := make([]string, len(report.Collectable))
+	for i, entry := range report.Collectable {
+		paths[i] = entry.Path
+	}
+	return paths
 }

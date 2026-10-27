@@ -110,7 +110,7 @@ Registry audience, public (default) or restricted, says who can download from th
 		},
 	}
 	addEndpointFlags(push, opts)
-	push.Flags().StringVar(&opts.audience, "audience", string(registry.Public), "Who can download: public or restricted")
+	push.Flags().StringVar(&opts.audience, "audience", string(registry.Public), "Who can download from the registry: public or restricted")
 
 	pull := &cobra.Command{
 		Use:   "pull [flags] <name|name@identity>",
@@ -218,7 +218,7 @@ Registry audience, public (default) or restricted, says who can download from th
 			if err := registry.Login(cmd.Context(), args[0], layer, username, password); err != nil {
 				return err
 			}
-			reportDone(cmd, "logged in to", registry.TrimBaseScheme(args[0]))
+			reportDone(cmd, "logged in to", registry.TrimBaseScheme(args[0])+" ("+layer+" layer)")
 			reportPermissions(layer)
 			return nil
 		},
@@ -226,12 +226,12 @@ Registry audience, public (default) or restricted, says who can download from th
 	login.Flags().StringVarP(&opts.username, "username", "u", "", "Registry username")
 	login.Flags().StringVarP(&opts.password, "password", "p", "", "Registry password or token")
 	login.Flags().BoolVar(&opts.passwordStdin, "password-stdin", false, "Read the password/token from stdin")
-	login.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Layer to save in: u/user, e/extra-root, r/cnt-root")
+	login.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Layer to save in: "+layerChoices)
 
 	logout := &cobra.Command{
-		Use:   "logout [flags] <host>[/<owner>/<repo>]",
-		Short: "Remove stored registry credentials",
-		Long: `Remove the credential saved under exactly this host or repository.`,
+		Use:          "logout [flags] <host>[/<owner>/<repo>]",
+		Short:        "Remove stored registry credentials",
+		Long:         `Remove the credential saved under exactly this host or repository.`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -243,11 +243,11 @@ Registry audience, public (default) or restricted, says who can download from th
 				}
 				return err
 			}
-			reportDone(cmd, "logged out of", registry.TrimBaseScheme(args[0]))
+			reportDone(cmd, "logged out of", registry.TrimBaseScheme(args[0])+" ("+layer+" layer)")
 			return nil
 		},
 	}
-	logout.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Layer to remove from: u/user, e/extra-root, r/cnt-root")
+	logout.Flags().StringVarP(&opts.layer, "layer", "l", "user", "Layer to remove from: "+layerChoices)
 
 	list := &cobra.Command{
 		Use:     "list",

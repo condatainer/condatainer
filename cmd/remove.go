@@ -22,7 +22,7 @@ var removeCmd = &cobra.Command{
 
 - A single plain term must match a name exactly, unlike 'list' and 'avail'.
 - Several terms must all match (AND).
-- Wildcards (*, ?) and regex also work. Full rules: ` + searchManualURL + `
+- Wildcards (*, ?) and regex also work.
 - It asks for confirmation before removing.`,
 	Example: `  condatainer rm cellranger/9.0.1                   # One version
   condatainer rm cellranger                         # Every version of cellranger

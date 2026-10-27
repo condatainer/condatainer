@@ -87,7 +87,7 @@ func printListSetting(key string, width int) {
 		return
 	}
 	if len(res.List) == 0 {
-		fmt.Printf("  %-*s %s\n", width, key+":", "none")
+		fmt.Printf("  %-*s\n", width, key+":")
 		return
 	}
 	fmt.Printf("  %-*s\n", width, key+":")

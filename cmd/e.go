@@ -22,6 +22,7 @@ var (
 	eReadOnly    bool
 	eNoAutoload  bool
 	eFakeroot    bool
+	eLoadGPU     bool
 	eActivation  string
 	eEnvSettings []string
 	eBindPaths   []string
@@ -54,6 +55,7 @@ func init() {
 	eCmd.Flags().BoolVarP(&eReadOnly, "read-only", "r", false, "Mount .img overlays as read-only (default: writable)")
 	eCmd.Flags().BoolVarP(&eNoAutoload, "no-autoload", "n", false, "Disable auto-loading env.img from current directory")
 	eCmd.Flags().BoolVarP(&eFakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
+	eCmd.Flags().BoolVar(&eLoadGPU, "load-gpu", false, "Make the host GPU available even if autoload_gpu is off")
 	eCmd.Flags().StringVar(&eActivation, "activation", "all", "Which activate.d scripts to source before the command: all, env, or none")
 	eCmd.Flags().StringArrayVar(&eEnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
 	eCmd.Flags().StringSliceVar(&eBindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
@@ -181,6 +183,7 @@ func runE(cmd *cobra.Command, args []string) error {
 		BindPaths:      append(configBinds(), eBindPaths...),
 		ApptainerFlags: apptainerFlags,
 		Fakeroot:       eFakeroot,
+		GpuRequested:   eLoadGPU,
 		BaseImage:      baseImageResolved,
 		HidePrompt:     hidePrompt,
 		Activation:     activation,

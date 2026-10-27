@@ -51,7 +51,7 @@ func init() {
 			return []string{"user", "cnt-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp
 		})
 	listCmd.Flags().BoolVarP(&listOne, "one", "1", false, "One entry per line (disable multi-column layout)")
-	listCmd.Flags().BoolVar(&listDescription, "description", false, "Show description for each overlay (default: off)")
+	listCmd.Flags().BoolVar(&listDescription, "desc", false, "Show description for each overlay (default: off)")
 }
 
 // DirOverlays holds the scan results for a single image directory.
@@ -382,7 +382,7 @@ func terminalWidth() int {
 	return 80
 }
 
-// listTermWidth returns 0 (single column) when -1 or --description is set, otherwise the terminal width.
+// listTermWidth returns 0 (single column) when -1 or --desc is set, otherwise the terminal width.
 func listTermWidth() int {
 	if listOne || listDescription {
 		return 0

@@ -55,11 +55,7 @@ func buildTestSqf(t *testing.T) (sqf, mnt string) {
 		t.Fatal(err)
 	}
 	sqf = filepath.Join(dir, "t.sqf")
-	mksquashfsBin, err := exec.LookPath("mksquashfs")
-	if err != nil {
-		t.Skip("mksquashfs not available")
-	}
-	if out, err := exec.Command(mksquashfsBin, src, sqf, "-no-progress").CombinedOutput(); err != nil {
+	if out, err := exec.Command(hostTool(t, "mksquashfs"), src, sqf, "-no-progress").CombinedOutput(); err != nil {
 		t.Fatalf("mksquashfs: %v\n%s", err, out)
 	}
 	mnt = filepath.Join(dir, "mnt")
@@ -67,6 +63,25 @@ func buildTestSqf(t *testing.T) (sqf, mnt string) {
 		t.Fatal(err)
 	}
 	return sqf, mnt
+}
+
+// fuseRunning reports whether a squashfuse process for sqf exists. The mount lives in a private
+// namespace, invisible to the test, so the process is what it watches.
+func fuseRunning(sqf string) bool {
+	out, _ := exec.Command("pgrep", "-f", "squashfuse.*"+sqf).Output()
+	return len(out) != 0
+}
+
+// waitFor polls cond until it holds or limit passes, and reports whether it held.
+func waitFor(limit time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(limit)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return true
 }
 
 // A ctx cancelled while work is still running must not leave the FUSE
@@ -89,8 +104,11 @@ func TestMountedRunCancelKillsFuseProcess(t *testing.T) {
 		done <- MountedRun(ctx, squashfuse, []string{sqf}, mnt, "sleep 30", execpkg.IO{})
 	}()
 
-	// Give the mount time to appear before cancelling mid-"work".
-	time.Sleep(1 * time.Second)
+	// Cancel mid-"work", once the mount is up.
+	if !waitFor(10*time.Second, func() bool { return fuseRunning(sqf) }) {
+		cancel()
+		t.Fatal("FUSE process never appeared")
+	}
 	cancel()
 
 	select {
@@ -100,11 +118,8 @@ func TestMountedRunCancelKillsFuseProcess(t *testing.T) {
 	}
 
 	// The kernel needs a moment to reap the killed process group.
-	time.Sleep(1 * time.Second)
-
-	out, _ := exec.Command("pgrep", "-f", sqf).Output()
-	if len(out) != 0 {
-		t.Errorf("FUSE process for %s survived cancellation:\n%s", sqf, out)
+	if !waitFor(5*time.Second, func() bool { return !fuseRunning(sqf) }) {
+		t.Errorf("FUSE process for %s survived cancellation", sqf)
 	}
 }
 
@@ -133,19 +148,9 @@ func TestMountedRunSurvivesAbruptDeath(t *testing.T) {
 	}
 	driverPid := driver.Process.Pid
 
-	// Wait for the FUSE process to actually come up (the mount lives in a
-	// private namespace, invisible to us, so watch for the process instead).
-	// Scoped to this test's own sqf path, never a bare tool name.
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		out, _ := exec.Command("pgrep", "-f", "squashfuse.*"+sqf).Output()
-		if len(out) != 0 {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	out, _ := exec.Command("pgrep", "-f", "squashfuse.*"+sqf).Output()
-	if len(out) == 0 {
+	// Wait for the FUSE process to actually come up. The pattern is scoped to
+	// this test's own sqf path, never a bare tool name.
+	if !waitFor(10*time.Second, func() bool { return fuseRunning(sqf) }) {
 		driver.Process.Kill() //nolint:errcheck
 		t.Fatal("FUSE process never appeared")
 	}
@@ -156,13 +161,9 @@ func TestMountedRunSurvivesAbruptDeath(t *testing.T) {
 	}
 	driver.Wait() //nolint:errcheck
 
-	// Give the kernel a moment to deliver Pdeathsig to the sentinel and let
-	// it run the group kill.
-	time.Sleep(2 * time.Second)
-
-	survivor, _ := exec.Command("pgrep", "-f", "squashfuse.*"+sqf).Output()
-	if len(survivor) != 0 {
+	// The kernel delivers Pdeathsig to the sentinel, which runs the group kill.
+	if !waitFor(5*time.Second, func() bool { return !fuseRunning(sqf) }) {
 		exec.Command("pkill", "-KILL", "-f", "squashfuse.*"+sqf).Run() //nolint:errcheck
-		t.Errorf("FUSE process for %s survived the driver's abrupt death (driver pid %d):\n%s", sqf, driverPid, survivor)
+		t.Errorf("FUSE process for %s survived the driver's abrupt death (driver pid %d)", sqf, driverPid)
 	}
 }

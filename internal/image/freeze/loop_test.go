@@ -21,7 +21,7 @@ type node struct {
 // archiveNodes lists an archive with each entry's type and size.
 func archiveNodes(t *testing.T, sqf string) map[string]node {
 	t.Helper()
-	out, err := exec.Command("unsquashfs", "-ll", sqf).CombinedOutput()
+	out, err := exec.Command(hostTool(t, "unsquashfs"), "-ll", sqf).CombinedOutput()
 	if err != nil {
 		t.Fatalf("unsquashfs -ll: %v\n%s", err, out)
 	}

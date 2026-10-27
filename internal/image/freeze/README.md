@@ -14,6 +14,11 @@
 - `unshare --mount --user --map-root-user` does not use setuid at all.
   - It maps namespace-uid 0 to the caller, and the kernel grants capability inside a namespace nobody else can see.
   - It works from a login shell or from inside a container, since each call creates a fresh namespace.
+- Namespace root skips file permission checks, so a cleared write bit would not stop a FUSE server from opening an image read-write.
+  - The FUSE process is started through `_mount_exec`, which drops `CAP_DAC_OVERRIDE` and `CAP_DAC_READ_SEARCH` from the bounding set first.
+  - It keeps the rest, including the capability to mount.
+  - A `fuse2fs` that decides by permission bits then mounts a write-protected image read-only. That includes 1.47.4, which opens it read-write otherwise.
+  - A read-only bind mount of the image was tried and rejected: 1.47.4 refuses to mount a file it cannot open for writing.
 - The mount is ended by killing the foreground FUSE process, never `umount` or `fusermount`.
   - Those are setuid-root binaries, and the owning uid has no mapping in the namespace. Some kernels refuse to exec them.
   - The namespace, mount included, disappears when nothing runs in it, so a killed run leaks nothing.

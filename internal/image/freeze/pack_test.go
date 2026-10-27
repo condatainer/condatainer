@@ -63,10 +63,7 @@ func packImage(t *testing.T, img string) string {
 // listArchive returns the archive's paths, with unsquashfs's display root removed.
 func listArchive(t *testing.T, sqf string) []string {
 	t.Helper()
-	if _, err := exec.LookPath("unsquashfs"); err != nil {
-		t.Skip("unsquashfs not available")
-	}
-	out, err := exec.Command("unsquashfs", "-l", sqf).CombinedOutput()
+	out, err := exec.Command(hostTool(t, "unsquashfs"), "-l", sqf).CombinedOutput()
 	if err != nil {
 		t.Fatalf("unsquashfs: %v\n%s", err, out)
 	}
@@ -121,7 +118,7 @@ mkdir bin`)
 	if contains(listArchive(t, sqf), "usr/bin/.wh.micromamba") {
 		t.Error("the marker file was packed; it would surface as an ordinary file at mount")
 	}
-	out, err := exec.Command("unsquashfs", "-ll", sqf).CombinedOutput()
+	out, err := exec.Command(hostTool(t, "unsquashfs"), "-ll", sqf).CombinedOutput()
 	if err != nil {
 		t.Fatalf("unsquashfs -ll: %v\n%s", err, out)
 	}
@@ -173,14 +170,18 @@ func TestPackLeavesTheSourceUntouched(t *testing.T) {
 }
 
 // An image whose write bit is already clear is packed as it stands and stays
-// pinned: clearing that bit is how an artifact is protected, and freeze must not
-// quietly unpin one.
+// protected: clearing that bit is how an artifact is protected, so freeze neither
+// makes it writable nor writes to it.
 func TestPackKeepsAProtectedImageProtected(t *testing.T) {
 	requireSquashfs(t)
 	t.Parallel()
 	img := newImage(t, "cd upper\nmkdir cnt_env")
 	writeInto(t, img, "/upper/cnt_env", "f", "x\n")
 	if err := os.Chmod(img, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(img)
+	if err != nil {
 		t.Fatal(err)
 	}
 	packImage(t, img)
@@ -191,6 +192,13 @@ func TestPackKeepsAProtectedImageProtected(t *testing.T) {
 	}
 	if info.Mode().Perm()&0o222 != 0 {
 		t.Errorf("the pack made a protected image writable: %v", info.Mode().Perm())
+	}
+	after, err := os.ReadFile(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("the pack wrote to a protected image")
 	}
 }
 

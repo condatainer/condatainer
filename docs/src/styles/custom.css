@@ -148,3 +148,20 @@
 .code-tabs .code-tabs-tab:hover {
 	color: var(--sl-color-white);
 }
+
+/* A line sets the Read the Docs ad apart from the page. It shows only when the ad is there. */
+#ethical-ad-placement:not(:empty) {
+	border-top: 1px solid var(--sl-color-hairline);
+	margin-top: 2rem;
+	padding-top: 1.5rem;
+}
+
+/* The ad takes the page's colors, so it is readable in dark mode. */
+#ethical-ad-placement .ethical-sidebar {
+	background: var(--sl-color-bg-nav);
+	border-color: var(--sl-color-hairline);
+	color: var(--sl-color-text);
+}
+#ethical-ad-placement .ethical-sidebar a {
+	color: inherit;
+}

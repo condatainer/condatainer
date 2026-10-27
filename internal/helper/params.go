@@ -73,7 +73,7 @@ func ApplyParamFlags(params []HelperParam, args []string) (map[string]string, []
 // -l/-u are cobra-level only and never reach script arg parsing, so they are excluded.
 var ReservedShortFlags = map[string]string{
 	"-c": "--cpu", "-m": "--mem", "-t": "--time", "-g": "--gpu",
-	"-e": "--env", "-o": "--overlay", "-w": "--cwd",
+	"-e": "--env-img", "-o": "--overlay", "-w": "--cwd",
 	"-A": "--account", "-p": "--partition",
 }
 
@@ -92,6 +92,24 @@ func ValidateHelperParamConflicts(params []HelperParam) error {
 	}
 	return nil
 }
+
+// RunFlagRoutes says, for every flag `helper run` accepts, where it takes effect.
+//   - RouteExec: buildCondatainerCmd writes it into the `condatainer exec` line the job runs.
+//   - RouteJob: it sets the job's resources or scheduler options, not the exec line.
+//   - RouteLauncher: only the launching command acts on it.
+//   - A new flag must be listed here, and TestEveryRunFlagHasARoute fails until it is.
+var RunFlagRoutes = map[string]string{
+	"overlay": RouteExec, "env-img": RouteExec, "cwd": RouteExec, "no-project": RouteExec, "gpu": RouteExec,
+	"cpu": RouteJob, "mem": RouteJob, "time": RouteJob, "account": RouteJob, "partition": RouteJob, "exclude-nodes": RouteJob,
+	"new": RouteLauncher, "wait": RouteLauncher,
+}
+
+// The places a `helper run` flag can take effect, as RunFlagRoutes values.
+const (
+	RouteExec     = "exec"
+	RouteJob      = "job"
+	RouteLauncher = "launcher"
+)
 
 // PrintRunFlags prints the flags `helper run` accepts after the helper name, in one list for every help screen.
 //   - spec fills in the defaults of a helper. Nil prints the flags without them.
@@ -117,14 +135,14 @@ func PrintRunFlags(w io.Writer, spec *scheduler.ResourceSpec) {
 	fmt.Fprintf(w, "  -m, --mem         Memory%s\n", def(mem))
 	fmt.Fprintf(w, "  -t, --time        Walltime%s\n", def(timeStr))
 	fmt.Fprintln(w, "  -g, --gpu         GPU spec (e.g. a100:1)")
-	fmt.Fprintln(w, "  -e, --env         Writable overlay (.img)")
+	fmt.Fprintln(w, "  -e, --env-img     Writable overlay (.img)")
 	fmt.Fprintln(w, "  -o, --overlay     Additional read-only overlay (repeatable)")
 	fmt.Fprintln(w, "  -w, --cwd <path>  Change working directory (e.g. -w .)")
 	fmt.Fprintln(w, "  -A, --account     Billing/allocation account")
 	fmt.Fprintln(w, "  -p, --partition   Partition/queue")
 	fmt.Fprintln(w, "      --exclude-nodes <a,b>  Nodes the job must not run on (empty for none)")
 	fmt.Fprintln(w, "      --new         Skip reuse prompt, force new instance")
-	fmt.Fprintln(w, "      --no-project  Ignore the project lock when resolving the helper's overlays")
+	fmt.Fprintln(w, "      --no-project  Ignore the project lock")
 	fmt.Fprintln(w, "      --wait        Stay attached until the app is ready")
 }
 

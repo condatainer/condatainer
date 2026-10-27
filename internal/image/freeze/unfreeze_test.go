@@ -18,9 +18,7 @@ import (
 // unfreezeInto rebuilds a writable overlay from an artifact.
 func unfreezeInto(t *testing.T, sqf string, opts UnfreezeOptions) UnfreezeResult {
 	t.Helper()
-	if _, err := exec.LookPath("unsquashfs"); err != nil {
-		t.Skip("unsquashfs not available")
-	}
+	hostTool(t, "unsquashfs")
 	opts.Artifact = sqf
 	if opts.Target == "" {
 		opts.Target = filepath.Join(artifactDir(t), "env.img")
@@ -50,7 +48,7 @@ func imgEntry(t *testing.T, img, dir, name string) (mode string, found bool) {
 
 func dbgLs(t *testing.T, img, dir string) string {
 	t.Helper()
-	out, err := exec.Command("debugfs", "-R", "ls -p "+dir, img).Output()
+	out, err := exec.Command(hostTool(t, "debugfs"), "-R", "ls -p "+dir, img).Output()
 	if err != nil {
 		t.Fatalf("debugfs ls %s: %v", dir, err)
 	}
@@ -123,7 +121,7 @@ func TestUnfreezeOwnsThePayload(t *testing.T) {
 	writeInto(t, img, "/upper/cnt_env", "f", "x\n")
 
 	res := unfreezeInto(t, freezeImage(t, img).Path, UnfreezeOptions{})
-	out, err := exec.Command("debugfs", "-R", "ls -l /upper/cnt_env", res.Path).Output()
+	out, err := exec.Command(hostTool(t, "debugfs"), "-R", "ls -l /upper/cnt_env", res.Path).Output()
 	if err != nil {
 		t.Fatal(err)
 	}

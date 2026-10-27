@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 
 	"github.com/condatainer/condatainer/internal/project"
@@ -19,20 +18,17 @@ type projectContext struct {
 }
 
 // projectRunContext resolves a script's declarations through its project lock, or reports that there is no project to resolve against.
+//   - list prints the resolved overlays. A run that is about to submit a job leaves it to the job, whose log keeps it.
 //   - A script the project ignores resolves as outside the project: nothing is pinned.
 //   - The project is the nearest ancestor of the current directory holding cnt-lock/.
 //   - The script may live anywhere: declarations resolve against the project root.
 //   - The working directory is left to the script and the scheduler.
 //   - A #DEP: with no pin resolves live, as outside a project.
-func projectRunContext(ctx context.Context, contentScript string) (*projectContext, error) {
+func projectRunContext(ctx context.Context, contentScript string, list bool) (*projectContext, error) {
 	if noProjectRequested {
 		return nil, nil
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	standing, err := project.StandingAt(cwd)
+	standing, err := standingProjectHere()
 	if err != nil || standing == nil {
 		return nil, err
 	}
@@ -40,8 +36,13 @@ func projectRunContext(ctx context.Context, contentScript string) (*projectConte
 	if err != nil {
 		return nil, err
 	}
-	if outside, err := outsideProject(standing.Root, script); outside || err != nil {
+	outside, err := outsideProject(standing.Root, script)
+	if err != nil {
 		return nil, err
+	}
+	if outside {
+		announceUnlocked(standing.Root, script)
+		return nil, nil
 	}
 	announceProject(standing.Root)
 
@@ -58,24 +59,39 @@ func projectRunContext(ctx context.Context, contentScript string) (*projectConte
 	projectRun := &projectContext{Root: standing.Root}
 	for _, mount := range resolution.Mounts {
 		projectRun.Overlays = append(projectRun.Overlays, mount.Path)
-		switch {
-		case mount.Found != "":
-			utils.PrintNote("%s is mounted from an equivalent overlay, not %s",
-				mount.Name, short(mount.Identity))
-		case mount.Live:
-			utils.PrintNote("%s resolved to %s, not pinned",
-				mount.Request, mount.Name)
-		}
+	}
+	if list {
+		printMounts(resolution.Mounts, true)
 	}
 	return projectRun, nil
 }
 
-// outsideProject reports whether a script is left out of the project's lock, and says so when it is.
+// outsideProject reports whether the project's lock does not cover a script.
+//   - The project's rules can skip it, or a symlink on its path can lead outside the project or to a file the rules skip.
+//   - A symlink to a script of the project is covered, since the scan reads that script under its own name.
 func outsideProject(root, script string) (bool, error) {
 	member, err := lock.IsMember(root, script)
-	if err != nil || member {
-		return false, err
+	if err != nil || !member {
+		return !member && err == nil, err
 	}
-	utils.PrintNote("%s is ignored by the project, overlays resolved without lock", script)
-	return true, nil
+	realScript, err := filepath.EvalSymlinks(script)
+	if err != nil {
+		return false, nil
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false, nil
+	}
+	if rel, err := filepath.Rel(root, script); err == nil && realScript == filepath.Join(realRoot, rel) {
+		return false, nil
+	}
+	member, err = lock.IsMember(realRoot, realScript)
+	return !member || err != nil, nil
+}
+
+// announceUnlocked prints the project line for a script the lock does not cover, marked, when the script declares anything to resolve.
+func announceUnlocked(root, script string) {
+	if deps, _ := utils.ScriptDependencies(script); len(deps) > 0 {
+		announceProjectMarked(root, "script not locked")
+	}
 }

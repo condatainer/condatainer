@@ -228,6 +228,36 @@ func TestScanAppliesGitignoreAndTheLockIgnoreList(t *testing.T) {
 	}
 }
 
+// A symlink to a script the scan reads elsewhere is not reported, and one to anything else is.
+func TestScanReportsSymlinksItSkips(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	write(t, root, "real.sh", "#!/bin/bash\n")
+	write(t, root, "src/ignored.sh", "#!/bin/bash\n")
+	write(t, root, ".gitignore", "src/ignored.sh\nlink-ignored.sh\n")
+	write(t, outside, "elsewhere.sh", "#!/bin/bash\n")
+	write(t, outside, "notes.txt", "text\n")
+	for name, target := range map[string]string{
+		"link-in.sh":      filepath.Join(root, "real.sh"),
+		"link-out.sh":     filepath.Join(outside, "elsewhere.sh"),
+		"link-ignored.sh": filepath.Join(outside, "elsewhere.sh"),
+		"link-text.txt":   filepath.Join(outside, "notes.txt"),
+		"link-to-gitnote": filepath.Join(root, "src/ignored.sh"),
+		"data":            outside,
+	} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+
+	result := scan(t, root)
+	if want := []string{"link-out.sh", "link-to-gitnote"}; !reflect.DeepEqual(result.SymlinkedScripts, want) {
+		t.Errorf("scripts = %v, want %v", result.SymlinkedScripts, want)
+	}
+	if want := []string{"data"}; !reflect.DeepEqual(result.SymlinkedDirs, want) {
+		t.Errorf("dirs = %v, want %v", result.SymlinkedDirs, want)
+	}
+}
+
 func TestScanRefusesANegationInTheLockIgnoreList(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "cnt-lock/ignore", "lib\n!lib/keep.sh\n")
@@ -383,24 +413,53 @@ func TestScanClassifiesExternalPathsAsUnpinnable(t *testing.T) {
 	}
 }
 
-// A `../` declaration escapes under the root anchor but can still name a file
-// well inside the project when read relative to the script that wrote it.
-func TestScanReclassifiesAnEscapeThatStaysInsideViaItsScript(t *testing.T) {
+// A relative path is read from its script's folder first, with the root-relative
+// reading as the fallback, so a `../` declaration can name a file inside the project.
+func TestScanAnchorsARelativePathToItsScript(t *testing.T) {
 	root := t.TempDir()
+	write(t, root, "steps1/run.sh", "#!/bin/bash\n#DEP: tool.sqf\n#DEP: ../overlays/shared.sqf\nrun\n")
+
+	result := scan(t, root)
+	tool := find(t, result, PathPrefix+"steps1/tool.sqf")
+	if tool.Kind != KindPath || tool.Fallback != PathPrefix+"tool.sqf" {
+		t.Errorf("tool = %#v, want the script-relative key with the root key as fallback", tool)
+	}
+	shared := find(t, result, PathPrefix+"overlays/shared.sqf")
+	if shared.Kind != KindPath || shared.Fallback != "" {
+		t.Errorf("shared = %#v, want a path inside the project with no fallback", shared)
+	}
+}
+
+// Scripts in different folders that write the same text get one request each,
+// so each pins its own file.
+func TestScanKeepsSameTextFromDifferentFoldersApart(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "step1/run.sh", "#!/bin/bash\n#DEP: x.sqf\nrun\n")
+	write(t, root, "step2/run.sh", "#!/bin/bash\n#DEP: x.sqf\nrun\n")
+
+	result := scan(t, root)
+	for _, key := range []string{PathPrefix + "step1/x.sqf", PathPrefix + "step2/x.sqf"} {
+		request := find(t, result, key)
+		if len(request.Scripts) != 1 {
+			t.Errorf("%s scripts = %v, want its own script alone", key, request.Scripts)
+		}
+	}
+}
+
+// Two declarations that land on one file are one request.
+func TestScanMergesDeclarationsThatNameOneFile(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "run.sh", "#!/bin/bash\n#DEP: overlays/tool.sqf\nrun\n")
 	write(t, root, "steps1/run.sh", "#!/bin/bash\n#DEP: ../overlays/tool.sqf\nrun\n")
 
 	result := scan(t, root)
 	tool := find(t, result, PathPrefix+"overlays/tool.sqf")
-	if tool.Kind != KindPath {
-		t.Fatalf("tool.Kind = %q, want path", tool.Kind)
-	}
-	if tool.Path != "overlays/tool.sqf" {
-		t.Errorf("tool.Path = %q, want overlays/tool.sqf", tool.Path)
+	if tool.Kind != KindPath || len(tool.Scripts) != 2 {
+		t.Errorf("tool = %#v, want one path request from both scripts", tool)
 	}
 }
 
-// A script two directories deep still escapes the project even relative to
-// its own directory, so it stays external.
+// A path that leaves the project from the script's folder and from the root stays external.
 func TestScanKeepsAnEscapeExternalWhenItsScriptCannotRescueIt(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "steps1/run.sh", "#!/bin/bash\n#DEP: ../../outside/tool.sqf\nrun\n")
@@ -409,25 +468,6 @@ func TestScanKeepsAnEscapeExternalWhenItsScriptCannotRescueIt(t *testing.T) {
 	tool := find(t, result, PathPrefix+"../../outside/tool.sqf")
 	if tool.Kind != KindExternal {
 		t.Errorf("tool.Kind = %q, want external", tool.Kind)
-	}
-}
-
-// A reclassified escape that would land on a key another declaration already
-// owns is refused rather than silently merged into it: two different
-// declaration texts must not end up sharing one identity by accident.
-func TestScanNeverLetsAReclassifiedEscapeCollideWithAnExistingKey(t *testing.T) {
-	root := t.TempDir()
-	write(t, root, "run.sh", "#!/bin/bash\n#DEP: overlays/tool.sqf\nrun\n")
-	write(t, root, "steps1/run.sh", "#!/bin/bash\n#DEP: ../overlays/tool.sqf\nrun\n")
-
-	result := scan(t, root)
-	direct := find(t, result, PathPrefix+"overlays/tool.sqf")
-	if direct.Kind != KindPath || len(direct.Scripts) != 1 {
-		t.Errorf("direct = %#v, want an untouched path pin from run.sh alone", direct)
-	}
-	climbing := find(t, result, PathPrefix+"../overlays/tool.sqf")
-	if climbing.Kind != KindExternal {
-		t.Errorf("climbing.Kind = %q, want external: reclassifying it would have collided with the existing key", climbing.Kind)
 	}
 }
 

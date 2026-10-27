@@ -7,6 +7,7 @@
 // Usage:
 //
 //	mountharness _mount_sentinel <fuseBin> <mnt> -- [fuseArgs...]   see freeze.RunSentinel; work comes from $CNT_MOUNT_WORK
+//	mountharness _mount_exec -- <bin> [args...]                  see freeze.ExecWithoutDACOverride
 //	mountharness _payload_key <dir> <base> <workers>             prints the payload key of dir, as the hidden command does
 //	mountharness drive <fuseBin> <sqf> <mnt> <work>              calls freeze.MountedRun directly and blocks until it returns
 package main
@@ -40,6 +41,13 @@ func main() {
 			fuseArgs = fuseArgs[1:]
 		}
 		if err := freeze.RunSentinel(fuseBin, mnt, os.Getenv(freeze.EnvSentinelWork), fuseArgs); err != nil {
+			fail("%v", err)
+		}
+	case "_mount_exec":
+		if len(os.Args) < 4 || os.Args[2] != "--" {
+			fail("usage: mountharness _mount_exec -- <bin> [args...]")
+		}
+		if err := freeze.ExecWithoutDACOverride(os.Args[3], os.Args[4:]); err != nil {
 			fail("%v", err)
 		}
 	case "_payload_key":

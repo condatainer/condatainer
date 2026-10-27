@@ -13,27 +13,31 @@ import (
 	"github.com/condatainer/condatainer/internal/toolpath"
 )
 
+// hostTool returns where a tool the test runs lives, found as a freeze finds
+// it: libexec first, then PATH. It skips the test when the tool is absent.
+func hostTool(t *testing.T, name string) string {
+	t.Helper()
+	path, err := toolpath.Resolve(name)
+	if err != nil {
+		t.Skipf("%s not available: %v", name, err)
+	}
+	return path
+}
+
 // requireTools skips when the ext3 toolchain is absent, which is the case on a
 // machine that could not run a freeze either.
 func requireTools(t *testing.T) {
 	t.Helper()
 	for _, bin := range []string{"debugfs", "mke2fs", "dd"} {
-		if _, err := exec.LookPath(bin); err != nil {
-			t.Skipf("%s not available", bin)
-		}
+		hostTool(t, bin)
 	}
 }
 
-// requireSquashfs skips when a pack could not run: mksquashfs as the freeze
-// resolves it, and unsquashfs off PATH for the tests that read the archive back.
+// requireSquashfs skips when a pack could not run or its archive could not be read back.
 func requireSquashfs(t *testing.T) {
 	t.Helper()
-	if _, err := toolpath.Resolve("mksquashfs"); err != nil {
-		t.Skipf("mksquashfs not available: %v", err)
-	}
-	if _, err := exec.LookPath("unsquashfs"); err != nil {
-		t.Skip("unsquashfs not available")
-	}
+	hostTool(t, "mksquashfs")
+	hostTool(t, "unsquashfs")
 }
 
 // newImage builds an overlay image and runs script through debugfs to populate
@@ -46,14 +50,14 @@ func newImage(t *testing.T, script string) string {
 
 	run := func(name string, args ...string) {
 		t.Helper()
-		if out, err := exec.Command(name, args...).CombinedOutput(); err != nil {
+		if out, err := exec.Command(hostTool(t, name), args...).CombinedOutput(); err != nil {
 			t.Fatalf("%s: %v\n%s", name, err, out)
 		}
 	}
 	run("dd", "if=/dev/zero", "of="+path, "bs=1M", "count=0", "seek=16", "status=none")
 	run("mke2fs", "-q", "-t", "ext3", "-F", path)
 
-	cmd := exec.Command("debugfs", "-w", path)
+	cmd := exec.Command(hostTool(t, "debugfs"), "-w", path)
 	cmd.Stdin = strings.NewReader("mkdir upper\nmkdir work\n" + script + "\nquit\n")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("debugfs: %v\n%s", err, out)
@@ -68,7 +72,7 @@ func writeInto(t *testing.T, img, dir, name, content string) {
 	if err := os.WriteFile(src, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("debugfs", "-w", img)
+	cmd := exec.Command(hostTool(t, "debugfs"), "-w", img)
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("cd %s\nwrite %s %s\nquit\n", dir, src, name))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("write %s: %v\n%s", name, err, out)

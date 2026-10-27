@@ -45,7 +45,7 @@ var availCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(availCmd)
 	availCmd.Flags().BoolVarP(&availExpand, "expand", "e", false, "Expand recipe templates into individual variants")
-	availCmd.Flags().BoolVar(&availDescription, "description", false,
+	availCmd.Flags().BoolVar(&availDescription, "desc", false,
 		"Show and search descriptions (default: on, off with --expand)")
 	availCmd.Flags().StringArrayVarP(&availSources, "source", "s", nil,
 		"Use only this configured recipe source, in flag order (repeatable)")
@@ -151,9 +151,9 @@ func runAvail(cmd *cobra.Command, args []string) error {
 	query := NewSearchQuery(filters, availExactLookup)
 
 	// Descriptions are shown by default, but not under --expand where they would repeat
-	// on every variant. An explicit --description=false overrides either default.
+	// on every variant. An explicit --desc=false overrides either default.
 	showDescription := !availExpand
-	if cmd.Flags().Changed("description") {
+	if cmd.Flags().Changed("desc") {
 		showDescription = availDescription
 	}
 

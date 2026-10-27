@@ -49,7 +49,7 @@ func Accepts(text string) Option { return func(o *options) { o.accepts = text } 
 func Validate(fn func(text string) error) Option { return func(o *options) { o.validate = fn } }
 
 // Split turns the text of an environment variable into list elements.
-// The default splits on "|", or on ":" when there is no "|".
+// The default splits on "|".
 func Split(fn func(string) []string) Option { return func(o *options) { o.split = fn } }
 
 // DefaultList sets the default of a List key.

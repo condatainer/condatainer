@@ -131,7 +131,7 @@ func init() {
 	}
 	configSourceAddCmd.Flags().BoolVar(&sourceOpts.tokenStdin, "token-stdin", false, "Read tokens from stdin, one per line: the recipe token, then the registry token")
 	for _, c := range []*cobra.Command{configSourceAddCmd, configSourceMoveCmd, configSourceRemoveCmd} {
-		c.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/cnt-root")
+		c.Flags().StringVarP(&setLayer, "layer", "l", "", "Layer to write: "+layerChoices)
 	}
 	configSourceCmd.AddCommand(configSourceAddCmd, configSourceMoveCmd, configSourceListCmd, configSourceRemoveCmd)
 	configCmd.AddCommand(configSourceCmd)

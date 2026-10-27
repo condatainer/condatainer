@@ -1,10 +1,6 @@
 package container
 
-import (
-	"strings"
-
-	"github.com/condatainer/condatainer/internal/settings"
-)
+import "github.com/condatainer/condatainer/internal/settings"
 
 var (
 	keyAutoloadGPU = settings.Bool("autoload_gpu",
@@ -13,15 +9,6 @@ var (
 
 	keyBind = settings.List("bind",
 		settings.MergeLists(), settings.Order(8),
-		settings.Split(func(text string) []string {
-			var out []string
-			for _, b := range strings.Split(text, "|") {
-				if b = strings.TrimSpace(b); b != "" {
-					out = append(out, b)
-				}
-			}
-			return out
-		}),
 		settings.Help("Paths added to every container, as host[:container[:opts]]. Every layer's list is merged."))
 )
 

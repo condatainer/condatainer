@@ -698,7 +698,7 @@ func TestEquivalentNoteNamesTheInputsThatDiffer(t *testing.T) {
 		},
 	}
 	got := equivalentNote(result)
-	for _, want := range []string{"equivalent, not sha256:41ab1c2d3e4f;", "differs: src:gtf, dep:samtools/1.23.1"} {
+	for _, want := range []string{"equivalent, not 41ab1c2d3e4f;", "differs: src:gtf, dep:samtools/1.23.1"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("note = %q, want it to contain %q", got, want)
 		}
@@ -712,7 +712,7 @@ func TestEquivalentNoteNamesTheInputsThatDiffer(t *testing.T) {
 // With no diffs to name, the note is what it was before diffs existed.
 func TestEquivalentNoteWithoutDiffsNamesNothing(t *testing.T) {
 	got := equivalentNote(restore.Result{Identity: "sha256:41ab1c2d3e4f5a6b7c8d"})
-	if want := " (equivalent, not sha256:41ab1c2d3e4f)"; got != want {
+	if want := " (equivalent, not 41ab1c2d3e4f)"; got != want {
 		t.Errorf("note = %q, want %q", got, want)
 	}
 }
@@ -912,5 +912,35 @@ func TestProjectIgnoreRefusesAPathOutsideTheProject(t *testing.T) {
 	_, err := run(t, "project", "ignore", "../elsewhere")
 	if err == nil || !strings.Contains(err.Error(), "outside the project") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestPrintSymlinksWarnsForScriptsAndNotesFolders(t *testing.T) {
+	out, _ := stderrOf(t, func() error {
+		printSymlinks([]string{"a/step.sh", "b.sh"}, []string{"data", "results"})
+		return nil
+	})
+	for _, want := range []string{"Symlink not scanned: a/step.sh, b.sh", "Symlinked folders skipped: data, results"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in %q", want, out)
+		}
+	}
+	if out, _ := stderrOf(t, func() error { printSymlinks(nil, nil); return nil }); out != "" {
+		t.Errorf("nothing skipped printed %q", out)
+	}
+}
+
+// A flag nobody classified is one a submitted rebuild might silently drop.
+func TestEveryRestoreFlagHasAJobRule(t *testing.T) {
+	cmd := newProjectRestoreCmd()
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if _, ok := restoreJobRules[f.Name]; !ok && f.Name != "help" {
+			t.Errorf("--%s has no entry in restoreJobRules: say whether a submitted rebuild repeats it", f.Name)
+		}
+	})
+	for name := range restoreJobRules {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("restoreJobRules lists --%s, which restore does not have", name)
+		}
 	}
 }

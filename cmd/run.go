@@ -69,8 +69,8 @@ var jobIDRe = regexp.MustCompile(`^\d+(\.\S+)?$`)
 
 var runCmd = &cobra.Command{
 	Use:   "run [flags] <script> [script-args...]",
-	Short: "Run a script and auto-solve the dependencies by #DEP tags",
-	Long: `Execute a script with automatic dependency resolution.
+	Short: "Run a script with the overlays its #DEP: lines name",
+	Long: `Run a script with the overlays its #DEP: lines name.
 
 The first line picks the interpreter:
   Bash       : #!/bin/bash or #!/usr/bin/bash
@@ -82,8 +82,8 @@ The script can contain these comment tags in its header:
   - #BIND: host:container Extra bind mount, repeatable
   - #WRITABLE:            Mount .img overlays writable
   - #FAKEROOT:            Run with fakeroot privileges
-  - #NCPU: 4              CPUs per task
-  - #MEM: 16G             Memory per node
+  - #NCPU: 4              CPUs (per rank in an MPI job)
+  - #MEM: 16G             Memory (per rank in an MPI job)
   - #TIME: 2h             Walltime
   - #GPU: a100:2          GPUs per node: N, TYPE or TYPE:N
   - #NAME:                Job name
@@ -116,10 +116,10 @@ func init() {
 	runCmd.Flags().StringVar(&runAfterNotOK, "afternotok", "", "Run after jobs fail (colon-separated IDs)")
 	runCmd.Flags().StringVar(&runAfterAny, "afterany", "", "Run after jobs finish, any outcome (colon-separated IDs)")
 	runCmd.Flags().StringArrayVar(&runEnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
-	runCmd.Flags().StringArrayVar(&runBindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
+	runCmd.Flags().StringSliceVar(&runBindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
 	runCmd.Flags().BoolVarP(&runFakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
-	runCmd.Flags().IntVarP(&runCPU, "cpu", "c", 0, "Override CPUs per task (e.g. 4)")
-	runCmd.Flags().StringVarP(&runMem, "mem", "m", "", "Override memory per task (e.g. 4G, 8192M)")
+	runCmd.Flags().IntVarP(&runCPU, "cpu", "c", 0, "Override CPUs, per rank in an MPI job (e.g. 4)")
+	runCmd.Flags().StringVarP(&runMem, "mem", "m", "", "Override memory, per rank in an MPI job (e.g. 4G, 8192M)")
 	runCmd.Flags().StringVarP(&runTime, "time", "t", "", "Override walltime (e.g. 4d12h, 2h30m, 01:30:00)")
 	runCmd.Flags().StringVarP(&runGPU, "gpu", "g", "", "Override GPUs per node (e.g. 1, a100:2, a100)")
 	runCmd.Flags().StringVarP(&runAccount, "account", "A", "", "Override billing/allocation account")
@@ -162,7 +162,7 @@ func init() {
 }
 
 func runScript(cmd *cobra.Command, args []string) error {
-	if err := applyProjectRelocation(runProjectDir); err != nil {
+	if err := applyProjectFlag(runProjectDir); err != nil {
 		return err
 	}
 	for _, flagInfo := range []struct{ name, val string }{
@@ -246,7 +246,9 @@ func runScript(cmd *cobra.Command, args []string) error {
 			}
 			scriptSpecs.Control.ExcludeNodes = append([]string{}, runExcludeNodes...)
 		}
-		setDefaultWorkDir(scriptSpecs)
+		if err := useSubmitDir(originScriptPath, scriptSpecs); err != nil {
+			return err
+		}
 	}
 
 	// CLI -c/-m/-t/-g resource overrides (highest priority, only when spec is parsed)
@@ -266,10 +268,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				ExitWithError("--mem %q: %v", runMem, err)
 			}
-			cpus := runCPU
-			if cpus <= 0 {
-				cpus = 1
-			}
+			cpus := overrideCPUs(runCPU, scriptSpecs.Spec.CpusPerTask)
 			override.MemPerCpuMB = (mb + int64(cpus) - 1) / int64(cpus)
 		}
 		if runTime != "" {
@@ -314,7 +313,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 	// A project's lock governs what this script mounts. Resolved before the dry
 	// run so a preview reports the identities the run would actually mount, not
 	// whatever currently answers to their names.
-	projectRun, err := projectRunContext(cmd.Context(), contentScript)
+	projectRun, err := projectRunContext(cmd.Context(), contentScript, !runDryRun && !willSubmitRun(scriptSpecs))
 	if err != nil {
 		return err
 	}
@@ -341,7 +340,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 		ExitWithError("--array requires scheduler submission; cannot run array jobs locally")
 	}
 	if runWritableImg && getNtasks(scriptSpecs) > 1 {
-		ExitWithError("--writable cannot be used with multi-task jobs (ntasks=%d)", getNtasks(scriptSpecs))
+		ExitWithError("--writable cannot be used with multi-rank jobs (%d ranks)", getNtasks(scriptSpecs))
 	}
 	var overlays []string
 	if projectRun != nil {
@@ -372,20 +371,35 @@ func runScript(cmd *cobra.Command, args []string) error {
 	}
 
 	// 4. Submit if scheduler specs present and scheduler available
+	noScheduler := false
 	if scheduler.Enabled() && scheduler.HasSchedulerSpecs(scriptSpecs) {
 		sched := scheduler.ActiveScheduler()
 		if sched == nil {
-			utils.PrintNote("Script has scheduler specs but no scheduler is available. Running locally.")
+			noScheduler = true
 		} else {
 			return submitRunJob(cmd.Context(), sched, originScriptPath, contentScript, scriptSpecs, runDependencies(), containerFlags, scriptArgs, arraySpec)
 		}
-	} else if !scheduler.HasSchedulerSpecs(scriptSpecs) {
-		utils.PrintNote("No scheduler specs found in script. Running locally.")
 	}
-	if runStdout != "" || runStderr != "" || runMem != "" || runTime != "" || runGPU != "" || runAccount != "" || runPartition != "" {
-		utils.PrintNote("-o/-e/-m/-t/-g/-A/-p are only used for submitted jobs and will be ignored when running locally.")
+	jobFlags := runStdout != "" || runStderr != "" || runMem != "" || runTime != "" || runGPU != "" || runAccount != "" || runPartition != ""
+	if note := localRunNote(noScheduler, jobFlags); note != "" {
+		utils.PrintNote("%s", note)
 	}
 	return runLocally(cmd.Context(), contentScript, overlays, scriptSpecs, scriptArgs)
+}
+
+// localRunNote is the one line a local run prints, or "" when it has nothing to add.
+//   - A script with no resources runs locally by definition and says nothing.
+//   - A fallback for lack of a scheduler, and job flags that a local run ignores, share one line.
+func localRunNote(noScheduler, jobFlags bool) string {
+	switch {
+	case noScheduler && jobFlags:
+		return "No scheduler: running locally, -o/-e/-m/-t/-g/-A/-p ignored"
+	case noScheduler:
+		return "No scheduler: running locally"
+	case jobFlags:
+		return "-o/-e/-m/-t/-g/-A/-p are only used for submitted jobs and are ignored when running locally"
+	}
+	return ""
 }
 
 // runDependencies returns the typed dependencies given by --afterok,
@@ -417,16 +431,28 @@ func willSubmitRun(specs *scheduler.ScriptSpecs) bool {
 		!scheduler.IsInsideJob() && !config.IsInsideContainer() && scheduler.ActiveScheduler() != nil
 }
 
-// setDefaultWorkDir makes a job run where it was submitted from unless the script
-// names a directory. Without it PBS starts the job in $HOME, unlike the other
-// schedulers.
-func setDefaultWorkDir(specs *scheduler.ScriptSpecs) {
+// overrideCPUs is the CPU count that -m is divided over: -c, else the script's #NCPU, else 1.
+func overrideCPUs(flag, script int) int {
+	switch {
+	case flag > 0:
+		return flag
+	case script > 0:
+		return script
+	}
+	return 1
+}
+
+// useSubmitDir makes a job run where it was submitted from, and refuses a script that names another directory.
+//   - A local run and a submitted job then start in the same place.
+//   - The job script always names the directory, because PBS otherwise starts a job in $HOME.
+func useSubmitDir(script string, specs *scheduler.ScriptSpecs) error {
 	if specs.Control.WorkDir != "" {
-		return
+		return fmt.Errorf("%s sets a working directory; remove it and run from that directory", script)
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		specs.Control.WorkDir = cwd
 	}
+	return nil
 }
 
 // resolveScriptAndSpecs tries to read scheduler specs and resolves the content script path.
@@ -604,7 +630,7 @@ func runLocally(ctx context.Context, contentScript string, overlays []string, sp
 	// Auto-bind the script's directory so it's accessible inside the container.
 	// (Scheduler will copy the script to a temp location)
 	scriptDir := filepath.Dir(contentScript)
-	bindPaths := append(append([]string{scriptDir}, configBinds()...), expandBinds(runBindPaths)...)
+	bindPaths := append(append([]string{scriptDir}, configBinds()...), runBindPaths...)
 
 	rs := effectiveResourceSpec(specs)
 	gpuRequested := rs.Gpu != nil && rs.Gpu.Count > 0
@@ -830,27 +856,27 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 		isMPI := ntasks > 1
 
 		if isMPI {
-			// MPI or Hybrid: show task geometry first
-			fmt.Printf("  MPI Tasks:  %d\n", ntasks)
+			// MPI or Hybrid: show rank geometry first
+			fmt.Printf("  MPI Ranks:  %d\n", ntasks)
 			if rs.Nodes > 0 {
 				fmt.Printf("  Nodes:      %d\n", rs.Nodes)
 			}
 			if rs.TasksPerNode > 0 {
-				fmt.Printf("  Tasks/Node: %d\n", rs.TasksPerNode)
+				fmt.Printf("  Ranks/Node: %d\n", rs.TasksPerNode)
 			}
 			if rs.CpusPerTask > 1 {
-				// Hybrid: also show per-task thread count
-				fmt.Printf("  CPU/Task:   %d\n", rs.CpusPerTask)
+				// Hybrid: also show per-rank thread count
+				fmt.Printf("  CPU/Rank:   %d\n", rs.CpusPerTask)
 			}
 		} else {
-			// Pure OpenMP / single-task
+			// Pure OpenMP / single-rank
 			if rs.CpusPerTask > 0 {
 				fmt.Printf("  CPU:        %d\n", rs.CpusPerTask)
 			}
 		}
 
 		if memPerTaskMB := rs.GetMemPerTaskMB(); memPerTaskMB > 0 {
-			memLabel := "Mem/Task:  "
+			memLabel := "Mem/Rank:  "
 			if !isMPI {
 				memLabel = "Mem:       "
 			}
@@ -1088,11 +1114,18 @@ func detectMpi() (string, bool) {
 
 // forwardedFlagArgs returns the flags given on the command line that a submitted job must run with, as shell words.
 //   - A submitted job runs `condatainer run` again on the compute node, so a flag left out of that command is lost there.
-//   - Every flag that was set is forwarded, except the job flags, which the generated job script carries, and --project, which the working directory already carries.
+//   - Every flag that was set is forwarded, except the job flags, which the generated job script carries.
+//   - --project is forwarded as the absolute project root, since the job starts in the directory the command was run from, which need not be in the project.
 func forwardedFlagArgs(fs *pflag.FlagSet) []string {
 	var args []string
 	fs.VisitAll(func(fl *pflag.Flag) {
-		if !fl.Changed || runJobFlagNames[fl.Name] || fl.Name == "project" {
+		if !fl.Changed || runJobFlagNames[fl.Name] {
+			return
+		}
+		if fl.Name == "project" {
+			if projectRootFlag != "" {
+				args = append(args, "--project="+shellQuote(projectRootFlag))
+			}
 			return
 		}
 		values := []string{fl.Value.String()}
@@ -1131,9 +1164,9 @@ func buildMpiRunCommand(contentScript string, containerFlags, scriptArgs []strin
 	}
 	mpiexecPath, ok := detectMpi()
 	if !ok {
-		return "", fmt.Errorf("ntasks=%d needs mpiexec, which is not on PATH", getNtasks(specs))
+		return "", fmt.Errorf("%d ranks need mpiexec, which is not on PATH", getNtasks(specs))
 	}
-	utils.PrintNote("Detected mpiexec: %s", mpiexecPath)
+	utils.PrintDebug("Detected mpiexec: %s", mpiexecPath)
 	return fmt.Sprintf("%s -n %d %s", mpiexecPath, getNtasks(specs), runCmd), nil
 }
 
@@ -1227,7 +1260,7 @@ func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPa
 		return err
 	}
 
-	if scheduler.ProxyPerJob() {
+	if scheduler.ProxyPerJob(scheduler.ProxyRun) {
 		if h, err2 := os.Hostname(); err2 == nil && h != "" {
 			specs.ProxyVia = h
 		}

@@ -22,6 +22,7 @@ var (
 	eReadOnly    bool
 	eNoAutoload  bool
 	eFakeroot    bool
+	eLoadGPU     bool
 	eActivation  string
 	eEnvSettings []string
 	eBindPaths   []string
@@ -54,8 +55,9 @@ func init() {
 	eCmd.Flags().BoolVarP(&eReadOnly, "read-only", "r", false, "Mount .img overlays as read-only (default: writable)")
 	eCmd.Flags().BoolVarP(&eNoAutoload, "no-autoload", "n", false, "Disable auto-loading env.img from current directory")
 	eCmd.Flags().BoolVarP(&eFakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
+	eCmd.Flags().BoolVar(&eLoadGPU, "load-gpu", false, "Make the host GPU available even if autoload_gpu is off")
 	eCmd.Flags().StringVar(&eActivation, "activation", "all", "Which activate.d scripts to source before the command: all, env, or none")
-	eCmd.Flags().StringSliceVar(&eEnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
+	eCmd.Flags().StringArrayVar(&eEnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
 	eCmd.Flags().StringSliceVar(&eBindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
 	RegisterProjectFlags(eCmd, &eProjectDir)
 
@@ -79,12 +81,12 @@ func init() {
 }
 
 func runE(cmd *cobra.Command, args []string) error {
-	if err := applyProjectRelocation(eProjectDir); err != nil {
+	if err := applyProjectFlag(eProjectDir); err != nil {
 		return err
 	}
 
 	// STRICT parsing: everything before -- is overlay/flag, after is command
-	overlays, commands, apptainerFlags, err := parseEArgs(args)
+	overlays, commands, apptainerFlags, err := parseEArgs(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -181,6 +183,7 @@ func runE(cmd *cobra.Command, args []string) error {
 		BindPaths:      append(configBinds(), eBindPaths...),
 		ApptainerFlags: apptainerFlags,
 		Fakeroot:       eFakeroot,
+		GpuRequested:   eLoadGPU,
 		BaseImage:      baseImageResolved,
 		HidePrompt:     hidePrompt,
 		Activation:     activation,
@@ -206,7 +209,7 @@ func runE(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseEArgs(args []string) (overlays, commands, apptainerFlags []string, err error) {
+func parseEArgs(cmd *cobra.Command, args []string) (overlays, commands, apptainerFlags []string, err error) {
 	// Parse os.Args directly to catch unknown flags that Cobra filtered out
 	eIdx := -1
 	for i, arg := range os.Args {
@@ -216,17 +219,7 @@ func parseEArgs(args []string) (overlays, commands, apptainerFlags []string, err
 		}
 	}
 
-	knownFlags := map[string]bool{
-		"--read-only": true, "-r": true,
-		"--no-autoload": true, "-n": true,
-		"--env":      true,
-		"--bind":     true,
-		"--fakeroot": true, "-f": true,
-		"--activation": true,
-		"--debug":      true,
-		"--quiet":      true, "-q": true,
-		"--yes": true, "-y": true,
-	}
+	tokens := flagTokens(cmd)
 
 	commandStarted := false
 
@@ -262,10 +255,9 @@ func parseEArgs(args []string) (overlays, commands, apptainerFlags []string, err
 
 		// Before -- (overlay/flag section)
 
-		// Skip known flags (already handled by cobra)
-		if knownFlags[arg] || isKnownFlagWithEquals(knownFlags, arg) {
-			// Check if flag needs value
-			if (arg == "--env" || arg == "--bind" || arg == "--activation") && i+1 < len(os.Args) {
+		// Skip the command's own flags (already handled by cobra)
+		if own, valueFollows := ownFlag(tokens, arg); own {
+			if valueFollows && i+1 < len(os.Args) {
 				i++ // Skip value
 			}
 			continue

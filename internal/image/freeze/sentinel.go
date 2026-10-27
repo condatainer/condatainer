@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // EnvSentinelWork is the env var MountedRun uses to hand the work script to
@@ -27,6 +30,11 @@ func RunSentinel(fuseBin, mnt, work string, fuseArgs []string) error {
 		return fmt.Errorf("reading own process group: %w", err)
 	}
 
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locating condatainer binary: %w", err)
+	}
+
 	var quoted []string
 	for _, a := range append(append([]string{}, fuseArgs...), mnt) {
 		quoted = append(quoted, shellQuote(a))
@@ -34,7 +42,7 @@ func RunSentinel(fuseBin, mnt, work string, fuseArgs []string) error {
 	// Work runs in a subshell so its exit status is kept while the FUSE process
 	// is stopped afterwards.
 	script := fmt.Sprintf(`set -o pipefail
-%s -f %s &
+%s _mount_exec -- %s -f %s &
 fpid=$!
 for i in $(seq 1 50); do grep -qF ' %s ' /proc/mounts && break; sleep 0.1; done
 grep -qF ' %s ' /proc/mounts || { echo "mount never appeared" >&2; kill $fpid 2>/dev/null; wait $fpid 2>/dev/null; exit 1; }
@@ -43,7 +51,7 @@ rc=$?
 kill $fpid 2>/dev/null
 wait $fpid 2>/dev/null
 exit $rc
-`, shellQuote(fuseBin), strings.Join(quoted, " "), mnt, mnt, work)
+`, shellQuote(self), shellQuote(fuseBin), strings.Join(quoted, " "), mnt, mnt, work)
 
 	cmd := exec.Command("unshare", "--mount", "--user", "--map-root-user", "--", "/bin/bash", "-c", script)
 	cmd.Stdin = os.Stdin
@@ -75,4 +83,18 @@ exit $rc
 	case err := <-done:
 		return err
 	}
+}
+
+// ExecWithoutDACOverride replaces this process with bin, which keeps the namespace root's other capabilities but not the two that skip file permission checks.
+//   - Namespace root otherwise ignores a cleared write bit, so a FUSE server would open a write-protected image read-write.
+//   - Without them the server sees the permission bits as the image's owner does, and mounts a write-protected image read-only.
+//   - The capabilities are dropped from the bounding set, which applies to the thread that execs.
+func ExecWithoutDACOverride(bin string, args []string) error {
+	runtime.LockOSThread()
+	for _, capability := range []uintptr{unix.CAP_DAC_OVERRIDE, unix.CAP_DAC_READ_SEARCH} {
+		if err := unix.Prctl(unix.PR_CAPBSET_DROP, capability, 0, 0, 0); err != nil {
+			return fmt.Errorf("dropping capability %d: %w", capability, err)
+		}
+	}
+	return unix.Exec(bin, append([]string{bin}, args...), os.Environ())
 }

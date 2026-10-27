@@ -20,6 +20,8 @@ func TestSubmittedJobCarriesTheFlagsGiven(t *testing.T) {
 	fs.String("project", "", "")
 	fs.Int("cpu", 0, "")
 
+	projectRootFlag = "/p r"
+	t.Cleanup(func() { projectRootFlag = "" })
 	plain, err := buildMpiRunCommand("/s.sh", forwardedFlagArgs(fs), []string{"a"}, nil, false)
 	if err != nil || !strings.HasSuffix(plain, " run /s.sh 'a'") {
 		t.Fatalf("no flags: %q, %v", plain, err)
@@ -33,8 +35,24 @@ func TestSubmittedJobCarriesTheFlagsGiven(t *testing.T) {
 		}
 	}
 	got, err := buildMpiRunCommand("/s.sh", forwardedFlagArgs(fs), nil, nil, false)
-	want := ` run --bind='/a b:/c' --env='K=it'\''s' --future='x' --writable='true' /s.sh`
+	want := ` run --bind='/a b:/c' --env='K=it'\''s' --future='x' --project='/p r' --writable='true' /s.sh`
 	if err != nil || !strings.HasSuffix(got, want) {
 		t.Fatalf("flags:\n got %q\nwant suffix %q (%v)", got, want, err)
+	}
+}
+
+func TestLocalRunNote(t *testing.T) {
+	for _, tc := range []struct {
+		noScheduler, jobFlags bool
+		want                  string
+	}{
+		{false, false, ""},
+		{true, false, "No scheduler: running locally"},
+		{true, true, "No scheduler: running locally, -o/-e/-m/-t/-g/-A/-p ignored"},
+		{false, true, "-o/-e/-m/-t/-g/-A/-p are only used for submitted jobs and are ignored when running locally"},
+	} {
+		if got := localRunNote(tc.noScheduler, tc.jobFlags); got != tc.want {
+			t.Errorf("noScheduler=%v jobFlags=%v: %q, want %q", tc.noScheduler, tc.jobFlags, got, tc.want)
+		}
 	}
 }

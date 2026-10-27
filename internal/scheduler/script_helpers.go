@@ -190,16 +190,16 @@ func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime
 			fmt.Fprintf(w, "echo \"Nodes:      %d\"\n", nodes)
 		}
 		if rs.GetNtasks() > 1 {
-			fmt.Fprintf(w, "echo \"Tasks:      %d\"\n", rs.GetNtasks())
+			fmt.Fprintf(w, "echo \"Ranks:      %d\"\n", rs.GetNtasks())
 		}
 		if rs.TasksPerNode > 0 {
-			fmt.Fprintf(w, "echo \"Tasks/Node: %d\"\n", rs.TasksPerNode)
+			fmt.Fprintf(w, "echo \"Ranks/Node: %d\"\n", rs.TasksPerNode)
 		}
 		if rs.CpusPerTask > 0 {
-			fmt.Fprintf(w, "echo \"CPUs/Task:  %d\"\n", rs.CpusPerTask)
+			fmt.Fprintf(w, "echo \"CPUs/Rank:  %d\"\n", rs.CpusPerTask)
 		}
 		if memPerTaskMB := rs.GetMemPerTaskMB(); memPerTaskMB > 0 {
-			fmt.Fprintf(w, "echo \"Mem/Task:   %d MB\"\n", memPerTaskMB)
+			fmt.Fprintf(w, "echo \"Mem/Rank:   %d MB\"\n", memPerTaskMB)
 		}
 		if rs.Time > 0 && formatTime != nil {
 			fmt.Fprintf(w, "echo \"Time:       %s\"\n", formatTime(rs.Time))

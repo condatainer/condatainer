@@ -162,10 +162,10 @@ func checkRoot(ctx context.Context, cwd string) error {
 const stopGraceSecs = 30
 
 // buildCondatainerCmd builds the `condatainer exec` line the wrapper runs on the compute node.
-//   - Order: --stop-grace, the overlays, -w, --gpu, a bind of the executable, --pwd, then the script.
+//   - Order: --stop-grace, the overlays, -w, --load-gpu, a bind of the executable, --pwd, then the script.
 //   - It uses `exec`, not `e`, so nothing is autoloaded.
 //   - The script runs through its own shebang.
-//   - A GPU request in spec forces --gpu, even with autoload_gpu off.
+//   - A GPU request in spec forces --load-gpu, even with autoload_gpu off.
 func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -174,6 +174,11 @@ func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string,
 
 	var parts []string
 	parts = append(parts, shellQuote(exe), "exec", "--stop-grace", strconv.Itoa(stopGraceSecs))
+
+	// exec otherwise follows the project at the job's directory, which could give the helper a root the launch asked to ignore.
+	if opts.NoProject {
+		parts = append(parts, "--no-project")
+	}
 
 	// Named read-only overlays (SquashFS) — code-server, igv, etc.
 	for _, ol := range opts.Overlays {
@@ -190,16 +195,15 @@ func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string,
 
 	// Script declared a GPU requirement: force detection past autoload_gpu:false.
 	if spec != nil && spec.Gpu != nil && spec.Gpu.Count > 0 {
-		parts = append(parts, "--gpu")
+		parts = append(parts, "--load-gpu")
 	}
 
-	// Bind condatainer binary so helpers can call _server_ready/_server_message inside.
+	// Bind condatainer binary so helpers can call _helper ready and _helper message inside.
 	parts = append(parts, "--bind", shellQuote(exe+":/usr/local/bin/condatainer"))
 
-	// Extra binds from #BIND: headers, single-quoted: the wrapper's shell never sees a value, and
-	// `exec` expands $VAR (e.g. $CNT_HELPER_STATE_DIR, $HOME) when the container starts.
+	// Extra binds from #BIND: headers. The wrapper's shell expands $VAR (e.g. $CNT_HELPER_STATE_DIR, $HOME) on the node.
 	for _, b := range opts.ExtraBinds {
-		parts = append(parts, "--bind", shellQuote(b))
+		parts = append(parts, "--bind", shellQuoteVars(b))
 	}
 
 	// Working directory inside container — passed through to apptainer as --flag=value.
@@ -488,14 +492,14 @@ func buildHelperCommandBody(id, name, cwd, stateDir string, walltime time.Durati
 	// shows where it ran. Headless, a child process also holds the lock file for as long as
 	// this wrapper lives, so the wrapper's liveness is visible from every host.
 	if sched == nil {
-		fmt.Fprintln(&sb, `condatainer _helper_hold "$CNT_HELPER_STATE_DIR/lock" $$ &`)
-		fmt.Fprintln(&sb, `condatainer _server_started`)
+		fmt.Fprintln(&sb, `condatainer _helper hold "$CNT_HELPER_STATE_DIR/lock" $$ &`)
+		fmt.Fprintln(&sb, `condatainer _helper started`)
 	} else {
-		fmt.Fprintf(&sb, "condatainer _server_started --node \"%s\"\n", sched.NodeNameEnvExpr())
+		fmt.Fprintf(&sb, "condatainer _helper started --node \"%s\"\n", sched.NodeNameEnvExpr())
 	}
 
 	// Free port (resolved on the compute node, not the login node)
-	fmt.Fprintln(&sb, `export CNT_HELPER_PORT=$(condatainer _pick_port)`)
+	fmt.Fprintln(&sb, `export CNT_HELPER_PORT=$(condatainer _helper pick-port)`)
 
 	// Bind address: 0.0.0.0 only for helper.connect=direct.
 	if bindAll {
@@ -511,7 +515,7 @@ func buildHelperCommandBody(id, name, cwd, stateDir string, walltime time.Durati
 	// CNT_HELPER_TMPDIR is always cleaned up: headless uses rm -rf on the resolved path;
 	// scheduler uses the shell variable so it works for both the scheduler-assigned dir
 	// and the /tmp fallback (scheduler-assigned dirs being wiped twice is harmless).
-	cleanupTrap := `condatainer _server_done --exit-code 130`
+	cleanupTrap := `condatainer _helper done --exit-code 130`
 	if sched == nil {
 		parentDir := utils.GetTmpDir()
 		jobTmpDir := filepath.Join(parentDir, id)
@@ -570,7 +574,7 @@ func buildHelperCommandBody(id, name, cwd, stateDir string, walltime time.Durati
 	if sched == nil {
 		fmt.Fprintln(&sb, `kill -KILL -$_cnt_watchdog_pid 2>/dev/null`)
 	}
-	fmt.Fprintln(&sb, `condatainer _server_done --exit-code $_cnt_exit`)
+	fmt.Fprintln(&sb, `condatainer _helper done --exit-code $_cnt_exit`)
 	if sched == nil {
 		parentDir := utils.GetTmpDir()
 		jobTmpDir := filepath.Join(parentDir, id)
@@ -650,7 +654,7 @@ func buildHelperScriptSpecs(name, cwd, account, partition string, excludeNodes [
 		},
 		HasDirectives: spec != nil,
 	}
-	if scheduler.ProxyPerJob() {
+	if scheduler.ProxyPerJob(scheduler.ProxyHelper) {
 		if h, err := os.Hostname(); err == nil && h != "" {
 			ss.ProxyVia = h
 		}
@@ -736,6 +740,58 @@ func shellQuote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// shellQuoteVars quotes s as shell words in which only $NAME and ${NAME} expand.
+// Any other character, a command substitution included, stays text.
+func shellQuoteVars(s string) string {
+	var sb strings.Builder
+	start := 0
+	flush := func(end int) {
+		if end > start {
+			sb.WriteString("'" + strings.ReplaceAll(s[start:end], "'", "'\\''") + "'")
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] != '$' {
+			continue
+		}
+		name, end := varRef(s, i)
+		if name == "" {
+			continue
+		}
+		flush(i)
+		sb.WriteString(`"${` + name + `}"`)
+		start, i = end, end-1
+	}
+	flush(len(s))
+	if sb.Len() == 0 {
+		return "''"
+	}
+	return sb.String()
+}
+
+// varRef reads the $NAME or ${NAME} that starts at s[i]. name is "" when none starts there.
+func varRef(s string, i int) (name string, end int) {
+	j := i + 1
+	braced := j < len(s) && s[j] == '{'
+	if braced {
+		j++
+	}
+	k := j
+	for k < len(s) && (s[k] == '_' || s[k] >= 'a' && s[k] <= 'z' || s[k] >= 'A' && s[k] <= 'Z' || k > j && s[k] >= '0' && s[k] <= '9') {
+		k++
+	}
+	if k == j {
+		return "", i
+	}
+	if braced {
+		if k >= len(s) || s[k] != '}' {
+			return "", i
+		}
+		return s[j:k], k + 1
+	}
+	return s[j:k], k
 }
 
 // normalizeOverlayForHistory converts a resolved overlay path to a portable form for history, keeping any :ro/:rw suffix.

@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -234,5 +236,41 @@ func TestSplitOverlayModeSeparatesTheMountMode(t *testing.T) {
 		if value != tc.value || suffix != tc.suffix {
 			t.Errorf("splitOverlayMode(%q) = %q, %q; want %q, %q", tc.in, value, suffix, tc.value, tc.suffix)
 		}
+	}
+}
+
+// A command's own flags never reach Apptainer as pass-through flags, whichever
+// way they are written, and the ones left over keep their order.
+func TestOwnFlagsAreNotPassedToApptainer(t *testing.T) {
+	saved := os.Args
+	t.Cleanup(func() { os.Args = saved })
+	os.Args = []string{"condatainer", "exec", "--no-project", "--project", "/p", "--project=/q", "--nv", "bash", "-c", "true"}
+
+	command, apptainerFlags := ParseCommandArgs(&execCmd.Command)
+	if want := []string{"bash", "-c", "true"}; !slices.Equal(command, want) {
+		t.Errorf("command = %v, want %v", command, want)
+	}
+	if want := []string{"--nv"}; !slices.Equal(apptainerFlags, want) {
+		t.Errorf("apptainer flags = %v, want only %v", apptainerFlags, want)
+	}
+}
+
+func TestEOwnFlagsAreNotPassedToApptainer(t *testing.T) {
+	saved := os.Args
+	t.Cleanup(func() { os.Args = saved })
+	os.Args = []string{"condatainer", "e", "--no-project", "--project", "/p", "-r", "--env", "A=1", "ol.sqf", "--nv", "--", "bash", "-c", "true"}
+
+	overlays, command, apptainerFlags, err := parseEArgs(eCmd, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"ol.sqf"}; !slices.Equal(overlays, want) {
+		t.Errorf("overlays = %v, want %v", overlays, want)
+	}
+	if want := []string{"bash", "-c", "true"}; !slices.Equal(command, want) {
+		t.Errorf("command = %v, want %v", command, want)
+	}
+	if want := []string{"--nv"}; !slices.Equal(apptainerFlags, want) {
+		t.Errorf("apptainer flags = %v, want only %v", apptainerFlags, want)
 	}
 }

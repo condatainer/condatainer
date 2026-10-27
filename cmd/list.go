@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -46,14 +45,13 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().BoolVarP(&listRemove, "remove", "r", false, "Remove listed overlays after confirmation (used with search terms)")
 	listCmd.Flags().BoolVarP(&listExact, "exact", "e", false, "Force exact full-name match even for a single term")
-	listCmd.Flags().StringP("dir", "D", "", "Limit to a specific image directory (substring match)")
-	listCmd.Flags().StringP("layer", "l", "", "Limit to a data layer: u/user, r/cnt-root, e/extra-root")
+	listCmd.Flags().StringP("layer", "l", "", "Limit to a layer: "+layerChoices)
 	listCmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 			return []string{"user", "cnt-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp
 		})
 	listCmd.Flags().BoolVarP(&listOne, "one", "1", false, "One entry per line (disable multi-column layout)")
-	listCmd.Flags().BoolVar(&listDescription, "description", false, "Show description for each overlay (default: off)")
+	listCmd.Flags().BoolVar(&listDescription, "desc", false, "Show description for each overlay (default: off)")
 }
 
 // DirOverlays holds the scan results for a single image directory.
@@ -384,7 +382,7 @@ func terminalWidth() int {
 	return 80
 }
 
-// listTermWidth returns 0 (single column) when -1 or --description is set, otherwise the terminal width.
+// listTermWidth returns 0 (single column) when -1 or --desc is set, otherwise the terminal width.
 func listTermWidth() int {
 	if listOne || listDescription {
 		return 0
@@ -457,37 +455,4 @@ func readOverlayDescription(overlayPath string) string {
 		return ""
 	}
 	return rt.Description
-}
-
-// filterImageDirs filters dirs according to dirFilter:
-//   - empty          → return all
-//   - no leading /   → substring match ("scratch" matches "/scratch/user/images")
-//   - starts with /  → exact match, unless it contains * or ? (wildcard via filepath.Match)
-func filterImageDirs(dirs []string, dirFilter string) []string {
-	if dirFilter == "" {
-		return dirs
-	}
-	var out []string
-	for _, d := range dirs {
-		if matchDirFilter(d, dirFilter) {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-func matchDirFilter(dir, filter string) bool {
-	if !strings.HasPrefix(filter, "/") {
-		return strings.Contains(dir, filter)
-	}
-	if strings.ContainsAny(filter, "*?") {
-		// filepath.Match only matches within a single path component (* won't cross /).
-		// Convert to regex so * matches across slashes: /scratch/* → ^/scratch/.*$
-		pattern := "^" + regexp.QuoteMeta(filter) + "$"
-		pattern = strings.ReplaceAll(pattern, `\*`, `.*`)
-		pattern = strings.ReplaceAll(pattern, `\?`, `.`)
-		matched, _ := regexp.MatchString(pattern, dir)
-		return matched
-	}
-	return dir == filter
 }

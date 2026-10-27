@@ -1,0 +1,124 @@
+---
+import config from 'virtual:starlight/user-config';
+
+import LanguageSelect from 'virtual:starlight/components/LanguageSelect';
+import Search from 'virtual:starlight/components/Search';
+import SiteTitle from 'virtual:starlight/components/SiteTitle';
+import SocialIcons from 'virtual:starlight/components/SocialIcons';
+import ThemeSelect from 'virtual:starlight/components/ThemeSelect';
+
+const shouldRenderSearch =
+	config.pagefind || config.components.Search !== '@astrojs/starlight/components/Search.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const links = [
+	{ label: 'Install', path: '/get_started/installation/' },
+	{ label: 'Guide', path: '/guides/concept/', section: '/guides/' },
+].map(({ label, path, section = path }) => ({
+	label,
+	href: base + path,
+	current: Astro.url.pathname.startsWith(base + section),
+}));
+---
+
+<div class="header">
+	<div class="title-wrapper sl-flex">
+		<SiteTitle />
+	</div>
+	<div class="middle sl-flex print:hidden">
+		<nav class="top-links" aria-label="Main">
+			{
+				links.map(({ label, href, current }) => (
+					<a {href} aria-current={current ? 'page' : undefined}>
+						{label}
+					</a>
+				))
+			}
+		</nav>
+		<div class="search sl-flex">
+			{shouldRenderSearch && <Search />}
+		</div>
+	</div>
+	<div class="sl-hidden md:sl-flex print:hidden right-group">
+		<div class="sl-flex social-icons">
+			<SocialIcons />
+		</div>
+		<ThemeSelect />
+		<LanguageSelect />
+	</div>
+</div>
+
+<style>
+	@layer starlight.core {
+		.header {
+			display: flex;
+			gap: var(--sl-nav-gap);
+			justify-content: space-between;
+			align-items: center;
+			height: 100%;
+		}
+
+		.title-wrapper {
+			/* Prevent long titles overflowing and covering the search and menu buttons on narrow viewports. */
+			overflow: clip;
+			/* Avoid clipping focus ring around link inside title wrapper. */
+			padding: 0.25rem;
+			margin: -0.25rem;
+			min-width: 0;
+		}
+
+		.middle {
+			align-items: center;
+			gap: var(--sl-nav-gap);
+			min-width: 0;
+		}
+
+		.top-links {
+			display: none;
+		}
+
+		.search {
+			margin-inline-start: auto;
+		}
+
+		.right-group,
+		.social-icons {
+			gap: 1rem;
+			align-items: center;
+		}
+		.social-icons::after {
+			content: '';
+			height: 2rem;
+			border-inline-end: 1px solid var(--sl-color-gray-5);
+		}
+
+		@media (min-width: 50rem) {
+			.header {
+				display: grid;
+				/* The title takes its own width, the links and search box the free space, the right items what they need. */
+				grid-template-columns: auto 1fr auto;
+				align-content: center;
+			}
+
+			.top-links {
+				display: flex;
+				gap: 1.5rem;
+			}
+
+			.top-links a {
+				color: var(--sl-color-gray-2);
+				font-size: var(--sl-text-base);
+				text-decoration: none;
+			}
+
+			.top-links a:hover,
+			.top-links a[aria-current='page'] {
+				color: var(--sl-color-text-accent);
+			}
+
+			.search {
+				flex: 0 1 22rem;
+			}
+		}
+	}
+</style>

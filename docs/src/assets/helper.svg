@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 816 268" role="img" aria-labelledby="hl-title hl-desc" font-family="inherit">
+  <title id="hl-title">How your browser reaches a helper</title>
+  <desc id="hl-desc">Your computer connects over SSH to the login node of the cluster, where the CondaTainer server runs. The server is a reverse proxy to the helper jobs, which run on the cluster's compute nodes. Each node has three slots. RStudio takes three and code-server takes two. A third compute node has no helper job.</desc>
+  <style>
+    .hl-box { fill: var(--sl-color-gray-6, #f1f2f6); stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1.5; }
+    .hl-cluster { fill: none; stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .hl-app { fill: var(--sl-color-accent-low, #dde4ff); stroke: var(--sl-color-accent, #4a63d6); stroke-width: 1.5; }
+    .hl-free { fill: none; stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1; stroke-dasharray: 3 3; }
+    .hl-text { fill: var(--sl-color-text, #2b2e38); font-size: 15px; }
+    .hl-strong { fill: var(--sl-color-white, #14161c); font-size: 16px; font-weight: 600; }
+    .hl-small { fill: var(--sl-color-gray-3, #5c606d); font-size: 13px; }
+    .hl-arrow { fill: none; stroke: var(--sl-color-accent, #4a63d6); stroke-width: 2; }
+    .hl-head { fill: var(--sl-color-accent, #4a63d6); }
+  </style>
+  <defs>
+    <marker id="hl-arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="hl-head"/>
+    </marker>
+  </defs>
+
+  <!-- your computer -->
+  <rect class="hl-box" x="24" y="48" width="170" height="188" rx="10"/>
+  <text class="hl-strong" x="109" y="74" text-anchor="middle">Your computer</text>
+  <rect class="hl-app" x="44" y="110" width="130" height="64" rx="8"/>
+  <text class="hl-text" x="109" y="136" text-anchor="middle">Browser</text>
+  <text class="hl-small" x="109" y="156" text-anchor="middle">localhost:port</text>
+
+  <!-- ssh -->
+  <path class="hl-arrow" d="M198 142 H294" marker-start="url(#hl-arrowhead)" marker-end="url(#hl-arrowhead)"/>
+  <text class="hl-small" x="246" y="131" text-anchor="middle">SSH</text>
+
+  <g transform="translate(36 0)">
+  <!-- cluster: the login node and the compute nodes -->
+  <rect class="hl-cluster" x="238" y="10" width="518" height="250" rx="14"/>
+  <text class="hl-small" x="254" y="32">Cluster</text>
+
+  <!-- login node -->
+  <rect class="hl-box" x="262" y="48" width="170" height="188" rx="10"/>
+  <text class="hl-strong" x="347" y="74" text-anchor="middle">Login node</text>
+  <rect class="hl-app" x="282" y="110" width="130" height="64" rx="8"/>
+  <text class="hl-text" x="347" y="137" text-anchor="middle">CondaTainer</text>
+  <text class="hl-text" x="347" y="157" text-anchor="middle">server</text>
+
+  <!-- compute nodes: three slots each, helper jobs take one or more -->
+  <text class="hl-strong" x="642" y="34" text-anchor="middle">Compute nodes</text>
+  <rect class="hl-box" x="552" y="48" width="180" height="56" rx="10"/>
+  <rect class="hl-app" x="562" y="60" width="160" height="32" rx="6"/>
+  <text class="hl-text" x="642" y="81" text-anchor="middle">RStudio</text>
+  <rect class="hl-box" x="552" y="114" width="180" height="56" rx="10"/>
+  <rect class="hl-app" x="562" y="126" width="104" height="32" rx="6"/>
+  <text class="hl-text" x="614" y="147" text-anchor="middle">code-server</text>
+  <rect class="hl-free" x="674" y="126" width="48" height="32" rx="6"/>
+  <rect class="hl-box" x="552" y="180" width="180" height="56" rx="10"/>
+  <rect class="hl-free" x="562" y="192" width="48" height="32" rx="6"/>
+  <rect class="hl-free" x="618" y="192" width="48" height="32" rx="6"/>
+  <rect class="hl-free" x="674" y="192" width="48" height="32" rx="6"/>
+
+  <!-- reverse proxy -->
+  <path class="hl-arrow" d="M436 142 H548" marker-start="url(#hl-arrowhead)" marker-end="url(#hl-arrowhead)"/>
+  <path class="hl-arrow" d="M490 142 V76 H548" marker-end="url(#hl-arrowhead)"/>
+  <text class="hl-small" x="492" y="65" text-anchor="middle">reverse proxy</text>
+  </g>
+</svg>

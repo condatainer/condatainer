@@ -1,0 +1,50 @@
+/* The mobile table-of-contents bar is not rendered, so no space is kept for it. */
+:root {
+	--sl-mobile-toc-height: 0rem;
+}
+
+/* The page's headings are in the left sidebar; the right column takes no space. */
+.right-sidebar-container {
+	display: none;
+}
+
+@media (min-width: 72rem) {
+	[data-has-sidebar][data-has-toc] .main-pane {
+		--sl-content-margin-inline: auto;
+		width: 100%;
+	}
+}
+
+ul.sidebar-toc {
+	list-style: none;
+	margin: 0.125rem 0 0.25rem;
+	padding: 0 0 0 0.25rem;
+}
+
+ul.sidebar-toc ul.sidebar-toc {
+	margin-top: 0;
+	padding-inline-start: 0.75rem;
+}
+
+.sidebar-toc a {
+	display: block;
+	padding: 0.15rem 0.5rem;
+	font-size: var(--sl-text-xs);
+	color: var(--sl-color-gray-3);
+	text-decoration: none;
+	overflow-wrap: anywhere;
+}
+
+.sidebar-toc a::before {
+	content: '#';
+	margin-inline-end: 0.35em;
+	opacity: 0.5;
+}
+
+.sidebar-toc a:hover {
+	color: var(--sl-color-white);
+}
+
+.sidebar-toc a.is-active {
+	color: var(--sl-color-text-accent);
+}

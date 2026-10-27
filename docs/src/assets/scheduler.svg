@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 296" role="img" aria-labelledby="sd-title sd-desc" font-family="inherit">
+  <title id="sd-title">Cluster, scheduler and job</title>
+  <desc id="sd-desc">You write a job script on the login node and submit it. The scheduler queues it as a job and starts it on a compute node when the resources are free. A compute node runs several jobs at once.</desc>
+  <style>
+    .sd-box { fill: var(--sl-color-gray-6, #f1f2f6); stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1.5; }
+    .sd-cluster { fill: none; stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .sd-script { fill: var(--sl-color-bg, #ffffff); stroke: var(--sl-color-gray-3, #5c606d); stroke-width: 1.5; stroke-dasharray: 4 3; }
+    .sd-free { fill: none; stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1; stroke-dasharray: 3 3; }
+    .sd-job { fill: var(--sl-color-accent-low, #dde4ff); stroke: var(--sl-color-accent, #4a63d6); stroke-width: 1.5; }
+    .sd-text { fill: var(--sl-color-text, #2b2e38); font-size: 15px; }
+    .sd-strong { fill: var(--sl-color-white, #14161c); font-size: 16px; font-weight: 600; }
+    .sd-small { fill: var(--sl-color-gray-3, #5c606d); font-size: 13px; }
+    .sd-arrow { fill: none; stroke: var(--sl-color-accent, #4a63d6); stroke-width: 2; }
+    .sd-head { fill: var(--sl-color-accent, #4a63d6); }
+  </style>
+  <defs>
+    <marker id="sd-arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="sd-head"/>
+    </marker>
+  </defs>
+
+  <!-- cluster -->
+  <rect class="sd-cluster" x="8" y="8" width="744" height="280" rx="14"/>
+  <text class="sd-small" x="24" y="30">Cluster</text>
+
+  <!-- login node -->
+  <rect class="sd-box" x="28" y="76" width="190" height="188" rx="10"/>
+  <text class="sd-strong" x="123" y="104" text-anchor="middle">Login node</text>
+  <text class="sd-small" x="123" y="122" text-anchor="middle">shared by everyone</text>
+  <rect class="sd-script" x="53" y="146" width="140" height="62" rx="8"/>
+  <text class="sd-text" x="123" y="172" text-anchor="middle">Job script</text>
+  <text class="sd-small" x="123" y="192" text-anchor="middle">with directives</text>
+
+  <!-- scheduler -->
+  <rect class="sd-box" x="300" y="76" width="170" height="188" rx="10"/>
+  <text class="sd-strong" x="385" y="104" text-anchor="middle">Scheduler</text>
+  <text class="sd-small" x="385" y="122" text-anchor="middle">queue</text>
+  <rect class="sd-job" x="325" y="134" width="120" height="32" rx="6"/>
+  <rect class="sd-job" x="325" y="174" width="120" height="32" rx="6"/>
+  <rect class="sd-job" x="325" y="214" width="120" height="32" rx="6"/>
+  <text class="sd-small" x="385" y="154" text-anchor="middle">job</text>
+  <text class="sd-small" x="385" y="194" text-anchor="middle">job</text>
+  <text class="sd-small" x="385" y="234" text-anchor="middle">job</text>
+
+  <!-- compute nodes: each has two rows of slots -->
+  <text class="sd-strong" x="630" y="46" text-anchor="middle">Compute nodes</text>
+  <rect class="sd-box" x="530" y="76" width="200" height="88" rx="10"/>
+  <rect class="sd-job" x="548" y="88" width="112" height="28" rx="5"/>
+  <rect class="sd-job" x="668" y="88" width="52" height="28" rx="5"/>
+  <rect class="sd-job" x="548" y="124" width="52" height="28" rx="5"/>
+  <rect class="sd-job" x="608" y="124" width="52" height="28" rx="5"/>
+  <rect class="sd-free" x="668" y="124" width="52" height="28" rx="5"/>
+  <rect class="sd-box" x="530" y="176" width="200" height="88" rx="10"/>
+  <rect class="sd-job" x="548" y="188" width="52" height="28" rx="5"/>
+  <rect class="sd-job" x="608" y="188" width="112" height="28" rx="5"/>
+  <rect class="sd-free" x="548" y="224" width="52" height="28" rx="5"/>
+  <rect class="sd-free" x="608" y="224" width="52" height="28" rx="5"/>
+  <rect class="sd-free" x="668" y="224" width="52" height="28" rx="5"/>
+
+  <!-- arrows -->
+  <path class="sd-arrow" d="M218 170 H292" marker-end="url(#sd-arrowhead)"/>
+  <text class="sd-small" x="255" y="159" text-anchor="middle">submit</text>
+  <path class="sd-arrow" d="M470 170 H522" marker-end="url(#sd-arrowhead)"/>
+  <text class="sd-small" x="496" y="159" text-anchor="middle">start</text>
+</svg>

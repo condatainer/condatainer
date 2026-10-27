@@ -1,0 +1,150 @@
+/* Theme colors from the logo: blue for the accent, green for tips. */
+:root {
+	--sl-color-accent-low: #0f2d45;
+	--sl-color-accent: #3084c3;
+	--sl-color-accent-high: #9ccbee;
+	--cnt-green-low: #1b2f17;
+	--cnt-green: #67ad4c;
+	--cnt-green-high: #a8d996;
+	/* Starlight's "white" is pure white: too bright for titles and aside text on a dark page. */
+	--sl-color-white: hsl(224, 14%, 88%);
+	--sl-color-gray-1: hsl(224, 12%, 82%);
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #d3e6f5;
+	--sl-color-accent: #2a73a8;
+	--sl-color-accent-high: #1c4f78;
+	--cnt-green-low: #dcefd3;
+	--cnt-green: #4a8a33;
+	--cnt-green-high: #2f5d1f;
+	--sl-color-white: hsl(224, 10%, 10%);
+	--sl-color-gray-1: hsl(224, 14%, 16%);
+}
+
+:root {
+	--sl-sidebar-pad-x: 0.25rem;
+	--sl-color-bg-sidebar: var(--sl-color-bg);
+	--sl-content-width: 53rem;
+	--sl-content-gap-y: 0.75rem;
+	--sl-text-h1: var(--sl-text-4xl);
+	--sl-text-h2: var(--sl-text-2xl);
+	--sl-text-h3: var(--sl-text-xl);
+	--sl-text-h4: var(--sl-text-lg);
+	--sl-text-h5: var(--sl-text-base);
+}
+
+/* Space above a heading that follows other content. */
+.sl-markdown-content :not(h1, h2, h3, h4, h5, h6, .sl-heading-wrapper) + .sl-heading-wrapper,
+.sl-markdown-content :not(h1, h2, h3, h4, h5, h6) + :is(h1, h2, h3, h4, h5, h6):not(:where(.not-content *)) {
+	margin-top: 1em;
+}
+
+/* Thin, muted scrollbars for the page, the sidebar and wide content. The sidebar's
+   track is its own background, so the scrollbar strip matches the rest of it. */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--sl-color-gray-5) transparent;
+}
+
+/* Less space above the sidebar's first entry. */
+.sidebar-content {
+	padding-top: 0.5rem;
+}
+
+/* The same space above and below the page title. */
+.content-panel {
+	padding-block: 1rem;
+}
+
+.content-panel h1 {
+	margin-top: 0;
+}
+
+.sidebar-pane {
+	scrollbar-color: var(--sl-color-gray-5) var(--sl-color-bg-sidebar);
+}
+
+/* Bottom navigation shows the arrow and the page title, without "Previous" and "Next". */
+.pagination-links a > span {
+	font-size: 0;
+}
+
+.pagination-links a > span br {
+	display: none;
+}
+
+.pagination-links .link-title {
+	font-size: var(--sl-text-lg);
+}
+
+/* Home page: the title is colored like the logo. */
+.logo-conda {
+	color: var(--cnt-green);
+}
+
+.logo-tainer {
+	color: var(--sl-color-accent);
+}
+
+/* Home page: feature cards numbered 01, 02, ... in the accent color. */
+.numbered-cards {
+	counter-reset: feature;
+}
+
+.numbered-cards .title::before {
+	content: counter(feature, decimal-leading-zero);
+	counter-increment: feature;
+	color: var(--sl-color-accent-high);
+	font-variant-numeric: tabular-nums;
+	margin-inline-end: 0.5rem;
+}
+
+/* Asides: a lighter background in the light theme and a darker one in the dark theme. */
+.starlight-aside--note {
+	--aside-hue: 205;
+	--sl-color-blue-low: var(--sl-color-accent-low);
+	--sl-color-blue: var(--sl-color-accent);
+	--sl-color-blue-high: var(--sl-color-accent-high);
+}
+
+.starlight-aside--tip {
+	--aside-hue: 103;
+	--sl-color-purple-low: var(--cnt-green-low);
+	--sl-color-purple: var(--cnt-green);
+	--sl-color-purple-high: var(--cnt-green-high);
+}
+
+.starlight-aside--caution {
+	--aside-hue: var(--sl-hue-orange);
+}
+
+.starlight-aside--danger {
+	--aside-hue: var(--sl-hue-red);
+}
+
+:root[data-theme='light'] .starlight-aside {
+	background-color: hsl(var(--aside-hue), 90%, 96%);
+}
+
+:root[data-theme='light'] .starlight-aside--tip {
+	background-color: hsl(var(--aside-hue), 60%, 97.5%);
+}
+
+:root[data-theme='dark'] .starlight-aside {
+	background-color: hsl(var(--aside-hue), 35%, 13%);
+}
+
+/* Tabs in a code frame's header: see plugins/code-tabs/ */
+.code-tabs .code-tabs-tab {
+	background: none;
+	border: 0;
+	color: var(--sl-color-gray-3);
+	cursor: pointer;
+	font: inherit;
+	margin-block-start: var(--ec-frm-edTabsMargBlkStart);
+	padding: calc(var(--ec-uiPadBlk) + var(--ec-frm-edActTabIndHt)) var(--ec-uiPadInl);
+}
+.code-tabs .code-tabs-tab:hover {
+	color: var(--sl-color-white);
+}

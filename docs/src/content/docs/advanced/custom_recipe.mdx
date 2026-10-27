@@ -1,0 +1,257 @@
+---
+title: Custom Build Recipe
+description: Write a shell script that builds your own tool or data overlay.
+---
+
+When no Conda channel or recipe source provides what you need, write a **build recipe**. A build recipe is an executable shell script that installs software or creates data into `$CNT_BUILD_PREFIX`. CondaTainer executes the script inside a clean container and packages the resulting files into an overlay.
+
+## App Recipe
+
+An application overlay provides executable software tools. Download prebuilt programs and install them under `$CNT_BUILD_PREFIX/bin`.
+
+Prefer downloading prebuilt binaries with `#SOURCE:` lines rather than compiling code from source during the build.
+
+```bash title="Archive (tar.gz)" tabs="app"
+#!/bin/bash
+#DESC: Pangenome graph read alignment and inference tool
+#TARGET: rpvg/1.0
+#SOURCE: rpvg https://github.com/jonassibbesen/rpvg/releases/download/v1.0/rpvg-v1.0_linux.tar.gz
+
+mkdir -p "$CNT_BUILD_PREFIX/bin"
+tar -xzf "$CNT_BUILD_SRC_rpvg" -C "$CNT_BUILD_PREFIX/bin"
+```
+
+```bash title="Template (Multi-Version)" tabs="app"
+#!/bin/bash
+#DESC: Pangenome graph read alignment and inference tool {version}
+#TARGET: rpvg/{version}
+#PH: version:1.0,0.9
+#SOURCE: rpvg https://github.com/jonassibbesen/rpvg/releases/download/v{version}/rpvg-v{version}_linux.tar.gz
+
+mkdir -p "$CNT_BUILD_PREFIX/bin"
+tar -xzf "$CNT_BUILD_SRC_rpvg" -C "$CNT_BUILD_PREFIX/bin"
+```
+
+```bash title="Standalone Binary" tabs="app"
+#!/bin/bash
+#DESC: Command-line JSON processor
+#TARGET: jq/1.7.1
+#SOURCE: jq amd64 https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
+#SOURCE: jq arm64 https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-arm64
+
+mkdir -p "$CNT_BUILD_PREFIX/bin"
+install -m 755 "$CNT_BUILD_SRC_jq" "$CNT_BUILD_PREFIX/bin/jq"
+```
+
+Build the recipe and test the resulting overlay:
+
+```bash
+condatainer create -f rpvg.sh -p rpvg
+condatainer exec -o ./rpvg.sqf rpvg --help
+```
+
+- `#TARGET:` defines the overlay's name. At build and runtime, `$CNT_BUILD_PREFIX` expands to `/cnt/<name>`.
+- `#SOURCE:` downloads an asset before the script runs. The local path to the downloaded asset is passed in `$CNT_BUILD_SRC_<name>`, where `<name>` is the identifier following the directive.
+- Adding `amd64` or `arm64` after the name targets specific CPU architectures.
+- `#PH:` defines template placeholders (such as `version`). Every `{name}` in the recipe is replaced by the chosen value before the script runs.
+- The application's `bin/` directory is automatically prepended to `PATH`.
+
+:::caution[Placeholders replace every occurrence]
+`{name}` is replaced as plain text everywhere in the file: in headers, comments and the script body. It does not know about the shell.
+
+- With a placeholder `version`, a shell `${version}` becomes `$1.0`. Give the placeholder a name no shell variable uses, such as `release`.
+- `$version` without braces is not touched.
+- Only declared names are replaced. Other braces, such as `${HOME}` or `{a,b}`, stay as written.
+- `prefix` cannot be a placeholder name, because `{prefix}` in `#ENV:` is the install location.
+:::
+
+## Data Recipe
+
+A data overlay packages reference files that tools read, such as reference genomes and aligner indices. 
+
+- By default, names consist of three or more components are data overlays (e.g., `myproj/gtf/47`). 
+- Data overlays use `#ENV:` directives define environment variables pointing to the files. In `#ENV:` definitions, `{prefix}` expands to `$CNT_BUILD_PREFIX`.
+
+```bash title="Download" tabs="data"
+#!/bin/bash
+#DESC: GENCODE release 47 annotation GTF
+#TARGET: myproj/gtf/47
+#SOURCE: gtf https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_47/gencode.v47.annotation.gtf.gz
+#ENV: ANNOTATION_GTF={prefix}/annotation.gtf
+
+pigz -dc -p "$NCPU" "$CNT_BUILD_SRC_gtf" > "$CNT_BUILD_PREFIX/annotation.gtf"
+```
+
+```bash title="Build with Dependencies" tabs="data"
+#!/bin/bash
+#DESC: Salmon index for GRCh38 GENCODE 47
+#TARGET: myproj/salmon/gencode47-k31
+#DEP: salmon/2.7.0
+#DEP: grch38/transcript/gencode/47
+#ENV: SALMON_INDEX_DIR={prefix}
+
+#NCPU: 16
+#MEM: 24G
+#TIME: 2h
+
+salmon index -p "$NCPU" -t "$TRANSCRIPT_FASTA" -k 31 -i "$CNT_BUILD_PREFIX" --gencode
+```
+
+- `#DEP:` declares build dependencies. Only data recipes may specify `#DEP:`, and should be a name not a path.
+- `$TRANSCRIPT_FASTA` is set by the `grch38/transcript/gencode/47` overlay.
+- A resource header (`#NCPU:`, `#MEM:`, `#TIME:`) makes `condatainer create` submit the build as a scheduler job. Without a scheduler, it runs locally.
+- The headers work on any scheduler. A recipe may carry the scheduler's own directives instead (see [Scheduler](../guides/scheduler.mdx)).
+
+Build the recipe and inspect the exported environment variable:
+
+```bash
+condatainer create -f salmon-index.sh -p salmon-index
+condatainer exec -o ./salmon-index.sqf bash -c 'echo "$SALMON_INDEX_DIR"'
+```
+
+### Name the Environment Variable
+
+Scripts use environment variables exported by data overlays, so name them according to their content:
+
+| Pattern | Intended Content | Example |
+|---|---|---|
+| Standard name | A well-known kind of file | `GENOME_FASTA`, `ANNOTATION_GTF` |
+| `_GZ` suffix | File that remains compressed | `ANNOTATION_GTF_GZ` |
+| `<TOOL>_*_DIR` | Directory used as a whole | `STAR_INDEX_DIR` |
+| `<TOOL>_PREFIX` | Prefix used by the tool | `BOWTIE2_PREFIX` |
+
+- Prefix the variable name with the tool name when the data is specific to that tool.
+- Any text following `##` on an `#ENV:` line is displayed as description by `condatainer info`. Write self-contained notes: `#ENV: STAR_INDEX_DIR={prefix} ## STAR index, GRCh38 GENCODE 47`.
+
+## OS Recipe (`.def`)
+
+An OS overlay is a root filesystem: a Linux distribution plus the tools and libraries you add. Write it as an Apptainer/Singularity definition file instead of a shell script. A file that ends in `.def` is built as an OS overlay:
+
+```bash title="Definition" tabs="os"
+#DESC: Ubuntu 24.04 with compilers for R packages
+
+Bootstrap: docker
+From: ubuntu:24.04
+
+%environment
+    export LC_ALL=C.UTF-8
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/99-no-sandbox
+    apt-get update && apt-get install -y build-essential gfortran libssl-dev
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+    rm -f /etc/apt/apt.conf.d/99-no-sandbox
+```
+
+```bash title="Template" tabs="os"
+#DESC: R {version} on Ubuntu 24.04
+#TARGET: ubuntu24/r/{version}
+#PH: version:4.5.1,4.4.3
+
+Bootstrap: docker
+From: posit/r-base:{version}-noble
+
+%runscript
+    exec /usr/bin/R "$@"
+```
+
+Build it, and use it as the container's root:
+
+```bash
+condatainer create -f r-tools.def -p r-tools
+condatainer exec -o ./r-tools.sqf bash
+```
+
+- A `.def` always builds an OS overlay.
+- Its name is its path under `recipes/`, without `.def`: `recipes/ubuntu24/xfce4.def` builds `ubuntu24/xfce4`. A template names itself with `#TARGET:` and `#PH:`, as in [Recipe Path and `#TARGET:`](custom_source.mdx#recipe-path-and-target).
+- `Bootstrap:` and `From:` choose the image to start from. The exact upstream image used is recorded in the overlay.
+- `#SOURCE:`, `#INPUT:`, `#DEP:` and `#ARCH:` are refused in a `.def`, while `#DESC:`, `#URL:`, `#TARGET:` and `#PH:` work. 
+
+## Headers
+
+Headers are directive lines written as `#KEY: value` at the top of the recipe. The value ends at the first `##`, and the text after `##` is a comment. A single `#` belongs to the value.
+
+| Header | Meaning |
+|---|---|
+| `#DESC:` | One-line summary description, displayed in `condatainer avail`. |
+| `#URL:` | Homepage, recorded in the overlay metadata. |
+| `#TARGET:` | Overlay name. Recipe organized inside a [recipe source](custom_source.mdx) derives its name from the path unless `#TARGET:` specified. |
+| `#TYPE:` | Explicitly sets overlay type to `app` or `data`. |
+| `#ARCH:` | Where the recipe builds: `noarch`, or a list of `amd64` and `arm64`. See [Architecture](#architecture). |
+| `#SOURCE:` | Declares a remote file to download and verify before running the recipe. |
+| `#INPUT:` | Prompts for interactive input before starting the build. |
+| `#DEP:` | Declares overlays required to run the build (data recipes only). |
+| `#ENV:` | Environment variable exported by the overlay when mounted. |
+| `#LICENSE:` | SPDX license identifier (e.g., `MIT`), recorded in the overlay metadata. |
+| `#REDISTRIBUTE:` | `yes` or `no`: determines whether the overlay can be published to a public registry (see [Publish Prebuilt Overlays](custom_source.mdx#publish-prebuilt-overlays)). |
+| `#PH:` | Declares placeholder variables for templates (see [Custom Recipe Source](custom_source.mdx#recipe-path-and-target)). |
+| `#NCPU:`, `#MEM:`, `#TIME:`, `#GPU:` | Resources the build asks for, such as `16`, `24G`, `2h` and `a100:2`. A bare `#MEM:` number is in GB, and a bare `#TIME:` number is in hours. |
+
+- A header key is upper case, written straight after the `#`.
+- Headers are read from the comment lines at the top of the recipe, before its first command. A header below the first command, such as one inside a heredoc, is ignored.
+- `#INPUT:` and `#SOURCE:` directives are not supported in Singularity `.def` recipes.
+
+## Architecture
+
+An architecture is the kind of CPU a machine has, such as `amd64` (x86-64) or `arm64`. `#ARCH:` says where a recipe builds and whether its result is portable.
+
+```bash
+#ARCH: amd64            ## builds on amd64 machines only
+#ARCH: amd64 arm64      ## builds on either
+#ARCH: noarch           ## the result is the same on any machine
+```
+
+- With no `#ARCH:`, the recipe builds on any machine.
+- A list limits where the recipe builds.
+- `noarch` means the overlay's content is working on any architecture.
+- A `noarch` overlay built with other overlays records their identities, which means building on another architecture will give a different [identity](../guides/identity.md). To use the same build everywhere, publish it and download the prebuilt.
+
+## Inside the Build
+
+Build scripts run under `bash -euo pipefail`, ensuring that any unexpected command failure halts execution immediately. The build environment provides the following variables:
+
+| Variable | Meaning |
+|---|---|
+| `CNT_BUILD_NAME` | The overlay's full name (e.g., `rpvg/1.0` or `myproj/gtf/47`). |
+| `CNT_BUILD_TYPE` | Overlay type: `app` or `data`. |
+| `CNT_BUILD_PREFIX` | Installation target directory (e.g., `/cnt/rpvg/1.0`). |
+| `CNT_BUILD_TMPDIR` | Scratch directory, also assigned to `TMPDIR`. |
+| `CNT_BUILD_SRC_<name>` | Absolute path to the read-only file fetched by `#SOURCE: <name>`. Copy to `$CNT_BUILD_TMPDIR` before modifying. |
+| `NCPU`, `MEM`, `MEM_GB` | Allocated CPU cores and memory. `MEM` is specified in megabytes. |
+
+Files downloaded via `curl` or `wget` inside the script are not recorded. Declare downloads using `#SOURCE:` so CondaTainer can verify and record digests.
+
+## Authenticated or Expiring Download Links
+
+Some software downloads require temporary and signed URLs tied to a user account (such as 10x Genomics Cell Ranger). In place of a static URL, use `ask:` followed by an interactive prompt:
+
+```bash
+#!/bin/bash
+#DESC: 10x Genomics single-cell RNA-seq pipeline
+#TARGET: cellranger/9.0.1
+#SOURCE: crx ask:Paste the cellranger-9.0.1.tar.gz link from the 10x Genomics downloads page
+
+tar -xf "$CNT_BUILD_SRC_crx" -C "$CNT_BUILD_PREFIX" --strip-components=1 --no-same-owner
+```
+
+When `condatainer create` runs, it displays the prompt, downloads the URL provided, and exposes the file at `$CNT_BUILD_SRC_crx`.
+
+For interactive configuration values (such as license confirmations), use `#INPUT: <question>`. Each answer is delivered via standard input in the order declared:
+
+```bash
+#INPUT: Type yes to accept the license agreement
+read -r ACCEPT
+```
+
+User input from `#INPUT:` must not alter the build output or package variant. Dynamic variant selection belongs in `#PH:` template placeholders instead.
+
+## Best Practices
+
+- **Store files uncompressed in overlays:** SquashFS is compressed. Only keep files compressed when a tool specifically requires it.
+- **Omit resource headers for simple downloads:** Recipes that only download and unpack files do not need `#NCPU:`, `#MEM:` or `#TIME:`.
+- **Use dedicated names for data variants:** Name variations explicitly (e.g., `gtf/gencode-basic` and `gtf/gencode-comprehensive`) rather than generic placeholder values.
+
+## Share the Recipe
+
+To share recipes across your team or cluster, organize them in a [recipe source](custom_source.mdx) so users can build them directly by name. To avoid rebuild, [publish prebuilt overlays](custom_source.mdx#publish-prebuilt-overlays) to a container registry.

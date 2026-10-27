@@ -69,8 +69,8 @@ var jobIDRe = regexp.MustCompile(`^\d+(\.\S+)?$`)
 
 var runCmd = &cobra.Command{
 	Use:   "run [flags] <script> [script-args...]",
-	Short: "Run a script and auto-solve the dependencies by #DEP tags",
-	Long: `Execute a script with automatic dependency resolution.
+	Short: "Run a script with the overlays its #DEP: lines name",
+	Long: `Run a script with the overlays its #DEP: lines name.
 
 The first line picks the interpreter:
   Bash       : #!/bin/bash or #!/usr/bin/bash
@@ -82,8 +82,8 @@ The script can contain these comment tags in its header:
   - #BIND: host:container Extra bind mount, repeatable
   - #WRITABLE:            Mount .img overlays writable
   - #FAKEROOT:            Run with fakeroot privileges
-  - #NCPU: 4              CPUs per task
-  - #MEM: 16G             Memory per node
+  - #NCPU: 4              CPUs (per rank in an MPI job)
+  - #MEM: 16G             Memory (per rank in an MPI job)
   - #TIME: 2h             Walltime
   - #GPU: a100:2          GPUs per node: N, TYPE or TYPE:N
   - #NAME:                Job name
@@ -116,10 +116,10 @@ func init() {
 	runCmd.Flags().StringVar(&runAfterNotOK, "afternotok", "", "Run after jobs fail (colon-separated IDs)")
 	runCmd.Flags().StringVar(&runAfterAny, "afterany", "", "Run after jobs finish, any outcome (colon-separated IDs)")
 	runCmd.Flags().StringArrayVar(&runEnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
-	runCmd.Flags().StringArrayVar(&runBindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
+	runCmd.Flags().StringSliceVar(&runBindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
 	runCmd.Flags().BoolVarP(&runFakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
-	runCmd.Flags().IntVarP(&runCPU, "cpu", "c", 0, "Override CPUs per task (e.g. 4)")
-	runCmd.Flags().StringVarP(&runMem, "mem", "m", "", "Override memory per task (e.g. 4G, 8192M)")
+	runCmd.Flags().IntVarP(&runCPU, "cpu", "c", 0, "Override CPUs, per rank in an MPI job (e.g. 4)")
+	runCmd.Flags().StringVarP(&runMem, "mem", "m", "", "Override memory, per rank in an MPI job (e.g. 4G, 8192M)")
 	runCmd.Flags().StringVarP(&runTime, "time", "t", "", "Override walltime (e.g. 4d12h, 2h30m, 01:30:00)")
 	runCmd.Flags().StringVarP(&runGPU, "gpu", "g", "", "Override GPUs per node (e.g. 1, a100:2, a100)")
 	runCmd.Flags().StringVarP(&runAccount, "account", "A", "", "Override billing/allocation account")
@@ -268,10 +268,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				ExitWithError("--mem %q: %v", runMem, err)
 			}
-			cpus := runCPU
-			if cpus <= 0 {
-				cpus = 1
-			}
+			cpus := overrideCPUs(runCPU, scriptSpecs.Spec.CpusPerTask)
 			override.MemPerCpuMB = (mb + int64(cpus) - 1) / int64(cpus)
 		}
 		if runTime != "" {
@@ -343,7 +340,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 		ExitWithError("--array requires scheduler submission; cannot run array jobs locally")
 	}
 	if runWritableImg && getNtasks(scriptSpecs) > 1 {
-		ExitWithError("--writable cannot be used with multi-task jobs (ntasks=%d)", getNtasks(scriptSpecs))
+		ExitWithError("--writable cannot be used with multi-rank jobs (%d ranks)", getNtasks(scriptSpecs))
 	}
 	var overlays []string
 	if projectRun != nil {
@@ -432,6 +429,17 @@ func runDependencies() []scheduler.Dependency {
 func willSubmitRun(specs *scheduler.ScriptSpecs) bool {
 	return scheduler.Enabled() && scheduler.HasSchedulerSpecs(specs) &&
 		!scheduler.IsInsideJob() && !config.IsInsideContainer() && scheduler.ActiveScheduler() != nil
+}
+
+// overrideCPUs is the CPU count that -m is divided over: -c, else the script's #NCPU, else 1.
+func overrideCPUs(flag, script int) int {
+	switch {
+	case flag > 0:
+		return flag
+	case script > 0:
+		return script
+	}
+	return 1
 }
 
 // useSubmitDir makes a job run where it was submitted from, and refuses a script that names another directory.
@@ -848,27 +856,27 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 		isMPI := ntasks > 1
 
 		if isMPI {
-			// MPI or Hybrid: show task geometry first
-			fmt.Printf("  MPI Tasks:  %d\n", ntasks)
+			// MPI or Hybrid: show rank geometry first
+			fmt.Printf("  MPI Ranks:  %d\n", ntasks)
 			if rs.Nodes > 0 {
 				fmt.Printf("  Nodes:      %d\n", rs.Nodes)
 			}
 			if rs.TasksPerNode > 0 {
-				fmt.Printf("  Tasks/Node: %d\n", rs.TasksPerNode)
+				fmt.Printf("  Ranks/Node: %d\n", rs.TasksPerNode)
 			}
 			if rs.CpusPerTask > 1 {
-				// Hybrid: also show per-task thread count
-				fmt.Printf("  CPU/Task:   %d\n", rs.CpusPerTask)
+				// Hybrid: also show per-rank thread count
+				fmt.Printf("  CPU/Rank:   %d\n", rs.CpusPerTask)
 			}
 		} else {
-			// Pure OpenMP / single-task
+			// Pure OpenMP / single-rank
 			if rs.CpusPerTask > 0 {
 				fmt.Printf("  CPU:        %d\n", rs.CpusPerTask)
 			}
 		}
 
 		if memPerTaskMB := rs.GetMemPerTaskMB(); memPerTaskMB > 0 {
-			memLabel := "Mem/Task:  "
+			memLabel := "Mem/Rank:  "
 			if !isMPI {
 				memLabel = "Mem:       "
 			}
@@ -1156,7 +1164,7 @@ func buildMpiRunCommand(contentScript string, containerFlags, scriptArgs []strin
 	}
 	mpiexecPath, ok := detectMpi()
 	if !ok {
-		return "", fmt.Errorf("ntasks=%d needs mpiexec, which is not on PATH", getNtasks(specs))
+		return "", fmt.Errorf("%d ranks need mpiexec, which is not on PATH", getNtasks(specs))
 	}
 	utils.PrintDebug("Detected mpiexec: %s", mpiexecPath)
 	return fmt.Sprintf("%s -n %d %s", mpiexecPath, getNtasks(specs), runCmd), nil

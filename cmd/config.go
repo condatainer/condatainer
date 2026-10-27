@@ -546,7 +546,7 @@ var configPathsCmd = &cobra.Command{
 	Use:   "paths",
 	Args:  cobra.NoArgs,
 	Short: "Show data search paths",
-	Long: `Show the search paths for images and helper scripts.
+	Long: `Show the search paths for overlays and helper scripts.
 
 Reads check these nearest-first, and the first match wins:
   1. Scratch ($SCRATCH/condatainer)
@@ -795,12 +795,12 @@ var configRemoveCmd = &cobra.Command{
 
 func init() {
 	// Add flags
-	configInitCmd.Flags().StringVarP(&initLayer, "layer", "l", "", "Config layer to create in: u/user, e/extra-root, r/cnt-root")
-	configGetCmd.Flags().StringVarP(&getLayer, "layer", "l", "", "Read only this config layer: u/user, e/extra-root, r/cnt-root")
-	configSetCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/cnt-root")
-	configAppendCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/cnt-root")
-	configPrependCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/cnt-root")
-	configRemoveCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Config layer to write: u/user, e/extra-root, r/cnt-root")
+	configInitCmd.Flags().StringVarP(&initLayer, "layer", "l", "", "Layer to create in: "+layerChoices)
+	configGetCmd.Flags().StringVarP(&getLayer, "layer", "l", "", "Read only this layer: "+layerChoices)
+	configSetCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Layer to write: "+layerChoices)
+	configAppendCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Layer to write: "+layerChoices)
+	configPrependCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Layer to write: "+layerChoices)
+	configRemoveCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Layer to write: "+layerChoices)
 
 	// Add subcommands
 	configListCmd.Flags().BoolVar(&showOrigin, "origin", false, "Tag each value with the layer or environment variable that sets it")

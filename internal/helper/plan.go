@@ -187,9 +187,9 @@ func PlanRun(ctx context.Context, opts RunOptions) (*RunPlan, error) {
 	// does not satisfy it.
 	if meta.EnvRequired && !utils.IsImg(opts.EnvImg) {
 		if utils.IsSqf(opts.EnvImg) {
-			return nil, fmt.Errorf("helper requires a writable overlay; %s is a read-only snapshot — run `overlay create` to continue from it, or pass --env explicitly", opts.EnvImg)
+			return nil, fmt.Errorf("helper requires a writable overlay; %s is a read-only snapshot — run `overlay create` to continue from it, or pass --env-img explicitly", opts.EnvImg)
 		}
-		return nil, fmt.Errorf("helper requires a writable overlay (#ENV_PACKAGES set) — create one and pass --env or set EnvImg")
+		return nil, fmt.Errorf("helper requires a writable overlay (#ENV_PACKAGES set) — create one and pass --env-img or set EnvImg")
 	}
 
 	if err := CheckHelperPackages(meta, opts.EnvImg, params); err != nil {

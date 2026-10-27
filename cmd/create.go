@@ -70,8 +70,8 @@ func createJobFlags() []string {
 var createCmd = &cobra.Command{
 	Use:     "create [flags] [packages...]",
 	Aliases: []string{"install", "i"},
-	Short:   "Create a new SquashFS overlay",
-	Long: `Create a new SquashFS overlay from a recipe, Conda packages, or an image.
+	Short:   "Create a read-only SquashFS overlay",
+	Long: `Create a read-only SquashFS overlay.
 
 Exits with code 3 if build jobs were submitted to a scheduler.`,
 	Example: `  condatainer create orad/2.7.0                              # From a recipe
@@ -194,7 +194,7 @@ func init() {
 	f.BoolVarP(&createUpdate, "update", "u", false, "Rebuild overlays even if they already exist")
 	f.BoolVar(&createStore, "store", false, "Build into the store, filed under its identity")
 	f.BoolVar(&createNoPrebuilt, "no-prebuilt", false, "Build from the recipe instead of pulling a prebuilt overlay")
-	f.StringVarP(&createLayer, "layer", "l", "", "Build into this data layer: u/user, r/cnt-root, e/extra-root")
+	f.StringVarP(&createLayer, "layer", "l", "", "Build into this layer: "+layerChoices)
 	settings.AddSwitch(f, "build.always_submit_data", "always-submit-data", "true", settings.Usage("Submit data builds as scheduler jobs, even without directives"))
 	settings.AddSwitch(f, "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))
 
@@ -282,7 +282,7 @@ func getWritableImagesDir() string {
 		ExitWithError("%v", err)
 	}
 	imagesDirNoteOnce.Do(func() {
-		utils.PrintNote("Installing to %s (%s)", dir, config.ClassifyDataDir(dir))
+		utils.PrintNote("Installing to %s (%s layer)", dir, config.ClassifyDataDir(dir))
 	})
 	return dir
 }

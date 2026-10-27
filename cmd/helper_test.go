@@ -124,3 +124,16 @@ func TestParsePostScriptHelperFlagsExcludeNodes(t *testing.T) {
 		t.Fatal("a name with shell syntax should be refused")
 	}
 }
+
+func TestParsePostScriptHelperFlagsEnvImg(t *testing.T) {
+	flags, rest, err := parsePostScriptHelperFlags([]string{"--env-img", "env.img", "--env=x.img"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !flags.envSet || flags.env != "env.img" {
+		t.Errorf("--env-img = (%v, %q), want (true, env.img)", flags.envSet, flags.env)
+	}
+	if len(rest) != 1 || rest[0] != "--env=x.img" {
+		t.Errorf("--env is not a helper flag and stays with the script: %#v", rest)
+	}
+}

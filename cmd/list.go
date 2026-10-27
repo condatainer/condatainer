@@ -45,7 +45,7 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().BoolVarP(&listRemove, "remove", "r", false, "Remove listed overlays after confirmation (used with search terms)")
 	listCmd.Flags().BoolVarP(&listExact, "exact", "e", false, "Force exact full-name match even for a single term")
-	listCmd.Flags().StringP("layer", "l", "", "Limit to a data layer: u/user, r/cnt-root, e/extra-root")
+	listCmd.Flags().StringP("layer", "l", "", "Limit to a layer: "+layerChoices)
 	listCmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 			return []string{"user", "cnt-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp

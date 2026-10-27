@@ -73,7 +73,7 @@ func ApplyParamFlags(params []HelperParam, args []string) (map[string]string, []
 // -l/-u are cobra-level only and never reach script arg parsing, so they are excluded.
 var ReservedShortFlags = map[string]string{
 	"-c": "--cpu", "-m": "--mem", "-t": "--time", "-g": "--gpu",
-	"-e": "--env", "-o": "--overlay", "-w": "--cwd",
+	"-e": "--env-img", "-o": "--overlay", "-w": "--cwd",
 	"-A": "--account", "-p": "--partition",
 }
 
@@ -117,14 +117,14 @@ func PrintRunFlags(w io.Writer, spec *scheduler.ResourceSpec) {
 	fmt.Fprintf(w, "  -m, --mem         Memory%s\n", def(mem))
 	fmt.Fprintf(w, "  -t, --time        Walltime%s\n", def(timeStr))
 	fmt.Fprintln(w, "  -g, --gpu         GPU spec (e.g. a100:1)")
-	fmt.Fprintln(w, "  -e, --env         Writable overlay (.img)")
+	fmt.Fprintln(w, "  -e, --env-img     Writable overlay (.img)")
 	fmt.Fprintln(w, "  -o, --overlay     Additional read-only overlay (repeatable)")
 	fmt.Fprintln(w, "  -w, --cwd <path>  Change working directory (e.g. -w .)")
 	fmt.Fprintln(w, "  -A, --account     Billing/allocation account")
 	fmt.Fprintln(w, "  -p, --partition   Partition/queue")
 	fmt.Fprintln(w, "      --exclude-nodes <a,b>  Nodes the job must not run on (empty for none)")
 	fmt.Fprintln(w, "      --new         Skip reuse prompt, force new instance")
-	fmt.Fprintln(w, "      --no-project  Ignore the project lock when resolving the helper's overlays")
+	fmt.Fprintln(w, "      --no-project  Ignore the project lock")
 	fmt.Fprintln(w, "      --wait        Stay attached until the app is ready")
 }
 

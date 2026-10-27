@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -275,7 +276,7 @@ func ParseDataLayer(s string) (DataLayer, error) {
 	case "e", "extra-root", "extraroot", "extra":
 		return LayerExtraRoot, nil
 	}
-	return "", fmt.Errorf("unknown layer %q (want: u/user, r/cnt-root, e/extra-root)", s)
+	return "", fmt.Errorf("unknown layer %q (want: u/user, e/extra-root, r/cnt-root)", s)
 }
 
 // ClassifyDataDir reports which layer a data directory belongs to, by comparing its parent against each tier root.
@@ -295,6 +296,38 @@ func ClassifyDataDir(path string) DataLayer {
 		return LayerUser
 	}
 	return LayerUnknown
+}
+
+// LayerOfPath reports the layer a path lies in: the nearest ancestor directory that belongs to a tier, or LayerUnknown.
+func LayerOfPath(path string) DataLayer {
+	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
+		if layer := ClassifyDataDir(p); layer != LayerUnknown {
+			return layer
+		}
+		if parent := filepath.Dir(p); parent == p {
+			return LayerUnknown
+		}
+	}
+}
+
+// LayerNote names the layers the paths lie in, as the tail of a message: " (user layer)" or " (user, cnt-root layers)". It is "" when no path is in a known layer.
+func LayerNote(paths ...string) string {
+	var names []string
+	seen := map[DataLayer]bool{}
+	for _, path := range paths {
+		if layer := LayerOfPath(path); layer != LayerUnknown && !seen[layer] {
+			seen[layer] = true
+			names = append(names, string(layer))
+		}
+	}
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return " (" + names[0] + " layer)"
+	}
+	sort.Strings(names)
+	return " (" + strings.Join(names, ", ") + " layers)"
 }
 
 // FilterDirsByLayer returns the subset of dirs belonging to layer, preserving order.

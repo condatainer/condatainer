@@ -37,6 +37,9 @@ const searchSyntaxHint = `Search terms:
 
 // formatDescription wraps prose at word boundaries and indents every line.
 // Long individual words are left intact rather than split.
+// layerChoices names the layers a --layer flag accepts, in the order they are read.
+const layerChoices = "u/user, e/extra-root, r/cnt-root"
+
 func formatDescription(description string, indent, width int) string {
 	words := strings.Fields(description)
 	if len(words) == 0 {
@@ -287,7 +290,7 @@ func ResolveFlagAlias(cmd *cobra.Command, canonical, alias string) {
 func RegisterCommonFlags(cmd *cobra.Command, flags *CommonFlags) {
 	cmd.Flags().StringSliceVarP(&flags.Overlays, "overlay", "o", nil, "Overlay file to mount (repeatable)")
 	cmd.Flags().BoolVarP(&flags.WritableImg, "writable", "w", false, "Mount .img overlays as writable (default: read-only)")
-	cmd.Flags().StringSliceVar(&flags.EnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
+	cmd.Flags().StringArrayVar(&flags.EnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
 	cmd.Flags().StringSliceVar(&flags.BindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
 	cmd.Flags().BoolVarP(&flags.Fakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
 

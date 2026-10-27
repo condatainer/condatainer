@@ -28,3 +28,15 @@ func TestUseSubmitDir(t *testing.T) {
 		t.Error("a script that sets its own working directory was accepted")
 	}
 }
+
+func TestOverrideCPUs(t *testing.T) {
+	for _, tc := range []struct{ flag, script, want int }{
+		{2, 4, 2},
+		{0, 4, 4},
+		{0, 0, 1},
+	} {
+		if got := overrideCPUs(tc.flag, tc.script); got != tc.want {
+			t.Errorf("overrideCPUs(%d, %d) = %d, want %d", tc.flag, tc.script, got, tc.want)
+		}
+	}
+}

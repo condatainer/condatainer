@@ -119,7 +119,7 @@ func Add(ctx context.Context, names []string, layer config.DataLayer, force bool
 	if err := utils.MkdirAllShared(dir); err != nil {
 		return fmt.Errorf("failed to create helper scripts directory: %w", err)
 	}
-	say(w, "Adding to %s (%s)", dir, config.ClassifyDataDir(dir))
+	say(w, "Adding to %s (%s layer)", dir, config.ClassifyDataDir(dir))
 
 	dirs := config.GetHelperScriptSearchPaths()
 	var errs []error
@@ -253,7 +253,7 @@ func ApplyUpgrade(ctx context.Context, items []UpgradeItem, w io.Writer) error {
 			errs = append(errs, fmt.Errorf("%s in %s: %w", item.Name, item.Dir, err))
 			continue
 		}
-		say(w, "Upgraded %s in %s", item.Name, item.Dir)
+		say(w, "Upgraded %s in %s (%s layer)", item.Name, item.Dir, item.Layer)
 		noteShadow(w, dirs, item.Dir, item.Name)
 	}
 	return errors.Join(errs...)
@@ -309,7 +309,7 @@ func Remove(items []RemoveItem, w io.Writer) error {
 			errs = append(errs, fmt.Errorf("%s: %w", item.Name, err))
 			continue
 		}
-		say(w, "Removed %s", item.Path)
+		say(w, "Removed %s%s", item.Path, config.LayerNote(item.Path))
 		if item.Uncovers != "" {
 			say(w, "Note: %s now resolves to %s", item.Name, item.Uncovers)
 		}

@@ -894,7 +894,7 @@ func newProjectRegistrySetCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&audience, "audience", "public", "What a push may publish here: public or restricted")
+	cmd.Flags().StringVar(&audience, "audience", "public", "Who can download from the registry: public or restricted")
 	cmd.Flags().StringVar(&codeURL, "code-url", "", "Code repository URL that published packages link to (default: origin remote)")
 	return cmd
 }

@@ -76,7 +76,7 @@ func parsePbsChunk(chunkStr string) (pbsChunkSpec, error) {
 			chunk.ngpus = v
 		default:
 			if key, value, ok := strings.Cut(part, "="); !ok || key == "" || value == "" {
-				return chunk, fmt.Errorf("invalid select resource %q; using passthrough", part)
+				return chunk, fmt.Errorf("invalid select resource %q; resource directives not parsed", part)
 			}
 			if chunk.extra != "" {
 				chunk.extra += ":"
@@ -91,7 +91,7 @@ func parsePbsChunk(chunkStr string) (pbsChunkSpec, error) {
 // the writer emits for a multi-rank chunk. Any other value has no field in ResourceSpec.
 func checkOmpThreads(chunk pbsChunkSpec, cpusPerRank int) error {
 	if chunk.ompthreads != 0 && chunk.ompthreads != cpusPerRank {
-		return fmt.Errorf("ompthreads=%d differs from the %d CPUs per rank; using passthrough", chunk.ompthreads, cpusPerRank)
+		return fmt.Errorf("ompthreads=%d differs from the %d CPUs per rank; resource directives not parsed", chunk.ompthreads, cpusPerRank)
 	}
 	return nil
 }
@@ -319,7 +319,7 @@ func (p *PbsScheduler) parseRuntimeConfig(directives []string) (RuntimeConfig, [
 
 // parseResourceSpec consumes PBS resource directives from the directive list.
 //   - Returns a populated ResourceSpec and any unconsumed directives.
-//   - Returns nil ResourceSpec on any parse error (passthrough mode).
+//   - Returns nil ResourceSpec on any parse error (unparsed).
 func (p *PbsScheduler) parseResourceSpec(directives []string) (*ResourceSpec, []string) {
 	defaults := GetSpecDefaults()
 	rs := &ResourceSpec{
@@ -400,10 +400,10 @@ func (p *PbsScheduler) parseResourceList(resourceStr string, rs *ResourceSpec) e
 				// Multi-chunk select= ("+" groups for heterogeneous jobs).
 				// CpusPerTask must be uniform across all chunks. Memory must be uniform either per CPU
 				// or per node, the two forms ResourceSpec holds. If so, aggregate node counts and fully
-				// populate ResourceSpec (no passthrough). If not, return a plain error to trigger passthrough.
+				// populate ResourceSpec (parsed). If not, return a plain error to leave the script unparsed.
 				for _, chunk := range chunks {
 					if chunk.ngpus > 0 {
-						return fmt.Errorf("ngpus= inside multi-chunk (+) select is not supported; use passthrough")
+						return fmt.Errorf("ngpus= inside multi-chunk (+) select is not supported")
 					}
 				}
 				firstMPI := max(chunks[0].mpiprocs, 1)
@@ -475,7 +475,7 @@ func (p *PbsScheduler) parseResourceList(resourceStr string, rs *ResourceSpec) e
 				rs.TasksPerNode = firstNTasks
 				rs.Ntasks = rs.Nodes * firstNTasks
 				if chunks[0].ncpus%firstNTasks != 0 {
-					return fmt.Errorf("ncpus=%d not evenly divisible by mpiprocs=%d; using passthrough", chunks[0].ncpus, firstNTasks)
+					return fmt.Errorf("ncpus=%d not evenly divisible by mpiprocs=%d; resource directives not parsed", chunks[0].ncpus, firstNTasks)
 				}
 				rs.CpusPerTask = chunks[0].ncpus / firstNTasks
 				if err := checkOmpThreads(chunks[0], rs.CpusPerTask); err != nil {
@@ -490,7 +490,7 @@ func (p *PbsScheduler) parseResourceList(resourceStr string, rs *ResourceSpec) e
 			continue
 		}
 
-		// Reject legacy nodes=N:ppn=M format to induce passthrough
+		// Reject legacy nodes=N:ppn=M format to leave the script unparsed
 		if strings.HasPrefix(res, "nodes=") {
 			return fmt.Errorf("old style nodes=... directives are not supported; please use select=... syntax")
 		}
@@ -505,7 +505,7 @@ func (p *PbsScheduler) parseResourceList(resourceStr string, rs *ResourceSpec) e
 
 // parseSingleResource parses a single resource=value specification.
 //   - Only walltime= and place= are valid standalone -l resources in PBS Pro.
-//   - Old Torque-style standalone resources (ncpus=, mem=, ngpus=, nodes=) are rejected here to induce passthrough, just like nodes= in parseResourceList.
+//   - Old Torque-style standalone resources (ncpus=, mem=, ngpus=, nodes=) are rejected here to leave the script unparsed, just like nodes= in parseResourceList.
 func (p *PbsScheduler) parseSingleResource(res string, rs *ResourceSpec) error {
 	parts := strings.SplitN(res, "=", 2)
 	if len(parts) != 2 {
@@ -587,7 +587,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	// Write shebang
 	fmt.Fprintln(writer, "#!/bin/bash")
 
-	// Write passthrough flags (directives not consumed by Spec or Control)
+	// Write the directives not consumed by Spec or Control
 	for _, flag := range specs.RemainingFlags {
 		fmt.Fprintf(writer, "#PBS %s\n", flag)
 	}
@@ -622,7 +622,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 		fmt.Fprintf(writer, "#PBS -A %s\n", ctrl.Account)
 	}
 
-	// Write ResourceSpec directives (only if not in passthrough mode)
+	// Write ResourceSpec directives (only when the resources parsed)
 	if specs.Spec != nil {
 		rs := specs.Spec
 
@@ -701,10 +701,10 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 				fmt.Fprintf(writer, "#PBS -l %s\n", strings.Join(selectParts, ":"))
 			}
 		} else {
-			// TasksPerNode=0 and Nodes=0: either a passthrough multi-chunk job
+			// TasksPerNode=0 and Nodes=0: either an unparsed multi-chunk job
 			// (non-uniform CpusPerTask/MemPerCpu across chunks), or a single-task
 			// job with no node specification.
-			// Passthrough: original -l select=...+... is in RemainingFlags (written above).
+			// Unparsed: original -l select=...+... is in RemainingFlags (written above).
 			isMultiChunk := false
 			for _, f := range specs.RemainingFlags {
 				if strings.Contains(f, "select=") {

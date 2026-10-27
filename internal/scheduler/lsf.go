@@ -202,7 +202,7 @@ var lsfAffinityRe = regexp.MustCompile(`affinity\[cores\((\d+)\)\]`)
 
 // parseResourceSpec consumes resource fields from the directive list using a two-pass
 // approach so that -n semantics can be resolved after all -R span/affinity info is known.
-// Returns nil + all directives on any parse failure (passthrough mode).
+// Returns nil + all directives on any parse failure (unparsed).
 func (l *LsfScheduler) parseResourceSpec(directives []string) (*ResourceSpec, []string) {
 	defaults := GetSpecDefaults()
 	rs := &ResourceSpec{

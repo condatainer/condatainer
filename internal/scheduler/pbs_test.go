@@ -388,7 +388,7 @@ func TestPbsResourceParsing(t *testing.T) {
 		wantMemMB       int64
 		wantTime        time.Duration
 		wantGpu         *GpuSpec
-		wantPassthrough bool
+		wantUnparsed    bool
 	}{
 		{
 			name: "select format with ncpus, mem",
@@ -414,7 +414,7 @@ func TestPbsResourceParsing(t *testing.T) {
 				"#!/bin/bash",
 				"#PBS -l nodes=1:ppn=8",
 			},
-			wantPassthrough: true,
+			wantUnparsed: true,
 		},
 		{
 			name: "ngpus resource",
@@ -428,13 +428,13 @@ func TestPbsResourceParsing(t *testing.T) {
 		},
 		{
 			// #PBS -l gpus=... is old Torque syntax; PBS Pro requires ngpus= inside select=.
-			name: "gpus standalone -l is old Torque syntax: passthrough",
+			name: "gpus standalone -l is old Torque syntax: unparsed",
 			lines: []string{
 				"#!/bin/bash",
 				"#PBS -l select=1:ncpus=4",
 				"#PBS -l gpus=a100:2",
 			},
-			wantPassthrough: true,
+			wantUnparsed: true,
 		},
 		{
 			name: "multiple resource lines",
@@ -488,9 +488,9 @@ func TestPbsResourceParsing(t *testing.T) {
 				t.Fatalf("Failed to parse script: %v", err)
 			}
 
-			if tt.wantPassthrough {
+			if tt.wantUnparsed {
 				if specs.Spec != nil {
-					t.Errorf("Spec = %+v; want nil (passthrough)", specs.Spec)
+					t.Errorf("Spec = %+v; want nil (unparsed)", specs.Spec)
 				}
 				return
 			}
@@ -661,7 +661,7 @@ func TestPbsNodeTaskParsing(t *testing.T) {
 		wantNodes        int
 		wantTasksPerNode int
 		wantCpusPerTask  int
-		wantPassthrough  bool
+		wantUnparsed     bool
 	}{
 		{
 			name: "select with mpiprocs",
@@ -689,7 +689,7 @@ func TestPbsNodeTaskParsing(t *testing.T) {
 				"#!/bin/bash",
 				"#PBS -l nodes=3:ppn=8",
 			},
-			wantPassthrough: true,
+			wantUnparsed: true,
 		},
 		{
 			name: "select=1 single node",
@@ -722,12 +722,12 @@ func TestPbsNodeTaskParsing(t *testing.T) {
 			wantCpusPerTask:  4, // ncpus(16) / mpiprocs(4) = 4 threads per task
 		},
 		{
-			name: "ncpus not divisible by mpiprocs: passthrough",
+			name: "ncpus not divisible by mpiprocs: unparsed",
 			lines: []string{
 				"#!/bin/bash",
 				"#PBS -l select=4:ncpus=7:mpiprocs=2:mem=8gb",
 			},
-			wantPassthrough: true, // 7 % 2 != 0 → passthrough
+			wantUnparsed: true, // 7 % 2 != 0 → unparsed
 		},
 	}
 
@@ -746,9 +746,9 @@ func TestPbsNodeTaskParsing(t *testing.T) {
 				t.Fatalf("Failed to parse script: %v", err)
 			}
 
-			if tt.wantPassthrough {
+			if tt.wantUnparsed {
 				if specs.Spec != nil {
-					t.Errorf("Spec = %+v; want nil (passthrough)", specs.Spec)
+					t.Errorf("Spec = %+v; want nil (unparsed)", specs.Spec)
 				}
 				return
 			}
@@ -779,7 +779,7 @@ func TestPbsMultiChunkParsing(t *testing.T) {
 		wantNodes        int
 		wantNtasks       int
 		wantTasksPerNode int // Ceiling division for cross-scheduler translation
-		wantPassthrough  bool
+		wantUnparsed     bool
 	}{
 		{
 			name: "uniform mpiprocs uniform mem",
@@ -821,31 +821,31 @@ func TestPbsMultiChunkParsing(t *testing.T) {
 			wantTasksPerNode: 3,
 		},
 		{
-			name: "non-uniform mem per cpu: passthrough",
+			name: "non-uniform mem per cpu: unparsed",
 			lines: []string{
 				"#!/bin/bash",
 				"#PBS -l select=2:ncpus=8:mpiprocs=2:mem=16gb+2:ncpus=8:mpiprocs=2:mem=32gb",
 			},
-			// MemPerCpu: 16*1024/8=2048 vs 32*1024/8=4096 → non-uniform → passthrough
-			wantPassthrough: true,
+			// MemPerCpu: 16*1024/8=2048 vs 32*1024/8=4096 → non-uniform → unparsed
+			wantUnparsed: true,
 		},
 		{
-			name: "non-uniform CpusPerTask: passthrough",
+			name: "non-uniform CpusPerTask: unparsed",
 			lines: []string{
 				"#!/bin/bash",
 				"#PBS -l select=1:ncpus=8:mpiprocs=2+1:ncpus=2:mpiprocs=1",
 			},
-			// CpusPerTask: 8/2=4 vs 2/1=2 (non-uniform) → passthrough
-			wantPassthrough: true,
+			// CpusPerTask: 8/2=4 vs 2/1=2 (non-uniform) → unparsed
+			wantUnparsed: true,
 		},
 		{
-			name: "GPU in multi-chunk: passthrough",
+			name: "GPU in multi-chunk: unparsed",
 			lines: []string{
 				"#!/bin/bash",
 				"#PBS -l select=1:ncpus=4:ngpus=2+1:ncpus=4:ngpus=2",
 			},
-			// ngpus= inside multi-chunk select is not supported → passthrough
-			wantPassthrough: true,
+			// ngpus= inside multi-chunk select is not supported → unparsed
+			wantUnparsed: true,
 		},
 		{
 			name: "three-chunk uniform",
@@ -877,9 +877,9 @@ func TestPbsMultiChunkParsing(t *testing.T) {
 				t.Fatalf("Failed to parse script: %v", err)
 			}
 
-			if tt.wantPassthrough {
+			if tt.wantUnparsed {
 				if specs.Spec != nil {
-					t.Errorf("Spec = %+v; want nil (passthrough)", specs.Spec)
+					t.Errorf("Spec = %+v; want nil (unparsed)", specs.Spec)
 				}
 				return
 			}
@@ -1107,10 +1107,10 @@ func TestPbsGetJobResources(t *testing.T) {
 	})
 }
 
-// TestPbsOldStyleResourcePassthrough verifies that Torque-era standalone -l
+// TestPbsOldStyleResourceUnparsed verifies that Torque-era standalone -l
 // resource directives (ncpus=, mem=, ngpus=, gpus=) are rejected and trigger
-// full passthrough (Spec == nil), consistent with how nodes= is handled.
-func TestPbsOldStyleResourcePassthrough(t *testing.T) {
+// left unparsed (Spec == nil), consistent with how nodes= is handled.
+func TestPbsOldStyleResourceUnparsed(t *testing.T) {
 	tests := []struct {
 		name  string
 		lines []string
@@ -1168,7 +1168,7 @@ func TestPbsOldStyleResourcePassthrough(t *testing.T) {
 				t.Fatalf("ReadScriptSpecs failed: %v", err)
 			}
 			if specs.Spec != nil {
-				t.Errorf("Spec = %+v; want nil (expected passthrough for old Torque syntax)", specs.Spec)
+				t.Errorf("Spec = %+v; want nil (expected unparsed for old Torque syntax)", specs.Spec)
 			}
 		})
 	}
@@ -1279,12 +1279,12 @@ func TestPbsNonUniformMpiScriptGen(t *testing.T) {
 	}
 }
 
-// Memory across the chunks of a select is read as the same per CPU, else the same per node, else passthrough.
+// Memory across the chunks of a select is read as the same per CPU, else the same per node, else unparsed.
 func TestPbsMultiChunkMemory(t *testing.T) {
 	tests := []struct {
 		name            string
 		selectBody      string
-		wantPassthrough bool
+		wantUnparsed    bool
 		wantNodes       int
 		wantCpusPerTask int
 		wantPerCpuMB    int64
@@ -1294,8 +1294,8 @@ func TestPbsMultiChunkMemory(t *testing.T) {
 		{name: "same per CPU, different per node", selectBody: "3:ncpus=8:mpiprocs=4:mem=16384mb+1:ncpus=4:mpiprocs=2:mem=8192mb", wantNodes: 4, wantCpusPerTask: 2, wantPerCpuMB: 2048},
 		{name: "identical chunks", selectBody: "2:ncpus=8:mpiprocs=2:mem=16gb+2:ncpus=8:mpiprocs=2:mem=16gb", wantNodes: 4, wantCpusPerTask: 4, wantPerCpuMB: 2048},
 		{name: "no memory", selectBody: "3:ncpus=8:mpiprocs=4+1:ncpus=4:mpiprocs=2", wantNodes: 4, wantCpusPerTask: 2},
-		{name: "different both ways", selectBody: "2:ncpus=8:mpiprocs=2:mem=16gb+2:ncpus=8:mpiprocs=2:mem=32gb", wantPassthrough: true},
-		{name: "memory in one chunk only", selectBody: "3:ncpus=8:mpiprocs=4:mem=16384mb+1:ncpus=4:mpiprocs=2", wantPassthrough: true},
+		{name: "different both ways", selectBody: "2:ncpus=8:mpiprocs=2:mem=16gb+2:ncpus=8:mpiprocs=2:mem=32gb", wantUnparsed: true},
+		{name: "memory in one chunk only", selectBody: "3:ncpus=8:mpiprocs=4:mem=16384mb+1:ncpus=4:mpiprocs=2", wantUnparsed: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1308,15 +1308,15 @@ func TestPbsMultiChunkMemory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tt.wantPassthrough {
+			if tt.wantUnparsed {
 				if specs.Spec != nil {
-					t.Fatalf("Spec = %+v; want passthrough", specs.Spec)
+					t.Fatalf("Spec = %+v; want unparsed", specs.Spec)
 				}
 				return
 			}
 			got := specs.Spec
 			if got == nil {
-				t.Fatal("passthrough; want a parsed spec")
+				t.Fatal("unparsed; want a parsed spec")
 			}
 			if got.Nodes != tt.wantNodes || got.CpusPerTask != tt.wantCpusPerTask ||
 				got.MemPerCpuMB != tt.wantPerCpuMB || got.MemPerNodeMB != tt.wantPerNodeMB {
@@ -1358,7 +1358,7 @@ func TestPbsUnevenSelectRoundTrip(t *testing.T) {
 			}
 			got := specs.Spec
 			if got == nil {
-				t.Fatal("the generated select reads as passthrough")
+				t.Fatal("the generated select does not parse")
 			}
 			if got.Nodes != rs.Nodes || got.Ntasks != rs.Ntasks || got.CpusPerTask != rs.CpusPerTask ||
 				got.MemPerCpuMB != rs.MemPerCpuMB || got.MemPerNodeMB != rs.MemPerNodeMB {
@@ -1368,21 +1368,21 @@ func TestPbsUnevenSelectRoundTrip(t *testing.T) {
 	}
 }
 
-// ompthreads is read when it equals the CPUs per rank, else the script is passthrough. The writer emits it for every chunk with more than one rank.
+// ompthreads is read when it equals the CPUs per rank, else the script is unparsed. The writer emits it for every chunk with more than one rank.
 func TestPbsOmpThreads(t *testing.T) {
 	tests := []struct {
-		name            string
-		selectBody      string
-		wantPassthrough bool
-		wantWritten     string
+		name         string
+		selectBody   string
+		wantUnparsed bool
+		wantWritten  string
 	}{
 		{name: "equals CPUs per rank", selectBody: "2:ncpus=8:mpiprocs=4:ompthreads=2", wantWritten: "select=2:ncpus=8:mpiprocs=4:ompthreads=2"},
 		{name: "unset with ranks", selectBody: "2:ncpus=8:mpiprocs=4", wantWritten: "select=2:ncpus=8:mpiprocs=4:ompthreads=2"},
 		{name: "one rank equals ncpus", selectBody: "1:ncpus=4:ompthreads=4", wantWritten: "select=1:ncpus=4"},
 		{name: "one rank unset", selectBody: "1:ncpus=4", wantWritten: "select=1:ncpus=4"},
-		{name: "fewer threads than CPUs", selectBody: "1:ncpus=16:ompthreads=8", wantPassthrough: true},
-		{name: "differs per rank", selectBody: "2:ncpus=8:mpiprocs=4:ompthreads=4", wantPassthrough: true},
-		{name: "chunks differ", selectBody: "3:ncpus=8:mpiprocs=4:ompthreads=2+1:ncpus=4:mpiprocs=2:ompthreads=1", wantPassthrough: true},
+		{name: "fewer threads than CPUs", selectBody: "1:ncpus=16:ompthreads=8", wantUnparsed: true},
+		{name: "differs per rank", selectBody: "2:ncpus=8:mpiprocs=4:ompthreads=4", wantUnparsed: true},
+		{name: "chunks differ", selectBody: "3:ncpus=8:mpiprocs=4:ompthreads=2+1:ncpus=4:mpiprocs=2:ompthreads=1", wantUnparsed: true},
 		{name: "every chunk", selectBody: "3:ncpus=8:mpiprocs=4+1:ncpus=4:mpiprocs=2", wantWritten: "select=3:ncpus=8:mpiprocs=4:ompthreads=2+1:ncpus=4:mpiprocs=2:ompthreads=2"},
 	}
 	for _, tt := range tests {
@@ -1396,14 +1396,14 @@ func TestPbsOmpThreads(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tt.wantPassthrough {
+			if tt.wantUnparsed {
 				if specs.Spec != nil {
-					t.Fatalf("Spec = %+v; want passthrough", specs.Spec)
+					t.Fatalf("Spec = %+v; want unparsed", specs.Spec)
 				}
 				return
 			}
 			if specs.Spec == nil {
-				t.Fatal("passthrough; want a parsed spec")
+				t.Fatal("unparsed; want a parsed spec")
 			}
 			out, err := pbs.CreateScriptWithSpec(&JobSpec{Name: "omp", Command: "true", Specs: specs, Metadata: map[string]string{}}, t.TempDir())
 			if err != nil {
@@ -1420,21 +1420,21 @@ func TestPbsOmpThreads(t *testing.T) {
 	}
 }
 
-// A select resource outside the spec is kept as written in every chunk. Chunks that differ in them, or a part that is not key=value, make the script passthrough.
+// A select resource outside the spec is kept as written in every chunk. Chunks that differ in them, or a part that is not key=value, make the script unparsed.
 func TestPbsSelectExtra(t *testing.T) {
 	tests := []struct {
-		name            string
-		selectBody      string
-		wantPassthrough bool
-		wantWritten     string
+		name         string
+		selectBody   string
+		wantUnparsed bool
+		wantWritten  string
 	}{
 		{name: "gpu id", selectBody: "4:ncpus=1:ngpus=1:gpu_id=gpu0", wantWritten: "select=4:ncpus=1:ngpus=1:gpu_id=gpu0"},
 		{name: "several, in order", selectBody: "1:ncpus=4:host=node1:green=true", wantWritten: "select=1:ncpus=4:host=node1:green=true"},
 		{name: "with ranks", selectBody: "2:ncpus=8:mpiprocs=4:gpu_id=gpu0", wantWritten: "select=2:ncpus=8:mpiprocs=4:ompthreads=2:gpu_id=gpu0"},
 		{name: "same in every chunk", selectBody: "3:ncpus=8:mpiprocs=4:host=a+1:ncpus=4:mpiprocs=2:host=a", wantWritten: "select=3:ncpus=8:mpiprocs=4:ompthreads=2:host=a+1:ncpus=4:mpiprocs=2:ompthreads=2:host=a"},
-		{name: "differs across chunks", selectBody: "1:ncpus=4:host=a+1:ncpus=4:host=b", wantPassthrough: true},
-		{name: "in one chunk only", selectBody: "1:ncpus=4:host=a+1:ncpus=4", wantPassthrough: true},
-		{name: "not key=value", selectBody: "1:ncpus=4:green", wantPassthrough: true},
+		{name: "differs across chunks", selectBody: "1:ncpus=4:host=a+1:ncpus=4:host=b", wantUnparsed: true},
+		{name: "in one chunk only", selectBody: "1:ncpus=4:host=a+1:ncpus=4", wantUnparsed: true},
+		{name: "not key=value", selectBody: "1:ncpus=4:green", wantUnparsed: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1447,9 +1447,9 @@ func TestPbsSelectExtra(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tt.wantPassthrough {
+			if tt.wantUnparsed {
 				if specs.Spec != nil {
-					t.Fatalf("Spec = %+v; want passthrough", specs.Spec)
+					t.Fatalf("Spec = %+v; want unparsed", specs.Spec)
 				}
 				if want := "-l select=" + tt.selectBody; !slices.Contains(specs.RemainingFlags, want) {
 					t.Errorf("RemainingFlags = %q; want it to hold %q", specs.RemainingFlags, want)
@@ -1457,7 +1457,7 @@ func TestPbsSelectExtra(t *testing.T) {
 				return
 			}
 			if specs.Spec == nil {
-				t.Fatal("passthrough; want a parsed spec")
+				t.Fatal("unparsed; want a parsed spec")
 			}
 			out, err := pbs.CreateScriptWithSpec(&JobSpec{Name: "extra", Command: "true", Specs: specs, Metadata: map[string]string{}}, t.TempDir())
 			if err != nil {

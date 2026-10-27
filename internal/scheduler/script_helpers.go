@@ -59,7 +59,7 @@ func headerLines(path string, lines []string, extract func([]string) []string) [
 
 // parseScript is the two-stage pipeline behind each scheduler's ReadScriptSpecs.
 //   - Stage 1, ParseRuntimeConfig (job control), is critical. An error stops it, and its fields never reach RemainingFlags.
-//   - Stage 2, parseResourceSpec (geometry), is best effort. A failure returns nil, and the script becomes passthrough with a warning.
+//   - Stage 2, parseResourceSpec (geometry), is best effort. A failure returns nil, and the script is left unparsed with a warning.
 //   - Unconsumed directives go to RemainingFlags. RawFlags keeps every directive.
 func parseScript(
 	scriptPath string,
@@ -78,7 +78,7 @@ func parseScript(
 	rs, remaining := rsParser(unconsumed)
 	if rs == nil && len(unconsumed) > 0 {
 		// Duplicate warning, already printed by the scheduler-specific parser; no need to print again here.
-		// utils.PrintWarning("Could not parse resource directives; using passthrough mode")
+		// utils.PrintWarning("Could not parse resource directives; resource directives not parsed")
 	}
 
 	return &ScriptSpecs{
@@ -176,7 +176,7 @@ func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime
 		fmt.Fprintf(w, "echo \"Script:     %s\"\n", specs.ScriptPath)
 	}
 
-	// Extract ResourceSpec (may be nil → passthrough mode)
+	// Extract ResourceSpec (may be nil when the resources did not parse)
 	rs := (*ResourceSpec)(nil)
 	if specs != nil {
 		rs = specs.Spec

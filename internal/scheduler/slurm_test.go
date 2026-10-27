@@ -596,7 +596,7 @@ func TestSlurmNtasksParsing(t *testing.T) {
 		wantNtasks       int
 		wantTasksPerNode int // -1 = don't check
 		wantNodes        int
-		wantPassthrough  bool
+		wantUnparsed     bool
 	}{
 		{
 			name: "--ntasks evenly divisible by --nodes",
@@ -619,17 +619,17 @@ func TestSlurmNtasksParsing(t *testing.T) {
 			wantNtasks:       37,
 			wantTasksPerNode: 10, // ceiling(37/4) = 10
 			wantNodes:        4,
-			wantPassthrough:  false,
+			wantUnparsed:     false,
 		},
 		{
-			name: "--ntasks not divisible by --nodes: passthrough with gpu",
+			name: "--ntasks not divisible by --nodes: unparsed with gpu",
 			lines: []string{
 				"#!/bin/bash",
 				"#SBATCH --nodes=4",
 				"#SBATCH --ntasks=37",
 				"#SBATCH --gpus=2",
 			},
-			wantPassthrough: true,
+			wantUnparsed: true,
 		},
 		{
 			name: "--ntasks without --nodes",
@@ -669,9 +669,9 @@ func TestSlurmNtasksParsing(t *testing.T) {
 				t.Fatalf("ReadScriptSpecs failed: %v", err)
 			}
 
-			if tt.wantPassthrough {
+			if tt.wantUnparsed {
 				if specs.Spec != nil {
-					t.Errorf("Spec = non-nil; want nil (passthrough)")
+					t.Errorf("Spec = non-nil; want nil (unparsed)")
 				}
 				return
 			}

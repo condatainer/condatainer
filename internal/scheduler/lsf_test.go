@@ -729,7 +729,7 @@ func TestLsfSpanHostsParsing(t *testing.T) {
 	tests := []struct {
 		name             string
 		lines            []string
-		wantPassthrough  bool // true = expect Spec == nil (passthrough mode)
+		wantUnparsed     bool // true = expect Spec == nil (unparsed)
 		wantNodes        int  // 0 = don't check
 		wantNodesZero    bool // true = assert Nodes == 0 (no-span: no span emitted)
 		wantTasksPerNode int  // 0 = don't check
@@ -849,8 +849,8 @@ func TestLsfSpanHostsParsing(t *testing.T) {
 				"#!/bin/bash",
 				"#BSUB -J testjob",
 			},
-			wantNodes:        0, // passthrough
-			wantTasksPerNode: 0, // passthrough
+			wantNodes:        0, // unparsed
+			wantTasksPerNode: 0, // unparsed
 		},
 	}
 
@@ -869,9 +869,9 @@ func TestLsfSpanHostsParsing(t *testing.T) {
 				t.Fatalf("Failed to parse script: %v", err)
 			}
 
-			if tt.wantPassthrough {
+			if tt.wantUnparsed {
 				if specs.Spec != nil {
-					t.Errorf("Spec = %+v; want nil (passthrough)", specs.Spec)
+					t.Errorf("Spec = %+v; want nil (unparsed)", specs.Spec)
 				}
 				return
 			}
@@ -1356,7 +1356,7 @@ func TestLsfScriptPreservesRusageWithSpan(t *testing.T) {
 	}
 	scriptContent := string(content)
 
-	// Rusage should be preserved in the RemainingFlags passthrough
+	// Rusage should be preserved in the RemainingFlags as written
 	if !strings.Contains(scriptContent, "rusage[mem=4096]") {
 		t.Errorf("Script should preserve rusage\nScript:\n%s", scriptContent)
 	}

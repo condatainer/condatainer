@@ -85,7 +85,7 @@ type ResourceLimits struct {
 }
 
 // ResourceSpec holds compute geometry for a job.
-// A nil pointer means resource parsing failed — the job runs in passthrough mode.
+// A nil pointer means resource parsing failed.
 type ResourceSpec struct {
 	Nodes        int           // Number of nodes
 	Ntasks       int           // Total MPI tasks (0 = not set; use Nodes*TasksPerNode)
@@ -206,7 +206,7 @@ type ClusterInfo struct {
 // ScriptSpecs holds the full result of parsing a scheduler script.
 type ScriptSpecs struct {
 	ScriptPath     string        // Absolute path of the parsed script (for HTCondor .sub: the executable)
-	Spec           *ResourceSpec // Compute geometry (nil = resource parse failed → passthrough mode)
+	Spec           *ResourceSpec // Compute geometry (nil = resource parse failed)
 	Control        RuntimeConfig // Job control settings
 	HasDirectives  bool          // True if any scheduler directive (#SBATCH, #PBS, etc.) was found
 	RawFlags       []string      // ALL original directives — immutable audit log
@@ -251,8 +251,8 @@ func HasSchedulerSpecs(specs *ScriptSpecs) bool {
 	return specs.HasDirectives
 }
 
-// IsPassthrough reports having directives but no valid resource spec.
-func IsPassthrough(specs *ScriptSpecs) bool {
+// IsUnparsed reports having directives but no valid resource spec.
+func IsUnparsed(specs *ScriptSpecs) bool {
 	return specs != nil && specs.HasDirectives && specs.Spec == nil
 }
 
@@ -776,7 +776,7 @@ func getMpiLocalSize() *int {
 //   - The result is never nil.
 //   - A different script scheduler gives a warning, not an error.
 //   - Without directives HasDirectives is false and Spec holds GetSpecDefaults().
-//   - HasDirectives and IsPassthrough tell the three states apart.
+//   - HasDirectives and IsUnparsed tell the three states apart.
 func ReadScriptSpecsFromPath(scriptPath string) (*ScriptSpecs, error) {
 	// Parse script using any available parser
 	parsed, err := ParseScriptAny(scriptPath)
@@ -785,7 +785,7 @@ func ReadScriptSpecsFromPath(scriptPath string) (*ScriptSpecs, error) {
 	}
 
 	// No scheduler directives found — return a default spec with HasDirectives=false.
-	// Callers must check HasDirectives (not nil) to distinguish from normal/passthrough mode.
+	// Callers must check HasDirectives (not nil) to distinguish from a parsed spec.
 	if parsed == nil {
 		d := GetSpecDefaults()
 		d.Nodes = 1 // single-node default for local scripts

@@ -256,15 +256,6 @@ func configBinds() []string {
 	return out
 }
 
-// expandBinds expands $VAR and ${VAR} in --bind values, so a value passed unexpanded, as a helper wrapper does, means what a shell would have made of it.
-func expandBinds(binds []string) []string {
-	out := make([]string, len(binds))
-	for i, b := range binds {
-		out[i] = os.ExpandEnv(b)
-	}
-	return out
-}
-
 // CommonFlags holds the common flags used by exec
 type CommonFlags struct {
 	Overlays    []string

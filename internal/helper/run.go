@@ -201,10 +201,9 @@ func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string,
 	// Bind condatainer binary so helpers can call _helper ready and _helper message inside.
 	parts = append(parts, "--bind", shellQuote(exe+":/usr/local/bin/condatainer"))
 
-	// Extra binds from #BIND: headers, single-quoted: the wrapper's shell never sees a value, and
-	// `exec` expands $VAR (e.g. $CNT_HELPER_STATE_DIR, $HOME) when the container starts.
+	// Extra binds from #BIND: headers. The wrapper's shell expands $VAR (e.g. $CNT_HELPER_STATE_DIR, $HOME) on the node.
 	for _, b := range opts.ExtraBinds {
-		parts = append(parts, "--bind", shellQuote(b))
+		parts = append(parts, "--bind", shellQuoteVars(b))
 	}
 
 	// Working directory inside container — passed through to apptainer as --flag=value.
@@ -741,6 +740,58 @@ func shellQuote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// shellQuoteVars quotes s as shell words in which only $NAME and ${NAME} expand.
+// Any other character, a command substitution included, stays text.
+func shellQuoteVars(s string) string {
+	var sb strings.Builder
+	start := 0
+	flush := func(end int) {
+		if end > start {
+			sb.WriteString("'" + strings.ReplaceAll(s[start:end], "'", "'\\''") + "'")
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] != '$' {
+			continue
+		}
+		name, end := varRef(s, i)
+		if name == "" {
+			continue
+		}
+		flush(i)
+		sb.WriteString(`"${` + name + `}"`)
+		start, i = end, end-1
+	}
+	flush(len(s))
+	if sb.Len() == 0 {
+		return "''"
+	}
+	return sb.String()
+}
+
+// varRef reads the $NAME or ${NAME} that starts at s[i]. name is "" when none starts there.
+func varRef(s string, i int) (name string, end int) {
+	j := i + 1
+	braced := j < len(s) && s[j] == '{'
+	if braced {
+		j++
+	}
+	k := j
+	for k < len(s) && (s[k] == '_' || s[k] >= 'a' && s[k] <= 'z' || s[k] >= 'A' && s[k] <= 'Z' || k > j && s[k] >= '0' && s[k] <= '9') {
+		k++
+	}
+	if k == j {
+		return "", i
+	}
+	if braced {
+		if k >= len(s) || s[k] != '}' {
+			return "", i
+		}
+		return s[j:k], k + 1
+	}
+	return s[j:k], k
 }
 
 // normalizeOverlayForHistory converts a resolved overlay path to a portable form for history, keeping any :ro/:rw suffix.

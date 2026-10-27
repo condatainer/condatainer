@@ -317,7 +317,7 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 	}
 	specs.Control.WorkDir = workdir
 	build.SetJobName(specs, entry.Manifest.Name)
-	if scheduler.ProxyPerJob() {
+	if scheduler.ProxyPerJob(scheduler.ProxyCreate) {
 		if host, err := os.Hostname(); err == nil && host != "" {
 			specs.ProxyVia = host
 		}

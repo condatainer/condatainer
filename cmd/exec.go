@@ -53,7 +53,7 @@ func init() {
 
 	// Register common flags
 	RegisterCommonFlags(&execCmd.Command, &execFlags)
-	execCmd.Flags().BoolVar(&execGpuRequested, "gpu", false, "Force GPU flags (--nv/--rocm) even if autoload_gpu is disabled")
+	execCmd.Flags().BoolVar(&execGpuRequested, "load-gpu", false, "Make the host GPU available even if autoload_gpu is off")
 	execCmd.Flags().StringVar(&execActivation, "activation", "all", "Which activate.d scripts to source before the command: all, env, or none")
 	execCmd.Flags().IntVar(&execStopGrace, "stop-grace", 0, "Seconds the container gets to exit after this process is told to stop")
 	execCmd.Flags().MarkHidden("stop-grace") //nolint:errcheck

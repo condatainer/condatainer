@@ -17,18 +17,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// helperJobCmd groups the commands a helper job calls. It stays out of the top-level help.
+var helperJobCmd = &cobra.Command{
+	Use:    "_helper",
+	Hidden: true,
+	Short:  "Commands a helper job calls to report to CondaTainer",
+}
+
 func init() {
-	rootCmd.AddCommand(serverReadyCmd)
-	rootCmd.AddCommand(serverMessageCmd)
-	rootCmd.AddCommand(serverDoneCmd)
-	rootCmd.AddCommand(serverStartedCmd)
-	rootCmd.AddCommand(pickPortCmd)
-	rootCmd.AddCommand(helperHoldCmd)
-	rootCmd.AddCommand(helperStateDirCmd)
+	// A helper job script written by one build can run against a newer binary, so these
+	// commands ignore flags they do not know.
+	for _, c := range []*cobra.Command{serverReadyCmd, serverMessageCmd, serverDoneCmd, serverStartedCmd, pickPortCmd, helperHoldCmd, helperStateDirCmd} {
+		c.FParseErrWhitelist.UnknownFlags = true
+		helperJobCmd.AddCommand(c)
+	}
+	rootCmd.AddCommand(helperJobCmd)
 	rootCmd.AddCommand(serverDaemonCmd)
 }
 
-// ── _server_ready ──────────────────────────────────────────────────────────
+// ── ready ──────────────────────────────────────────────────────────
 
 var (
 	serverReadyID          string
@@ -42,9 +49,8 @@ var (
 )
 
 var serverReadyCmd = &cobra.Command{
-	Use:    "_server_ready",
-	Hidden: true,
-	Short:  "Signal that a helper service is ready (called from compute node)",
+	Use:   "ready",
+	Short: "Signal that a helper service is ready (called from compute node)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 		id := serverReadyID
@@ -143,7 +149,7 @@ func processExists(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
-// ── _server_message ────────────────────────────────────────────────────────
+// ── message ────────────────────────────────────────────────────────
 
 var (
 	serverMessageID    string
@@ -151,10 +157,9 @@ var (
 )
 
 var serverMessageCmd = &cobra.Command{
-	Use:    "_server_message <text>",
-	Hidden: true,
-	Short:  "Append a message to the helper messages file (called from compute node)",
-	Args:   cobra.MinimumNArgs(1),
+	Use:   "message <text>",
+	Short: "Append a message to the helper messages file (called from compute node)",
+	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 		id := serverMessageID
@@ -177,7 +182,7 @@ func init() {
 	serverMessageCmd.Flags().StringVar(&serverMessageLevel, "level", "info", "Message level: info|warn|error")
 }
 
-// ── _server_started ────────────────────────────────────────────────────────
+// ── started ────────────────────────────────────────────────────────
 
 var (
 	serverStartedID   string
@@ -185,7 +190,7 @@ var (
 )
 
 var serverStartedCmd = &cobra.Command{
-	Use:    "_server_started",
+	Use:    "started",
 	Hidden: true,
 	Short:  "Record the node a helper job started on (called from the wrapper script)",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -214,7 +219,7 @@ func init() {
 	serverStartedCmd.Flags().StringVar(&serverStartedNode, "node", "", "Node name (defaults to the host name)")
 }
 
-// ── _server_done ───────────────────────────────────────────────────────────
+// ── done ───────────────────────────────────────────────────────────
 
 var (
 	serverDoneID       string
@@ -222,7 +227,7 @@ var (
 )
 
 var serverDoneCmd = &cobra.Command{
-	Use:    "_server_done",
+	Use:    "done",
 	Hidden: true,
 	Short:  "Signal that a helper job has finished (called from the wrapper script)",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -246,12 +251,11 @@ func init() {
 	serverDoneCmd.Flags().IntVar(&serverDoneExitCode, "exit-code", 0, "Process exit code")
 }
 
-// ── _pick_port ─────────────────────────────────────────────────────────────
+// ── pick-port ─────────────────────────────────────────────────────────────
 
 var pickPortCmd = &cobra.Command{
-	Use:    "_pick_port",
-	Hidden: true,
-	Short:  "Print a free TCP port on this host",
+	Use:   "pick-port",
+	Short: "Print a free TCP port on this host",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 		port, err := pickFreePort()
@@ -273,10 +277,10 @@ func pickFreePort() (int, error) {
 	return port, nil
 }
 
-// ── _helper_hold ───────────────────────────────────────────────────────────
+// ── hold ───────────────────────────────────────────────────────────
 
 var helperHoldCmd = &cobra.Command{
-	Use:    "_helper_hold <lock-file> <wrapper-pid>",
+	Use:    "hold <lock-file> <wrapper-pid>",
 	Hidden: true,
 	Short:  "Hold a headless helper's lock file until its wrapper exits (called from the wrapper)",
 	Args:   cobra.ExactArgs(2),
@@ -306,10 +310,10 @@ var helperHoldCmd = &cobra.Command{
 	},
 }
 
-// ── _helper_state_dir ──────────────────────────────────────────────────────
+// ── state-dir ──────────────────────────────────────────────────────
 
 var helperStateDirCmd = &cobra.Command{
-	Use:    "_helper_state_dir <id>",
+	Use:    "state-dir <id>",
 	Hidden: true,
 	Short:  "Print the NFS state directory for a helper run ID",
 	Args:   cobra.ExactArgs(1),

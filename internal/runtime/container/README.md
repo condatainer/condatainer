@@ -107,7 +107,7 @@ Root selection has already run, so ordering never decides which overlay becomes 
 - NVIDIA is detected by `/dev/nvidiactl`, AMD by `/dev/kfd`.
 - A declared GPU always forces detection. `autoload_gpu` only decides use that declared none, such as a hand-typed `exec`.
 - It defaults on, because the two failures differ.
-  - Off, a user on a GPU node silently gets no GPU, and nothing points at `--gpu`.
+  - Off, a user on a GPU node silently gets no GPU, and nothing points at `--load-gpu`.
   - On, the bad case is a loaded driver with an unusable GPU. `--nv` then fails loudly at container creation.
 
 ## Writable and snapshot environment overlay as a pair

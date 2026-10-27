@@ -35,7 +35,7 @@ func listArchiveLong(t *testing.T, sqf string) []string {
 
 func runTool(t *testing.T, name string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command(name, args...).CombinedOutput()
+	out, err := exec.Command(hostTool(t, name), args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s: %v\n%s", name, err, out)
 	}

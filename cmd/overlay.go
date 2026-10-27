@@ -64,7 +64,7 @@ func registerOverlayCreateFlags(cmd *cobra.Command) {
 	cmd.Flags().StringP("size", "s", ext3.DefaultSize, "Set overlay size (e.g., 500M, 10g)")
 	cmd.Flags().StringP("profile", "p", "balanced", "Overlay profile: small/balanced/large files")
 	cmd.Flags().Bool("fakeroot", false, "Create a fakeroot-compatible overlay (owned by root)")
-	cmd.Flags().BoolP("sparse", "S", false, "Create a sparse overlay image (no pre-allocation)")
+	cmd.Flags().BoolP("sparse", "S", false, "Create a sparse overlay (no pre-allocation)")
 	cmd.Flags().StringP("file", "f", "", "Initialize with a Conda environment file (.yml/.yaml) or explicit spec (.txt)")
 
 	cmd.RegisterFlagCompletionFunc("profile", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -109,7 +109,7 @@ func runOverlayCreate(cmd *cobra.Command, args []string) {
 	// Auto-append .img extension if not present and path doesn't have an extension
 	if !utils.IsImg(path) {
 		if strings.Contains(filepath.Base(path), ".") {
-			ExitWithError("Overlay image must have a .img or .ext3 extension.")
+			ExitWithError("Overlay must have a .img or .ext3 extension.")
 		}
 		path += ".img"
 	}
@@ -409,7 +409,7 @@ func init() {
 
 	// --- Resize ---
 	resizeCmd.Flags().StringP("size", "s", "", "New size (e.g., 20g, 2048M)")
-	resizeCmd.Flags().BoolP("sparse", "S", false, "Leave the image sparse (no pre-allocation)")
+	resizeCmd.Flags().BoolP("sparse", "S", false, "Leave the overlay sparse (no pre-allocation)")
 	_ = resizeCmd.MarkFlagRequired("size")
 
 	// --- Check ---
@@ -518,7 +518,7 @@ func runExportOverlay(cmd *cobra.Command, args []string) error {
 
 	if !utils.IsImg(overlayPath) {
 		cmd.SilenceUsage = true
-		return fmt.Errorf("export needs a writable .img overlay; %s is an installed image", overlayPath)
+		return fmt.Errorf("export needs a writable .img overlay; %s is not one", overlayPath)
 	}
 
 	// Reading an .img read-only does not trip Apptainer's ext3 lock, so probe it

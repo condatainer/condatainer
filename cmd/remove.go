@@ -36,48 +36,45 @@ var removeCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(removeCmd)
-	removeCmd.Flags().StringP("dir", "D", "", "Limit to a specific image directory (substring match)")
-	removeCmd.Flags().StringP("layer", "l", "", "Limit to a data layer: u/user, r/cnt-root, e/extra-root")
+	removeCmd.Flags().StringP("layer", "l", "", "Limit to a layer: "+layerChoices)
 	removeCmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 			return []string{"user", "cnt-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp
 		})
 }
 
-// scopedImageDirs applies --layer and --dir to the image search paths; both are
-// optional and compose. Exits with an error when a filter matches nothing, so an
-// empty result never reads as "no overlays installed".
+// imageDirsOfLayer returns the images directories of the layer a --layer value names.
+// A layer whose root is not configured has none, which is an error rather than an empty list.
+func imageDirsOfLayer(name string) ([]string, error) {
+	layer, err := config.ParseDataLayer(name)
+	if err != nil {
+		return nil, err
+	}
+	dirs := config.FilterDirsByLayer(config.GetImageSearchPaths(), layer)
+	if len(dirs) == 0 {
+		return nil, fmt.Errorf("the %s layer is not configured", layer)
+	}
+	return dirs, nil
+}
+
+// scopedImageDirs returns the image search paths, narrowed to --layer when it is set.
+// It exits on an error, so an empty result never reads as "no overlays installed".
 func scopedImageDirs(cmd *cobra.Command) []string {
-	dirs := config.GetImageSearchPaths()
-
-	if loc, _ := cmd.Flags().GetString("layer"); loc != "" {
-		layer, err := config.ParseDataLayer(loc)
-		if err != nil {
-			ExitWithError("%v", err)
-		}
-		dirs = config.FilterDirsByLayer(dirs, layer)
-		if len(dirs) == 0 {
-			utils.PrintWarning("No image directory in the %s layer.", layer)
-			os.Exit(ExitCodeError)
-		}
+	loc, _ := cmd.Flags().GetString("layer")
+	if loc == "" {
+		return config.GetImageSearchPaths()
 	}
-
-	if dirFilter, _ := cmd.Flags().GetString("dir"); dirFilter != "" {
-		dirs = filterImageDirs(dirs, dirFilter)
-		if len(dirs) == 0 {
-			utils.PrintWarning("No image directory matching %q found.", dirFilter)
-			os.Exit(ExitCodeError)
-		}
+	dirs, err := imageDirsOfLayer(loc)
+	if err != nil {
+		ExitWithError("%v", err)
 	}
-
 	return dirs
 }
 
-// isScoped reports whether the user restricted the operation to specific directories.
+// isScoped reports whether the user restricted the operation to a layer.
 func isScoped(cmd *cobra.Command) bool {
 	loc, _ := cmd.Flags().GetString("layer")
-	dir, _ := cmd.Flags().GetString("dir")
-	return loc != "" || dir != ""
+	return loc != ""
 }
 
 func runRemove(cmd *cobra.Command, args []string) error {
@@ -101,7 +98,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	terms := normalizeFilters(searchArgs)
 
 	// Resolve names within the scoped directories, so a copy shadowed by a
-	// higher-priority layer is reachable via --layer / --dir.
+	// higher-priority layer is reachable via --layer.
 	installedOverlays, err := getInstalledOverlaysMapIn(scopedImageDirs(cmd))
 	if err != nil {
 		return err
@@ -172,7 +169,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 }
 
 // performDelete handles duplicate detection, confirmation, and deletion of named overlays. names should be in "name/version" format.
-//   - It reads --dir from cmd to restrict to a dir.
+//   - It reads --layer from cmd to restrict to a layer.
 //   - Pass showListing=false to skip reprinting the overlay list (e.g. when list -d already showed it).
 func performDelete(cmd *cobra.Command, names []string, showListing ...bool) error {
 	printListing := len(showListing) == 0 || showListing[0]
@@ -218,7 +215,7 @@ func performDelete(cmd *cobra.Command, names []string, showListing ...bool) erro
 			}
 		}
 		if len(ambiguous) > 0 {
-			utils.PrintWarning("The following overlays exist in multiple layers. Use --layer (or --dir) to pick one:")
+			utils.PrintWarning("The following overlays exist in multiple layers. Use --layer to pick one:")
 			for _, name := range ambiguous {
 				fmt.Printf("  %s\n", name)
 				for _, p := range allCopies[name] {
@@ -279,7 +276,7 @@ func performDelete(cmd *cobra.Command, names []string, showListing ...bool) erro
 			continue
 		}
 		artifactcache.Forget(overlayPath)
-		utils.PrintSuccess("Overlay %s removed.", name)
+		utils.PrintSuccess("Overlay %s removed%s.", name, config.LayerNote(overlayPath))
 		envPath := overlayPath + ".env"
 		if utils.FileExists(envPath) {
 			if err := os.Remove(envPath); err != nil {
@@ -341,7 +338,7 @@ func removeExternalOverlays(cmd *cobra.Command, paths []string) error {
 			continue
 		}
 		artifactcache.Forget(p)
-		utils.PrintSuccess("Overlay %s removed.", filepath.Base(p))
+		utils.PrintSuccess("Overlay %s removed%s.", filepath.Base(p), config.LayerNote(p))
 		envPath := p + ".env"
 		if utils.FileExists(envPath) {
 			if err := os.Remove(envPath); err != nil {

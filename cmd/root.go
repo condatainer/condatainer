@@ -41,6 +41,16 @@ func isHostOnlyCommand(cmd *cobra.Command) bool {
 	return false
 }
 
+// isInternalCommand reports whether cmd, or a group it belongs to, is named with a leading underscore.
+func isInternalCommand(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if strings.HasPrefix(c.Name(), "_") {
+			return true
+		}
+	}
+	return false
+}
+
 var rootCmd = &cobra.Command{
 	Use:           "condatainer",
 	Short:         "Pack tools, data and Conda environments into modular images and run them on HPC.",
@@ -115,7 +125,7 @@ var rootCmd = &cobra.Command{
 		// commands expands bare names against the default distro; without one
 		// there is nothing to run. The registry takes full names only.
 		isRegistryCommand := strings.HasPrefix(cmd.CommandPath(), "condatainer registry")
-		if !isCompleteRequest && !isConfigCommand && !isRegistryCommand && !hostOnly && cmdName != "help" && !strings.HasPrefix(cmdName, "_") &&
+		if !isCompleteRequest && !isConfigCommand && !isRegistryCommand && !hostOnly && cmdName != "help" && !isInternalCommand(cmd) &&
 			config.ResolvedDefaultDistro() == "" {
 			ExitWithError("default_distro is not set. Run `condatainer config init`, or `condatainer config set default_distro <name>`")
 		}

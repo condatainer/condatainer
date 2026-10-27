@@ -46,6 +46,7 @@ type PackOptions struct {
 //   - It returns the tools it resolved, captured where each is resolved.
 //   - Default route: the payload is read through a fuse2fs mount in a private unprivileged namespace, so nothing is copied.
 //   - The image is made read-only meanwhile, because fuse2fs decides by permission bits, not -o ro.
+//   - The FUSE server runs without the capabilities that skip permission checks, so that bit holds for the namespace root too.
 //   - With StageDir it reads an earlier copy instead: faster, and the payload takes twice the disk.
 //   - Both routes give the same archive.
 //   - With Snapshot set the image is packed layered over that snapshot (see packStacked).

@@ -51,6 +51,23 @@ var (
 	}
 )
 
+// jobRepeats marks a flag in a job rule table that the job's command repeats. Any other text is the reason it does not.
+const jobRepeats = "repeated"
+
+// createJobRules says, for every create flag, whether a submitted build repeats it.
+//   - A new create flag must be listed here, and TestEveryCreateFlagHasAJobRule fails until it is.
+//   - A repeated flag also goes into createJobFlags. The compression flags are repeated through compFlagNames.
+var createJobRules = map[string]string{
+	"source": jobRepeats, "layer": jobRepeats, "channel": jobRepeats,
+	"block-size": jobRepeats, "data-block-size": jobRepeats,
+	"name": "the job builds by target", "prefix": "the job builds by target",
+	"file": "the job builds by target", "from": "the job builds by target",
+	"update": "the command builder adds it", "store": "the command builder adds it",
+	"no-prebuilt":        "the command builder adds it",
+	"no-submit":          "the job is the submission",
+	"always-submit-data": "decides whether to submit, not what is built",
+}
+
 // createJobFlags are the flags a submitted build has to repeat: the node re-runs
 // create from the name alone, so anything that changes what is built or where it
 // lands has to travel with it. Submission and mode flags are left out — the job
@@ -70,8 +87,8 @@ func createJobFlags() []string {
 var createCmd = &cobra.Command{
 	Use:     "create [flags] [packages...]",
 	Aliases: []string{"install", "i"},
-	Short:   "Create a new SquashFS overlay",
-	Long: `Create a new SquashFS overlay from a recipe, Conda packages, or an image.
+	Short:   "Create a read-only SquashFS overlay",
+	Long: `Create a read-only SquashFS overlay.
 
 Exits with code 3 if build jobs were submitted to a scheduler.`,
 	Example: `  condatainer create orad/2.7.0                              # From a recipe
@@ -194,7 +211,7 @@ func init() {
 	f.BoolVarP(&createUpdate, "update", "u", false, "Rebuild overlays even if they already exist")
 	f.BoolVar(&createStore, "store", false, "Build into the store, filed under its identity")
 	f.BoolVar(&createNoPrebuilt, "no-prebuilt", false, "Build from the recipe instead of pulling a prebuilt overlay")
-	f.StringVarP(&createLayer, "layer", "l", "", "Build into this data layer: u/user, r/cnt-root, e/extra-root")
+	f.StringVarP(&createLayer, "layer", "l", "", "Build into this layer: "+layerChoices)
 	settings.AddSwitch(f, "build.always_submit_data", "always-submit-data", "true", settings.Usage("Submit data builds as scheduler jobs, even without directives"))
 	settings.AddSwitch(f, "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))
 
@@ -282,7 +299,7 @@ func getWritableImagesDir() string {
 		ExitWithError("%v", err)
 	}
 	imagesDirNoteOnce.Do(func() {
-		utils.PrintNote("Installing to %s (%s)", dir, config.ClassifyDataDir(dir))
+		utils.PrintNote("Installing to %s (%s layer)", dir, config.ClassifyDataDir(dir))
 	})
 	return dir
 }

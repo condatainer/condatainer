@@ -224,3 +224,25 @@ func TestBindsMergeAcrossLayers(t *testing.T) {
 		t.Errorf("layerBinds with CNT_CONFIG_BIND = %v, want %v", got, want)
 	}
 }
+
+// A message names the layer of a file by the data directory above it.
+func TestLayerNote(t *testing.T) {
+	scratch, _, extraRoot, root := withAllTiers(t)
+	inRoot := filepath.Join(root, "images", "store", "star@9f2c1ab")
+	inExtra := filepath.Join(extraRoot, "images", "fastp--1.1.0.sqf")
+	inScratch := filepath.Join(scratch, "images", "x.sqf")
+	for name, tc := range map[string]struct {
+		paths []string
+		want  string
+	}{
+		"one layer":      {[]string{inRoot}, " (cnt-root layer)"},
+		"several layers": {[]string{inRoot, inExtra, inRoot}, " (cnt-root, extra-root layers)"},
+		"user layer":     {[]string{inScratch}, " (user layer)"},
+		"unknown path":   {[]string{filepath.Join(t.TempDir(), "x.sqf")}, ""},
+		"no path":        {nil, ""},
+	} {
+		if got := LayerNote(tc.paths...); got != tc.want {
+			t.Errorf("%s: %q, want %q", name, got, tc.want)
+		}
+	}
+}

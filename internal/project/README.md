@@ -132,6 +132,8 @@
 
 - A declaration counts wherever it is written. The scanner and `run` share one tokenizer, so they cannot disagree about a script.
 - Symlinked directories and scripts are never followed. A lock describes the checkout.
+- A symlink the scan skipped is reported, unless its target is a script the scan reads under its own name. A script link is a warning, since its `#DEP:` is never pinned. A directory link is a note.
+- `run` follows a link on a script's path. A target that is a script of the project uses the lock. Any other target is outside the project.
 - `cnt-lock/` and every dot-directory are skipped. They hold tool state (`.venv`, `.snakemake`) whose scripts are not this project's.
 - A build recipe is skipped. Its `#DEP:` are build dependencies already recorded in that artifact's provenance.
 - A recipe is identified by `$CNT_BUILD_PREFIX`. That is a property of the file itself.
@@ -149,12 +151,15 @@
 - The remedy differs by kind. Freeze a writable `.img`. Copy an external `.sqf` under the project.
 - One finding is reported per dependency, decided after every script is read.
 
-## The project root is the one anchor
+## Where a relative path points
 
-- A relative path in a declaration means relative to the project root, never the working directory.
+- A relative path in a declaration is read from the declaring script's folder first, then from the project root. It is never read from the working directory.
+- Each script gets its own request for a relative path, so `step1/run.sh` and `step2/run.sh` both writing `x.sqf` pin two files.
+- `lock` checks the filesystem to pick the reading. `run` only looks the choice up in the pins.
 - Mounts are resolved to absolute paths, so where a job runs does not matter to them.
-- A job runs where it was submitted from, unless the script names a directory. A project can hold steps in subdirectories, each run from its own.
-- A declared path may also resolve beside its declaring script, as a fallback address. The stored key is always root-relative.
+- A job runs where it was submitted from. A script that names another working directory is refused.
+- A project can hold steps in subdirectories, each run from its own.
+- The stored key is always root-relative, whichever reading answered.
 - Only pinning checks the filesystem for candidates.
 - Reconcile and Resolve check pin membership only, so a fresh checkout resolves before anything is restored.
 - A `name:` request also matches an existing pin whose version it admits, newest first. Two scripts naming one dependency at different precision then agree.
@@ -223,7 +228,7 @@ A pin answers for its own keys. A build dependency only has to leave its depende
 - Resolve never acquires. An absent artifact is an error naming `project restore`.
 - A `name:` request is held to an exact identity when it is pinned, not when it runs.
 - With no pin, `exec -o`, `run` and `check` resolve as they would outside a project: an installed version first, then the catalog's candidates, never a build.
-- A live-resolved mount is marked, and each caller prints what it resolved to.
+- A live-resolved or equivalent mount is marked. `run`, `exec` and `e` list what they resolved as `request → name@identity`. Outside a project they show only a request that became a different name. A `run` that is about to submit a job and a `--dry-run` leave the list out, since the job's log and the dry-run summary carry it.
 - The project's root is the exception. It is fixed, never live.
 
 ## Verification

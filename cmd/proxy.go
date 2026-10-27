@@ -27,7 +27,9 @@ Shared mode (login node):
 
 Per-job mode (compute node):
   - Run 'condatainer proxy start --via <login-node>' inside a job.
-  - Or set scheduler.proxy_perjob=true in the config to start one automatically.`,
+  - Or start one for each job automatically:
+      condatainer config append scheduler.proxy_per_job all
+    Use create, helper or run instead of all to limit it to those jobs.`,
 }
 
 // proxy start flags

@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/condatainer/condatainer/internal/project"
@@ -20,11 +19,7 @@ func projectCheck(ctx context.Context, scriptPaths []string, metaDeps []string) 
 	if len(scriptPaths) == 0 || noProjectRequested {
 		return false, nil
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return false, err
-	}
-	standing, err := project.StandingAt(cwd)
+	standing, err := standingProjectHere()
 	if err != nil {
 		return true, err
 	}
@@ -32,7 +27,6 @@ func projectCheck(ctx context.Context, scriptPaths []string, metaDeps []string) 
 		return false, nil
 	}
 	root := standing.Root
-	announceProject(root)
 	if err := oneScript(root, scriptPaths, metaDeps); err != nil {
 		return true, err
 	}
@@ -42,8 +36,10 @@ func projectCheck(ctx context.Context, scriptPaths []string, metaDeps []string) 
 		return true, err
 	}
 	if outside {
+		announceUnlocked(root, script)
 		return false, nil
 	}
+	announceProject(root)
 	if checkAutoInstall {
 		// -a installs by name into a shared images directory, which is one
 		// checkout's dependency silently replacing the artifact every other user

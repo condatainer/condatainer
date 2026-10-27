@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strings"
+	"slices"
 	"sync"
 	"time"
 
@@ -62,14 +62,15 @@ var (
 
 	keyExcludeNodes = settings.List("scheduler.exclude_nodes",
 		settings.Order(9), settings.MergeLists(),
-		settings.Split(splitNodeNames),
 		settings.Validate(validateNodeName),
 		settings.Help("Nodes jobs must not run on, as the scheduler names them. Every layer's list is merged. PBS refuses it."))
 
-	keyProxyPerJob = settings.Bool("scheduler.proxy_perjob",
-		settings.Order(10),
-		settings.Default(false),
-		settings.Help("Start a proxy to the login node inside each submitted job."))
+	keyProxyPerJob = settings.List("scheduler.proxy_per_job",
+		settings.Order(10), settings.MergeLists(),
+		settings.Validate(validateProxyJobKind),
+		settings.Accepts("a list of create, helper, run or all"),
+		settings.Suggest(ProxyAll, ProxyCreate, ProxyHelper, ProxyRun),
+		settings.Help("Job kinds that get a proxy to the login node: create (includes restore), helper, run or all."))
 )
 
 func init() {
@@ -159,17 +160,6 @@ func Account() string { return keyAccount.Get() }
 // ExcludeNodes is the nodes every submitted job is kept off, in the scheduler's own names.
 func ExcludeNodes() []string { return keyExcludeNodes.Get() }
 
-// splitNodeNames splits the text of an environment variable on commas.
-func splitNodeNames(text string) []string {
-	var out []string
-	for _, n := range strings.Split(text, ",") {
-		if n = strings.TrimSpace(n); n != "" {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
 // nodeNamePattern is a host name: letters, digits, dots, dashes and underscores. The
 // name is written into a job script, so nothing the shell or a submit file reads is allowed.
 var nodeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -197,8 +187,26 @@ func Partition() string { return keyPartition.Get() }
 // CommandTimeout is how long a scheduler command may take, 0 for no limit.
 func CommandTimeout() time.Duration { return time.Duration(keyTimeout.Get()) * time.Second }
 
-// ProxyPerJob reports whether each submitted job starts its own proxy.
-func ProxyPerJob() bool { return keyProxyPerJob.Get() }
+// The job kinds scheduler.proxy_per_job names. ProxyAll stands for every kind.
+const (
+	ProxyCreate = "create"
+	ProxyHelper = "helper"
+	ProxyRun    = "run"
+	ProxyAll    = "all"
+)
+
+func validateProxyJobKind(kind string) error {
+	switch kind {
+	case ProxyCreate, ProxyHelper, ProxyRun, ProxyAll:
+		return nil
+	}
+	return fmt.Errorf("%q is not a job kind: use create, helper, run or all", kind)
+}
+
+// ProxyPerJob reports whether each submitted job of the given kind starts its own proxy.
+func ProxyPerJob(kind string) bool {
+	return slices.ContainsFunc(keyProxyPerJob.Get(), func(k string) bool { return k == kind || k == ProxyAll })
+}
 
 // DefaultSpec is the resource request for a job that has no scheduler directives of its own.
 func DefaultSpec() ResourceSpec {

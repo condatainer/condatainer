@@ -84,12 +84,12 @@ It exits 1 on a problem. --strict also fails on a renamed or deprecated name.
 			utils.PrintError("%d problem(s) found", problems)
 			os.Exit(ExitCodeError)
 		}
-		utils.PrintMessage("Nothing wrong found in %d config file(s) and the environment", len(layers))
+		utils.PrintMessage("Config is valid: %d file(s) and the environment", len(layers))
 	},
 }
 
 func init() {
-	configCheckCmd.Flags().StringVarP(&checkLayer, "layer", "l", "", "Check only this config layer: u/user, e/extra-root, r/cnt-root")
+	configCheckCmd.Flags().StringVarP(&checkLayer, "layer", "l", "", "Check only this layer: "+layerChoices)
 	configCheckCmd.Flags().BoolVar(&checkStrict, "strict", false, "Also fail on a renamed or deprecated name")
 	configCheckCmd.Flags().BoolVar(&checkFix, "fix", false, "Rewrite renamed keys to their new names (needs -l)")
 	configCheckCmd.Flags().BoolVar(&checkKeepOld, "keep-old", false, "With --fix, keep the old name beside the new one")

@@ -46,7 +46,7 @@ func init() {
 }
 
 func runCheck(cmd *cobra.Command, args []string) error {
-	if err := applyProjectRelocation(checkProjectDir); err != nil {
+	if err := applyProjectFlag(checkProjectDir); err != nil {
 		return err
 	}
 
@@ -128,7 +128,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 // collectDeps gathers deduplicated dependencies from all scripts.
 // preSeededDeps are name/version deps from remote metadata (already normalized); they are
 // merged first so script-parsed deps deduplicate against them.
-// Relative overlay paths are resolved per-script using the scheduler WorkDir (if set) or cwd.
+// Relative overlay paths are resolved against the current working directory.
 func collectDeps(scriptPaths []string, preSeededDeps []string) ([]string, error) {
 	multiScript := len(scriptPaths) > 1
 	seen := make(map[string]bool)
@@ -152,11 +152,7 @@ func collectDeps(scriptPaths []string, preSeededDeps []string) ([]string, error)
 			return nil, fmt.Errorf("failed to parse dependencies from %s: %w", scriptPath, err)
 		}
 
-		// Prefer scheduler specs WorkDir if set, else current working directory.
 		workDir, _ := os.Getwd()
-		if specs, _ := scheduler.ReadScriptSpecsFromPath(scriptPath); specs != nil && specs.Control.WorkDir != "" {
-			workDir = specs.Control.WorkDir
-		}
 
 		for _, dep := range scriptDeps {
 			key := dep
@@ -439,7 +435,7 @@ func requireTextScript(path string) error {
 	case text:
 		return nil
 	case utils.IsImg(path):
-		return fmt.Errorf("%s is not a text file; to check an overlay image, run `condatainer overlay fscheck %s`", path, path)
+		return fmt.Errorf("%s is not a text file; to check an overlay, run `condatainer overlay fscheck %s`", path, path)
 	case utils.IsSqf(path):
 		return fmt.Errorf("%s is not a text file; to check an overlay, run `condatainer info %s --validate`", path, path)
 	}

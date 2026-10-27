@@ -158,7 +158,7 @@ var listKind = kind{
 		}
 		return text, nil
 	},
-	accepts: func(*Key) string { return "a list; add elements with config append" },
+	accepts: func(*Key) string { return "a list; replace it with config set or add an element with config append" },
 	suggest: noSuggest,
 }
 

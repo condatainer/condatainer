@@ -234,7 +234,7 @@ func reportFreeze(res freeze.Result, source string, removed bool) {
 func init() {
 	overlayCmd.AddCommand(overlayFreezeCmd)
 	f := overlayFreezeCmd.Flags()
-	f.StringVarP(&freezeDescription, "description", "d", "", "Description recorded in the overlay")
+	f.StringVarP(&freezeDescription, "desc", "d", "", "Description recorded in the overlay")
 	settings.AddFlag(f, "build.block_size", "block-size", settings.Usage("SquashFS block size (default: build.block_size)"))
 	f.BoolVar(&freezeUseTmp, "use-tmp", false, "Pack from a temporary copy (faster; needs space for the whole overlay; not for an .img with a snapshot beside it)")
 	f.BoolVar(&freezeKeep, "keep", false, "Keep the source .img after a bare freeze (default: remove it)")

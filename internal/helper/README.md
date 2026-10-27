@@ -47,8 +47,8 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 
 ## Binds
 
-- A `#BIND:` value reaches the wrapper's shell single-quoted, as one word. A space, a quote or a command substitution in it, or in a `#PARAM:` default, is text and never runs.
-- `exec` expands `$VAR` and `${VAR}` when the container starts, on the node the job runs on.
+- A `#BIND:` value reaches the wrapper's shell as one word. Only `$VAR` and `${VAR}` in it expand, on the node the job runs on.
+- A space, a quote or a command substitution in it, or in a `#PARAM:` default, is text and never runs.
 - A source under `$CNT_HELPER_STATE_DIR` is created before submission, since the state directory is known on the login node.
 
 ## Overlays
@@ -89,7 +89,7 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 
 - The compute node appends `start`, `ready`, `done` and message events to one `events` file, and the job's output goes to `job.log`. The login node reads them.
 - They sit on shared storage because the two never share a host.
-- `_server_ready` waits for the port to accept connections before writing `ready`, so `ready` means listening.
+- `_helper ready` waits for the port to accept connections before writing `ready`, so `ready` means listening.
   - The wait has a timeout so a service that never binds cannot hang the script. It reports ready with a warning.
   - Port `0` with an external URL needs no local port and no tunnel.
 - A headless wrapper exports the spec's resource variables, so `NCPU` and the rest are set as in a scheduler job.
@@ -106,7 +106,7 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 
 - A headless wrapper has no scheduler to ask.
 - Several login nodes can share one state directory, so a pid means nothing off its own host.
-- The wrapper starts `_helper_hold`, which takes an `fcntl` lock on `{state dir}/lock` and records the owner.
+- The wrapper starts `_helper hold`, which takes an `fcntl` lock on `{state dir}/lock` and records the owner.
   - Locks are visible from every host, and the kernel drops one when its holder dies, however it dies.
   - The holder ignores TERM, so a stop's group signal cannot release the lock before `done` is recorded.
 - `HeadlessLiveness` has three answers.

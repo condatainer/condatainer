@@ -67,6 +67,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - Use absolute paths and `config.Get*Dir()` for standard locations.
 - Create files and dirs with `utils.CreateFileWritable`, `MkdirAllShared`, `MakeExecutable`. Never a bare `os.Chmod(path, utils.Perm*)`.
 - Global config singleton: `config.Global`.
+- A command that writes a job script calling condatainer back must repeat the flags that matter. `run` copies every flag that was typed except those in `runJobFlagNames`. `create`, `project restore` and `helper run` keep a rule table (`createJobRules`, `restoreJobRules`, `helper.RunFlagRoutes`), and a test fails when a flag has no rule.
 - After editing Go files, run `gofmt -l .` and fix what it lists with `gofmt -w`.
 
 ## Writing rules

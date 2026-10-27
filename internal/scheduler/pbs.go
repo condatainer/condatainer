@@ -652,7 +652,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 			// Emit two chunks: nFullNodes with ceil(Ntasks/Nodes) tasks, one remainder node.
 			if rs.Ntasks > 0 && nodes > 0 && rs.Ntasks%nodes != 0 {
 				if rs.Gpu != nil && rs.Gpu.Count > 0 {
-					return "", fmt.Errorf("PBS: GPU jobs require uniform task distribution (Ntasks=%d not divisible by Nodes=%d)", rs.Ntasks, nodes)
+					return "", fmt.Errorf("PBS: GPU jobs need the same number of ranks on every node (%d ranks over %d nodes)", rs.Ntasks, nodes)
 				}
 				tasksPerNodeCeil := (rs.Ntasks + nodes - 1) / nodes
 				nFullNodes := rs.Ntasks / tasksPerNodeCeil

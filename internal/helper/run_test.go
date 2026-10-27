@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -76,7 +77,7 @@ func TestWrapperForwardsTermAndWaits(t *testing.T) {
 		}
 		return p
 	}
-	write("condatainer", "#!/bin/bash\ncase $1 in\n_pick_port) echo 12345;;\n_server_done) echo \"done $*\" >> "+log+";;\nesac\n")
+	write("condatainer", "#!/bin/bash\ncase \"$1 $2\" in\n\"_helper pick-port\") echo 12345;;\n\"_helper done\") echo \"done $*\" >> "+log+";;\nesac\n")
 	child := write("child.sh", "#!/bin/bash\ntrap 'echo got-term >> "+log+"; sleep 1; echo exited >> "+log+"; exit 0' TERM\necho started >> "+log+"\nwhile :; do sleep 0.1; done\n")
 
 	stateDir := filepath.Join(dir, "state")
@@ -110,21 +111,21 @@ func TestWrapperForwardsTermAndWaits(t *testing.T) {
 
 	data, _ := os.ReadFile(log)
 	got := string(data)
-	for _, want := range []string{"got-term", "exited", "done _server_done --exit-code 130"} {
+	for _, want := range []string{"got-term", "exited", "done _helper done --exit-code 130"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q; events:\n%s", want, got)
 		}
 	}
-	if strings.Index(got, "exited") > strings.Index(got, "done _server_done") {
+	if strings.Index(got, "exited") > strings.Index(got, "done _helper done") {
 		t.Fatalf("done was recorded before the container exited:\n%s", got)
 	}
 }
 
 func TestHelperBodyRecordsTheNodeBeforeSettingUp(t *testing.T) {
 	body := buildHelperCommandBody("t-1", "t", "/w", "/w/state", time.Hour, nil, nil, "true", false)
-	started, port := strings.Index(body, "condatainer _server_started\n"), strings.Index(body, "_pick_port")
+	started, port := strings.Index(body, "condatainer _helper started\n"), strings.Index(body, "_helper pick-port")
 	if started < 0 || started > port {
-		t.Errorf("_server_started should come before _pick_port:\n%s", body)
+		t.Errorf("_helper started should come before _helper pick-port:\n%s", body)
 	}
 }
 
@@ -147,6 +148,59 @@ func TestGenerateWrapperHeadlessExportsResources(t *testing.T) {
 	for _, want := range []string{"export NCPU=4\n", "export CNT_NCPU=4\n", "export MEM=8192\n", "export OMP_NUM_THREADS=4\n"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("job.sh lacks %q:\n%s", want, data)
+		}
+	}
+}
+
+// A flag nobody routed is one the job might silently drop.
+func TestEveryRunFlagHasARoute(t *testing.T) {
+	var out strings.Builder
+	PrintRunFlags(&out, nil)
+	printed := map[string]bool{}
+	for _, m := range regexp.MustCompile(`--([a-z][a-z-]*)`).FindAllStringSubmatch(out.String(), -1) {
+		printed[m[1]] = true
+		if _, ok := RunFlagRoutes[m[1]]; !ok {
+			t.Errorf("--%s has no entry in RunFlagRoutes: say where it takes effect", m[1])
+		}
+	}
+	for name := range RunFlagRoutes {
+		if !printed[name] {
+			t.Errorf("RunFlagRoutes lists --%s, which helper run does not print", name)
+		}
+	}
+}
+
+// A launch that ignores the project makes the job's exec ignore it too.
+func TestRunPassesNoProjectToExec(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "demo")
+	if err := os.WriteFile(script, []byte("#!/bin/bash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, noProject := range []bool{false, true} {
+		cmd, err := buildCondatainerCmd(RunOptions{ScriptPath: script, NoProject: noProject}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(cmd, " --no-project"); got != noProject {
+			t.Errorf("NoProject=%v: command %q has --no-project = %v", noProject, cmd, got)
+		}
+	}
+}
+
+// A helper that asks for a GPU makes its exec load the GPU even with autoload_gpu off.
+func TestRunPassesLoadGPUToExecWhenAGPUIsRequested(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "demo")
+	if err := os.WriteFile(script, []byte("#!/bin/bash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, count := range []int{0, 1} {
+		spec := &scheduler.ResourceSpec{Gpu: &scheduler.GpuSpec{Count: count}}
+		cmd, err := buildCondatainerCmd(RunOptions{ScriptPath: script}, spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(cmd, " --load-gpu"); got != (count > 0) {
+			t.Errorf("GPU count %d: command %q has --load-gpu = %v", count, cmd, got)
 		}
 	}
 }

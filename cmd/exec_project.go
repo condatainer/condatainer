@@ -24,7 +24,7 @@ func standingProject() (*project.Standing, error) {
 
 // projectOverlays resolves `-o` arguments: through the lock of the project the caller is standing in, else against what is installed.
 //   - `exec` and `e` share it.
-//   - There is no flag either way: `--project DIR` belongs to the commands that act *on* a project, and standing somewhere else is the opt-out.
+//   - `--no-project` leaves the lock out, and so does standing outside the project.
 func projectOverlays(ctx context.Context, overlays []string) ([]string, error) {
 	if len(overlays) == 0 {
 		return overlays, nil

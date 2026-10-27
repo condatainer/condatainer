@@ -93,6 +93,24 @@ func ValidateHelperParamConflicts(params []HelperParam) error {
 	return nil
 }
 
+// RunFlagRoutes says, for every flag `helper run` accepts, where it takes effect.
+//   - RouteExec: buildCondatainerCmd writes it into the `condatainer exec` line the job runs.
+//   - RouteJob: it sets the job's resources or scheduler options, not the exec line.
+//   - RouteLauncher: only the launching command acts on it.
+//   - A new flag must be listed here, and TestEveryRunFlagHasARoute fails until it is.
+var RunFlagRoutes = map[string]string{
+	"overlay": RouteExec, "env-img": RouteExec, "cwd": RouteExec, "no-project": RouteExec, "gpu": RouteExec,
+	"cpu": RouteJob, "mem": RouteJob, "time": RouteJob, "account": RouteJob, "partition": RouteJob, "exclude-nodes": RouteJob,
+	"new": RouteLauncher, "wait": RouteLauncher,
+}
+
+// The places a `helper run` flag can take effect, as RunFlagRoutes values.
+const (
+	RouteExec     = "exec"
+	RouteJob      = "job"
+	RouteLauncher = "launcher"
+)
+
 // PrintRunFlags prints the flags `helper run` accepts after the helper name, in one list for every help screen.
 //   - spec fills in the defaults of a helper. Nil prints the flags without them.
 func PrintRunFlags(w io.Writer, spec *scheduler.ResourceSpec) {

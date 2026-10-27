@@ -1536,6 +1536,17 @@ func newProjectRestoreCmd() *cobra.Command {
 	return cmd
 }
 
+// restoreJobRules says, for every restore flag, whether a submitted rebuild repeats it.
+//   - A new restore flag must be listed here, and TestEveryRestoreFlagHasAJobRule fails until it is.
+//   - A repeated flag also goes into restoreCommand (internal/project/restore), which builds the job's command from Options.
+var restoreJobRules = map[string]string{
+	"no-prebuilt": jobRepeats, "keep-build-deps": jobRepeats, "replace": jobRepeats,
+	"only":      "the command builder sets it to the artifact the job is for",
+	"dry-run":   "a plan is shown and nothing is submitted",
+	"no-submit": "the job is the submission",
+	"json":      "output format of this run",
+}
+
 // reportPlan prints a --dry-run plan and fails if it could not run.
 func reportPlan(plan *restore.Plan, jsonOutput bool) error {
 	if jsonOutput {

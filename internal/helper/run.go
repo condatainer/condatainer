@@ -175,6 +175,11 @@ func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string,
 	var parts []string
 	parts = append(parts, shellQuote(exe), "exec", "--stop-grace", strconv.Itoa(stopGraceSecs))
 
+	// exec otherwise follows the project at the job's directory, which could give the helper a root the launch asked to ignore.
+	if opts.NoProject {
+		parts = append(parts, "--no-project")
+	}
+
 	// Named read-only overlays (SquashFS) — code-server, igv, etc.
 	for _, ol := range opts.Overlays {
 		parts = append(parts, "-o", shellQuote(ol))

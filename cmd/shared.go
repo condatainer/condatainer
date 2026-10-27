@@ -20,6 +20,7 @@ import (
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // ============================================================================
@@ -304,22 +305,31 @@ func RegisterCommonFlags(cmd *cobra.Command, flags *CommonFlags) {
 	cmd.FParseErrWhitelist.UnknownFlags = true
 }
 
-// KnownFlags returns a map of all known condatainer flags
-func KnownFlags() map[string]bool {
-	return map[string]bool{
-		"--overlay": true, "-o": true,
-		"--writable": true, "-w": true,
-		"--env":      true,
-		"--bind":     true,
-		"--fakeroot": true, "-f": true,
-		"--gpu":        true,
-		"--activation": true,
-		"--stop-grace": true,
-		"--debug":      true,
-		"--no-submit":  true,
-		"--quiet":      true, "-q": true,
-		"--yes": true, "-y": true,
+// flagTokens maps every flag a command registered, as it is typed (--name and -s), to whether a value follows it as the next argument.
+//   - ParseCommandArgs and parseEArgs read os.Args themselves to recover the flags cobra dropped for Apptainer, so they need the command's own flags to tell the two apart.
+//   - A flag is known once it is registered, so a new flag needs no change here.
+func flagTokens(cmd *cobra.Command) map[string]bool {
+	cmd.InheritedFlags() // merges the parents' persistent flags into cmd.Flags()
+	tokens := map[string]bool{}
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		takesValue := f.NoOptDefVal == ""
+		tokens["--"+f.Name] = takesValue
+		if f.Shorthand != "" {
+			tokens["-"+f.Shorthand] = takesValue
+		}
+	})
+	return tokens
+}
+
+// ownFlag reports whether arg is one of the command's own flags, and whether the next argument is its value.
+func ownFlag(tokens map[string]bool, arg string) (own, valueFollows bool) {
+	if takesValue, ok := tokens[arg]; ok {
+		return true, takesValue
 	}
+	if name, _, hasValue := strings.Cut(arg, "="); hasValue {
+		_, own = tokens[name]
+	}
+	return own, false
 }
 
 // parseActivation validates a raw --activation value against
@@ -358,10 +368,11 @@ func ExitWithError(format string, a ...interface{}) {
 	os.Exit(ExitCodeError)
 }
 
-// ParseCommandArgs parses arguments from os.Args after a given subcommand
+// ParseCommandArgs parses arguments from os.Args after cmd's name
 // Returns: commands (positional args), apptainerFlags (unknown flags for apptainer)
-func ParseCommandArgs(subcommand string) ([]string, []string) {
+func ParseCommandArgs(cmd *cobra.Command) ([]string, []string) {
 	var commands, apptainerFlags []string
+	subcommand := cmd.Name()
 
 	// Find where subcommand appears in os.Args
 	cmdIdx := -1
@@ -377,7 +388,7 @@ func ParseCommandArgs(subcommand string) ([]string, []string) {
 		return commands, apptainerFlags
 	}
 
-	knownFlags := KnownFlags()
+	tokens := flagTokens(cmd)
 
 	// Parse from after subcommand in os.Args
 	commandStarted := false
@@ -390,10 +401,9 @@ func ParseCommandArgs(subcommand string) ([]string, []string) {
 			continue
 		}
 
-		// Skip known flags (already handled by cobra)
-		if knownFlags[arg] || isKnownFlagWithEquals(knownFlags, arg) {
-			// Value flags (space-separated)
-			if knownFlags[arg] && needsValue(arg) && i+1 < len(os.Args) {
+		// Skip the command's own flags (already handled by cobra)
+		if own, valueFollows := ownFlag(tokens, arg); own {
+			if valueFollows && i+1 < len(os.Args) {
 				i++ // Skip value
 			}
 			continue
@@ -411,24 +421,6 @@ func ParseCommandArgs(subcommand string) ([]string, []string) {
 	}
 
 	return commands, apptainerFlags
-}
-
-func isKnownFlagWithEquals(knownFlags map[string]bool, arg string) bool {
-	if !strings.Contains(arg, "=") {
-		return false
-	}
-	// Check if prefix matches a known flag
-	parts := strings.SplitN(arg, "=", 2)
-	return knownFlags[parts[0]]
-}
-
-func needsValue(flag string) bool {
-	valueFlags := map[string]bool{
-		"-o": true, "--overlay": true,
-		"--env": true, "--bind": true,
-		"--activation": true, "--stop-grace": true,
-	}
-	return valueFlags[flag]
 }
 
 // ensureRootBaseImage resolves the root a caller did not name: the standing project's

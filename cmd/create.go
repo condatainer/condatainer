@@ -51,6 +51,23 @@ var (
 	}
 )
 
+// jobRepeats marks a flag in a job rule table that the job's command repeats. Any other text is the reason it does not.
+const jobRepeats = "repeated"
+
+// createJobRules says, for every create flag, whether a submitted build repeats it.
+//   - A new create flag must be listed here, and TestEveryCreateFlagHasAJobRule fails until it is.
+//   - A repeated flag also goes into createJobFlags. The compression flags are repeated through compFlagNames.
+var createJobRules = map[string]string{
+	"source": jobRepeats, "layer": jobRepeats, "channel": jobRepeats,
+	"block-size": jobRepeats, "data-block-size": jobRepeats,
+	"name": "the job builds by target", "prefix": "the job builds by target",
+	"file": "the job builds by target", "from": "the job builds by target",
+	"update": "the command builder adds it", "store": "the command builder adds it",
+	"no-prebuilt":        "the command builder adds it",
+	"no-submit":          "the job is the submission",
+	"always-submit-data": "decides whether to submit, not what is built",
+}
+
 // createJobFlags are the flags a submitted build has to repeat: the node re-runs
 // create from the name alone, so anything that changes what is built or where it
 // lands has to travel with it. Submission and mode flags are left out — the job

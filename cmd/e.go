@@ -84,7 +84,7 @@ func runE(cmd *cobra.Command, args []string) error {
 	}
 
 	// STRICT parsing: everything before -- is overlay/flag, after is command
-	overlays, commands, apptainerFlags, err := parseEArgs(args)
+	overlays, commands, apptainerFlags, err := parseEArgs(cmd, args)
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func runE(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseEArgs(args []string) (overlays, commands, apptainerFlags []string, err error) {
+func parseEArgs(cmd *cobra.Command, args []string) (overlays, commands, apptainerFlags []string, err error) {
 	// Parse os.Args directly to catch unknown flags that Cobra filtered out
 	eIdx := -1
 	for i, arg := range os.Args {
@@ -216,17 +216,7 @@ func parseEArgs(args []string) (overlays, commands, apptainerFlags []string, err
 		}
 	}
 
-	knownFlags := map[string]bool{
-		"--read-only": true, "-r": true,
-		"--no-autoload": true, "-n": true,
-		"--env":      true,
-		"--bind":     true,
-		"--fakeroot": true, "-f": true,
-		"--activation": true,
-		"--debug":      true,
-		"--quiet":      true, "-q": true,
-		"--yes": true, "-y": true,
-	}
+	tokens := flagTokens(cmd)
 
 	commandStarted := false
 
@@ -262,10 +252,9 @@ func parseEArgs(args []string) (overlays, commands, apptainerFlags []string, err
 
 		// Before -- (overlay/flag section)
 
-		// Skip known flags (already handled by cobra)
-		if knownFlags[arg] || isKnownFlagWithEquals(knownFlags, arg) {
-			// Check if flag needs value
-			if (arg == "--env" || arg == "--bind" || arg == "--activation") && i+1 < len(os.Args) {
+		// Skip the command's own flags (already handled by cobra)
+		if own, valueFollows := ownFlag(tokens, arg); own {
+			if valueFollows && i+1 < len(os.Args) {
 				i++ // Skip value
 			}
 			continue

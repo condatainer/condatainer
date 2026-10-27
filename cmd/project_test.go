@@ -929,3 +929,18 @@ func TestPrintSymlinksWarnsForScriptsAndNotesFolders(t *testing.T) {
 		t.Errorf("nothing skipped printed %q", out)
 	}
 }
+
+// A flag nobody classified is one a submitted rebuild might silently drop.
+func TestEveryRestoreFlagHasAJobRule(t *testing.T) {
+	cmd := newProjectRestoreCmd()
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if _, ok := restoreJobRules[f.Name]; !ok && f.Name != "help" {
+			t.Errorf("--%s has no entry in restoreJobRules: say whether a submitted rebuild repeats it", f.Name)
+		}
+	})
+	for name := range restoreJobRules {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("restoreJobRules lists --%s, which restore does not have", name)
+		}
+	}
+}

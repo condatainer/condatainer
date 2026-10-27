@@ -1,0 +1,53 @@
+---
+title: CondaTainer
+description: A rootless CLI that packages tools, data, and Conda environments into portable images that run seamlessly on HPC.
+template: splash
+hero:
+  title: '<span class="logo-conda">Conda</span><span class="logo-tainer">Tainer</span>'
+  tagline: A rootless CLI that packages <em>tools</em>, <em>data</em>, and <em>Conda environments</em> into portable images that run seamlessly on HPC.
+  actions:
+    - text: Get started
+      link: get_started/installation/
+      icon: right-arrow
+    - text: Quick start
+      link: get_started/quick_start/
+      variant: secondary
+    - text: View on GitHub
+      link: https://github.com/condatainer/condatainer
+      variant: minimal
+      icon: github
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## Why CondaTainer
+
+<div class="numbered-cards">
+	<CardGrid>
+		<Card title="Modular">
+			Conda environments and data as separate images that work together.
+		</Card>
+		<Card title="Reproducible">
+			Pin exact versions per project and share them through OCI registries.
+		</Card>
+		<Card title="Scheduler Native">
+			Works with HPC schedulers such as Slurm.
+		</Card>
+		<Card title="Web-App Ready">
+			Run *RStudio*, *code-server*, *Jupyter* and *VNC* on compute nodes from a dashboard.
+		</Card>
+	</CardGrid>
+</div>
+
+## Guide
+
+<CardGrid>
+	<LinkCard title="Installation" description="Install CondaTainer for personal use on Linux." href="get_started/installation/" />
+	<LinkCard title="Quick start" description="Create software and data as overlays, run them, and run a script as a job." href="get_started/quick_start/" />
+	<LinkCard title="Concept" description="Understand how CondaTainer uses overlays to build reproducible containers." href="guides/concept/" />
+	<LinkCard title="Module overlay" description="Find, create, run and manage module overlays of software and data." href="guides/overlays/" />
+	<LinkCard title="Environment overlay" description="Keep a writable overlay, add packages and other software to it, and freeze it." href="guides/environments/" />
+	<LinkCard title="Scheduler" description="Set resources, pass arguments, run arrays and chain jobs with condatainer run." href="guides/scheduler/" />
+	<LinkCard title="Helper" description="Run web apps such as RStudio and VS Code on a compute node and use them in your own browser." href="guides/helper/" />
+	<LinkCard title="Project" description="Pin the exact overlays a project's scripts use, restore them on another machine, and publish them." href="guides/project/" />
+</CardGrid>

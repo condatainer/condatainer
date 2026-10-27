@@ -773,9 +773,9 @@ func (b *BuildObject) resolveResourceSpec() error {
 	}
 	b.scriptSpecs = specs
 
-	// Passthrough mode: scheduler directives found but resource parsing failed (unsupported flags).
+	// Scheduler directives were found but resource parsing failed (unsupported flags).
 	// Build cannot proceed without a normalized resource spec.
-	if scheduler.IsPassthrough(specs) {
+	if scheduler.IsUnparsed(specs) {
 		return fmt.Errorf("build script %s has unsupported scheduler directives; remove or fix them", b.buildSource)
 	}
 

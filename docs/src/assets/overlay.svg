@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 310" role="img" aria-labelledby="ov-title ov-desc" font-family="inherit">
+  <title id="ov-title">Overlays merged into one container</title>
+  <desc id="ov-desc">Four overlay files are stacked: an environment overlay on top, then a data overlay, an app overlay and an OS overlay. CondaTainer merges them into one directory tree inside the container: the OS overlay at the root, the app and data overlays under /cnt, and the environment overlay at /cnt_env.</desc>
+  <style>
+    .ov-box { fill: var(--sl-color-gray-6, #f1f2f6); stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1.5; }
+    .ov-os { fill: var(--sl-color-gray-5, #c3c6d0); stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1.5; }
+    .ov-app { fill: var(--sl-color-gray-6, #f1f2f6); stroke: var(--sl-color-gray-3, #5c606d); stroke-width: 1.5; }
+    .ov-data { fill: var(--cnt-green-low, #dcefd3); stroke: var(--cnt-green, #4a8a33); stroke-width: 1.5; }
+    .ov-env { fill: var(--sl-color-accent-low, #dde4ff); stroke: var(--sl-color-accent, #4a63d6); stroke-width: 1.5; }
+    .ov-sw-os { fill: var(--sl-color-gray-5, #c3c6d0); stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1; }
+    .ov-sw-app { fill: var(--sl-color-gray-6, #f1f2f6); stroke: var(--sl-color-gray-3, #5c606d); stroke-width: 1.5; }
+    .ov-sw-data { fill: var(--cnt-green, #4a8a33); }
+    .ov-sw-env { fill: var(--sl-color-accent, #4a63d6); }
+    .ov-text { fill: var(--sl-color-text, #2b2e38); font-size: 14px; }
+    .ov-strong { fill: var(--sl-color-white, #14161c); font-size: 16px; font-weight: 600; }
+    .ov-small { fill: var(--sl-color-gray-3, #5c606d); font-size: 13px; }
+    .ov-mono { fill: var(--sl-color-text, #2b2e38); font-size: 14px; font-family: var(--sl-font-mono, monospace); }
+    .ov-guide { fill: none; stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1.5; }
+    .ov-arrow { fill: none; stroke: var(--sl-color-accent, #4a63d6); stroke-width: 2; }
+    .ov-head { fill: var(--sl-color-accent, #4a63d6); }
+  </style>
+  <defs>
+    <marker id="ov-arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="ov-head"/>
+    </marker>
+  </defs>
+
+  <!-- overlays: the top layer first -->
+  <text class="ov-small" x="28" y="26">Overlays: stacked layers</text>
+  <rect class="ov-env" x="28" y="40" width="280" height="56" rx="8"/>
+  <text class="ov-strong" x="44" y="64">Environment overlay</text>
+  <text class="ov-small" x="44" y="84">env.img</text>
+  <text class="ov-small" x="292" y="84" text-anchor="end">writable</text>
+  <rect class="ov-data" x="28" y="106" width="280" height="56" rx="8"/>
+  <text class="ov-strong" x="44" y="130">Data overlay</text>
+  <text class="ov-small" x="44" y="150">grch38/genome/gencode</text>
+  <text class="ov-small" x="292" y="150" text-anchor="end">read-only</text>
+  <rect class="ov-app" x="28" y="172" width="280" height="56" rx="8"/>
+  <text class="ov-strong" x="44" y="196">App overlay</text>
+  <text class="ov-small" x="44" y="216">samtools/1.22</text>
+  <text class="ov-small" x="292" y="216" text-anchor="end">read-only</text>
+  <rect class="ov-os" x="28" y="238" width="280" height="56" rx="8"/>
+  <text class="ov-strong" x="44" y="262">OS overlay</text>
+  <text class="ov-small" x="44" y="282">ubuntu24/base</text>
+  <text class="ov-small" x="292" y="282" text-anchor="end">read-only</text>
+
+  <!-- merge -->
+  <path class="ov-arrow" d="M316 167 H372" marker-end="url(#ov-arrowhead)"/>
+  <text class="ov-small" x="344" y="156" text-anchor="middle">merge</text>
+
+  <!-- the container's view: the merged directory tree -->
+  <rect class="ov-box" x="380" y="14" width="352" height="280" rx="10"/>
+  <text class="ov-strong" x="400" y="42">Container</text>
+  <text class="ov-small" x="400" y="62">one directory tree for the program</text>
+
+  <!-- tree guides -->
+  <path class="ov-guide" d="M434 108 V255 M434 127 H444 M434 159 H444 M434 255 H444 M456 169 V223 M456 191 H468 M456 223 H468"/>
+
+  <text class="ov-mono" x="424" y="100">/</text>
+
+  <rect class="ov-sw-os" x="400" y="120" width="14" height="14" rx="3"/>
+  <text class="ov-mono" x="448" y="132">bin/  etc/  usr/  …</text>
+  <text class="ov-small" x="712" y="132" text-anchor="end">OS</text>
+
+  <text class="ov-mono" x="448" y="164">cnt/</text>
+
+  <rect class="ov-sw-app" x="400" y="184" width="14" height="14" rx="3"/>
+  <text class="ov-mono" x="472" y="196">samtools/1.22/</text>
+  <text class="ov-small" x="712" y="196" text-anchor="end">App</text>
+
+  <rect class="ov-sw-data" x="400" y="216" width="14" height="14" rx="3"/>
+  <text class="ov-mono" x="472" y="228">grch38/genome/gencode/</text>
+  <text class="ov-small" x="712" y="228" text-anchor="end">Data</text>
+
+  <rect class="ov-sw-env" x="400" y="248" width="14" height="14" rx="3"/>
+  <text class="ov-mono" x="448" y="260">cnt_env/</text>
+  <text class="ov-small" x="712" y="260" text-anchor="end">Environment</text>
+
+</svg>

@@ -1,0 +1,10 @@
+# Builds the tagged versions; the latest docs are on GitHub Pages.
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    nodejs: "22"
+  commands:
+    - cd docs && npm ci && npm run build
+    - mkdir -p $READTHEDOCS_OUTPUT/html && cp -r docs/dist/. $READTHEDOCS_OUTPUT/html/

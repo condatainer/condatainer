@@ -1,0 +1,299 @@
+---
+title: Custom Helper
+description: Write a script that starts your own web service as a helper.
+---
+
+A [helper](../guides/helper.mdx) is a script that launches a service (such as a web application) and reports when it is ready.
+
+CondaTainer handles the rest: it finds a free port, mounts required overlays, submits the job, and establishes SSH tunnels, which allows your browser directly connects to the service.
+
+## Add a Helper
+
+Place your script in a helper scripts directory. Name the file without an extension:
+
+```bash
+condatainer helper path  # Show the helper scripts directories
+cp my-service "<the writable directory it shows>"
+condatainer helper list  # Verify my-service appears
+condatainer helper run my-service
+```
+
+```bash title="my-service"
+#!/bin/bash
+#DESC: My Custom Service
+
+#NCPU: 2
+#MEM: 8G
+#TIME: 4:00:00
+
+my-service \
+    --host "${CNT_HELPER_BIND_ADDR:-127.0.0.1}" \
+    --port "$CNT_HELPER_PORT" &
+PID=$!
+
+condatainer _helper ready --port "$CNT_HELPER_PORT"
+
+wait $PID
+```
+
+- The first line must be `#!/bin/bash`, `#!/usr/bin/bash`, `#!/usr/bin/env <interpreter>` or `#!/bin/env <interpreter>`, such as `#!/usr/bin/env python3`. Any other first line is refused. The file needs no executable permission.
+- A helper is one file. CondaTainer copies the script when the job is submitted and runs the copy, so it cannot read files that sit beside it, and changing the file later does not affect a job already submitted.
+- Always bind your application port to `$CNT_HELPER_PORT` and bind address to `$CNT_HELPER_BIND_ADDR`. This defaults to `127.0.0.1` and resolves to `0.0.0.0` only when `helper.connect` is configured to `direct`.
+- The helper job runs for as long as your script executes. Use `wait $PID` when supervising a background service process, or `sleep infinity` if no single process controls the lifecycle.
+- To distribute your helper across a team, see [Share Helpers](custom_source.mdx#share-helpers).
+
+## Headers
+
+Headers are written one per line as `#KEY: value`, in the comment lines at the top of the script, before its first command. The value ends at the first `##`, and the text after `##` is a comment. A single `#` belongs to the value.
+
+- A header below the first command is ignored, and CondaTainer prints a warning with the line.
+
+### Resources
+
+| Header | Meaning |
+|---|---|
+| `#NCPU:` | CPUs, such as `4`. |
+| `#MEM:` | Memory, such as `16G`. A bare number is in GB. |
+| `#TIME:` | Walltime, such as `12:00:00`, `12h`. A bare number is in hours. |
+| `#GPU:` | GPUs, as a count such as `2`. The count is at least 1. |
+
+These headers set default resource requests for the helper. They can be overwritten using `-c`, `-m`, `-t`, and `-g`.
+
+A value that does not read as shown, such as `#NCPU: many` or `#GPU: 0`, stops the launch and names the line.
+
+### Description
+
+The `#DESC:` header provides a one-line summary displayed by `condatainer helper avail`, `condatainer helper list --desc` and within the helper web dashboard.
+
+### Module Overlays (Read-Only)
+
+A helper's software usually comes from [module overlays](../guides/overlays.md), such as `igv/2.19.7`, `code-server` or the OS overlay `xfce4`. `#DEP:` lists them, one per line:
+
+```bash
+#DEP: xfce4
+#DEP: igv/{IGV}
+```
+
+- The last `#DEP:` line is topmost in the mount stack.
+- Missing overlays are built before the job is submitted.
+- `{IGV}` is replaced by the value of a [parameter](#parameters), so users can pick the version.
+
+#### Naming Module Overlays
+
+An **app**-overlay name can be abbreviated. It resolves using the same rules as `condatainer create` and `exec -o`:
+
+| Declared Name | Resolved Mount |
+|---|---|
+| `igv/2.19.7` | Exact version specified. |
+| `igv/2.19` | Newest installed matching 2.19.x. |
+| `code-server` | Newest installed version. |
+| `xfce4` | Matched under the default distribution root (e.g., `ubuntu24/xfce4`). |
+
+- Version matching evaluates whole dot-separated components: `openjdk/17` matches `17.0.18`, but will not match `170.1`.
+- CondaTainer checks locally installed overlays first. The newest installed match is mounted even if a newer remote recipe exists. Missing overlays are auto-created.
+- When running within a locked [Project](../guides/project.mdx), overlay names resolve to the project's pinned builds.
+
+### Environment Overlay (Writable)
+
+A writable [environment overlay](../guides/environments.md) is the project's own `env.img`, where they install Conda packages during the session. `#ENV_PACKAGES:` asks for one:
+
+```bash
+#ENV_PACKAGES: python={PYTHON} jupyterlab
+```
+
+| Header | Meaning |
+|---|---|
+| `#ENV_PACKAGES:` | Conda packages the overlay needs. With no value, the helper only requires a writable overlay. |
+| `#ENV_POST_INSTALL:` | A single command to execute inside the container after packages are installed into a newly created overlay. |
+
+- By default, use `env.img` under current directory. Without one, CondaTainer offers to create it and install the `#ENV_PACKAGES:` packages.
+- An existing overlay is checked by package name only.
+- An unset `{KEY}` with a `#VALUE:` list is chosen from that list when the overlay is created.
+- Use it when users need to install packages during their interactive sessions. Use module overlays for a fixed tool.
+
+### Parameters
+
+`#PARAM:` declares parameters that users can set when launching the helper:
+
+```bash
+#PARAM: PASSWORD=? --password,-P "Password for authentication"
+```
+
+- Syntax format: `KEY=default --long,-s "Description"`. Either flag may be omitted.
+- The resolved value is exported to the script environment as `$KEY`, and substitutes dynamically for `{KEY}` in `#DEP:`, `#ENV_PACKAGES:`, and `#BIND:` headers.
+- `KEY` is upper case letters, digits and underscores, and does not start with a digit. It cannot start with `CNT_`, and it cannot be `NCPU`, `MEM`, `MEM_GB`, `NNODE`, `NRANK`, `NRANK_PER_NODE`, `OMP_NUM_THREADS`, `PATH`, `HOME` or `TMPDIR`.
+
+Key and value setup:
+
+- `KEY=value`: Declares a fixed default value.
+- `KEY=?`: Uses the first entry of the parameter's `#VALUE:` list as the default. If no `#VALUE:` list is defined, the default is empty.
+- `KEY=`: Marks the parameter as required. If omitted on the command line, CondaTainer prompts for it interactively.
+- Reserved CLI flags cannot be used for custom parameters: `-c`, `-m`, `-t`, `-g`, `-e`, `-o`, `-w`, `-A`, `-p`, `--cpu`, `--mem`, `--time`, `--gpu`, `--env-img`, `--overlay`, `--cwd`, `--account`, `--partition`, `--new`, `--no-project`, `--wait`.
+
+The `#VALUE:` header enumerates allowed values for a parameter:
+
+```bash
+#VALUE: VERSION=3.13,3.12,3.11       ## Comma-separated: newest first; first entry is the default
+#VALUE: MODE=light | full            ## Pipe-separated: preserves declared order
+```
+
+- Allowed values are displayed in `--help` output and presented as selectable options during interactive prompts.
+- When a user supplies a value via a flag, it must match an entry in `#VALUE:`. Short prefix versions (e.g., `3.12`) automatically resolve to the first matching entry.
+
+Combining parameters, value lists, and script usage:
+
+```bash
+#DEP: igv/{IGV}
+#PARAM: IGV=? --igv "IGV version"
+#VALUE: IGV=2.19.7,2.19.6,2.17.4
+
+echo "Starting IGV $IGV"
+```
+
+```bash
+condatainer helper run igv              # IGV 2.19.7 (first entry)
+condatainer helper run igv --igv 2.17   # IGV 2.17.4
+```
+
+- `{IGV}` in a header is substituted with the chosen value before the job is submitted.
+- `$IGV` in the script body contains the same value when the script runs.
+
+### Mounts and Instances
+
+| Header | Meaning |
+|---|---|
+| `#BIND:` | Additional host path bind mount: `src:dest` or `src:dest:opts`. Environment variables (`$VAR`) are expanded on the compute node. |
+| `#SINGLETON:` | Restricts the helper to at most one active running instance per user. Write the line alone or as `#SINGLETON: true`; leave it out to allow several. Any other value, `false` included, is an error. |
+
+```bash
+#BIND: $CNT_HELPER_STATE_DIR/vnc:$HOME/.vnc
+```
+
+## Environment Variables
+
+CondaTainer sets the following environment variables for the helper script:
+
+| Variable | Description |
+|---|---|
+| `CNT_HELPER_PORT` | Allocated free TCP port on the compute node. The service must bind to this port. |
+| `CNT_HELPER_BIND_ADDR` | Network bind address: `127.0.0.1` (default), or `0.0.0.0` when `helper.connect` is set to `direct`. |
+| `CNT_HELPER_BIND_ALL` | Set to `1` when `helper.connect` is `direct`; unset otherwise. |
+| `CNT_HELPER_STATE_DIR` | Dedicated run state directory on shared storage. Preserved after the job terminates. |
+| `CNT_HELPER_TMPDIR` | Node-local scratch directory, cleaned up when the job ends. |
+| `CNT_HELPER_CWD` | Working directory selected by the user. |
+| `CNT_HELPER_NAME` | Name of the helper script. |
+| `CNT_HELPER_ID` | Unique run identifier. |
+| `CNT_HELPER_JOB_ID` | Cluster scheduler job ID. |
+| `CNT_HELPER_WALLTIME_SECS` | Total job walltime limit in seconds. |
+| `NCPU` | CPUs of the job. |
+| `MEM` | Memory of the job in MB. |
+| `MEM_GB` | Memory of the job in GB. |
+| `<KEY>` | Resolved value for each declared `#PARAM:`. |
+
+## Service Readiness and Reporting
+
+Helpers use three internal utility commands to coordinate lifecycle events with CondaTainer:
+
+```bash
+condatainer _helper ready --port "$CNT_HELPER_PORT" --url-path "?token=$TOKEN"
+condatainer _helper message --level warn "Disk space below 10%"
+condatainer _helper pick-port
+```
+
+- `_helper ready`: Notifies CondaTainer that the service is running and accessible.
+  - Waits up to `--wait` seconds (default 60; `0` skips waiting) for the port to begin accepting connections.
+  - `--url-path`: Appends a query string or path component to the generated access URL (e.g., authentication tokens).
+  - `--external-url`: Specifies an external URL when the service is hosted outside the current compute node. Use with `--port 0`.
+  - `--pid`: Monitors a process ID and reports failure if the target process exits.
+- `_helper message`: Emits status messages displayed in the user's terminal and helper web dashboard. Supported `--level` values: `info`, `warn`, `error`.
+- `_helper pick-port`: Discovers and prints an additional unused TCP port on the compute node for multi-port services.
+
+## Example: Writable Environment (JupyterLab)
+
+This example sets up JupyterLab with a writable Conda environment and token authentication:
+
+```bash
+#!/bin/bash
+#DESC: Jupyter Lab
+
+#NCPU: 4
+#MEM: 16G
+#TIME: 12:00:00
+
+#ENV_PACKAGES: python={CONDA_PYTHON} jupyterlab
+#VALUE: CONDA_PYTHON=3.13.13,3.12.13,3.11.15
+
+TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(8))" 2>/dev/null \
+    || openssl rand -hex 8 2>/dev/null \
+    || echo "$(date +%s)$RANDOM")
+
+jupyter-lab \
+    --no-browser \
+    --ip="${CNT_HELPER_BIND_ADDR:-127.0.0.1}" \
+    --port "$CNT_HELPER_PORT" \
+    --IdentityProvider.token "$TOKEN" \
+    ${CNT_HELPER_BIND_ALL:+--ServerApp.allow_remote_access=True} &
+PID=$!
+
+condatainer _helper ready \
+    --port "$CNT_HELPER_PORT" \
+    --url-path "?token=$TOKEN"
+
+wait $PID
+```
+
+- On first launch, CondaTainer guides the user to create `env.img` with the requested packages, prompting for the Python version.
+- Subsequent runs reuse the existing `env.img`.
+- `${CNT_HELPER_BIND_ALL:+...}` enables remote access flags only when external direct networking is active.
+
+## Example: Fixed Tool (code-server)
+
+This example runs code-server from a module overlay with an optional user password:
+
+```bash
+#!/bin/bash
+#DESC: code-server (Browser-based VS Code)
+
+#NCPU: 4
+#MEM: 16G
+#TIME: 12:00:00
+
+#DEP: code-server
+
+#PARAM: PASSWORD=? --password "Authentication password (leave blank for none)"
+
+if [ -n "${PASSWORD:-}" ]; then
+    condatainer _helper message "Password: ${PASSWORD}"
+    export PASSWORD
+    AUTH_OPTS="--auth password"
+else
+    AUTH_OPTS="--auth none"
+fi
+
+code-server \
+    --disable-update-check \
+    --bind-addr "${CNT_HELPER_BIND_ADDR:-127.0.0.1}:${CNT_HELPER_PORT}" \
+    $AUTH_OPTS \
+    "${CNT_HELPER_CWD:-.}" &
+PID=$!
+
+condatainer _helper ready \
+    --port "$CNT_HELPER_PORT" \
+    --url-path "?folder=${CNT_HELPER_CWD}"
+
+wait $PID
+```
+
+- Specifying `code-server` without a version mounts the newest installed version, or automatically builds it if missing. Tools not distributed via Conda can be defined using a [Custom Build Recipe](custom_recipe.mdx).
+- When `--password` is omitted, `$PASSWORD` remains empty.
+
+## Debugging Helpers
+
+```bash
+ls ~/.local/state/condatainer/helper/                   # Lists run directories
+tail -f ~/.local/state/condatainer/helper/<id>/job.log  # Streams job execution log
+```
+
+- State directories are stored under `$XDG_STATE_HOME/condatainer/helper/` (defaulting to `~/.local/state/condatainer/helper/`).
+- State directories persist after the job exits, retaining `job.log` and status files for post-run inspection.
+- Insert `condatainer _helper message` calls at key milestones to identify slow initialization steps.

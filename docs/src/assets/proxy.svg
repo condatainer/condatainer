@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 210" role="img" aria-labelledby="px-title px-desc" font-family="inherit">
+  <title id="px-title">How a compute node job reaches the internet</title>
+  <desc id="px-desc">A compute node has no direct route to the internet. A job on it sends its traffic to a proxy that runs on the login node, using the http_proxy and all_proxy variables. The proxy uses an SSH tunnel to the login node to send it out to the internet.</desc>
+  <style>
+    .px-box { fill: var(--sl-color-gray-6, #f1f2f6); stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1.5; }
+    .px-app { fill: var(--sl-color-accent-low, #dde4ff); stroke: var(--sl-color-accent, #4a63d6); stroke-width: 1.5; }
+    .px-text { fill: var(--sl-color-text, #2b2e38); font-size: 15px; }
+    .px-strong { fill: var(--sl-color-white, #14161c); font-size: 16px; font-weight: 600; }
+    .px-small { fill: var(--sl-color-gray-3, #5c606d); font-size: 13px; }
+    .px-label { fill: var(--sl-color-gray-3, #5c606d); font-size: 13px; }
+    .px-arrow { fill: none; stroke: var(--sl-color-accent, #4a63d6); stroke-width: 2; }
+    .px-head { fill: var(--sl-color-accent, #4a63d6); }
+    .px-blocked { fill: none; stroke: var(--sl-color-gray-4, #8b8f9c); stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .px-gap { fill: var(--sl-color-bg, #fff); }
+    .px-cross { stroke: var(--sl-color-red, #d1453b); stroke-width: 3; stroke-linecap: round; }
+  </style>
+  <defs>
+    <marker id="px-arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="px-head"/>
+    </marker>
+  </defs>
+
+  <!-- compute node -->
+  <rect class="px-box" x="20" y="52" width="200" height="140" rx="10"/>
+  <text class="px-strong" x="120" y="78" text-anchor="middle">Compute node</text>
+  <rect class="px-app" x="40" y="98" width="160" height="70" rx="8"/>
+  <text class="px-text" x="120" y="126" text-anchor="middle">Your job</text>
+  <text class="px-small" x="120" y="148" text-anchor="middle">condatainer run</text>
+
+  <!-- login node -->
+  <rect class="px-box" x="340" y="52" width="200" height="140" rx="10"/>
+  <text class="px-strong" x="440" y="78" text-anchor="middle">Login node</text>
+  <rect class="px-app" x="360" y="98" width="160" height="70" rx="8"/>
+  <text class="px-text" x="440" y="126" text-anchor="middle">Proxy</text>
+  <text class="px-small" x="440" y="148" text-anchor="middle">SOCKS5 and HTTP</text>
+
+  <!-- internet -->
+  <rect class="px-box" x="660" y="52" width="180" height="140" rx="10"/>
+  <text class="px-strong" x="750" y="116" text-anchor="middle">Internet</text>
+  <text class="px-small" x="750" y="138" text-anchor="middle">packages, downloads</text>
+
+  <!-- no direct route -->
+  <path class="px-blocked" d="M120 52 V26 H750 V48" marker-end="url(#px-arrowhead)"/>
+  <rect class="px-gap" x="420" y="16" width="30" height="20"/>
+  <line class="px-cross" x1="428" y1="19" x2="442" y2="33"/>
+  <line class="px-cross" x1="442" y1="19" x2="428" y2="33"/>
+  <text class="px-label" x="435" y="13" text-anchor="middle">no route out</text>
+
+  <!-- through the proxy -->
+  <path class="px-arrow" d="M224 133 H336" marker-end="url(#px-arrowhead)"/>
+  <text class="px-label" x="280" y="123" text-anchor="middle">http_proxy</text>
+  <path class="px-arrow" d="M544 133 H656" marker-end="url(#px-arrowhead)"/>
+  <text class="px-label" x="600" y="123" text-anchor="middle">outbound</text>
+</svg>

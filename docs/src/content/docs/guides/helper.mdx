@@ -1,0 +1,157 @@
+---
+title: Helper
+description: Run web apps such as RStudio and VS Code on a compute node and use them in your own browser.
+---
+
+import ForwardDiagram from '../../../assets/helper.svg';
+import HelperStartDemo from '../../../components/HelperStartDemo.astro';
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Some tasks are much easier to perform in a graphical web application than a plain terminal: writing R code in *RStudio*, developing projects in *VS Code*, or checking alignments using *IGV*. However, running these apps on a HPC can be complicated: the app needs to run on a compute node, it needs the correct software environment, and you need a way to securely connect to it from your local browser.
+
+A **helper** automates the entire process for you. It packages the app as overlays, submits it to a compute node, and provides you with a direct link to open in your browser.
+
+- If you are on an HPC cluster, the helper submits the app as a [scheduler](scheduler.mdx) job so it runs on a compute node. If you don't have a scheduler, it runs the app locally.
+- Each helper names the needed overlays and allows writable environment overlay for new packages.
+
+## Server and SSH Port Forwarding
+
+CondaTainer server provides a web dashboard for helper jobs and files management on the cluster. Helper links are formatted as `http://<id>.localhost:<port>/`. Because this port is open on the remote login node, you must set up an SSH port forward from your local computer to access it. You only need to configure this once.
+
+<ForwardDiagram />
+
+
+To securely forward the port from your local computer to the cluster, use the `-L` flag when SSHing:
+
+```bash
+ssh -L 13182:localhost:13182 <your-cluster-address>
+```
+
+**Make it persistent (Recommended):**
+To avoid typing this every time, you can add a `LocalForward` rule to your local `~/.ssh/config` file:
+
+```text
+Host hpc
+    HostName hpc.university.edu
+    User your_username
+    LocalForward 13182 localhost:13182
+```
+
+Now, simply typing `ssh hpc` will log you in and forward the port automatically. Because all helpers route through this single port, you can now visit `http://localhost:13182/` in your browser.
+
+:::tip[Passwordless Login]
+To make connecting even smoother, you can set up SSH keys so you don't have to type your password every time.
+
+Generate an SSH key locally (if you don't have one):
+   ```bash
+   ssh-keygen -t ed25519
+   ```
+
+Copy the public key to the cluster:
+- **Mac/Linux:**
+  ```bash
+  ssh-copy-id hpc
+  ```
+- **Windows (PowerShell):**
+  ```powershell
+  type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh hpc "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+  ```
+:::
+
+After tunnel setup, you can start CondaTainer server using the command line:
+
+```bash
+condatainer server start -p 13182  # Starts the server on a specific port
+condatainer server status          # Checks if it's running and displays the port
+condatainer server stop            # Stops the server
+```
+
+**Key Server Details:**
+- The port number is saved automatically after your first start.
+- By default, the server stops when you disconnect your SSH session (designed for multi-login-nodes clusters). If you want it to run continuously in the background, use the `--daemon` flag.
+- The server commands (`start`, `stop`, `restart`) are login node only (blocked on compute nodes and in container).
+
+## Web Dashboard
+
+The easiest way to manage your helper jobs is through the web dashboard. 
+
+In the demo below, code-server is already added. Click **Manage** to add another helper. Nothing is submitted in the demo.
+
+<HelperStartDemo />
+
+<Tabs>
+  <TabItem label="Manage">
+    Click **Manage** at the top right of the **Start** tab to add or remove helpers.
+
+    - **Add:** open the **Available** tab and click **Add**. The helper then shows on the **Start** tab.
+    - **Remove:** open the **Installed** tab and click the bin icon.
+
+    **NOTE:** A new install has no helpers added, so add one before you start it. In the demo above, code-server is already added.
+  </TabItem>
+  <TabItem label="Start">
+    The **Start** tab is where you launch new applications:
+
+    1. Select a helper application from the list.
+    2. Configure the requested resources (CPUs, memory, walltime, and GPUs).
+    3. Select a writable environment overlay, plus any additional overlays you might need.
+    4. Click **Start**.
+
+    The gear **Defaults** button saves the resources and options you prefer for the selected helper, such as CPUs, memory, time and the R version. The next launch of that helper starts from them.
+
+    **NOTE:** Some helpers require a **environment overlay** for packages installation.  If you don't have one, just click **New** to create it on the fly (see [Environment Overlay](environments.md)).
+  </TabItem>
+  <TabItem label="Jobs">
+    The **Jobs** tab displays active cards for every running or pending helper. From these cards, you can **Open** the app in a new tab, **Copy** the link, or **Stop** the job.
+
+    **Understanding the Links:**
+    Every helper generates two unique addresses:
+    - `<id>.localhost`: Routes directly to that specific job ID.
+    - `<helper-name>.localhost`: Routes to the oldest running job of that type. (The `link` button next to `copy`)
+
+    **Why use the name link?** Browsers tie saved settings, layouts, and cookies to specific URLs. If you use a new `<id>.localhost` link every time you start code-server, you will get a default-config workspace every time. By using the `<helper-name>.localhost` link, your address stays consistent across sessions.
+  </TabItem>
+  <TabItem label="History">
+    The **History** tab provides a log of your past sessions, detailing the app name, final state, compute node used, working directory, and finish time.
+
+    - **Rerun**: Fill the Start tab with all the old settings pre-filled. You can adjust them as needed before launching.
+    - You can manually delete individual rows, or use **Clear finished** to remove all completed jobs.
+  </TabItem>
+</Tabs>
+
+## Command Line Interface
+
+Everything you can do in the web dashboard can also be done directly from the terminal:
+
+```bash
+condatainer helper avail               # List the helpers the sources offer
+condatainer helper add code-server     # Add a helper
+condatainer helper list                # List the helpers you can start
+condatainer helper upgrade             # Bring added helpers up to date
+condatainer helper remove code-server  # Remove an added helper
+
+condatainer helper run code-server     # Submit a new VS Code helper job
+condatainer helper run code-server -h  # View specific configuration options for VS Code
+
+condatainer helper                     # List all currently running helpers
+condatainer helper stop                # Interactively stop a running helper
+```
+
+**Adding Helpers:**
+- `add` takes one or more names, and `-l` chooses the directory by [layer](layers.md) (`user`, `cnt-root` or `extra-root`). It prints where it put them.
+- `upgrade` prints what it will replace and asks first. `-y` skips the question. It keeps a helper you edited, and tells you to use `add --force` to replace it.
+- `remove` lists what it will delete and asks first. It deletes only helpers that `add` installed.
+
+**Execution Behavior:**
+- When you start a helper from the CLI, the command submits the job and returns immediately. Once the application is fully ready, it prints the browser link to your terminal, along with any necessary authentication details (like an auto-generated password).
+- If you prefer to block the terminal until the app is ready, append the `--wait` flag.
+- Pressing `Ctrl+C` while waiting only detaches your terminal from the monitor; **it does not stop the helper job**. Use `condatainer helper stop` to actually terminate the application.
+
+**Saving Defaults:**
+The dashboard's gear **Defaults** button and the command line save the same per-helper defaults. A flag on the command line overrides a saved default for that run.
+
+```bash
+condatainer helper config rstudio-server list       # Saved values
+condatainer helper config rstudio-server set cpu 8  # Save a default
+```
+
+If a helper does not open, cannot install packages or fails on one node, see [Helper Issues](../troubleshooting/helper.md).

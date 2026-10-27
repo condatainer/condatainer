@@ -65,3 +65,9 @@ cnt
 
 # --- NFS Temp Files ---
 .nfs*
+
+# --- Docs (Astro + Starlight) ---
+/backup
+/docs/node_modules/
+/docs/dist/
+/docs/.astro/

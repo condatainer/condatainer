@@ -302,7 +302,7 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 		copied := *parsed
 		specs = &copied
 	}
-	if scheduler.IsPassthrough(specs) {
+	if scheduler.IsUnparsed(specs) {
 		return "", fmt.Errorf("the recipe has scheduler directives that cannot be normalized")
 	}
 	// The same priority chain a catalog build resolves: build defaults, then the

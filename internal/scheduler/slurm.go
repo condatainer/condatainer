@@ -21,7 +21,7 @@ var emitMem = settings.Bool("scheduler.slurm.emit_mem",
 	settings.Help("Write --mem or --mem-per-cpu in generated SLURM scripts. Turn off where memory is not a scheduled resource."))
 
 // slurmBlacklistedFlags lists SLURM directives that describe CPU topology / task
-// distribution that cannot be reliably translated. Any match forces passthrough mode.
+// distribution that cannot be reliably translated. Any match leaves the resource directives unparsed.
 var slurmBlacklistedFlags = []string{
 	"--gpus-per-socket",
 	"--sockets-per-node",
@@ -275,10 +275,10 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 	var unconsumed []string
 
 	for _, flag := range directives {
-		// Blacklist: topology flags we cannot translate → passthrough immediately.
+		// Blacklist: topology flags we cannot translate → unparsed immediately.
 		for _, bl := range slurmBlacklistedFlags {
 			if flag == bl || flagMatches(flag, bl) {
-				logParseWarning("SLURM: unsupported topology directive %q; using passthrough mode", flag)
+				logParseWarning("SLURM: unsupported topology directive %q; resource directives not parsed", flag)
 				return nil, directives
 			}
 		}
@@ -347,7 +347,7 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 
 	// Conflict Check
 	if gpuPerTaskStr != "" && hasNtasksPerGpu {
-		logParseWarning("SLURM: --gpus-per-task and --ntasks-per-gpu are mutually exclusive; using passthrough")
+		logParseWarning("SLURM: --gpus-per-task and --ntasks-per-gpu are mutually exclusive; resource directives not parsed")
 		return nil, directives
 	}
 
@@ -359,7 +359,7 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 	case gpuGresStr != "":
 		gpu, err := parseSlurmGpu(gpuGresStr)
 		if err != nil {
-			logParseWarning("SLURM: failed to parse --gres value %q: %v; using passthrough", gpuGresStr, err)
+			logParseWarning("SLURM: failed to parse --gres value %q: %v; resource directives not parsed", gpuGresStr, err)
 			return nil, directives
 		}
 		if rs.Nodes <= 0 {
@@ -369,7 +369,7 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 	case gpuPerNodeStr != "":
 		gpu, err := parseSlurmGpu(gpuPerNodeStr)
 		if err != nil {
-			logParseWarning("SLURM: failed to parse --gpus-per-node value %q: %v; using passthrough", gpuPerNodeStr, err)
+			logParseWarning("SLURM: failed to parse --gpus-per-node value %q: %v; resource directives not parsed", gpuPerNodeStr, err)
 			return nil, directives
 		}
 		if rs.Nodes <= 0 {
@@ -379,7 +379,7 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 	case gpuTotalStr != "":
 		gpu, err := parseSlurmGpu(gpuTotalStr)
 		if err != nil {
-			logParseWarning("SLURM: failed to parse --gpus value %q: %v; using passthrough", gpuTotalStr, err)
+			logParseWarning("SLURM: failed to parse --gpus value %q: %v; resource directives not parsed", gpuTotalStr, err)
 			return nil, directives
 		}
 		if rs.Nodes <= 0 {
@@ -388,7 +388,7 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 			gpu.Count = 1
 		} else {
 			if gpu.Count%rs.Nodes != 0 {
-				logParseWarning("SLURM: --gpus=%d not divisible by --nodes=%d; using passthrough", gpu.Count, rs.Nodes)
+				logParseWarning("SLURM: --gpus=%d not divisible by --nodes=%d; resource directives not parsed", gpu.Count, rs.Nodes)
 				return nil, directives
 			}
 			gpu.Count /= rs.Nodes
@@ -406,7 +406,7 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 			if totalNtasks%rs.Nodes == 0 {
 				rs.TasksPerNode = totalNtasks / rs.Nodes
 			} else if rs.Gpu != nil || gpuPerTaskStr != "" {
-				logParseWarning("SLURM: --ntasks=%d not evenly divisible by --nodes=%d with GPU specs; using passthrough mode", totalNtasks, rs.Nodes)
+				logParseWarning("SLURM: --ntasks=%d not evenly divisible by --nodes=%d with GPU specs; resource directives not parsed", totalNtasks, rs.Nodes)
 				return nil, directives
 			} else {
 				// Non-divisible: use ceiling to ensure all tasks fit; this matches memory allocation logic.
@@ -419,7 +419,7 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 		if rs.Gpu != nil {
 			rs.Ntasks = ntasksPerGpu * (rs.Nodes * rs.Gpu.Count)
 		} else {
-			logParseWarning("SLURM: --ntasks-per-gpu requires a GPU spec; using passthrough")
+			logParseWarning("SLURM: --ntasks-per-gpu requires a GPU spec; resource directives not parsed")
 			return nil, directives
 		}
 	} else if hasNtasksPerNode {
@@ -430,7 +430,7 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 	if gpuPerTaskStr != "" {
 		gpu, err := parseSlurmGpu(gpuPerTaskStr)
 		if err != nil {
-			logParseWarning("SLURM: failed to parse --gpus-per-task value %q: %v; using passthrough mode", gpuPerTaskStr, err)
+			logParseWarning("SLURM: failed to parse --gpus-per-task value %q: %v; resource directives not parsed", gpuPerTaskStr, err)
 			return nil, directives
 		}
 		if rs.Nodes > 0 {
@@ -453,7 +453,7 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 		rs.CpusPerTask = cpusPerTask
 	} else if hasCpusPerGpu {
 		if rs.Gpu == nil {
-			logParseWarning("SLURM: --cpus-per-gpu requires a GPU spec; using passthrough mode")
+			logParseWarning("SLURM: --cpus-per-gpu requires a GPU spec; resource directives not parsed")
 			return nil, directives
 		}
 		rs.CpusPerTask = cpusPerGpu * rs.Gpu.Count
@@ -481,26 +481,26 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 	case memStr != "":
 		mem, err := parseMemoryMB(memStr)
 		if err != nil {
-			logParseWarning("SLURM: invalid --mem value %q: %v; using passthrough mode", memStr, err)
+			logParseWarning("SLURM: invalid --mem value %q: %v; resource directives not parsed", memStr, err)
 			return nil, directives
 		}
 		rs.MemPerNodeMB = mem
 	case memPerCpuStr != "":
 		memPerCpu, err := parseMemoryMB(memPerCpuStr)
 		if err != nil {
-			logParseWarning("SLURM: invalid --mem-per-cpu value %q: %v; using passthrough mode", memPerCpuStr, err)
+			logParseWarning("SLURM: invalid --mem-per-cpu value %q: %v; resource directives not parsed", memPerCpuStr, err)
 			return nil, directives
 		}
 		rs.MemPerCpuMB = memPerCpu
 		rs.MemPerNodeMB = 0 // clear default so GetMemPerNodeMB() derives correctly
 	case memPerGpuStr != "":
 		if rs.Gpu == nil {
-			logParseWarning("SLURM: --mem-per-gpu requires a GPU spec; using passthrough mode")
+			logParseWarning("SLURM: --mem-per-gpu requires a GPU spec; resource directives not parsed")
 			return nil, directives
 		}
 		memPerGpu, err := parseMemoryMB(memPerGpuStr)
 		if err != nil {
-			logParseWarning("SLURM: invalid --mem-per-gpu value %q: %v; using passthrough mode", memPerGpuStr, err)
+			logParseWarning("SLURM: invalid --mem-per-gpu value %q: %v; resource directives not parsed", memPerGpuStr, err)
 			return nil, directives
 		}
 		rs.MemPerNodeMB = memPerGpu * int64(rs.Gpu.Count)
@@ -510,7 +510,7 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 	if timeStr != "" {
 		t, err := utils.ParseDHMSTime(timeStr)
 		if err != nil {
-			logParseWarning("SLURM: invalid --time value %q: %v; using passthrough mode", timeStr, err)
+			logParseWarning("SLURM: invalid --time value %q: %v; resource directives not parsed", timeStr, err)
 			return nil, directives
 		}
 		rs.Time = t
@@ -566,10 +566,10 @@ func (s *SlurmScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string
 	// Write shebang
 	fmt.Fprintln(writer, "#!/bin/bash")
 
-	// Write passthrough flags (directives not consumed by Spec or Control), with
+	// Write the directives not consumed by Spec or Control, with
 	// the environment directive replaced by one that copies everything.
-	passthrough, export := slurmFullEnv(specs.RemainingFlags)
-	for _, flag := range passthrough {
+	kept, export := slurmFullEnv(specs.RemainingFlags)
+	for _, flag := range kept {
 		fmt.Fprintf(writer, "#SBATCH %s\n", flag)
 	}
 	fmt.Fprintf(writer, "#SBATCH %s\n", export)
@@ -614,7 +614,7 @@ func (s *SlurmScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string
 		fmt.Fprintf(writer, "#SBATCH --exclude=%s\n", strings.Join(nodes, ","))
 	}
 
-	// Write ResourceSpec directives (only if not in passthrough mode)
+	// Write ResourceSpec directives (only when the resources parsed)
 	if specs.Spec != nil {
 		rs := specs.Spec
 

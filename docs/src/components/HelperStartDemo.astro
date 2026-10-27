@@ -1,0 +1,1142 @@
+---
+// A small interactive demo of the dashboard's Start and Jobs sections. Nothing
+// is started: the Start button adds a card to the Jobs section. The look copies
+// the dashboard's own style (web/style.css), and follows the docs' light and
+// dark themes through the `data-theme` attribute.
+---
+
+<div class="hsd not-content" data-helper-demo>
+	<aside class="hsd-sidebar">
+		<div class="hsd-logo"><span class="hsd-logo-conda">Conda</span><span class="hsd-logo-tainer">Tainer</span></div>
+		<ul class="hsd-nav">
+			<li><button type="button" class="hsd-nav-item" data-tab="jobs" aria-selected="false">Jobs</button></li>
+			<li><button type="button" class="hsd-nav-item" data-tab="start" aria-selected="true">Start</button></li>
+			<li><button type="button" class="hsd-nav-item" data-tab="history" aria-selected="false">History</button></li>
+			<li><span class="hsd-nav-item hsd-off" title="Not in this demo">Overlay</span></li>
+			<li><span class="hsd-nav-item hsd-off" title="Not in this demo">Files</span></li>
+		</ul>
+	</aside>
+
+	<div class="hsd-main">
+		<section data-panel="start">
+			<div class="hsd-header">
+				<div>
+					<div class="hsd-title">Start Helper</div>
+					<div class="hsd-sub">Launch a new helper on a compute node</div>
+				</div>
+				<button type="button" class="hsd-btn hsd-text-icon" data-manage title="Add, upgrade and remove helpers">
+					<svg viewBox="0 -960 960 960" aria-hidden="true"><path d="m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24.5 12t22.5 15l119-50 110 190-103 78q1 7 1 13.5v27q0 6.5-2 13.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm112-260q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Z" /></svg>Manage
+				</button>
+			</div>
+			<div class="hsd-layout">
+				<div class="hsd-list" role="radiogroup" aria-label="Helper" data-helper-list></div>
+
+				<div class="hsd-config">
+					<div class="hsd-divider">Resources</div>
+					<div class="hsd-grid">
+						<label class="hsd-field"><span class="hsd-label">CPUs</span><input class="hsd-input" data-cpus /></label>
+						<label class="hsd-field"><span class="hsd-label">Memory (GB)</span><input class="hsd-input" data-mem /></label>
+						<label class="hsd-field"><span class="hsd-label">Walltime (hours)</span><input class="hsd-input" data-time /></label>
+						<label class="hsd-field"><span class="hsd-label">GPU (optional)</span><input class="hsd-input" data-gpu autocomplete="off" /></label>
+					</div>
+					<div class="hsd-field">
+						<label class="hsd-label" for="hsd-env">Env Overlay (.img)</label>
+						<div class="hsd-row">
+							<input id="hsd-env" class="hsd-input" value="env.img" placeholder="optional" data-env />
+							<button type="button" class="hsd-btn hsd-ghost" data-clear>Clear</button>
+							<button type="button" class="hsd-btn" data-new>New</button>
+						</div>
+					</div>
+					<div class="hsd-actions">
+						<button type="button" class="hsd-btn hsd-ghost hsd-text-icon" data-defaults title="Save default resources for this helper">
+							<svg viewBox="0 -960 960 960" aria-hidden="true"><path d="m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24.5 12t22.5 15l119-50 110 190-103 78q1 7 1 13.5v27q0 6.5-2 13.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm112-260q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Z" /></svg>Defaults
+						</button>
+						<button type="button" class="hsd-btn hsd-success" data-start>
+							<svg viewBox="0 -960 960 960" aria-hidden="true"><path d="M320-200v-560l440 280-440 280Z" /></svg>Start
+						</button>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<section data-panel="jobs" hidden>
+			<div class="hsd-header">
+				<div>
+					<div class="hsd-title">Running Jobs</div>
+					<div class="hsd-sub">Active helpers on compute nodes</div>
+				</div>
+			</div>
+			<div class="hsd-empty" data-empty>No running helpers. Start one on the Start section.</div>
+			<div class="hsd-jobs" data-jobs></div>
+		</section>
+
+		<section data-panel="history" hidden>
+			<div class="hsd-header">
+				<div>
+					<div class="hsd-title">History</div>
+					<div class="hsd-sub">Past helper runs</div>
+				</div>
+				<button type="button" class="hsd-btn hsd-danger hsd-sm" data-clear-finished>Clear finished</button>
+			</div>
+			<div class="hsd-tablewrap">
+				<table class="hsd-table">
+					<thead>
+						<tr><th>Name</th><th>Status</th><th>Node</th><th>CWD</th><th>Ended</th><th>Actions</th></tr>
+					</thead>
+					<tbody data-history></tbody>
+				</table>
+			</div>
+		</section>
+	</div>
+
+	<div class="hsd-backdrop" data-hm hidden>
+		<div class="hsd-modal hsd-modal-lg" role="dialog" aria-label="Helpers">
+			<div class="hsd-modal-head">Helpers</div>
+			<div class="hsd-tabs">
+				<button type="button" class="hsd-tab" data-hm-tab="available" aria-selected="true">Available</button>
+				<button type="button" class="hsd-tab" data-hm-tab="installed" aria-selected="false">Installed</button>
+			</div>
+			<div class="hsd-hm-body" data-hm-body></div>
+			<div class="hsd-modal-foot">
+				<button type="button" class="hsd-btn" data-hm-close>Close</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="hsd-backdrop" data-modal hidden>
+		<div class="hsd-modal" role="dialog" aria-label="Saved Defaults">
+			<div class="hsd-modal-head" data-modal-title>Saved Defaults</div>
+			<div class="hsd-grid">
+				<label class="hsd-field"><span class="hsd-label">CPUs</span><input class="hsd-input" data-saved-cpus /></label>
+				<label class="hsd-field"><span class="hsd-label">Memory (GB)</span><input class="hsd-input" data-saved-mem /></label>
+				<label class="hsd-field"><span class="hsd-label">Walltime (hours)</span><input class="hsd-input" data-saved-time /></label>
+				<label class="hsd-field"><span class="hsd-label">GPU (optional)</span><input class="hsd-input" data-saved-gpu autocomplete="off" /></label>
+			</div>
+			<div class="hsd-modal-foot">
+				<button type="button" class="hsd-btn" data-modal-cancel>Cancel</button>
+				<button type="button" class="hsd-btn hsd-primary" data-modal-save>Save</button>
+			</div>
+		</div>
+	</div>
+</div>
+
+<style is:global>
+	.hsd {
+		--bg: #ffffff;
+		--surface: #f6f8fa;
+		--surface2: #eaeef2;
+		--hover: #e3e8ee;
+		--border: #d0d7de;
+		--text: #1f2328;
+		--muted: #656d76;
+		--accent: #0969da;
+		--success: #1a7f37;
+		--warn: #9a6700;
+		--danger: #cf222e;
+		--radius: 6px;
+		--radius-sm: 4px;
+		--mono: 'SF Mono', 'Cascadia Code', 'Consolas', 'Liberation Mono', monospace;
+		--sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		color: var(--text);
+		display: flex;
+		font-family: var(--sans);
+		font-size: 14px;
+		height: 25rem;
+		line-height: 1.4;
+		margin-block: 1rem;
+		overflow: hidden;
+	}
+	[data-theme='dark'] .hsd {
+		--bg: #0d1117;
+		--surface: #161b22;
+		--surface2: #1c2128;
+		--hover: #262c36;
+		--border: #30363d;
+		--text: #c9d1d9;
+		--muted: #99a1ab;
+		--accent: #58a6ff;
+		--success: #2ea043;
+		--warn: #d29922;
+		--danger: #c0392b;
+	}
+	.hsd * {
+		box-sizing: border-box;
+		margin: 0;
+	}
+
+	/* Sidebar */
+	.hsd-sidebar {
+		background: var(--surface);
+		border-right: 1px solid var(--border);
+		flex: 0 0 6.5rem;
+	}
+	.hsd-logo {
+		align-items: center;
+		border-bottom: 1px solid var(--border);
+		display: flex;
+		font-size: 13px;
+		font-weight: 700;
+		height: 44px;
+		padding: 0 10px;
+	}
+	.hsd-logo-conda {
+		color: #07b843;
+	}
+	.hsd-logo-tainer {
+		color: #3084c3;
+	}
+	.hsd-nav {
+		list-style: none;
+		padding: 6px 0;
+	}
+	.hsd-nav-item {
+		align-items: center;
+		background: none;
+		border: 0;
+		border-left: 3px solid transparent;
+		color: var(--muted);
+		cursor: pointer;
+		display: flex;
+		font: inherit;
+		font-size: 14px;
+		font-weight: 500;
+		gap: 6px;
+		padding: 8px 10px;
+		text-align: left;
+		width: 100%;
+	}
+	.hsd-nav-item:hover:not(.hsd-off) {
+		background: var(--hover);
+		color: var(--text);
+	}
+	.hsd-nav-item[aria-selected='true'] {
+		background: color-mix(in srgb, var(--accent) 8%, transparent);
+		border-left-color: var(--accent);
+		color: var(--accent);
+	}
+	.hsd-off {
+		cursor: default;
+		opacity: 0.55;
+	}
+	/* Main */
+	.hsd-main {
+		flex: 1;
+		min-width: 0;
+		overflow-y: auto;
+		padding: 20px;
+	}
+	.hsd-main [hidden] {
+		display: none;
+	}
+	.hsd-header {
+		align-items: center;
+		display: flex;
+		gap: 12px;
+		justify-content: space-between;
+		margin-bottom: 20px;
+	}
+	.hsd-sm {
+		font-size: 12px;
+		padding: 3px 8px;
+	}
+	.hsd-text-icon {
+		gap: 4px;
+	}
+	.hsd-text-icon svg {
+		fill: currentColor;
+		height: 16px;
+		width: 16px;
+	}
+	.hsd-btn:disabled {
+		cursor: default;
+		opacity: 0.6;
+	}
+	.hsd-title {
+		font-size: 16px;
+		font-weight: 600;
+	}
+	.hsd-sub {
+		color: var(--muted);
+		font-size: 12px;
+		margin-top: 1px;
+	}
+	.hsd-layout {
+		display: flex;
+		gap: 16px;
+	}
+	.hsd-list {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		display: flex;
+		flex: 0 0 8.5rem;
+		flex-direction: column;
+		align-self: flex-start;
+	}
+	.hsd-item {
+		background: none;
+		border: 0;
+		border-bottom: 1px solid var(--border);
+		border-left: 3px solid transparent;
+		color: inherit;
+		cursor: pointer;
+		display: block;
+		font: inherit;
+		padding: 9px 10px 9px 11px;
+		text-align: left;
+	}
+	.hsd-item:last-child {
+		border-bottom: 0;
+	}
+	.hsd-item:hover {
+		background: var(--hover);
+	}
+	.hsd-item[aria-checked='true'] {
+		background: color-mix(in srgb, var(--accent) 8%, transparent);
+		border-left-color: var(--accent);
+	}
+	.hsd-item-name {
+		display: block;
+		font-weight: 600;
+	}
+	.hsd-item-desc {
+		color: var(--muted);
+		display: block;
+		font-size: 12px;
+		margin-top: 2px;
+	}
+	.hsd-config {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+		gap: 10px;
+		min-width: 0;
+		padding: 16px;
+	}
+	.hsd-divider {
+		align-items: center;
+		color: var(--muted);
+		display: flex;
+		font-size: 12px;
+		font-weight: 600;
+		gap: 8px;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+	}
+	.hsd-divider::after {
+		background: var(--border);
+		content: '';
+		flex: 1;
+		height: 1px;
+	}
+	.hsd-grid {
+		display: grid;
+		gap: 10px 16px;
+		grid-template-columns: 1fr 1fr;
+	}
+	.hsd-field {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.hsd-label {
+		color: var(--muted);
+		font-size: 12px;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+	.hsd-input {
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		color: var(--text);
+		font-family: var(--mono);
+		font-size: 13px;
+		outline: none;
+		padding: 6px 10px;
+		width: 100%;
+	}
+	.hsd-input:focus {
+		border-color: var(--accent);
+	}
+	.hsd-row {
+		display: flex;
+		gap: 6px;
+	}
+	.hsd-row .hsd-input {
+		flex: 1;
+	}
+	.hsd-btn {
+		align-items: center;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		color: var(--text);
+		cursor: pointer;
+		display: inline-flex;
+		font: inherit;
+		font-size: 13px;
+		font-weight: 500;
+		padding: 5px 12px;
+		white-space: nowrap;
+	}
+	.hsd-btn:hover {
+		background: var(--hover);
+	}
+	.hsd-ghost {
+		background: transparent;
+		border-color: var(--border);
+		color: var(--muted);
+	}
+	.hsd-success {
+		background: var(--success);
+		border-color: var(--success);
+		color: #fff;
+		gap: 5px;
+	}
+	.hsd-success:hover {
+		background: color-mix(in srgb, var(--success) 86%, #000);
+		border-color: color-mix(in srgb, var(--success) 86%, #000);
+	}
+	.hsd-success svg {
+		fill: currentColor;
+		height: 18px;
+		width: 18px;
+	}
+	.hsd-actions {
+		align-items: center;
+		display: flex;
+		justify-content: space-between;
+		margin-top: 4px;
+	}
+	.hsd-input::placeholder {
+		color: var(--muted);
+		opacity: 0.7;
+	}
+
+	/* Saved Defaults dialog */
+	.hsd {
+		position: relative;
+	}
+	.hsd-backdrop {
+		align-items: center;
+		background: rgba(0, 0, 0, 0.4);
+		display: flex;
+		inset: 0;
+		justify-content: center;
+		position: absolute;
+		z-index: 2;
+	}
+	.hsd-backdrop[hidden] {
+		display: none;
+	}
+	.hsd-modal {
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		max-width: 90%;
+		padding: 16px;
+		width: 24rem;
+	}
+	.hsd-modal-head {
+		font-size: 15px;
+		font-weight: 600;
+	}
+	.hsd-modal-foot {
+		display: flex;
+		gap: 8px;
+		justify-content: flex-end;
+	}
+	.hsd-primary {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: #fff;
+	}
+	.hsd-primary:hover {
+		background: color-mix(in srgb, var(--accent) 86%, #000);
+	}
+	.hsd-danger {
+		background: var(--danger);
+		border-color: var(--danger);
+		color: #fff;
+	}
+	.hsd button:focus-visible,
+	.hsd input:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 1px;
+	}
+
+	/* Jobs */
+	.hsd-modal-lg {
+		width: 30rem;
+	}
+	.hsd-tabs {
+		border-bottom: 1px solid var(--border);
+		display: flex;
+		gap: 4px;
+		margin-top: -6px;
+	}
+	.hsd-tab {
+		background: none;
+		border: 0;
+		border-bottom: 2px solid transparent;
+		color: var(--muted);
+		cursor: pointer;
+		font: inherit;
+		padding: 6px 12px;
+	}
+	.hsd-tab[aria-selected='true'] {
+		border-bottom-color: var(--accent);
+		color: var(--text);
+		font-weight: 600;
+	}
+	.hsd-hm-body {
+		height: 11rem;
+		overflow-y: auto;
+	}
+	.hsd-hm-group {
+		color: var(--muted);
+		font-size: 12px;
+		padding: 4px 0;
+	}
+	.hsd-hm-row {
+		align-items: center;
+		border-bottom: 1px solid var(--border);
+		display: flex;
+		gap: 10px;
+		padding: 7px 0;
+	}
+	.hsd-hm-name {
+		flex: 1;
+		min-width: 0;
+	}
+	.hsd-badge[data-state='added'] {
+		background: color-mix(in srgb, var(--success) 15%, transparent);
+		color: var(--success);
+	}
+	.hsd-list-empty {
+		align-items: flex-start;
+		color: var(--muted);
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 10px;
+	}
+	.hsd-empty {
+		color: var(--muted);
+		padding: 40px 0;
+		text-align: center;
+	}
+	.hsd-jobs {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+	.hsd-card {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 14px 16px;
+		position: relative;
+		transition: border-color 150ms;
+	}
+	.hsd-card:hover {
+		border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+	}
+	.hsd-card-top {
+		align-items: center;
+		display: flex;
+		gap: 9px;
+		margin-bottom: 5px;
+		padding-right: 80px;
+	}
+	.hsd-name {
+		font-size: 15px;
+		font-weight: 600;
+	}
+	.hsd-badge {
+		border-radius: 999px;
+		display: inline-flex;
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 1.5;
+		padding: 2px 8px;
+	}
+	.hsd-badge[data-state='pending'],
+	.hsd-badge[data-state='starting'] {
+		background: color-mix(in srgb, var(--warn) 15%, transparent);
+		color: var(--warn);
+	}
+	.hsd-badge[data-state='done'] {
+		background: var(--surface2);
+		color: var(--muted);
+	}
+	.hsd-badge[data-state='running'] {
+		background: color-mix(in srgb, var(--success) 15%, transparent);
+		color: var(--success);
+	}
+	.hsd-meta {
+		align-items: center;
+		color: var(--muted);
+		display: flex;
+		font-family: var(--mono);
+		font-size: 12px;
+		gap: 6px;
+		margin-bottom: 5px;
+		min-width: 0;
+	}
+	.hsd-sep {
+		color: var(--border);
+		flex-shrink: 0;
+	}
+	.hsd-tail {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.hsd-walltime {
+		color: var(--muted);
+		font-size: 13px;
+		margin-bottom: 7px;
+	}
+	.hsd-access {
+		align-items: center;
+		display: flex;
+		gap: 6px;
+		min-width: 0;
+	}
+	.hsd-link {
+		align-items: center;
+		background: color-mix(in srgb, var(--accent) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+		border-radius: var(--radius-sm);
+		color: var(--accent);
+		cursor: default;
+		display: flex;
+		flex: 1;
+		font-size: 13px;
+		font-weight: 500;
+		gap: 5px;
+		height: 34px;
+		min-width: 0;
+		overflow: hidden;
+		padding: 0 12px;
+	}
+	.hsd-link-text {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.hsd-link-ext {
+		flex-shrink: 0;
+	}
+	.hsd-icon-btn {
+		height: 34px;
+		justify-content: center;
+		padding: 0;
+		width: 34px;
+	}
+	.hsd-icon-btn svg {
+		fill: currentColor;
+		height: 18px;
+		width: 18px;
+	}
+	.hsd-stop {
+		padding: 3px 8px;
+		font-size: 12px;
+		position: absolute;
+		right: 16px;
+		top: 14px;
+	}
+
+	/* History */
+	.hsd-tablewrap {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		overflow-x: auto;
+	}
+	.hsd-table {
+		border-collapse: collapse;
+		font-size: 14px;
+		width: 100%;
+	}
+	.hsd-table th {
+		border-bottom: 1px solid var(--border);
+		color: var(--muted);
+		font-size: 12px;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		padding: 7px 10px;
+		text-align: left;
+		text-transform: uppercase;
+		white-space: nowrap;
+	}
+	.hsd-table td {
+		border-bottom: 1px solid var(--border);
+		padding: 9px 10px;
+		vertical-align: middle;
+		white-space: nowrap;
+	}
+	.hsd-table tbody tr:last-child td {
+		border-bottom: 0;
+	}
+	.hsd-table tbody tr:hover {
+		background: var(--hover);
+	}
+	.hsd-td-name {
+		font-weight: 600;
+	}
+	.hsd-td-muted {
+		color: var(--muted);
+	}
+	.hsd-td-mono {
+		font-family: var(--mono);
+		font-size: 13px;
+	}
+	.hsd-td-empty {
+		color: var(--muted);
+		padding: 20px;
+		text-align: center;
+	}
+	.hsd-flat {
+		background: transparent;
+		border-color: transparent;
+		color: var(--muted);
+		padding: 3px;
+	}
+	.hsd-flat:hover:not(:disabled) {
+		background: var(--hover);
+		color: var(--text);
+	}
+	.hsd-flat.hsd-flat-danger,
+	.hsd-flat.hsd-flat-danger:hover:not(:disabled) {
+		color: var(--danger);
+	}
+	.hsd-flat:disabled {
+		cursor: not-allowed;
+		opacity: 0.4;
+	}
+	.hsd-flat svg {
+		fill: currentColor;
+		height: 20px;
+		width: 20px;
+	}
+
+	@media (max-width: 36rem) {
+		.hsd {
+			flex-direction: column;
+			height: 32rem;
+		}
+		.hsd-sidebar {
+			border-bottom: 1px solid var(--border);
+			border-right: 0;
+			flex: none;
+		}
+		.hsd-logo {
+			display: none;
+		}
+		.hsd-nav {
+			display: flex;
+			overflow-x: auto;
+		}
+		.hsd-nav-item {
+			border-bottom: 3px solid transparent;
+			border-left: 0;
+			white-space: nowrap;
+		}
+		.hsd-nav-item[aria-selected='true'] {
+			border-bottom-color: var(--accent);
+		}
+		.hsd-layout {
+			flex-direction: column;
+		}
+		.hsd-list {
+			flex: none;
+			align-self: stretch;
+		}
+	}
+</style>
+
+<script>
+	type Entry = {
+		name: string;
+		status: string;
+		node: string;
+		cwd: string;
+		ended: string;
+		cpus: string;
+		mem: string;
+		hours: number;
+		gpu: string;
+		overlay: string;
+		timers: number[];
+		card?: HTMLElement;
+	};
+
+	const ICON_COPY = '<svg viewBox="0 -960 960 960" aria-hidden="true"><path d="M360-240q-33 0-56.5-23.5T280-320v-480q0-33 23.5-56.5T360-880h360q33 0 56.5 23.5T800-800v480q0 33-23.5 56.5T720-240H360Zm0-80h360v-480H360v480ZM200-80q-33 0-56.5-23.5T120-160v-560h80v560h440v80H200Zm160-240v-480 480Z"/></svg>';
+	const ICON_CHECK = '<svg viewBox="0 -960 960 960" aria-hidden="true"><path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z"/></svg>';
+	const ICON_LINK = '<svg viewBox="0 -960 960 960" aria-hidden="true"><path d="M318-120q-82 0-140-58t-58-140q0-40 15-76t43-64l134-133 56 56-134 134q-17 17-25.5 38.5T200-318q0 49 34.5 83.5T318-200q23 0 45-8.5t39-25.5l133-134 57 57-134 133q-28 28-64 43t-76 15Zm79-220-57-57 223-223 57 57-223 223Zm251-28-56-57 134-133q17-17 25-38t8-44q0-50-34-85t-84-35q-23 0-44.5 8.5T558-726L425-592l-57-56 134-134q28-28 64-43t76-15q82 0 139.5 58T839-641q0 39-14.5 75T782-502L648-368Z"/></svg>';
+	const ICON_REPLAY = '<svg viewBox="0 -960 960 960" aria-hidden="true"><path d="M480-80q-75 0-140.5-28.5t-114-77q-48.5-48.5-77-114T120-440h80q0 117 81.5 198.5T480-160q117 0 198.5-81.5T760-440q0-117-81.5-198.5T480-720h-6l62 62-56 58-160-160 160-160 56 58-62 62h6q75 0 140.5 28.5t114 77q48.5 48.5 77 114T840-440q0 75-28.5 140.5t-77 114q-48.5 48.5-114 77T480-80Z"/></svg>';
+	const ICON_DELETE = '<svg viewBox="0 -960 960 960" aria-hidden="true"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>';
+
+	const ACTIVE = ['pending', 'starting', 'running'];
+
+	function el(tag: string, className = '', text = '') {
+		const node = document.createElement(tag);
+		node.className = className;
+		node.textContent = text;
+		return node;
+	}
+
+	function iconButton(svg: string, className: string, title: string) {
+		const button = el('button', className) as HTMLButtonElement;
+		button.type = 'button';
+		button.title = title;
+		button.innerHTML = svg;
+		return button;
+	}
+
+	function stamp() {
+		const d = new Date();
+		const two = (n: number) => String(n).padStart(2, '0');
+		return `${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}`;
+	}
+
+	for (const root of document.querySelectorAll<HTMLElement>('[data-helper-demo]')) {
+		const q = <T extends HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
+		const tabs = [...root.querySelectorAll<HTMLButtonElement>('[data-tab]')];
+		const panels = [...root.querySelectorAll<HTMLElement>('[data-panel]')];
+		const list = q('[data-helper-list]');
+		const jobs = q('[data-jobs]');
+		const empty = q('[data-empty]');
+		const tbody = q('[data-history]');
+		const env = q<HTMLInputElement>('[data-env]');
+		// The sources offer these. A helper is on the Start tab only after it is added; code-server starts added.
+		const OFFERED = [
+			{ name: 'code-server', description: 'Open-source VS Code' },
+			{ name: 'rstudio-server', description: 'RStudio Server' },
+			{ name: 'igv', description: 'Integrative Genomics Viewer' },
+		];
+		const installed: string[] = ['code-server'];
+		let helper = '';
+		let next = 1;
+
+		const seed = (name: string, node: string, cwd: string, ended: string, cpus: string, mem: string, hours: number): Entry => ({
+			name, status: 'done', node, cwd, ended, cpus, mem, hours, gpu: '', overlay: 'env.img', timers: [],
+		});
+		const history: Entry[] = [
+			seed('code-server', 'cn102', '/home/you/project', '2 hours ago', '4', '16', 12),
+			seed('rstudio-server', 'cn101', '/home/you/analysis', 'yesterday', '8', '32', 24),
+		];
+
+		function show(name: string) {
+			for (const tab of tabs) tab.setAttribute('aria-selected', String(tab.dataset.tab === name));
+			for (const panel of panels) panel.hidden = panel.dataset.panel !== name;
+		}
+		for (const tab of tabs) tab.addEventListener('click', () => show(tab.dataset.tab!));
+
+		// The resource fields start empty and show the helper's defaults as
+		// placeholders: the saved defaults, else the built-in ones.
+		const FIELDS = ['cpus', 'mem', 'time', 'gpu'] as const;
+		type Field = (typeof FIELDS)[number];
+		const BUILT_IN: Record<Field, string> = { cpus: '4', mem: '16', time: '12', gpu: '' };
+		const saved: Record<string, Partial<Record<Field, string>>> = {};
+		const field = (name: Field) => q<HTMLInputElement>(`[data-${name}]`);
+		const modal = q('[data-modal]');
+
+		function defaultOf(name: Field) {
+			return saved[helper]?.[name] || BUILT_IN[name];
+		}
+		function refreshPlaceholders() {
+			for (const name of FIELDS) field(name).placeholder = defaultOf(name);
+		}
+		function valueOf(name: Field) {
+			return field(name).value.trim() || defaultOf(name);
+		}
+
+		const startButton = q<HTMLButtonElement>('[data-start]');
+		const defaultsButton = q<HTMLButtonElement>('[data-defaults]');
+
+		function select(name: string) {
+			helper = name;
+			for (const item of list.querySelectorAll<HTMLElement>('[data-helper]')) {
+				item.setAttribute('aria-checked', String(item.dataset.helper === name));
+			}
+			startButton.disabled = !name;
+			defaultsButton.disabled = !name;
+			refreshPlaceholders();
+		}
+
+		function renderList() {
+			list.replaceChildren();
+			if (installed.length === 0) {
+				const none = el('div', 'hsd-list-empty', 'No helpers installed.');
+				const add = el('button', 'hsd-btn', 'Add helpers') as HTMLButtonElement;
+				add.type = 'button';
+				add.addEventListener('click', () => openManager());
+				none.append(add);
+				list.append(none);
+			}
+			for (const name of installed) {
+				const item = el('button', 'hsd-item') as HTMLButtonElement;
+				item.type = 'button';
+				item.setAttribute('role', 'radio');
+				item.dataset.helper = name;
+				item.append(el('span', 'hsd-item-name', name), el('span', 'hsd-item-desc', OFFERED.find((o) => o.name === name)!.description));
+				item.addEventListener('click', () => {
+					for (const f of FIELDS) field(f).value = '';
+					select(name);
+				});
+				list.append(item);
+			}
+			select(installed.includes(helper) ? helper : (installed[0] ?? ''));
+		}
+
+		// The Manage window: Available lists what the sources offer, Installed what Start shows.
+		const manager = q('[data-hm]');
+		const managerBody = q('[data-hm-body]');
+		const managerTabs = [...root.querySelectorAll<HTMLButtonElement>('[data-hm-tab]')];
+		let managerTab = 'available';
+
+		function renderManager() {
+			for (const tab of managerTabs) tab.setAttribute('aria-selected', String(tab.dataset.hmTab === managerTab));
+			managerBody.replaceChildren();
+			const rows = managerTab === 'available' ? OFFERED : OFFERED.filter((o) => installed.includes(o.name));
+			if (managerTab === 'installed') {
+				if (rows.length === 0) managerBody.append(el('div', 'hsd-empty', 'No helpers installed.'));
+				else managerBody.append(el('div', 'hsd-hm-group', 'user'));
+			}
+			for (const offered of rows) {
+				const added = installed.includes(offered.name);
+				const row = el('div', 'hsd-hm-row');
+				const name = el('div', 'hsd-hm-name');
+				name.append(el('span', 'hsd-item-name', offered.name), el('span', 'hsd-item-desc', offered.description));
+				row.append(name);
+				if (managerTab === 'installed') {
+					const remove = iconButton(ICON_DELETE, 'hsd-btn hsd-flat hsd-flat-danger', 'Remove');
+					remove.addEventListener('click', () => {
+						installed.splice(installed.indexOf(offered.name), 1);
+						renderList();
+						renderManager();
+						renderHistory();
+					});
+					row.append(remove);
+				} else if (added) {
+					const mark = el('span', 'hsd-badge', 'added');
+					mark.dataset.state = 'added';
+					row.append(mark);
+				} else {
+					const add = el('button', 'hsd-btn hsd-primary', 'Add') as HTMLButtonElement;
+					add.type = 'button';
+					add.addEventListener('click', () => {
+						installed.push(offered.name);
+						renderList();
+						renderManager();
+						renderHistory();
+					});
+					row.append(add);
+				}
+				managerBody.append(row);
+			}
+		}
+		function openManager() {
+			managerTab = 'available';
+			renderManager();
+			manager.hidden = false;
+		}
+		for (const tab of managerTabs) {
+			tab.addEventListener('click', () => {
+				managerTab = tab.dataset.hmTab!;
+				renderManager();
+			});
+		}
+		q('[data-manage]').addEventListener('click', openManager);
+		q('[data-hm-close]').addEventListener('click', () => (manager.hidden = true));
+
+		defaultsButton.addEventListener('click', () => {
+			q('[data-modal-title]').textContent = `Saved Defaults — ${helper}`;
+			for (const name of FIELDS) {
+				const input = q<HTMLInputElement>(`[data-saved-${name}]`);
+				input.value = saved[helper]?.[name] ?? '';
+				input.placeholder = BUILT_IN[name];
+			}
+			modal.hidden = false;
+		});
+		q('[data-modal-cancel]').addEventListener('click', () => (modal.hidden = true));
+		q('[data-modal-save]').addEventListener('click', () => {
+			saved[helper] = {};
+			for (const name of FIELDS) saved[helper][name] = q<HTMLInputElement>(`[data-saved-${name}]`).value.trim();
+			refreshPlaceholders();
+			modal.hidden = true;
+		});
+		renderList();
+
+		q('[data-clear]').addEventListener('click', () => {
+			env.value = '';
+		});
+		q('[data-new]').addEventListener('click', () => {
+			env.value = 'env.img';
+		});
+
+		function refreshJobs() {
+			const n = jobs.children.length;
+			empty.hidden = n > 0;
+		}
+
+		function badge(status: string) {
+			const node = el('span', 'hsd-badge', status);
+			node.dataset.state = status === 'done' ? 'done' : status;
+			return node;
+		}
+
+		function renderHistory() {
+			tbody.replaceChildren();
+			if (history.length === 0) {
+				const row = document.createElement('tr');
+				const cell = el('td', 'hsd-td-empty', 'No history yet.');
+				cell.colSpan = 6;
+				row.append(cell);
+				tbody.append(row);
+				return;
+			}
+			const rows = [...history].sort((a, b) => Number(ACTIVE.includes(b.status)) - Number(ACTIVE.includes(a.status)));
+			for (const entry of rows) {
+				const active = ACTIVE.includes(entry.status);
+				const row = document.createElement('tr');
+				const status = document.createElement('td');
+				status.append(badge(entry.status));
+				const actions = document.createElement('td');
+				const present = installed.includes(entry.name);
+				const rerun = iconButton(ICON_REPLAY, 'hsd-btn hsd-flat', active ? 'Job is still active' : present ? 'Rerun' : 'Add the helper first');
+				const remove = iconButton(ICON_DELETE, 'hsd-btn hsd-flat hsd-flat-danger', active ? 'Stop the job before removing it' : 'Remove entry');
+				rerun.disabled = active || !present;
+				remove.disabled = active;
+				rerun.addEventListener('click', () => {
+					select(entry.name);
+					field('cpus').value = entry.cpus;
+					field('mem').value = entry.mem;
+					field('time').value = String(entry.hours);
+					field('gpu').value = entry.gpu;
+					env.value = entry.overlay;
+					show('start');
+				});
+				remove.addEventListener('click', () => {
+					history.splice(history.indexOf(entry), 1);
+					renderHistory();
+				});
+				actions.append(rerun, ' ', remove);
+				row.append(
+					el('td', 'hsd-td-name', entry.name),
+					status,
+					el('td', 'hsd-td-muted hsd-td-mono', entry.node),
+					el('td', 'hsd-td-muted hsd-td-mono', entry.cwd),
+					el('td', 'hsd-td-muted', entry.ended),
+					actions,
+				);
+				tbody.append(row);
+			}
+		}
+
+		q('[data-clear-finished]').addEventListener('click', () => {
+			for (let i = history.length - 1; i >= 0; i--) if (!ACTIVE.includes(history[i].status)) history.splice(i, 1);
+			renderHistory();
+		});
+
+		function launch(name: string, cpus: string, mem: string, hours: number, gpu: string, overlay: string) {
+			const id = `${name}-${stamp()}-${next++}`;
+			const url = `http://${id}.localhost:13182/`;
+			const stable = `http://${name}.localhost:13182/`;
+			const firstOfName = ![...jobs.children].some((card) => (card as HTMLElement).dataset.name === name);
+			const request = `${cpus} CPUs · ${mem} GB${gpu ? ' · GPU ' + gpu : ''}`;
+			const entry: Entry = { name, status: 'pending', node: '—', cwd: '/home/you/project', ended: '—', cpus, mem, hours, gpu, overlay, timers: [] };
+			history.unshift(entry);
+
+			const card = el('div', 'hsd-card');
+			card.dataset.name = name;
+
+			const top = el('div', 'hsd-card-top');
+			const state = badge('pending');
+			top.append(el('span', 'hsd-name', name), state);
+
+			const meta = el('div', 'hsd-meta');
+			const node = el('span', '', '—');
+			const tail = (text: string) => el('span', 'hsd-tail', text);
+			meta.append(node, el('span', 'hsd-sep', '|'), tail(entry.cwd));
+			if (overlay) meta.append(el('span', 'hsd-sep', '|'), tail(overlay));
+
+			const walltime = el('div', 'hsd-walltime', `⏱ ${hours}:00:00 · ${request}`);
+
+			const access = el('div', 'hsd-access');
+			const link = el('div', 'hsd-link');
+			link.title = url;
+			link.append(el('span', 'hsd-link-text', url), el('span', 'hsd-link-ext', '↗'));
+			const copy = iconButton(ICON_COPY, 'hsd-btn hsd-icon-btn', 'Copy URL');
+			copy.addEventListener('click', () => {
+				navigator.clipboard?.writeText(url).catch(() => {});
+				copy.innerHTML = ICON_CHECK;
+				setTimeout(() => (copy.innerHTML = ICON_COPY), 1200);
+			});
+			access.append(link, copy);
+			if (firstOfName) access.append(iconButton(ICON_LINK, 'hsd-btn hsd-icon-btn', stable));
+			access.hidden = true;
+
+			const stop = el('button', 'hsd-btn hsd-danger hsd-stop', 'Stop') as HTMLButtonElement;
+			stop.type = 'button';
+
+			card.append(top, meta, walltime, access, stop);
+			jobs.prepend(card);
+			refreshJobs();
+			renderHistory();
+
+			entry.timers.push(
+				window.setTimeout(() => {
+					entry.status = 'starting';
+					entry.node = 'cn101';
+					state.textContent = 'starting';
+					state.dataset.state = 'starting';
+					node.textContent = 'cn101';
+					renderHistory();
+				}, 800),
+				window.setTimeout(() => {
+					entry.status = 'running';
+					state.textContent = 'running';
+					state.dataset.state = 'running';
+					walltime.textContent = `Ends in ${hours - 1}h 59m · ${request}`;
+					access.hidden = false;
+					renderHistory();
+				}, 1800),
+			);
+			stop.addEventListener('click', () => {
+				entry.timers.forEach(clearTimeout);
+				entry.status = 'done';
+				entry.ended = 'just now';
+				card.remove();
+				refreshJobs();
+				renderHistory();
+			});
+		}
+
+		q('[data-start]').addEventListener('click', () => {
+			const hours = Math.max(1, parseInt(valueOf('time'), 10) || 1);
+			launch(helper, valueOf('cpus'), valueOf('mem'), hours, valueOf('gpu'), env.value.trim());
+			show('jobs');
+		});
+
+		refreshJobs();
+		renderHistory();
+	}
+</script>

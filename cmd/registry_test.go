@@ -19,6 +19,7 @@ import (
 	"github.com/condatainer/condatainer/internal/registry"
 	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/utils"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/spf13/cobra"
 )
 
@@ -548,6 +549,47 @@ func TestPatternMatcher(t *testing.T) {
 	} {
 		if got := patternMatcher(tc.pattern).MatchString(tc.name); got != tc.want {
 			t.Errorf("%q against %q = %v, want %v", tc.pattern, tc.name, got, tc.want)
+		}
+	}
+}
+
+// Each tag keeps its spelling and says what it is; one this tool did not write
+// has no name or key.
+func TestTagsDocReadsEachTag(t *testing.T) {
+	doc := tagsDoc("ghcr.io/lab/cnt", []string{"star--2.7.11b__eq-e90d3b7714cf__amd64", "latest"})
+	if doc.Repository != "ghcr.io/lab/cnt" || len(doc.Tags) != 2 {
+		t.Fatalf("doc = %+v", doc)
+	}
+	if got := doc.Tags[0]; got.Kind != registry.TagEquiv || got.Name != "star/2.7.11b" || got.Key != "e90d3b7714cf" || got.Arch != "amd64" {
+		t.Errorf("equiv tag = %+v", got)
+	}
+	if got := doc.Tags[1]; got != (report.Tag{Tag: "latest", Kind: registry.TagOther}) {
+		t.Errorf("other tag = %+v", got)
+	}
+}
+
+// A resolved copy reads its name, architecture and keys from the manifest
+// annotations, and names the tag the address asked for.
+func TestResolutionNamesTheTagAsked(t *testing.T) {
+	equiv := meta.KeyRef{Scheme: "script-equiv-v1", SHA256: "e90d3b7714cf0000"}
+	identity := meta.KeyRef{Scheme: "script-identity-v1", SHA256: "9f2c1ab4d3e80000"}
+	found := resolvedRegistryArtifact{
+		desc: ocispec.Descriptor{Digest: "sha256:abcd"},
+		annotations: map[string]string{
+			registry.AnnTitle: "star/2.7.11b", registry.AnnArch: "amd64",
+			registry.AnnIdentityScheme: identity.Scheme, registry.AnnIdentitySHA: identity.SHA256,
+			registry.AnnEquivScheme: equiv.Scheme, registry.AnnEquivSHA: equiv.SHA256,
+		},
+	}
+	for spec, tag := range map[string]string{
+		"star/2.7.11b":                 "star--2.7.11b__amd64",
+		"star/2.7.11b@9f2c1ab":         "star--2.7.11b__9f2c1ab4d3e8__amd64",
+		"star/2.7.11b:eq-e90d3b7714cf": "star--2.7.11b__eq-e90d3b7714cf__amd64",
+		"":                             "",
+	} {
+		got := resolution(found, spec, "amd64").Overlay
+		if got.Tag != tag || got.Name != "star/2.7.11b" || got.Arch != "amd64" || got.Digest != "sha256:abcd" || got.Identity != identity || got.Equiv != equiv {
+			t.Errorf("%q: resolved = %+v, want tag %q", spec, got, tag)
 		}
 	}
 }

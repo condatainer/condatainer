@@ -140,6 +140,7 @@ Registry audience, public (default) or restricted, says who can download from th
 	pull.Flags().StringVar(&opts.digest, "digest", "", "Install the copy with this digest (sha256:<hex>)")
 	pull.Flags().StringVarP(&opts.prefix, "prefix", "p", "", "Install at this path (the image extension is optional)")
 
+	var asJSON bool
 	resolve := &cobra.Command{
 		Use:   "resolve [flags] <name|name@identity>",
 		Short: "Print the digest of a published overlay without downloading it",
@@ -152,10 +153,18 @@ Registry audience, public (default) or restricted, says who can download from th
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				spec := firstArg(args)
+				if opts.digest != "" {
+					spec = ""
+				}
+				return report.Write(cmd.OutOrStdout(), resolution(resolved, spec, opts.arch))
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), resolved.desc.Digest)
 			return nil
 		},
 	}
+	jsonFlag(resolve.Flags(), &asJSON)
 	addEndpointFlags(resolve, opts)
 	resolve.Flags().StringVar(&opts.digest, "digest", "", "Check the copy with this digest (sha256:<hex>)")
 	resolve.Flags().StringVar(&opts.arch, "arch", "", "Machine architecture: amd64, arm64 or noarch")
@@ -185,12 +194,16 @@ Registry audience, public (default) or restricted, says who can download from th
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				return report.Write(cmd.OutOrStdout(), tagsDoc(ep.repository, listed))
+			}
 			for _, tag := range listed {
 				fmt.Fprintln(cmd.OutOrStdout(), tag)
 			}
 			return nil
 		},
 	}
+	jsonFlag(tags.Flags(), &asJSON)
 	addEndpointFlags(tags, opts)
 
 	login := &cobra.Command{
@@ -396,6 +409,41 @@ func recipeCheck(ep registryEndpoint) (func(string) bool, error) {
 }
 
 // firstArg is the one optional argument, or empty.
+// tagsDoc is the tags document for a repository's tags.
+func tagsDoc(repository string, listed []string) *report.Tags {
+	doc := &report.Tags{Repository: repository, Tags: make(report.List[report.Tag], 0, len(listed))}
+	for _, tag := range listed {
+		info := registry.DescribeTag(tag)
+		doc.Tags = append(doc.Tags, report.Tag{Tag: tag, Name: info.Name, Kind: info.Kind, Key: info.Key, Arch: info.Arch})
+	}
+	return doc
+}
+
+// resolution is the resolution document for a found copy. The tag is the one
+// the address asked for, from the copy's own keys, and absent for a digest.
+func resolution(found resolvedRegistryArtifact, spec, arch string) *report.Resolution {
+	ann := found.annotations
+	out := report.Resolved{
+		Overlay:  report.Overlay{Name: ann[registry.AnnTitle], Arch: ann[registry.AnnArch]},
+		Digest:   found.desc.Digest.String(),
+		Identity: registry.Identity(ann),
+		Equiv:    registry.Equiv(ann),
+	}
+	if addr, err := parseRegistryAddress(spec, arch); err == nil && spec != "" {
+		var tag string
+		switch {
+		case addr.Identity != "":
+			tag, _ = registry.BuildTag(out.Name, out.Identity, out.Arch)
+		case addr.Equiv != "":
+			tag, _ = registry.EquivTag(out.Name, out.Equiv, out.Arch)
+		default:
+			tag, _ = registry.NameTag(out.Name, out.Arch)
+		}
+		out.Tag = tag
+	}
+	return &report.Resolution{Overlay: out}
+}
+
 func firstArg(args []string) string {
 	if len(args) == 0 {
 		return ""

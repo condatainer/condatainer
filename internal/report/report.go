@@ -194,3 +194,38 @@ type Copies struct {
 	Overlays   List[Copy]    `json:"overlays"`
 	Problems   List[Problem] `json:"problems"`
 }
+
+// Tag is one tag of a registry. A tag this tool did not write has only Tag and
+// Kind (other). Key is the short key a build or equivalence tag spells.
+type Tag struct {
+	Tag  string `json:"tag"`
+	Name string `json:"name,omitempty"`
+	Kind string `json:"kind"`
+	Key  string `json:"key,omitempty"`
+	Arch string `json:"arch,omitempty"`
+}
+
+// Tags is the document of a command that lists a registry's tags.
+type Tags struct {
+	Doc
+	Repository string        `json:"repository"`
+	Tags       List[Tag]     `json:"tags"`
+	Problems   List[Problem] `json:"problems"`
+}
+
+// Resolved is a published copy found by an address, from its manifest
+// annotations alone. Tag is the tag the address asked for, empty for a digest.
+type Resolved struct {
+	Overlay
+	Tag      string      `json:"tag,omitempty"`
+	Digest   string      `json:"digest"`
+	Identity meta.KeyRef `json:"identity,omitzero"`
+	Equiv    meta.KeyRef `json:"equiv,omitzero"`
+}
+
+// Resolution is the document of a command that finds one published copy.
+type Resolution struct {
+	Doc
+	Overlay  Resolved      `json:"overlay"`
+	Problems List[Problem] `json:"problems"`
+}

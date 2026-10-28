@@ -165,6 +165,41 @@ func parseTag(tag string) parsedTag {
 	return parsedTag{}
 }
 
+// Tag kinds, as DescribeTag names them.
+const (
+	TagName     = "name"
+	TagIdentity = "identity"
+	TagEquiv    = "equiv"
+	TagOther    = "other"
+)
+
+// TagInfo is what a tag's spelling says. A tag this package did not write has
+// only its Kind, other.
+type TagInfo struct {
+	Kind string
+	// Name is the artifact name, Key the short key (hex) a build or equivalence
+	// tag carries, and Arch the architecture.
+	Name, Key, Arch string
+}
+
+// DescribeTag reads a tag's spelling.
+func DescribeTag(tag string) TagInfo {
+	p := parseTag(tag)
+	info := TagInfo{Kind: TagOther}
+	switch p.Kind {
+	case kindName:
+		info.Kind = TagName
+	case kindBuild:
+		info.Kind = TagIdentity
+	case kindEquiv:
+		info.Kind = TagEquiv
+	default:
+		return info
+	}
+	info.Name, info.Key, info.Arch = image.DecodeArtifactName(p.Encoded), p.Qualifier, p.Arch
+	return info
+}
+
 // TagRequest says which tags a push writes besides the build tag.
 type TagRequest struct {
 	// Name also writes the name tag.

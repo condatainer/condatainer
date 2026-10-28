@@ -24,18 +24,18 @@ import (
 // Submitted is one rebuild handed to the scheduler. The artifact is not
 // available yet; a later restore adopts what the job publishes.
 type Submitted struct {
-	Artifact string `json:"artifact"`
-	Name     string `json:"name"`
-	Identity string `json:"identity"`
-	JobID    string `json:"job_id"`
+	Artifact string
+	Name     string
+	Identity meta.KeyRef
+	JobID    string
 	// Destination is the project path the job will write, empty for a
 	// store-addressed artifact.
-	Destination string `json:"destination,omitempty"`
+	Destination string
 	// DependsOn are the job IDs this one waits for, sorted by step order.
-	DependsOn []string `json:"depends_on,omitempty"`
+	DependsOn []string
 	// Queued reports that the job was already in flight and this restore
 	// submitted nothing. Re-running a restore is how it is resumed.
-	Queued bool `json:"queued,omitempty"`
+	Queued bool
 }
 
 // jobs is one restore's scheduler partition: which steps the scheduler runs,
@@ -338,7 +338,7 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 		OverrideOutput: true,
 		Metadata: map[string]string{
 			"Target":   entry.Manifest.Name,
-			"Identity": step.Identity,
+			"Identity": step.Identity.Digest(),
 			"Project":  root,
 		},
 	}

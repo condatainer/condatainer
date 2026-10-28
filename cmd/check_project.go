@@ -41,7 +41,7 @@ func projectCheck(ctx context.Context, scriptPaths []string, metaDeps []string) 
 	}
 	if checkJSON {
 		return true, fmt.Errorf("check --json does not answer for a project yet\n"+
-			"run `condatainer project restore --project %s --dry-run`", root)
+			"run `condatainer project restore --project %s --dry-run --json`", root)
 	}
 	announceProject(root)
 	if checkAutoInstall {

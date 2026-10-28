@@ -62,7 +62,7 @@ func TestRunReportsAnEquivalentAdoption(t *testing.T) {
 	if result.Verdict != compare.Equivalent {
 		t.Errorf("verdict = %q, want equivalent", result.Verdict)
 	}
-	if result.Identity == "" || result.Found == "" || result.Identity == result.Found {
+	if result.Identity.Empty() || result.Found.Empty() || result.Identity == result.Found {
 		t.Errorf("result = %#v, want both identities reported", result)
 	}
 }

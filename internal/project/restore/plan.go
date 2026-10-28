@@ -53,29 +53,29 @@ const (
 // Step is one artifact's place in a restore.
 type Step struct {
 	// Artifact is the vendored directory, relative to the lock directory.
-	Artifact string `json:"artifact"`
-	Name     string `json:"name"`
+	Artifact string
+	Name     string
 	// Identity is what the lock records.
-	Identity string `json:"identity"`
+	Identity meta.KeyRef
 	// Found is the identity actually present, set only when an equivalent
 	// artifact stands in for the locked one. Empty for an exact hit, so a reader
 	// can tell a substitution from a match without comparing two digests.
-	Found  string `json:"found,omitempty"`
-	Action Action `json:"action"`
+	Found  meta.KeyRef
+	Action Action
 	// Direct reports that a pin mounts this artifact. A closure-only step
 	// is a build dependency, materialized only because something above it must be
 	// rebuilt.
-	Direct bool `json:"direct"`
+	Direct bool
 	// Requests are the pin keys this artifact answers, sorted. Empty for
 	// a closure-only step.
-	Requests []string `json:"requests,omitempty"`
+	Requests []string
 	// Destination is the project-relative path this artifact must end up at,
 	// set only for a `path:` pin. Empty means the artifact is addressed
 	// by identity and goes wherever the store's destination rule puts it.
 	//
 	// A project path is an output, not somewhere to look: a step carrying one
 	// is never satisfied by, and never installed into, a shared images root.
-	Destination string `json:"destination,omitempty"`
+	Destination string
 	// Replaces describes a different artifact already sitting at Destination
 	// that this step will overwrite — its identity, or "an unreadable file" when
 	// the bytes there are not a readable artifact. Empty when the path is free
@@ -83,31 +83,31 @@ type Step struct {
 	//
 	// A restore renames over that file, so a plan that did not say this would
 	// preview an overwrite as an ordinary build.
-	Replaces string `json:"replaces,omitempty"`
+	Replaces string
 	// Path and Layout are set when the artifact was found locally. For a
 	// destination step Path is that destination, already present and verified.
-	Path   string       `json:"path,omitempty"`
-	Layout store.Layout `json:"layout,omitempty"`
+	Path   string
+	Layout store.Layout
 	// Remotes are the recorded fetch locations, in retry order.
-	Remotes []lock.Remote `json:"remotes,omitempty"`
+	Remotes []lock.Remote
 	// DependsOn are the artifacts that must exist first, sorted.
-	DependsOn []string `json:"depends_on,omitempty"`
+	DependsOn []string
 	// RequiresInput reports that a rebuild would prompt, for #INPUT: or #SOURCE: ask: answers.
-	RequiresInput bool `json:"requires_input,omitempty"`
+	RequiresInput bool
 	// Arch is the artifact's recorded architecture, or "noarch".
-	Arch string `json:"arch,omitempty"`
+	Arch string
 	// StoreOnly keeps this step out of the bare name because a pin in the
 	// same plan answers to it. Set only on a build dependency being installed.
-	StoreOnly bool `json:"store_only,omitempty"`
+	StoreOnly bool
 	// Unbuildable reports an artifact with no sources to rebuild from, so a
 	// registry copy is the only thing that can produce it.
-	Unbuildable bool `json:"unbuildable,omitempty"`
+	Unbuildable bool
 }
 
 // verdict is how a step's result relates to the lock, decided by whether an
 // equivalent artifact stood in for the locked identity.
 func (s Step) verdict() compare.Verdict {
-	if s.Found != "" {
+	if !s.Found.Empty() {
 		return compare.Equivalent
 	}
 	return compare.Exact
@@ -115,13 +115,13 @@ func (s Step) verdict() compare.Verdict {
 
 // Plan is a dependency-first restore, with everything that would prevent it.
 type Plan struct {
-	Root  string `json:"root"`
-	Match Match  `json:"match"`
+	Root  string
+	Match Match
 	// Base is the artifact path of the project's root pin, empty when it has none.
-	Base string `json:"-"`
+	Base string
 	// Steps are ordered so every step's DependsOn precede it.
-	Steps    []Step   `json:"steps"`
-	Problems []string `json:"problems,omitempty"`
+	Steps    []Step
+	Problems []string
 }
 
 // Complete reports whether the plan can run as computed.
@@ -282,7 +282,7 @@ func Compute(root string, l *lock.Lock, opts Options) *Plan {
 		base := Step{
 			Artifact: artifact,
 			Name:     entry.Manifest.Name,
-			Identity: entry.Identity.Digest(),
+			Identity: entry.Identity,
 			Remotes:  l.Remotes[artifact],
 			Arch:     entry.Manifest.Platform.Arch,
 
@@ -500,7 +500,7 @@ func (p *Plan) classify(step Step, keys meta.Keys, hostArch string, opts Options
 	if candidate, ok := found(); ok {
 		step.Action, step.Path, step.Layout = ActionAdopt, candidate.Path, candidate.Layout
 		if candidate.Identity != keys.Identity {
-			step.Found = candidate.Identity.Digest()
+			step.Found = candidate.Identity
 		}
 		return step, nil
 	}

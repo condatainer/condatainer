@@ -47,8 +47,8 @@ type registryOptions struct {
 	noRecipe      bool
 }
 
-// registryRemoveJSON is --json on registry remove and registry gc, which are
-// never run together.
+// registryRemoveJSON is --json on registry remove, registry gc and project
+// registry gc, which are never run together.
 var registryRemoveJSON bool
 
 // pullJSON is --json on registry pull.

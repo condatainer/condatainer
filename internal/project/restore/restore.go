@@ -50,40 +50,42 @@ const (
 
 // Result is one artifact that is now available, and how it got that way.
 type Result struct {
-	Artifact string `json:"artifact"`
-	Name     string `json:"name"`
+	Artifact string
+	Name     string
 	// Identity is what the lock records; Found is what is actually there, set
 	// only when an equivalent artifact stands in.
-	Identity string          `json:"identity"`
-	Found    string          `json:"found,omitempty"`
-	Verdict  compare.Verdict `json:"verdict"`
-	Outcome  Outcome         `json:"outcome"`
+	Identity meta.KeyRef
+	Found    meta.KeyRef
+	Verdict  compare.Verdict
+	Outcome  Outcome
 	// Path is the absolute image, and Destination the project-relative path it
 	// was required at, empty for a store-addressed artifact.
-	Path        string       `json:"path"`
-	Destination string       `json:"destination,omitempty"`
-	Layout      store.Layout `json:"layout,omitempty"`
+	Path        string
+	Destination string
+	Layout      store.Layout
 	// Transient reports that this artifact was produced only to build something
 	// else and no longer exists. --keep-build-deps installs it instead.
-	Transient bool `json:"transient,omitempty"`
+	Transient bool
 	// Diffs name the inputs an equivalent artifact was built from differently
 	// from the locked one. Empty for an exact match, and when the comparison
 	// could not be made: it explains a substitution and gates nothing.
-	Diffs []string `json:"diffs,omitempty"`
+	Diffs []string
 	// PayloadDrift reports a rebuild whose identity matches the lock's but whose
 	// files do not: the recipe does not produce the same bytes twice.
-	PayloadDrift bool `json:"payload_drift,omitempty"`
+	PayloadDrift bool
 }
 
 // Failure is one artifact that could not be made available.
 type Failure struct {
-	Artifact string `json:"artifact"`
-	Name     string `json:"name"`
-	Reason   string `json:"reason"`
+	Artifact string
+	Name     string
+	Reason   string
+	// Destination is the project path of a destination step, empty otherwise.
+	Destination string
 	// Diffs name the inputs that moved, when a result was produced and rejected.
-	Diffs []string `json:"diffs,omitempty"`
+	Diffs []string
 	// Rejected is where a rejected result was kept, when it was kept.
-	Rejected string `json:"rejected,omitempty"`
+	Rejected string
 }
 
 // Blocked is one artifact that was never attempted because something beneath it
@@ -91,26 +93,30 @@ type Failure struct {
 // broken dependency produces a single failure and a list of what it stopped,
 // rather than a failure per artifact with the real one buried among them.
 type Blocked struct {
-	Artifact string `json:"artifact"`
-	Name     string `json:"name"`
+	Artifact string
+	Name     string
 	// Cause is the artifact that actually failed, which may lie further down
 	// than this one's own edges.
-	Cause string `json:"cause"`
+	Cause string
+	// Destination is the project path of a destination step, empty otherwise.
+	Destination string
 }
 
 // Report is everything one restore did.
 type Report struct {
-	Root     string    `json:"root"`
-	Match    Match     `json:"match"`
-	Results  []Result  `json:"results,omitempty"`
-	Failures []Failure `json:"failures,omitempty"`
-	Blocked  []Blocked `json:"blocked,omitempty"`
+	Root     string
+	Match    Match
+	Results  []Result
+	Failures []Failure
+	Blocked  []Blocked
 	// Submitted are the rebuilds the scheduler will run. They are not results:
 	// nothing is available until those jobs finish.
-	Submitted []Submitted `json:"submitted,omitempty"`
+	Submitted []Submitted
 	// Problems are planning failures, which stop a restore before it acquires
 	// anything.
-	Problems []string `json:"problems,omitempty"`
+	Problems []string
+	// Plan is the plan the run followed.
+	Plan *Plan
 }
 
 // Complete reports whether every pin is now available. A submission is
@@ -125,7 +131,7 @@ func (r *Report) Complete() bool {
 //   - A later failure leaves earlier results in place; they are exact results someone can use, not a partial transaction to roll back, and re-running adopts them.
 func Run(ctx context.Context, root string, l *lock.Lock, opts Options) (*Report, error) {
 	plan := Compute(root, l, opts)
-	report := &Report{Root: plan.Root, Match: plan.Match, Problems: plan.Problems}
+	report := &Report{Root: plan.Root, Match: plan.Match, Problems: plan.Problems, Plan: plan}
 	if !plan.Complete() {
 		return report, fmt.Errorf("%w: %d planning problem(s)", ErrIncomplete, len(plan.Problems))
 	}
@@ -172,7 +178,7 @@ func Run(ctx context.Context, root string, l *lock.Lock, opts Options) (*Report,
 		}
 		if cause := blockedBy(step, stopped); cause != "" {
 			report.Blocked = append(report.Blocked, Blocked{
-				Artifact: step.Artifact, Name: step.Name, Cause: cause})
+				Artifact: step.Artifact, Name: step.Name, Cause: cause, Destination: step.Destination})
 			stopped[step.Artifact] = cause
 			continue
 		}
@@ -180,13 +186,14 @@ func Run(ctx context.Context, root string, l *lock.Lock, opts Options) (*Report,
 			entry, ok := verified.Entries[step.Artifact]
 			if !ok {
 				report.Failures = append(report.Failures, Failure{Artifact: step.Artifact,
-					Name: step.Name, Reason: "the overlay is no longer vendored"})
+					Name: step.Name, Destination: step.Destination, Reason: "the overlay is no longer vendored"})
 				stopped[step.Artifact] = step.Artifact
 				continue
 			}
 			submitted, result, failure := queue.submitStep(ctx, root, entry, step, queue.waitFor(step), opts)
 			switch {
 			case failure != nil:
+				failure.Destination = step.Destination
 				report.Failures = append(report.Failures, *failure)
 				stopped[step.Artifact] = step.Artifact
 			case submitted != nil:
@@ -200,6 +207,7 @@ func Run(ctx context.Context, root string, l *lock.Lock, opts Options) (*Report,
 		}
 		result, failure := execute(ctx, root, verified, step, plan.Match, available, baseArtifact, scratch, opts)
 		if failure != nil {
+			failure.Destination = step.Destination
 			report.Failures = append(report.Failures, *failure)
 			stopped[step.Artifact] = step.Artifact
 			continue
@@ -278,14 +286,14 @@ func execute(ctx context.Context, root string, verified *lock.Verified, step Ste
 		Artifact: step.Artifact, Name: step.Name, Identity: step.Identity,
 		Found: step.Found, Destination: step.Destination, Verdict: compare.Exact,
 	}
-	if step.Found != "" {
+	if !step.Found.Empty() {
 		result.Verdict = compare.Equivalent
 	}
 
 	switch step.Action {
 	case ActionAdopt:
 		result.Outcome, result.Path, result.Layout = OutcomeAdopted, step.Path, step.Layout
-		if step.Found != "" {
+		if !step.Found.Empty() {
 			result.Diffs = substituteDiffs(ctx, entry, step)
 		}
 		return result, nil
@@ -380,7 +388,7 @@ func rebuild(ctx context.Context, root string, entry *lock.Entry, step Step, mat
 			return nil, fail("%v", err)
 		}
 		log.Info("Rebuilding from the lock", "kind", "note",
-			"name", step.Name, "identity", step.Identity)
+			"name", step.Name, "identity", step.Identity.Digest())
 		if buildErr = object.Build(ctx, false); buildErr == nil {
 			break
 		}
@@ -425,7 +433,7 @@ func rebuild(ctx context.Context, root string, entry *lock.Entry, step Step, mat
 	}
 	result.Path, result.Layout = candidate.Path, candidate.Layout
 	if candidate.Identity != entry.Identity {
-		result.Found = candidate.Identity.Digest()
+		result.Found = candidate.Identity
 	}
 	return result, nil
 }
@@ -599,7 +607,7 @@ func fetch(ctx context.Context, root string, entry *lock.Entry, step Step, match
 			result.Path = path.Path
 			result.Layout = path.Layout
 			if !path.Identity.Empty() && path.Identity != entry.Identity {
-				result.Found = path.Identity.Digest()
+				result.Found = path.Identity
 			}
 			return result, nil
 		}
@@ -614,10 +622,10 @@ func fetch(ctx context.Context, root string, entry *lock.Entry, step Step, match
 	// names the flag that asks for the build, instead of quietly taking it.
 	if step.Unbuildable {
 		return nil, fail("%v: no recorded remote served %s (%s); it is a snapshot, so a registry copy is the only thing that can produce it",
-			ErrNotAcquirable, step.Identity, strings.Join(attempts, "; "))
+			ErrNotAcquirable, step.Identity.Digest(), strings.Join(attempts, "; "))
 	}
 	return nil, fail("%v: no recorded remote served %s (%s); use --no-prebuilt to build from source instead",
-		ErrNotAcquirable, step.Identity, strings.Join(attempts, "; "))
+		ErrNotAcquirable, step.Identity.Digest(), strings.Join(attempts, "; "))
 }
 
 // fetched is where one successful fetch landed.

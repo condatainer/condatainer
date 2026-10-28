@@ -43,10 +43,12 @@ type prebuiltCandidate struct {
 	annotations map[string]string
 }
 
-// prebuiltPlan is a node's prebuilt decision, made before anything runs.
+// prebuiltPlan is a node's prebuilt decision, made before anything runs. miss
+// says why a lookup that found nothing did.
 type prebuiltPlan struct {
 	choice    prebuiltChoice
 	candidate prebuiltCandidate
+	miss      prebuiltMiss
 }
 
 // plannedDep is what a dependency that is not installed yet will contribute to
@@ -74,13 +76,26 @@ const (
 	missUnavailable                     // the registry could not be reached
 )
 
-// prebuiltEligible reports whether a prebuilt can apply at all. A Conda build
-// has none to pull.
-func (b *BuildObject) prebuiltEligible() bool {
-	return !config.Global.SkipPrebuilt && b.buildType != BuildTypeConda &&
-		b.catalogSource != nil && b.catalogSource.DescriptorErr == nil &&
-		b.catalogSource.Desc.OCI.Registry != ""
+// noPrebuiltReason says why no prebuilt can apply at all, or "" when one can. A
+// Conda build has none to pull.
+func (b *BuildObject) noPrebuiltReason() string {
+	switch {
+	case config.Global.SkipPrebuilt:
+		return "prebuilt lookup is turned off"
+	case b.buildType == BuildTypeConda:
+		return "a Conda build has nothing published"
+	case b.catalogSource == nil:
+		return "it has no recipe source"
+	case b.catalogSource.DescriptorErr != nil:
+		return "its recipe source has an invalid descriptor"
+	case b.catalogSource.Desc.OCI.Registry == "":
+		return "its recipe source declares no registry"
+	}
+	return ""
 }
+
+// prebuiltEligible reports whether a prebuilt can apply at all.
+func (b *BuildObject) prebuiltEligible() bool { return b.noPrebuiltReason() == "" }
 
 // findPrebuilt reads the source's registry by metadata alone, and returns the
 // artifact published there for the planned architecture if it was made from the
@@ -149,7 +164,7 @@ func (b *BuildObject) planPrebuilt(ctx context.Context, known bool) error {
 			if miss == missUnavailable {
 				logging.FromContext(ctx).Warn(fmt.Sprintf("Cannot fetch prebuilt %s, building from the recipe", b.spec.Image.Name))
 			}
-			b.prebuilt = prebuiltPlan{choice: prebuiltNone}
+			b.prebuilt = prebuiltPlan{choice: prebuiltNone, miss: miss}
 			return nil
 		}
 		b.prebuilt = prebuiltPlan{choice: prebuiltPull, candidate: cand}

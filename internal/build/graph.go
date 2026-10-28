@@ -577,6 +577,13 @@ type PlannedStep struct {
 	Deps          []PlannedDep
 	RequiresInput bool   // the recipe asks questions before it builds
 	Path          string // where the overlay lands
+	// Registry is where a published copy was looked for. It is empty when no
+	// lookup applies, and NoRegistry says why.
+	Registry   string
+	NoRegistry string
+	// Unreachable says the lookup could not reach the registry, so a copy that
+	// was not found may still be there.
+	Unreachable bool
 }
 
 // PlannedDep is one dependency of a planned step, as the step's key counts it.
@@ -631,6 +638,10 @@ func (b *BuildObject) PlannedStep(ctx context.Context) PlannedStep {
 	}
 	if b.spec.Image.Noarch {
 		step.Arch = meta.ArchNone
+	}
+	if step.NoRegistry = b.noPrebuiltReason(); step.NoRegistry == "" {
+		step.Registry = b.catalogSource.Desc.OCI.Registry
+		step.Unreachable = b.prebuilt.miss == missUnavailable
 	}
 	for _, edge := range b.plannedEdges {
 		path := b.plannedDepPaths[edge.Name]

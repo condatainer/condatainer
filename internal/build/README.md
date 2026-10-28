@@ -128,6 +128,8 @@ Builds overlay images from Conda packages, recipes or Apptainer definitions.
 - Every check reads it: the recipe's `#ARCH:`, the resolver, the prebuilt lookup, and which `#SOURCE: ask:` lines count as questions.
 - A plan-only context asks none of a recipe's questions, which are also asked while the object is made.
   - The answers choose what is downloaded, which enters identity only, so equivalence is the same without them.
+- A plan says where it looked for a published copy, and whether the registry could not be reached.
+  - A copy that is absent and a registry that did not answer differ: only the first means the copy is missing.
 - Either kind of plan can be read, never run. A build runs where it is built, with its answers.
 
 ## Workspace

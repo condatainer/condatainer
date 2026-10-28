@@ -96,3 +96,30 @@ func TestFormatOfReadsTheExtension(t *testing.T) {
 		}
 	}
 }
+
+// A missing copy has its recipe's key and tag and nothing of a manifest; a
+// published one adds the digest and identity.
+func TestCopyAddsTheManifestOnlyWhenPublished(t *testing.T) {
+	equiv := meta.KeyRef{Scheme: "definition-equiv-v1", SHA256: "e90d"}
+	missing, err := json.Marshal(Copy{Overlay: Overlay{Name: "ubuntu24/base", Type: artifact.TypeOS, Arch: "amd64"},
+		Equiv: equiv, Tag: "ubuntu24--base__eq-e90d__amd64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(missing, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["published"] != false || m["tag"] == nil || m["equiv"] == nil || m["digest"] != nil || m["identity"] != nil {
+		t.Errorf("missing copy = %s", missing)
+	}
+
+	published, err := json.Marshal(Copy{Published: true, Equiv: equiv, Digest: "sha256:ab",
+		Identity: meta.KeyRef{Scheme: "definition-identity-v1", SHA256: "9f2c"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(published), `"digest":"sha256:ab"`) || !strings.Contains(string(published), `"identity":{"scheme":"definition-identity-v1","sha256":"9f2c"}`) {
+		t.Errorf("published copy = %s", published)
+	}
+}

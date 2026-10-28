@@ -174,3 +174,23 @@ type Steps struct {
 	Steps    List[Step]    `json:"steps"`
 	Problems List[Problem] `json:"problems"`
 }
+
+// Copy is whether a registry holds the copy a local recipe would make, for one
+// architecture. Equiv is the recipe's key and Tag the equivalence tag asked
+// for. A published copy adds the Digest and Identity its manifest says.
+type Copy struct {
+	Overlay
+	Published bool        `json:"published"`
+	Equiv     meta.KeyRef `json:"equiv"`
+	Tag       string      `json:"tag"`
+	Digest    string      `json:"digest,omitempty"`
+	Identity  meta.KeyRef `json:"identity,omitzero"`
+}
+
+// Copies is the document of a command that checks overlays against a registry.
+type Copies struct {
+	Doc
+	Repository string        `json:"repository"`
+	Overlays   List[Copy]    `json:"overlays"`
+	Problems   List[Problem] `json:"problems"`
+}

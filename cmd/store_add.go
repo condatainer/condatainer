@@ -6,6 +6,7 @@ import (
 	"github.com/condatainer/condatainer/internal/artifact/compare"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
@@ -13,6 +14,7 @@ import (
 
 func newStoreAddCmd() *cobra.Command {
 	var layer string
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "add [flags] <file.sqf>",
 		Short: "Install an existing overlay file into the store",
@@ -57,12 +59,20 @@ func newStoreAddCmd() *cobra.Command {
 				opts.SearchDirs = []string{dir}
 			}
 
-			candidate, err := store.InstallFile(artifact.Name, artifact.IdentityRef(), source, opts)
+			// Whether the build is already installed is read before the install,
+			// which adopts an existing copy without saying so.
+			identity := artifact.IdentityRef()
+			_, _, notInstalled := store.ResolveIdentity(artifact.Name, store.IdentityQuery{Scheme: identity.Scheme, SHA256: identity.SHA256}, opts.SearchDirs)
+
+			candidate, err := store.InstallFile(artifact.Name, identity, source, opts)
 			if err != nil {
 				return err
 			}
-			if candidate.Path != source && candidate.Layout == store.LayoutStored &&
-				candidate.Root == dir {
+			added := notInstalled != nil
+			if asJSON {
+				return report.Write(cmd.OutOrStdout(), &report.Added{Overlay: storedRecord(candidate), Added: added})
+			}
+			if added {
 				utils.PrintSuccess("Added %s%s", candidate.Path, config.LayerNote(candidate.Path))
 			} else {
 				// Begin adopted a copy that was already installed, which may be in
@@ -75,6 +85,7 @@ func newStoreAddCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&layer, "layer", "l", "", "Add to this layer: "+layerChoices)
+	jsonFlag(cmd.Flags(), &asJSON)
 	cmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
 		func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 			return []string{"user", "cnt-root", "extra-root"}, cobra.ShellCompDirectiveNoFileComp

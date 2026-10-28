@@ -232,13 +232,15 @@ type Resolution struct {
 
 // Installed is an overlay file on this machine. Alias is its short form under
 // the default distro. Shadowed says a nearer directory holds the same name, so
-// this file is not the one used. Runtime is the image's own runtime document,
-// absent when it could not be read.
+// this file is not the one used. Keys are the ones its manifest records, and
+// Runtime is the image's own runtime document; each is absent when it could not
+// be read.
 type Installed struct {
 	Overlay
 	Alias string `json:"alias,omitempty"`
 	Location
 	Shadowed bool          `json:"shadowed"`
+	Keys     *meta.Keys    `json:"keys,omitempty"`
 	Runtime  *meta.Runtime `json:"runtime,omitempty"`
 }
 
@@ -523,4 +525,79 @@ type RegistryRemovalPlan struct {
 	WouldMove   List[Move]             `json:"would_move"`
 	Kept        List[RegistryKept]     `json:"kept"`
 	Problems    List[Problem]          `json:"problems"`
+}
+
+// Stored is an overlay in an images directory, either under its plain name
+// (layout flat) or filed by identity (layout store). Keys are its identity and
+// equivalence, regenerated from the sources it embeds.
+type Stored struct {
+	Overlay
+	Location
+	Keys    *meta.Keys    `json:"keys,omitempty"`
+	Runtime *meta.Runtime `json:"runtime,omitempty"`
+}
+
+// Added is the document of adding an overlay file to the store. Added is false
+// when the build was already installed, and the record is where it is.
+type Added struct {
+	Doc
+	Overlay  Stored        `json:"overlay"`
+	Added    bool          `json:"added"`
+	Problems List[Problem] `json:"problems"`
+}
+
+// Promotion is the document of making one build the one its name resolves to.
+//   - Overlay is that build. Demoted is the build that held the name, now in
+//     the store, and Shadows is a farther copy of the name this one overrules.
+//   - AlreadyCurrent says the build already answered to the name.
+//   - Outcome is done once it is promoted, and absent in a preview, where
+//     Overlay is the build as it is filed now.
+type Promotion struct {
+	Doc
+	Overlay        Stored        `json:"overlay"`
+	Demoted        *Stored       `json:"demoted,omitempty"`
+	Shadows        string        `json:"shadows,omitempty"`
+	AlreadyCurrent bool          `json:"already_current,omitempty"`
+	Outcome        Outcome       `json:"outcome,omitempty"`
+	Problems       List[Problem] `json:"problems"`
+}
+
+// Collected is a store entry a garbage collection took, or would take. Age is
+// in seconds from the newest of the access, modification and change times, and
+// Basis names the one that decided it. Staging marks an abandoned partial file.
+type Collected struct {
+	Overlay
+	Location
+	Identity meta.KeyRef `json:"identity,omitzero"`
+	Age      int64       `json:"age"`
+	Basis    string      `json:"basis"`
+	Staging  bool        `json:"staging,omitempty"`
+}
+
+// CollectKept is a store entry a garbage collection left, with the reason it
+// gives in words.
+type CollectKept struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// Collection is the document of a store garbage collection that acted. Grace
+// is in seconds, and Reclaimed is the bytes freed.
+type Collection struct {
+	Doc
+	Grace     int64             `json:"grace"`
+	Reclaimed int64             `json:"reclaimed"`
+	Removed   List[Collected]   `json:"removed"`
+	Kept      List[CollectKept] `json:"kept"`
+	Problems  List[Problem]     `json:"problems"`
+}
+
+// CollectionPlan is the same collection reported and not made.
+type CollectionPlan struct {
+	Doc
+	Grace       int64             `json:"grace"`
+	Reclaimable int64             `json:"reclaimable"`
+	WouldRemove List[Collected]   `json:"would_remove"`
+	Kept        List[CollectKept] `json:"kept"`
+	Problems    List[Problem]     `json:"problems"`
 }

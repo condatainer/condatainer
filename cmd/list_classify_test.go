@@ -107,7 +107,8 @@ func TestListDocHasOneRecordPerImage(t *testing.T) {
 		}},
 	}
 
-	doc := listDoc(results, "ubuntu24")
+	keys := &meta.Keys{Identity: meta.KeyRef{Scheme: "script-identity-v1", SHA256: "9f2c"}}
+	doc := listDoc(results, "ubuntu24", func(string) (*meta.Keys, error) { return keys, nil })
 	if len(doc.Overlays) != 4 {
 		t.Fatalf("overlays = %+v", doc.Overlays)
 	}
@@ -116,6 +117,9 @@ func TestListDocHasOneRecordPerImage(t *testing.T) {
 		base.Format != report.FormatSquashFS || base.Layout != store.LayoutFlat || base.Dir != near || base.Size != 3 ||
 		base.Shadowed || base.Runtime == nil || base.Runtime.Name != "ubuntu24/base" {
 		t.Errorf("base = %+v", base)
+	}
+	if base.Keys == nil || base.Keys.Identity.SHA256 != "9f2c" || broken.Keys != nil {
+		t.Errorf("keys: base = %+v, broken = %+v", base.Keys, broken.Keys)
 	}
 	if star.Name != "star/2.7.11b" || star.Alias != "" {
 		t.Errorf("star = %+v", star)

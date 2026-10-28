@@ -117,7 +117,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		if listRemove {
 			return errors.New("--remove asks for confirmation and cannot be combined with --json; use `condatainer remove`")
 		}
-		return report.Write(os.Stdout, listDoc(results, projectDefaultDistro()))
+		return report.Write(os.Stdout, listDoc(results, projectDefaultDistro(), manifestKeys))
 	}
 
 	hasAnyMatch := false
@@ -482,8 +482,8 @@ func readOverlayDescription(overlayPath string) string {
 }
 
 // listDoc is the overlays document for a scan: one record per image, nearest
-// directory first. A name already seen in a nearer directory is shadowed there.
-func listDoc(results []DirOverlays, distro string) *report.Overlays[report.Installed] {
+// directory first, with the keys keysOf reads from it. A name already seen in a nearer directory is shadowed there.
+func listDoc(results []DirOverlays, distro string, keysOf func(path string) (*meta.Keys, error)) *report.Overlays[report.Installed] {
 	doc := &report.Overlays[report.Installed]{Overlays: report.List[report.Installed]{}}
 	distroLower := strings.ToLower(distro)
 	seen := map[string]bool{}
@@ -499,6 +499,12 @@ func listDoc(results []DirOverlays, distro string) *report.Overlays[report.Insta
 			} else {
 				rt := file.Runtime
 				rec.Name, rec.Type, rec.Arch, rec.Runtime = rt.Name, rt.Type, rt.Platform.Arch, &rt
+				if keys, err := keysOf(file.Path); err != nil {
+					doc.Problems = append(doc.Problems, report.Problem{Name: rt.Name,
+						Message: fmt.Sprintf("cannot read the manifest of %s: %v", filepath.Base(file.Path), err)})
+				} else {
+					rec.Keys = keys
+				}
 				if rt.Name != "" && rt.Name != fileName {
 					doc.Problems = append(doc.Problems, report.Problem{Name: rt.Name,
 						Message: fmt.Sprintf("the file is named %s; the image says %s", filepath.Base(file.Path), rt.Name)})
@@ -514,4 +520,19 @@ func listDoc(results []DirOverlays, distro string) *report.Overlays[report.Insta
 		}
 	}
 	return doc
+}
+
+// manifestKeys reads the keys an image's manifest records, nil when it records
+// none. An image with no manifest has none and is not an error.
+func manifestKeys(path string) (*meta.Keys, error) {
+	m, err := meta.ReadManifest(path)
+	switch {
+	case errors.Is(err, meta.ErrNoManifest):
+		return nil, nil
+	case err != nil:
+		return nil, err
+	case m.Keys.Identity.Empty() && m.Keys.Equiv.Empty() && m.Keys.Payload.Empty():
+		return nil, nil
+	}
+	return &m.Keys, nil
 }

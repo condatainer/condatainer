@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
@@ -13,6 +17,7 @@ import (
 
 func newStoreRemoveCmd() *cobra.Command {
 	var identity string
+	var dryRun, asJSON bool
 	cmd := &cobra.Command{
 		Use:     "remove [flags] <name>@<identity>",
 		Aliases: []string{"rm"},
@@ -26,22 +31,66 @@ func newStoreRemoveCmd() *cobra.Command {
   condatainer store remove star/2.7.11b --identity 9f2c1ab`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			name, query, err := splitStoreAddress(args[0], identity)
 			if err != nil {
 				return err
 			}
-			removed, err := store.Remove(name, query, nil)
-			if err != nil {
-				return err
-			}
-			utils.PrintSuccess("Removed %s (%s)%s", removed.Path,
-				store.FormatKeyRef(removed.Identity), config.LayerNote(removed.Path))
-			return nil
+			return runStoreRemove(cmd, name, query, dryRun, asJSON)
 		},
 	}
 	cmd.Flags().StringVar(&identity, "identity", "", "Complete identity or unambiguous digest prefix")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show which entry would be removed, without removing")
+	jsonFlag(cmd.Flags(), &asJSON)
 	return cmd
+}
+
+// runStoreRemove removes the entry an address names, or with dryRun only checks
+// that it could be: its lock is free and it is not write-protected. An entry
+// that is found and cannot be removed is kept, with the reason, and ends the
+// command with its error after the document is printed.
+func runStoreRemove(cmd *cobra.Command, name string, query store.IdentityQuery, dryRun, asJSON bool) error {
+	var candidate store.Candidate
+	var err error
+	if dryRun {
+		candidate, err = store.Removable(name, query, nil)
+	} else {
+		candidate, err = store.Remove(name, query, nil)
+	}
+	if candidate.Path == "" {
+		return err
+	}
+	rec := storedRecord(candidate)
+	var removed []report.Removed
+	var kept []report.Kept
+	if err != nil {
+		reason := report.KeptFailed
+		switch {
+		case errors.Is(err, image.ErrInUse):
+			reason = report.KeptInUse
+		case errors.Is(err, image.ErrProtected):
+			reason = report.KeptProtected
+		}
+		kept = append(kept, report.Kept{Overlay: rec.Overlay, Location: rec.Location, Reason: reason, Error: err.Error()})
+	} else {
+		removed = append(removed, report.Removed{Overlay: rec.Overlay, Location: rec.Location})
+	}
+
+	switch {
+	case asJSON:
+		if werr := writeRemovalDoc(cmd.OutOrStdout(), dryRun, removed, kept); werr != nil {
+			return werr
+		}
+	case err != nil:
+	case dryRun:
+		utils.PrintMessage("Would remove %s (%s)%s", candidate.Path,
+			store.FormatKeyRef(candidate.Identity), config.LayerNote(candidate.Path))
+		utils.PrintMessage("Dry run: nothing was removed.")
+	default:
+		utils.PrintSuccess("Removed %s (%s)%s", candidate.Path,
+			store.FormatKeyRef(candidate.Identity), config.LayerNote(candidate.Path))
+	}
+	return err
 }
 
 func newStoreGCCmd() *cobra.Command {
@@ -71,23 +120,29 @@ func newStoreGCCmd() *cobra.Command {
 				return err
 			}
 			opts := store.GCOptions{Dirs: dirs, Grace: time.Duration(graceDay) * 24 * time.Hour}
-			report, err := store.GC(opts)
+			if jsonOut {
+				// An unanswered question is a no: without -y it only reports.
+				opts.Apply = !previewOnly(true)
+				collected, err := store.GC(opts)
+				if err != nil {
+					return err
+				}
+				return writeCollection(cmd.OutOrStdout(), collected)
+			}
+			found, err := store.GC(opts)
 			if err != nil {
 				return err
 			}
-			if jsonOut {
-				return printJSON(report)
-			}
-			printGCReport(report)
-			if len(report.Collectable) == 0 {
+			printGCReport(found)
+			if len(found.Collectable) == 0 {
 				return nil
 			}
 			if layer == "" {
 				utils.PrintHint("add --layer to choose where to delete from")
 				return nil
 			}
-			if !utils.ShouldAnswerYes() && !utils.Confirm(cmd.Context(), os.Stdout,
-				fmt.Sprintf("Remove %d entrie(s)? Cannot be undone. [y/N]: ", len(report.Collectable))) {
+			if !utils.ShouldAnswerYes() && !utils.Confirm(cmd.Context(), os.Stderr,
+				fmt.Sprintf("Remove %d entrie(s)? Cannot be undone. [y/N]: ", len(found.Collectable))) {
 				return nil
 			}
 			opts.Apply = true
@@ -125,8 +180,8 @@ func storeGCDirs(layer string) ([]string, error) {
 // Retained entries are printed too, and not only as a count: "0 collectable"
 // with no explanation is indistinguishable from a broken scan, and the reasons
 // are what tell a locked artifact from a pinned one from a young one.
-func printGCReport(report *store.GCReport) {
-	for _, entry := range report.Collectable {
+func printGCReport(found *store.GCReport) {
+	for _, entry := range found.Collectable {
 		label := entry.Name
 		if entry.Staging {
 			label = "abandoned staging file"
@@ -135,23 +190,46 @@ func printGCReport(report *store.GCReport) {
 			utils.FormatSize(entry.Size), entry.Path,
 			fmt.Sprintf("%s %s", entry.Basis, utils.FormatDuration(entry.Age)))
 	}
-	for _, entry := range report.Retained {
+	for _, entry := range found.Retained {
 		utils.PrintDebug("kept %s: %s", entry.Path, entry.Reason)
 	}
-	if len(report.Collectable) == 0 {
+	if len(found.Collectable) == 0 {
 		utils.PrintSuccess("Nothing to collect (%d entries kept, grace %s).",
-			len(report.Retained), utils.FormatDuration(report.Grace))
+			len(found.Retained), utils.FormatDuration(found.Grace))
 		return
 	}
 	utils.PrintSuccess("%d entrie(s) collectable, %s reclaimable%s.",
-		len(report.Collectable), utils.FormatSize(report.Reclaimable), config.LayerNote(collectablePaths(report)...))
+		len(found.Collectable), utils.FormatSize(found.Reclaimable), config.LayerNote(collectablePaths(found)...))
 }
 
 // collectablePaths lists the paths of the entries a gc run found.
-func collectablePaths(report *store.GCReport) []string {
-	paths := make([]string, len(report.Collectable))
-	for i, entry := range report.Collectable {
+func collectablePaths(found *store.GCReport) []string {
+	paths := make([]string, len(found.Collectable))
+	for i, entry := range found.Collectable {
 		paths[i] = entry.Path
 	}
 	return paths
+}
+
+// writeCollection prints the document of a store collection: the entries it
+// took, or in a report would take, and the ones it left with the reason.
+func writeCollection(w io.Writer, collected *store.GCReport) error {
+	entries := report.List[report.Collected]{}
+	for _, entry := range collected.Collectable {
+		loc := plannedLocation(entry.Path, false)
+		loc.Layout, loc.Size = store.LayoutStored, entry.Size
+		entries = append(entries, report.Collected{
+			Overlay: report.Overlay{Name: entry.Name}, Location: loc, Identity: entry.Identity,
+			Age: int64(entry.Age.Seconds()), Basis: string(entry.Basis), Staging: entry.Staging,
+		})
+	}
+	kept := report.List[report.CollectKept]{}
+	for _, entry := range collected.Retained {
+		kept = append(kept, report.CollectKept{Path: entry.Path, Reason: entry.Reason})
+	}
+	grace := int64(collected.Grace.Seconds())
+	if collected.Applied {
+		return report.Write(w, &report.Collection{Grace: grace, Reclaimed: collected.Reclaimable, Removed: entries, Kept: kept})
+	}
+	return report.Write(w, &report.CollectionPlan{Grace: grace, Reclaimable: collected.Reclaimable, WouldRemove: entries, Kept: kept})
 }

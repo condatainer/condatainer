@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -427,13 +428,7 @@ func removalRecord(it removalItem) report.Kept {
 // refused marks a removal that did not start.
 func finishOverlayRemoval(cmd *cobra.Command, removed []report.Removed, kept []report.Kept, refused bool) error {
 	if removeJSON {
-		var err error
-		if removePreview {
-			err = report.Write(cmd.OutOrStdout(), &report.RemovalPlan{WouldRemove: removed, Kept: kept})
-		} else {
-			err = report.Write(cmd.OutOrStdout(), &report.Removal{Removed: removed, Kept: kept})
-		}
-		if err != nil {
+		if err := writeRemovalDoc(cmd.OutOrStdout(), removePreview, removed, kept); err != nil {
 			return err
 		}
 	}
@@ -447,6 +442,15 @@ func finishOverlayRemoval(cmd *cobra.Command, removed []report.Removed, kept []r
 		return fmt.Errorf("%d overlay(s) could not be removed", stuck)
 	}
 	return nil
+}
+
+// writeRemovalDoc prints what a removal took, or in a preview would take, and
+// what it left.
+func writeRemovalDoc(w io.Writer, preview bool, removed []report.Removed, kept []report.Kept) error {
+	if preview {
+		return report.Write(w, &report.RemovalPlan{WouldRemove: removed, Kept: kept})
+	}
+	return report.Write(w, &report.Removal{Removed: removed, Kept: kept})
 }
 
 // getAllOverlayCopies returns all paths for each overlay name across all image dirs.

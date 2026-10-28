@@ -187,7 +187,7 @@ func (b *BuildObject) lockRecipeSource(manifest meta.Manifest, sources map[strin
 
 	isDef := manifest.BuildType == BuildTypeDef
 	file := SourceFile{Name: meta.RecipeFileName, Data: recipe.Text}
-	source := SourceSpec{Script: &ScriptSource{File: file, Prompts: runnable.Prompts()}}
+	source := SourceSpec{Script: &ScriptSource{File: file, Prompts: runnable.Prompts(meta.NativeArch())}}
 	if isDef {
 		source = SourceSpec{Definition: &DefinitionSource{File: file, From: manifest.Build.From}}
 	}
@@ -210,7 +210,7 @@ func (b *BuildObject) lockRecipeSource(manifest meta.Manifest, sources map[strin
 	b.spec.Image.Noarch = runnable.Noarch()
 	b.embedSource(file)
 
-	b.inputPrompts, b.recipeInputs = runnable.Prompts(), len(runnable.Inputs)
+	b.inputPrompts, b.recipeInputs = runnable.Prompts(meta.NativeArch()), len(runnable.Inputs)
 	if b.spec.Source.RequiresInput && len(b.inputAnswers) != len(b.inputPrompts) {
 		return fmt.Errorf("%w: %s asks %d questions but %d answers were supplied",
 			ErrLockedInvalid, manifest.Name, len(b.inputPrompts), len(b.inputAnswers))

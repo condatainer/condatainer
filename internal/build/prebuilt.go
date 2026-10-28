@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -82,8 +83,8 @@ func (b *BuildObject) prebuiltEligible() bool {
 }
 
 // findPrebuilt reads the source's registry by metadata alone, and returns the
-// artifact published there if it was made from the local recipe. Every other
-// outcome is a miss.
+// artifact published there for the planned architecture if it was made from the
+// local recipe. Every other outcome is a miss.
 //   - The equivalence tag is asked for directly, so it does not matter where the name tag points.
 func (b *BuildObject) findPrebuilt(ctx context.Context) (prebuiltCandidate, bool, prebuiltMiss, error) {
 	want, err := b.prebuiltEquivalence(ctx)
@@ -95,7 +96,7 @@ func (b *BuildObject) findPrebuilt(ctx context.Context) (prebuiltCandidate, bool
 	if err != nil {
 		return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot use prebuilt %s: source registry: %w", b.spec.Image.Name, err)
 	}
-	arch := meta.NativeArch()
+	arch := planArch(ctx)
 	if b.spec.Image.Noarch {
 		arch = registry.ArchNoarch
 	}
@@ -130,8 +131,10 @@ func (b *BuildObject) findPrebuilt(ctx context.Context) (prebuiltCandidate, bool
 // node that cannot derive its equivalence yet stays undecided until it builds.
 func (b *BuildObject) planPrebuilt(ctx context.Context, known bool) error {
 	if known {
-		if equiv, err := b.prebuiltEquivalence(ctx); err == nil {
+		if equiv, edges, err := b.recipeEquivalence(ctx); err == nil {
 			b.plannedEquiv = equiv
+			b.plannedEdges = edges
+			b.plannedDepPaths = maps.Clone(b.depImagePaths)
 		}
 	}
 	switch {
@@ -214,9 +217,16 @@ func closedDoor(ctx context.Context, err error, endpoint string) bool {
 // artifact built against equivalent dependency instances is substitutable even
 // when their exact identities differ.
 func (b *BuildObject) prebuiltEquivalence(ctx context.Context) (meta.KeyRef, error) {
+	equiv, _, err := b.recipeEquivalence(ctx)
+	return equiv, err
+}
+
+// recipeEquivalence is prebuiltEquivalence with the dependency edges the key was
+// derived from, each with the role it plays.
+func (b *BuildObject) recipeEquivalence(ctx context.Context) (meta.KeyRef, []meta.Dependency, error) {
 	recipe, ok := b.spec.Source.RecipeFile()
 	if !ok {
-		return meta.KeyRef{}, errors.New("selected source has no recipe")
+		return meta.KeyRef{}, nil, errors.New("selected source has no recipe")
 	}
 	manifest := b.Manifest()
 	manifest.Dependencies, _ = key.Manifest(key.Artifact{
@@ -230,9 +240,9 @@ func (b *BuildObject) prebuiltEquivalence(ctx context.Context) (meta.KeyRef, err
 	})
 	derived, err := key.Generate(manifest, b.keySources())
 	if err != nil {
-		return meta.KeyRef{}, err
+		return meta.KeyRef{}, nil, err
 	}
-	return derived.Equiv.Ref, nil
+	return derived.Equiv.Ref, manifest.Dependencies, nil
 }
 
 func describePrebuiltKey(k meta.KeyRef) string {

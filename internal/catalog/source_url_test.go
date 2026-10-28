@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -132,7 +133,7 @@ func TestPromptsListInputThenAsks(t *testing.T) {
 	}, "\n"))
 
 	want := []string{"the recipe's own question", "first ask", "second ask"}
-	if got := rec.Prompts(); strings.Join(got, "|") != strings.Join(want, "|") {
+	if got := rec.Prompts(runtime.GOARCH); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("Prompts() = %v, want %v", got, want)
 	}
 	if len(rec.Inputs) != 1 {
@@ -216,5 +217,22 @@ func TestSourcePerArchitecture(t *testing.T) {
 		if err := parse(t, "recipes/tool/1", text).Validate(); !errors.Is(err, ErrInvalidRecipe) {
 			t.Errorf("Validate(%q) = %v, want ErrInvalidRecipe", text, err)
 		}
+	}
+}
+
+// An ask: for one architecture is a question only on that architecture.
+func TestPromptsCountOnlyTheAsksOfTheArchitecture(t *testing.T) {
+	rec := parse(t, "recipes/tool/1.0", strings.Join([]string{
+		"#TYPE:app",
+		"#SOURCE:pkg arm64 ask:arm64 link",
+		"#SOURCE:pkg amd64 https://example.invalid/tool-amd64.tar.gz",
+		"echo build",
+	}, "\n"))
+
+	if got := rec.Prompts("arm64"); len(got) != 1 || got[0] != "arm64 link" {
+		t.Errorf("Prompts(arm64) = %q, want the arm64 ask", got)
+	}
+	if got := rec.Prompts("amd64"); len(got) != 0 {
+		t.Errorf("Prompts(amd64) = %q, want none", got)
 	}
 }

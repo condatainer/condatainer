@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -342,13 +341,13 @@ func hasSourceName(sources []SourceURL, name string) bool {
 	return false
 }
 
-// Prompts returns every question a build must put to the user, in the order the
-// answers are supplied: the #INPUT: prompts, then each #SOURCE: ask: in
-// declaration order. #INPUT: answers reach the recipe; the rest are consumed by
-// the fetch and never reach it.
-func (r *Recipe) Prompts() []string {
+// Prompts returns every question a build on arch must put to the user, in the
+// order the answers are supplied: the #INPUT: prompts, then each #SOURCE: ask:
+// that applies on arch, in declaration order. #INPUT: answers reach the recipe;
+// the rest are consumed by the fetch and never reach it.
+func (r *Recipe) Prompts(arch string) []string {
 	out := append([]string(nil), r.Inputs...)
-	sources, _ := r.SourcesFor(runtime.GOARCH)
+	sources, _ := r.SourcesFor(arch)
 	for _, src := range sources {
 		if src.Prompt != "" {
 			out = append(out, src.Prompt)

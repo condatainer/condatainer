@@ -132,9 +132,23 @@ const (
 	OutcomeRefused   Outcome = "refused"
 )
 
+// Dep is one #DEP: of a step, as the step's key counts it. Role is data (its
+// equivalence enters the key), app (its name does) or history (nothing does).
+// An installed one has its Location.
+type Dep struct {
+	Overlay
+	Role      string      `json:"role"`
+	Installed bool        `json:"installed"`
+	Identity  meta.KeyRef `json:"identity,omitzero"`
+	Equiv     meta.KeyRef `json:"equiv,omitzero"`
+	Location
+}
+
 // Step is one overlay in a plan, and after acting, in a run.
 //   - Endpoint, Digest and Identity describe the copy a fetch takes.
-//   - Equiv is the recipe's key whenever it is known, whatever the action.
+//   - Equiv is the recipe's key whenever it is known, whatever the action, and
+//     Deps are the dependencies it was derived from.
+//   - DependsOn orders the steps; Deps describes them.
 //   - Outcome, JobID and Error are empty in a dry run.
 type Step struct {
 	Overlay
@@ -145,6 +159,7 @@ type Step struct {
 	Identity      meta.KeyRef `json:"identity,omitzero"`
 	Equiv         meta.KeyRef `json:"equiv,omitzero"`
 	DependsOn     []string    `json:"depends_on,omitempty"`
+	Deps          []Dep       `json:"deps,omitempty"`
 	RequiresInput bool        `json:"requires_input"`
 	Reason        string      `json:"reason,omitempty"`
 	Location

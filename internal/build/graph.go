@@ -8,9 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/artifact"
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/logging"
+	"github.com/condatainer/condatainer/internal/registry"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -20,6 +23,7 @@ import (
 // schedulerBuilds.
 type BuildGraph struct {
 	graph           map[string]*BuildObject // All build objects by name/version
+	order           []*BuildObject          // The plan's nodes, dependencies first
 	localBuilds     []*BuildObject          // Builds to run locally (no scheduler)
 	schedulerBuilds []*BuildObject          // Builds to submit via scheduler
 	jobIDs          map[string]string       // Job IDs for scheduler builds (name/version -> job ID)
@@ -155,6 +159,7 @@ func (bg *BuildGraph) resolvePlan(ctx context.Context, roots []string, hidden ma
 		}
 	}
 	order = bg.pruneDependencies(order, roots)
+	bg.order = order
 
 	log := logging.FromContext(ctx)
 	for _, obj := range order {
@@ -300,6 +305,9 @@ func (bg *BuildGraph) resolveBase(ctx context.Context) error {
 // Run executes the build graph
 // First runs local builds, then submits scheduler jobs
 func (bg *BuildGraph) Run(ctx context.Context) error {
+	if err := refuseUnrunnable(ctx); err != nil {
+		return err
+	}
 	if err := bg.resolveBase(ctx); err != nil {
 		return err
 	}
@@ -517,7 +525,8 @@ func jobToken(arg string) string {
 // embedding any input answers as a heredoc so the node needs no TTY.
 func buildSchedulerCreateCommand(target, flags []string, update, store, noPrebuilt bool, inputAnswers []string) string {
 	var cmd strings.Builder
-	cmd.WriteString(utils.SelfCommand() + " create")
+	cmd.WriteString(utils.SelfCommand())
+	cmd.WriteString(" create")
 	for _, flag := range flags {
 		cmd.WriteString(" ")
 		cmd.WriteString(jobToken(flag))
@@ -544,6 +553,98 @@ func buildSchedulerCreateCommand(target, flags []string, update, store, noPrebui
 		cmd.WriteString("\nCNT_INPUTS_EOF")
 	}
 	return cmd.String()
+}
+
+// PlannedStep is one node of a plan, as a caller reports it.
+type PlannedStep struct {
+	Name string
+	Type artifact.Type
+	// Arch is the architecture the plan is for, or noarch for a recipe that
+	// runs anywhere.
+	Arch      string
+	Installed bool // already installed and used as is
+	Pull      bool // a published copy will be pulled
+	// Endpoint, Digest and Identity describe the copy a pull takes.
+	Endpoint string
+	Digest   string
+	Identity meta.KeyRef
+	// Equiv is the recipe's equivalence key, empty until planning can derive it.
+	Equiv     meta.KeyRef
+	InJob     bool     // built by a scheduler job
+	DependsOn []string // nodes of this plan that must exist first
+	// Deps are every #DEP: of the recipe as its key counts them, empty until
+	// planning can derive the key.
+	Deps          []PlannedDep
+	RequiresInput bool   // the recipe asks questions before it builds
+	Path          string // where the overlay lands
+}
+
+// PlannedDep is one dependency of a planned step, as the step's key counts it.
+type PlannedDep struct {
+	Name string
+	Type artifact.Type
+	// Role is how it enters the key: data by its equivalence, app by its name,
+	// history not at all.
+	Role      string
+	Installed bool
+	Path      string // where the installed one is
+	Identity  meta.KeyRef
+	Equiv     meta.KeyRef
+}
+
+// Plan returns the planned nodes in dependency order, planned for the
+// architecture ctx carried into NewBuildGraph.
+func (bg *BuildGraph) Plan() []PlannedStep {
+	inJob := make(map[*BuildObject]bool, len(bg.schedulerBuilds))
+	for _, obj := range bg.schedulerBuilds {
+		inJob[obj] = true
+	}
+	steps := make([]PlannedStep, 0, len(bg.order))
+	for _, obj := range bg.order {
+		step := obj.PlannedStep(bg.ctx)
+		step.InJob = inJob[obj]
+		step.DependsOn = bg.graphDependencies(obj)
+		if obj.prebuilt.choice == prebuiltPull {
+			cand := obj.prebuilt.candidate
+			step.Pull = true
+			step.Endpoint = cand.endpoint
+			step.Digest = cand.desc.Digest.String()
+			step.Identity = registry.Identity(cand.annotations)
+		}
+		steps = append(steps, step)
+	}
+	return steps
+}
+
+// PlannedStep describes this object as a step planned for ctx's architecture,
+// as built by itself: what a graph adds, a pull, a job or dependencies, is left
+// out.
+func (b *BuildObject) PlannedStep(ctx context.Context) PlannedStep {
+	step := PlannedStep{
+		Name:          b.NameVersion(),
+		Type:          b.spec.Image.Type,
+		Arch:          planArch(ctx),
+		Installed:     !b.update && !b.storeOverflow && b.IsInstalled(),
+		Equiv:         b.plannedEquiv,
+		RequiresInput: b.spec.Source.RequiresInput,
+		Path:          b.tgt.Path,
+	}
+	if b.spec.Image.Noarch {
+		step.Arch = meta.ArchNone
+	}
+	for _, edge := range b.plannedEdges {
+		path := b.plannedDepPaths[edge.Name]
+		step.Deps = append(step.Deps, PlannedDep{
+			Name: edge.Name, Type: edge.Type, Role: edge.Role,
+			Installed: path != "", Path: path,
+			Identity: edge.Identity, Equiv: edge.Equiv,
+		})
+	}
+	// The base is installed wherever it is found, not only at its build target.
+	if step.Installed && b.spec.Image.Name == config.BaseRecipeName() {
+		step.Path = config.FindBaseImage()
+	}
+	return step
 }
 
 // GetJobIDs returns the map of job IDs for scheduler builds

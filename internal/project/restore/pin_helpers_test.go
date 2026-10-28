@@ -9,10 +9,3 @@ import (
 func pinOf(artifact string) lock.PinEntry {
 	return lock.PinEntry{Artifacts: map[string]string{meta.NativeArch(): artifact}}
 }
-
-// manualPinOf is pinOf for a pin the project recorded.
-func manualPinOf(artifact string) lock.PinEntry {
-	pin := pinOf(artifact)
-	pin.Manual = true
-	return pin
-}

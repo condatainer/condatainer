@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/project/lock"
+	"github.com/condatainer/condatainer/internal/scheduler"
 )
 
 // A script outside any project keeps today's behaviour untouched.
@@ -148,6 +149,37 @@ func TestResolveDepsRefusesAVersionConstraint(t *testing.T) {
 
 	if _, err := resolveDeps(context.Background(), filepath.Join(dir, "run.sh"), "run.sh"); !errors.Is(err, errRunAborted) {
 		t.Fatalf("err = %v, want the run to abort on a constrained #DEP:", err)
+	}
+}
+
+// A dry run names a dependency the real run would stop at.
+func TestDryRunRefusalsNamesAMissingDependency(t *testing.T) {
+	dir := t.TempDir()
+	writeScript(t, dir, "run.sh", "#DEP: star/2.7.11b\nrun\n")
+
+	got := dryRunRefusals(context.Background(), filepath.Join(dir, "run.sh"), nil, nil, nil)
+	if len(got) != 1 || got[0] != "missing dependencies: star/2.7.11b" {
+		t.Fatalf("refusals = %q, want the missing star/2.7.11b", got)
+	}
+}
+
+// Directives that could not be parsed and blank lines in the array file stop the run before its dependencies are read.
+func TestDryRunRefusalsNamesWhatStopsTheRunBeforeItsDependencies(t *testing.T) {
+	specs := &scheduler.ScriptSpecs{HasDirectives: true}
+	array := &scheduler.ArraySpec{BlankLines: []int{3}}
+
+	got := dryRunRefusals(context.Background(), "unread.sh", specs, array, &projectContext{})
+	if len(got) != 2 || !strings.Contains(got[0], "directives") || !strings.Contains(got[1], "blank lines at [3]") {
+		t.Fatalf("refusals = %q, want the directives, then the blank lines", got)
+	}
+}
+
+func TestDryRunRefusalsAcceptsARunnableScript(t *testing.T) {
+	dir := t.TempDir()
+	writeScript(t, dir, "run.sh", "run\n")
+
+	if got := dryRunRefusals(context.Background(), filepath.Join(dir, "run.sh"), nil, nil, nil); len(got) != 0 {
+		t.Fatalf("refusals = %q, want none", got)
 	}
 }
 

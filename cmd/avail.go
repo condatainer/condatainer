@@ -9,6 +9,7 @@ import (
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -17,6 +18,7 @@ var (
 	availExpand      bool
 	availDescription bool
 	availSources     []string
+	availJSON        bool
 )
 
 var availCmd = &cobra.Command{
@@ -50,6 +52,7 @@ func init() {
 	availCmd.Flags().StringArrayVarP(&availSources, "source", "s", nil,
 		"Use only this configured recipe source, in flag order (repeatable)")
 	availCmd.RegisterFlagCompletionFunc("source", sourceHandleCompletion) //nolint:errcheck
+	jsonFlag(availCmd.Flags(), &availJSON)
 }
 
 // PackageInfo holds information about a build script
@@ -65,6 +68,7 @@ type PackageInfo struct {
 	PH             map[string][]string // placeholder values (all values for templates; single-element for expanded)
 	PHNames        []string            // placeholders in target order
 	NeedsArch      string              // the architectures it builds on, when this machine is not one
+	Entry          *catalog.Entry      // the index entry it was made from
 }
 
 func runAvail(cmd *cobra.Command, args []string) error {
@@ -120,6 +124,7 @@ func runAvail(cmd *cobra.Command, args []string) error {
 			TargetTemplate: e.TargetTemplate,
 			PH:             e.PH,
 			PHNames:        phNames,
+			Entry:          e,
 		}
 	}
 
@@ -209,6 +214,15 @@ func runAvail(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Sort by name
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].Name < filtered[j].Name
+	})
+
+	if availJSON {
+		return report.Write(cmd.OutOrStdout(), availDoc(filtered, aliasOf))
+	}
+
 	if len(filtered) == 0 {
 		utils.PrintWarning("No matching build scripts found.")
 		// A term occurring only inside a variant name (e.g. "gencode47-101") cannot
@@ -225,11 +239,6 @@ func runAvail(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	}
-
-	// Sort by name
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].Name < filtered[j].Name
-	})
 
 	// --expand prints variants only, skipping the template headers they came from;
 	// otherwise print template group headers alongside plain entries.
@@ -268,6 +277,51 @@ func runAvail(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// availDoc is the recipes document for the listed recipes. With --expand it
+// holds the variants and not the templates they came from.
+func availDoc(listed []PackageInfo, aliasOf func(string) string) *report.Recipes {
+	doc := &report.Recipes{Recipes: report.List[report.Recipe]{}}
+	for _, pkg := range listed {
+		if availExpand && pkg.IsTemplate {
+			continue
+		}
+		e := pkg.Entry
+		rec := report.Recipe{
+			Overlay:     report.Overlay{Name: pkg.Name, Type: e.Type},
+			Alias:       aliasOf(pkg.Name),
+			Installed:   pkg.IsInstalled,
+			Buildable:   pkg.NeedsArch == "",
+			Source:      pkg.Source,
+			Recipe:      pkg.Path,
+			Description: pkg.Description,
+			URL:         e.URL,
+			Deps:        e.Deps,
+		}
+		for _, arch := range e.Arch {
+			rec.BuildsOn = append(rec.BuildsOn, string(arch))
+		}
+		switch {
+		case pkg.IsTemplate:
+			rec.Template = &report.Template{Target: pkg.TargetTemplate, Order: pkg.PHNames, Values: pkg.PH}
+		case pkg.TargetTemplate != "":
+			// A variant: each placeholder has the one value it was expanded with.
+			vars := make(map[string]string, len(pkg.PH))
+			for name, values := range pkg.PH {
+				if len(values) == 1 {
+					vars[name] = values[0]
+				}
+			}
+			rec.Template = &report.Template{Target: pkg.TargetTemplate, Placeholders: vars}
+			rec.Deps = make([]string, len(e.Deps))
+			for i, dep := range e.Deps {
+				rec.Deps[i] = interpolate(dep, vars)
+			}
+		}
+		doc.Recipes = append(doc.Recipes, rec)
+	}
+	return doc
 }
 
 // interpolate substitutes {key} tokens, used to render a variant's description.

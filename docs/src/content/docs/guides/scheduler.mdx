@@ -172,6 +172,8 @@ condatainer run --dry-run analysis.sh
 condatainer run --no-submit analysis.sh   
 ```
 
+- `--dry-run` exits 1 when the run would not start, such as when a dependency is missing, and names each reason.
+
 Any values provided after the script name are passed directly into the script as positional arguments (`$1`, `$2`, etc.):
 
 ```bash

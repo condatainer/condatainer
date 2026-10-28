@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"log/slog"
 
@@ -23,7 +24,11 @@ import (
 
 // cachedInstalledOverlays is the set of "name/version" strings for all overlays found
 // across all image search paths. Nil means the cache is cold or has been invalidated.
-var cachedInstalledOverlays map[string]bool
+// installedMu guards it; a set that was returned is never written to.
+var (
+	cachedInstalledOverlays map[string]bool
+	installedMu             sync.Mutex
+)
 
 // Kept as the build package's spelling for tests and documentation; producer
 // owns the value and the path construction.
@@ -32,6 +37,8 @@ const preparedSuffix = producer.PreparedSuffix
 // getInstalledOverlays returns the cached installed-overlay set, scanning all image
 // search paths on a cold cache.
 func getInstalledOverlays() map[string]bool {
+	installedMu.Lock()
+	defer installedMu.Unlock()
 	if cachedInstalledOverlays != nil {
 		return cachedInstalledOverlays
 	}
@@ -55,7 +62,9 @@ func invalidateInstalledOverlays() {
 // package — a "condatainer create" subprocess launched by internal/helper —
 // can force the next InstalledVersions call to rescan.
 func InvalidateInstalledOverlays() {
+	installedMu.Lock()
 	cachedInstalledOverlays = nil
+	installedMu.Unlock()
 	container.InvalidateInstalledOverlaysCache()
 }
 

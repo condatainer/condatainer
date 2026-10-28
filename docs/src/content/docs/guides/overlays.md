@@ -74,6 +74,7 @@ When you run `create`, CondaTainer first searches for a recipe; if none is found
 | `--update` | Rebuild an overlay even if already exists. |
 | `--no-prebuilt` | Force fresh build instead of downloading a prebuilt. |
 | `--no-submit` | Run the build process locally instead of use scheduler. |
+| `--dry-run` | Show what would be built, downloaded or submitted as a job, and do none of it. |
 
 :::note
 A build can be submitted to the scheduler as a job. `create` then exits with code 3.

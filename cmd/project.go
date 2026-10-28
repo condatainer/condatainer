@@ -22,6 +22,7 @@ import (
 	"github.com/condatainer/condatainer/internal/project/publish"
 	"github.com/condatainer/condatainer/internal/project/restore"
 	"github.com/condatainer/condatainer/internal/registry"
+	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -124,7 +125,7 @@ func newProjectLockCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return reportLockState(result, jsonOutput)
+			return reportLockState(cmd, result, jsonOutput)
 		},
 	}
 	jsonFlag(cmd.Flags(), &jsonOutput)
@@ -625,7 +626,7 @@ func newProjectListCmd() *cobra.Command {
 - A 'manual' pin is one no script declares. 'project lock' keeps it, and 'project unpin' removes it.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, err := projectRoot(!jsonOutput)
 			if err != nil {
 				return err
@@ -641,10 +642,7 @@ func newProjectListCmd() *cobra.Command {
 			pins := pinReports(l, verified)
 
 			if jsonOutput {
-				return printJSON(struct {
-					Root string      `json:"root"`
-					Pins []pinReport `json:"pins"`
-				}{Root: root, Pins: pins})
+				return writePins(cmd, root, pins)
 			}
 			if len(pins) == 0 {
 				utils.PrintMessage("This project pins nothing.")
@@ -732,15 +730,17 @@ func pinLabel(pin pinReport) string {
 // the vendored records rather than from the key, which addresses an artifact
 // without describing it.
 type pinReport struct {
-	Request string `json:"request"`
+	Request string
 	// Artifacts maps each architecture the pin covers to its vendored directory.
-	Artifacts map[string]string `json:"artifacts"`
-	Name      string            `json:"name,omitempty"`
+	Artifacts map[string]string
+	Name      string
 	// Identity is this machine's artifact, else the first architecture's.
-	Identity string `json:"identity,omitempty"`
-	Manual   bool   `json:"manual,omitempty"`
+	Identity string
+	// Entry is the vendored record, nil when it did not verify.
+	Entry  *lock.Entry
+	Manual bool
 	// Problem is why the artifact could not be read, empty when it verified.
-	Problem string `json:"problem,omitempty"`
+	Problem string
 }
 
 func pinReports(l *lock.Lock, verified *lock.Verified) []pinReport {
@@ -753,7 +753,7 @@ func pinReports(l *lock.Lock, verified *lock.Verified) []pinReport {
 			shown = pin.Paths()[0]
 		}
 		if entry, ok := verified.Entries[shown]; ok {
-			report.Name, report.Identity = entry.Manifest.Name, entry.Identity.Digest()
+			report.Name, report.Identity, report.Entry = entry.Manifest.Name, entry.Identity.Digest(), entry
 		}
 		for _, artifact := range pin.Paths() {
 			if _, ok := verified.Entries[artifact]; !ok {
@@ -978,6 +978,11 @@ func newProjectRegistryPushCmd() *cobra.Command {
 			// is missing from it. A dry run reports these and still shows the plan.
 			invalid := projectProblems(l, scanned, problems)
 			if len(invalid) > 0 && !dryRun {
+				if jsonOutput {
+					if err := writePushRefused(cmd, root, invalid); err != nil {
+						return err
+					}
+				}
 				return fmt.Errorf("the project is not valid, so nothing was published:\n  %s",
 					strings.Join(invalid, "\n  "))
 			}
@@ -995,13 +1000,18 @@ func newProjectRegistryPushCmd() *cobra.Command {
 
 			if dryRun {
 				plan.Problems = append(plan.Problems, invalid...)
-				return reportPushPlan(plan, jsonOutput)
+				return reportPushPlan(cmd, root, plan, verified, jsonOutput)
 			}
 			if !plan.Complete() {
+				if jsonOutput {
+					if err := writePush(cmd, root, plan, verified, nil); err != nil {
+						return err
+					}
+				}
 				return fmt.Errorf("nothing was published:\n  %s", strings.Join(plan.Problems, "\n  "))
 			}
-			report, runErr := publish.Run(cmd.Context(), root, plan, opts)
-			if err := reportPush(report, jsonOutput); err != nil {
+			run, runErr := publish.Run(cmd.Context(), root, plan, opts)
+			if err := reportPush(cmd, root, plan, verified, run, jsonOutput); err != nil {
 				return err
 			}
 			return runErr
@@ -1076,6 +1086,7 @@ func newProjectRegistryGCCmd() *cobra.Command {
 			return finishRemoval(cmd, cmd.Context(), repository, backend, plan)
 		},
 	}
+	jsonFlag(cmd.Flags(), &registryRemoveJSON)
 	cmd.Flags().BoolVar(&gitHistory, "git-history", false, "Also keep what earlier commits on this branch pin (needs a full clone)")
 	return cmd
 }
@@ -1132,10 +1143,24 @@ func pushLabel(step publish.Step) string {
 	return utils.StyleName(lock.PathPrefix + step.Destination)
 }
 
-func reportPushPlan(plan *publish.Plan, jsonOutput bool) error {
+// reportPushPlan prints a --dry-run publish plan and fails, in either format,
+// when the project could not be published as it stands.
+func reportPushPlan(cmd *cobra.Command, root string, plan *publish.Plan, verified *lock.Verified, jsonOutput bool) error {
 	if jsonOutput {
-		return printJSON(plan)
+		if err := writePush(cmd, root, plan, verified, nil); err != nil {
+			return err
+		}
+	} else {
+		printPushPlan(plan)
 	}
+	if !plan.Complete() {
+		return fmt.Errorf("this project cannot be published as it stands")
+	}
+	return nil
+}
+
+// printPushPlan prints a publish plan as text.
+func printPushPlan(plan *publish.Plan) {
 	utils.PrintMessage("Publishing to %s (%s)", plan.Repository, audienceOrDefault(plan.Audience))
 	if plan.Source != "" {
 		utils.PrintMessage("  packages link to %s", plan.Source)
@@ -1165,15 +1190,11 @@ func reportPushPlan(plan *publish.Plan, jsonOutput bool) error {
 	for _, problem := range plan.Problems {
 		utils.PrintError("%s", problem)
 	}
-	if !plan.Complete() {
-		return fmt.Errorf("this project cannot be published as it stands")
-	}
-	return nil
 }
 
-func reportPush(report *publish.Report, jsonOutput bool) error {
+func reportPush(cmd *cobra.Command, root string, plan *publish.Plan, verified *lock.Verified, report *publish.Report, jsonOutput bool) error {
 	if jsonOutput {
-		return printJSON(report)
+		return writePush(cmd, root, plan, verified, report)
 	}
 	for _, step := range report.Published {
 		utils.PrintMessage("  %-8s %s", step.Disposition, pushLabel(step))
@@ -1245,7 +1266,7 @@ func newProjectValidateCmd() *cobra.Command {
 				total++
 			}
 			if jsonOutput {
-				if err := printJSON(validateReport(root, current, problems, needPin, scanned, notInstalled)); err != nil {
+				if err := writeValidation(cmd, root, current, problems, needPin, scanned, notInstalled); err != nil {
 					return err
 				}
 				// The exit status is the answer; the format only changes how it
@@ -1321,68 +1342,12 @@ func requestsNeedingPin(l *lock.Lock, scanned *lock.ScanResult) []lock.Request {
 	return out
 }
 
-type requestReport struct {
-	Request  string   `json:"request"`
-	Kind     string   `json:"kind"`
-	Scripts  []string `json:"scripts"`
-	Artifact string   `json:"artifact,omitempty"`
-	// Pinnable is false for a declaration nothing can pin, which is a finding.
-	Pinnable bool `json:"pinnable"`
-}
-
-func validateReport(root string, l *lock.Lock, problems []lock.Problem, needPin []lock.Request, scanned *lock.ScanResult, notInstalled []string) any {
-	report := struct {
-		Root       string          `json:"root"`
-		Valid      bool            `json:"valid"`
-		Problems   []string        `json:"problems,omitempty"`
-		Findings   []lock.Finding  `json:"findings,omitempty"`
-		Unselected []requestReport `json:"needPin,omitempty"`
-		Scripts    []string        `json:"scripts"`
-	}{Root: root, Scripts: scanned.Scripts, Findings: scanned.Findings}
-	for _, problem := range problems {
-		report.Problems = append(report.Problems, problem.String())
-	}
-	if reason := missingBaseProblem(l); reason != "" {
-		report.Problems = append(report.Problems, reason)
-	}
-	report.Problems = append(report.Problems, notInstalled...)
-	for _, request := range needPin {
-		report.Unselected = append(report.Unselected, requestReport{
-			Request: request.Key, Kind: string(request.Kind), Scripts: request.Scripts,
-			Pinnable: true})
-	}
-	report.Valid = len(report.Problems) == 0 && len(report.Findings) == 0 && len(report.Unselected) == 0
-	return report
-}
-
 // reportLockState prints what a reconcile left behind and fails while anything
 // is needPin, so a partial lock is published but never reported as complete.
-func reportLockState(result *orchestrate.LockResult, jsonOutput bool) error {
+func reportLockState(cmd *cobra.Command, result *orchestrate.LockResult, jsonOutput bool) error {
 	root, l, scanned, pinned, failed := result.Root, result.Current, result.Scanned, result.Pinned, result.Failed
 	if jsonOutput {
-		report := struct {
-			Root                   string              `json:"root"`
-			Base                   string              `json:"base,omitempty"`
-			Requests               []requestReport     `json:"requests"`
-			Failed                 []string            `json:"failed,omitempty"`
-			Findings               []lock.Finding      `json:"findings,omitempty"`
-			UnpinnedHelperOverlays []string            `json:"unpinned_helper_overlays,omitempty"`
-			ManualPinUsage         map[string][]string `json:"manual_pin_usage,omitempty"`
-		}{Root: root, Findings: scanned.Findings,
-			UnpinnedHelperOverlays: result.UnpinnedHelperOverlays, ManualPinUsage: result.ManualPinUsage}
-		if pin, ok := l.Pins[lock.BaseKey]; ok {
-			report.Base, _ = pin.For(meta.NativeArch())
-		}
-		for _, request := range scanned.Requests {
-			entry := requestReport{Request: request.Key, Kind: string(request.Kind),
-				Scripts: request.Scripts, Pinnable: request.Kind.Pinnable()}
-			if _, pin, ok := lock.MatchPin(l, request); ok {
-				entry.Artifact, _ = pin.For(meta.NativeArch())
-			}
-			report.Requests = append(report.Requests, entry)
-		}
-		report.Failed = errorStrings(failed)
-		if err := printJSON(report); err != nil {
+		if err := writeLock(cmd, result); err != nil {
 			return err
 		}
 		return pinFailure(failed)
@@ -1506,15 +1471,15 @@ func newProjectRestoreCmd() *cobra.Command {
 			}
 
 			if dryRun {
-				return reportPlan(restore.Compute(root, current, opts), jsonOutput)
+				return reportPlan(cmd, current, restore.Compute(root, current, opts), jsonOutput)
 			}
-			report, runErr := restore.Run(cmd.Context(), root, current, opts)
-			if err := reportRestore(report, jsonOutput); err != nil {
+			run, runErr := restore.Run(cmd.Context(), root, current, opts)
+			if err := reportRestore(cmd, current, run, jsonOutput); err != nil {
 				return err
 			}
 			if errors.Is(runErr, restore.ErrJobsSubmitted) {
 				utils.PrintNote("%d scheduler job(s) submitted. exiting with code %d",
-					len(report.Submitted), ExitCodeJobsSubmitted)
+					len(run.Submitted), ExitCodeJobsSubmitted)
 				os.Exit(ExitCodeJobsSubmitted)
 			}
 			return runErr
@@ -1548,16 +1513,16 @@ var restoreJobRules = map[string]string{
 }
 
 // reportPlan prints a --dry-run plan and fails if it could not run.
-func reportPlan(plan *restore.Plan, jsonOutput bool) error {
+func reportPlan(cmd *cobra.Command, l *lock.Lock, plan *restore.Plan, jsonOutput bool) error {
 	if jsonOutput {
-		if err := printJSON(plan); err != nil {
+		if err := writeRestore(cmd, l, plan, nil); err != nil {
 			return err
 		}
 	} else {
 		for _, step := range plan.Steps {
 			line := fmt.Sprintf("  %-11s %s → %s", step.Action, utils.StyleName(step.Name), planDestination(step))
-			if step.Found != "" {
-				line += utils.StyleWarning(fmt.Sprintf(" (equivalent, not %s)", identityPrefix(step.Identity)))
+			if !step.Found.Empty() {
+				line += utils.StyleWarning(fmt.Sprintf(" (equivalent, not %s)", identityPrefix(step.Identity.Digest())))
 			}
 			utils.PrintMessage("%s", line)
 			if step.Replaces != "" {
@@ -1580,16 +1545,16 @@ func reportPlan(plan *restore.Plan, jsonOutput bool) error {
 
 // reportRestore prints what a restore did. The run's own error is the exit
 // status; this only explains it.
-func reportRestore(report *restore.Report, jsonOutput bool) error {
+func reportRestore(cmd *cobra.Command, l *lock.Lock, report *restore.Report, jsonOutput bool) error {
 	if jsonOutput {
-		return printJSON(report)
+		return writeRestore(cmd, l, report.Plan, report)
 	}
 	for _, result := range report.Results {
 		line := fmt.Sprintf("  %-8s %s → %s", result.Outcome, utils.StyleName(result.Name), result.Path)
 		if result.Transient {
 			line += " (build dep, discarded)"
 		}
-		if result.Found != "" {
+		if !result.Found.Empty() {
 			line += utils.StyleWarning(equivalentNote(result))
 		}
 		utils.PrintMessage("%s", line)
@@ -1633,7 +1598,7 @@ func reportRestore(report *restore.Report, jsonOutput bool) error {
 // built from differently. Names only: the digests are in --json, and a line per
 // input would bury a restore of many artifacts.
 func equivalentNote(result restore.Result) string {
-	note := fmt.Sprintf(" (equivalent, not %s", identityPrefix(result.Identity))
+	note := fmt.Sprintf(" (equivalent, not %s", identityPrefix(result.Identity.Digest()))
 	if fields := diffFields(result.Diffs); len(fields) > 0 {
 		note += "; differs: " + strings.Join(fields, ", ")
 	}
@@ -1663,4 +1628,299 @@ func planDestination(step restore.Step) string {
 	default:
 		return "store or flat"
 	}
+}
+
+// stepAt identifies one restore step: a path pin is one step per path.
+type stepAt struct{ artifact, destination string }
+
+// writeRestore prints the steps document of a restore plan, or of the run that followed it.
+func writeRestore(cmd *cobra.Command, l *lock.Lock, plan *restore.Plan, run *restore.Report) error {
+	return report.Write(cmd.OutOrStdout(), restoreDoc(plan.Root, l, plan, run))
+}
+
+// restoreDoc is a restore as the steps document: the plan, and with run the outcome of each step.
+//   - A step the run never reached has outcome skipped, and no outcome at all when planning stopped the run.
+//   - A step with no recorded result was built inside the job of the step that needs it.
+func restoreDoc(root string, l *lock.Lock, plan *restore.Plan, run *restore.Report) *report.ProjectSteps {
+	doc := &report.ProjectSteps{Root: plan.Root, Match: string(plan.Match),
+		Steps: report.List[report.ProjectStep]{}, Problems: problemList(plan.Problems)}
+	verified, _ := lock.Verify(root, l)
+
+	var results = map[stepAt]restore.Result{}
+	var failures = map[stepAt]restore.Failure{}
+	var blocked = map[stepAt]restore.Blocked{}
+	var submitted = map[stepAt]restore.Submitted{}
+	if run != nil {
+		doc.Problems = problemList(run.Problems)
+		for _, r := range run.Results {
+			results[stepAt{r.Artifact, r.Destination}] = r
+		}
+		for _, f := range run.Failures {
+			failures[stepAt{f.Artifact, f.Destination}] = f
+		}
+		for _, b := range run.Blocked {
+			blocked[stepAt{b.Artifact, b.Destination}] = b
+		}
+		for _, s := range run.Submitted {
+			submitted[stepAt{s.Artifact, s.Destination}] = s
+		}
+	}
+	ran := run != nil && plan.Complete()
+
+	for _, s := range plan.Steps {
+		id := stepAt{s.Artifact, s.Destination}
+		step := restoreStep(s, verified)
+		switch r, f, b, j := results[id], failures[id], blocked[id], submitted[id]; {
+		case r.Artifact != "":
+			step.Outcome = report.OutcomeDone
+			step.Action = restoreAction(r.Outcome)
+			step.Found, step.Diffs, step.PayloadDrift = r.Found, r.Diffs, r.PayloadDrift
+			step.Transient = r.Transient
+			step.Location = report.Location{}
+			if !r.Transient {
+				step.Location = plannedLocation(r.Path, true)
+				step.Layout = r.Layout
+			}
+			if r.Outcome == restore.OutcomeBuilt {
+				step.Runs = report.RunsLocal
+			}
+		case f.Artifact != "":
+			step.Outcome, step.Error, step.Diffs, step.Rejected = report.OutcomeFailed, f.Reason, f.Diffs, f.Rejected
+		case b.Artifact != "":
+			step.Outcome, step.Cause = report.OutcomeSkipped, b.Cause
+			step.Reason = fmt.Sprintf("not attempted, %s failed", b.Cause)
+		case j.Artifact != "":
+			step.Outcome, step.JobID, step.Queued, step.WaitsFor = report.OutcomeSubmitted, j.JobID, j.Queued, j.DependsOn
+			step.Runs = report.RunsJob
+		case ran:
+			step.Outcome = report.OutcomeSkipped
+			step.Reason = "not reached"
+			if s.Action == restore.ActionBuild && !s.Direct && len(run.Submitted) > 0 {
+				step.Reason = "built by the job of the step that needs it"
+			}
+		}
+		doc.Steps = append(doc.Steps, step)
+	}
+	return doc
+}
+
+// restoreStep is one planned step, before any outcome.
+func restoreStep(s restore.Step, verified *lock.Verified) report.ProjectStep {
+	step := report.ProjectStep{
+		Step: report.Step{
+			Overlay:       report.Overlay{Name: s.Name, Arch: s.Arch},
+			Action:        restoreAction(s.Action),
+			Identity:      s.Identity,
+			DependsOn:     s.DependsOn,
+			RequiresInput: s.RequiresInput,
+			Location:      plannedLocation(s.Path, s.Path != ""),
+		},
+		Artifact: s.Artifact, Requests: s.Requests, Direct: s.Direct,
+		Destination: s.Destination, Replaces: s.Replaces, Found: s.Found,
+		StoreOnly: s.StoreOnly, Unbuildable: s.Unbuildable,
+	}
+	step.Layout = s.Layout
+	if entry, ok := verified.Entries[s.Artifact]; ok {
+		step.Type, step.Equiv = entry.Manifest.Type, entry.Equiv
+	}
+	for _, remote := range s.Remotes {
+		step.Remotes = append(step.Remotes, report.Remote{Repository: remote.Repository, ManifestDigest: remote.ManifestDigest})
+	}
+	return step
+}
+
+// restoreAction names how a step makes its overlay available, from the plan or from what the run did.
+func restoreAction[T ~string](action T) report.Action {
+	switch string(action) {
+	case string(restore.ActionFetch), string(restore.OutcomeFetched):
+		return report.ActionFetch
+	case string(restore.ActionBuild), string(restore.OutcomeBuilt):
+		return report.ActionBuild
+	case string(restore.ActionUnavailable):
+		return report.ActionUnavailable
+	}
+	return report.ActionAdopt
+}
+
+// problemList is plain-text problems as the problems of a document.
+func problemList(messages []string) report.List[report.Problem] {
+	out := report.List[report.Problem]{}
+	for _, message := range messages {
+		out = append(out, report.Problem{Message: message})
+	}
+	return out
+}
+
+// writePush prints the pushes document of a publish plan, or of the run that followed it.
+func writePush(cmd *cobra.Command, root string, plan *publish.Plan, verified *lock.Verified, run *publish.Report) error {
+	return report.Write(cmd.OutOrStdout(), pushDoc(root, plan, verified, run))
+}
+
+// writePushRefused prints the document of a push that was refused before it was planned.
+func writePushRefused(cmd *cobra.Command, root string, problems []string) error {
+	return report.Write(cmd.OutOrStdout(), &report.ProjectPushes{Root: root,
+		AmbiguousNames: report.List[string]{}, Pushes: report.List[report.ProjectPush]{}, Problems: problemList(problems)})
+}
+
+// pushDoc is a publish plan as the pushes document, and with run the outcome of each step.
+//   - A refused step is refused in a preview too: nothing is attempted for it.
+//   - A step the run never reached is skipped.
+//   - A copy that is already there or served elsewhere is recorded in the lock and not uploaded, so it is done or skipped.
+func pushDoc(root string, plan *publish.Plan, verified *lock.Verified, run *publish.Report) *report.ProjectPushes {
+	doc := &report.ProjectPushes{Root: root, Repository: plan.Repository, Audience: plan.Audience, Source: plan.Source,
+		AmbiguousNames: report.List[string](plan.Ambiguous), Pushes: report.List[report.ProjectPush]{},
+		Problems: problemList(plan.Problems)}
+	if doc.AmbiguousNames == nil {
+		doc.AmbiguousNames = report.List[string]{}
+	}
+
+	published := map[stepAt]publish.Step{}
+	failed := map[stepAt]publish.Failure{}
+	if run != nil {
+		for _, s := range run.Published {
+			published[stepAt{s.Artifact, s.Destination}] = s
+		}
+		for _, f := range run.Failures {
+			failed[stepAt{f.Step.Artifact, f.Step.Destination}] = f
+		}
+	}
+
+	for _, s := range plan.Steps {
+		id := stepAt{s.Artifact, s.Destination}
+		push := report.ProjectPush{
+			Push: report.Push{Overlay: report.Overlay{Name: s.Name}, Path: s.Path, Repository: plan.Repository,
+				Tags: s.Tags, Audience: plan.Audience, Existing: s.Disposition == publish.Present},
+			Artifact: s.Artifact, Destination: s.Destination, Channels: s.Channels,
+		}
+		if entry, ok := verified.Entries[s.Artifact]; ok {
+			push.Type, push.Arch = entry.Manifest.Type, entry.Manifest.Platform.Arch
+			push.Identity, push.Equiv = entry.Identity, entry.Equiv
+		}
+		if info, err := os.Stat(s.Path); s.Path != "" && err == nil {
+			push.Size = info.Size()
+		}
+		if s.Remote != nil {
+			remote := report.Remote{Repository: s.Remote.Repository, ManifestDigest: s.Remote.ManifestDigest}
+			if s.Disposition == publish.Served {
+				push.Served = &remote
+			} else {
+				push.Digest = remote.ManifestDigest
+			}
+		}
+
+		switch done, f := published[id], failed[id]; {
+		case s.Disposition == publish.Refused:
+			push.Outcome, push.Error = report.OutcomeRefused, s.Reason
+		case done.Artifact != "":
+			push.Path = done.Path
+			if done.Remote != nil {
+				push.Digest = done.Remote.ManifestDigest
+			}
+			push.Outcome = report.OutcomeDone
+			if s.Disposition == publish.Served {
+				push.Outcome = report.OutcomeSkipped
+			}
+		case f.Step.Artifact != "":
+			push.Outcome, push.Error = report.OutcomeFailed, f.Reason
+		case run != nil:
+			push.Outcome = report.OutcomeSkipped
+		}
+		doc.Pushes = append(doc.Pushes, push)
+	}
+	return doc
+}
+
+// pinsDoc is a project's pins as the pins document. A pin whose records do not
+// verify is listed, with its reason in problems.
+func writePins(cmd *cobra.Command, root string, pins []pinReport) error {
+	return report.Write(cmd.OutOrStdout(), pinsDoc(root, pins))
+}
+
+func writeValidation(cmd *cobra.Command, root string, l *lock.Lock, problems []lock.Problem, needPin []lock.Request, scanned *lock.ScanResult, notInstalled []string) error {
+	return report.Write(cmd.OutOrStdout(), validationDoc(root, l, problems, needPin, scanned, notInstalled))
+}
+
+func writeLock(cmd *cobra.Command, result *orchestrate.LockResult) error {
+	return report.Write(cmd.OutOrStdout(), lockDoc(result))
+}
+
+func pinsDoc(root string, pins []pinReport) *report.ProjectPins {
+	doc := &report.ProjectPins{Root: root, Pins: report.List[report.ProjectPin]{}, Problems: report.List[report.Problem]{}}
+	for _, pin := range pins {
+		record := report.ProjectPin{Overlay: report.Overlay{Name: pin.Name}, Request: pin.Request,
+			Artifacts: pin.Artifacts, Manual: pin.Manual}
+		if pin.Entry != nil {
+			record.Type, record.Identity, record.Equiv = pin.Entry.Manifest.Type, pin.Entry.Identity, pin.Entry.Equiv
+		}
+		doc.Pins = append(doc.Pins, record)
+		if pin.Problem != "" {
+			doc.Problems = append(doc.Problems, report.Problem{Name: pin.Request, Message: pin.Problem})
+		}
+	}
+	return doc
+}
+
+// validationDoc is the verdict of `project validate`.
+// A problem of the lock names its pin, else its artifact; the installed problems are plain messages.
+func validationDoc(root string, l *lock.Lock, problems []lock.Problem, needPin []lock.Request, scanned *lock.ScanResult, notInstalled []string) *report.ProjectValidation {
+	doc := &report.ProjectValidation{Root: root, Scripts: report.List[string](scanned.Scripts),
+		Findings: findings(scanned.Findings), Unpinned: report.List[report.Declaration]{},
+		SymlinkedScripts: scanned.SymlinkedScripts, SymlinkedDirs: scanned.SymlinkedDirs,
+		Problems: report.List[report.Problem]{}}
+	if doc.Scripts == nil {
+		doc.Scripts = report.List[string]{}
+	}
+	for _, p := range problems {
+		name := p.Request
+		if name == "" {
+			name = p.Artifact
+		}
+		doc.Problems = append(doc.Problems, report.Problem{Name: name, Message: p.Reason})
+	}
+	if reason := missingBaseProblem(l); reason != "" {
+		doc.Problems = append(doc.Problems, report.Problem{Message: reason})
+	}
+	doc.Problems = append(doc.Problems, problemList(notInstalled)...)
+	for _, request := range needPin {
+		doc.Unpinned = append(doc.Unpinned, declaration(request, "", true))
+	}
+	doc.Valid = len(doc.Problems) == 0 && len(doc.Findings) == 0 && len(doc.Unpinned) == 0
+	return doc
+}
+
+// lockDoc is what `project lock` left behind.
+// A declaration the lock could not pin has no artifact, and the errors go to problems.
+func lockDoc(result *orchestrate.LockResult) *report.ProjectLock {
+	l, scanned := result.Current, result.Scanned
+	doc := &report.ProjectLock{Root: result.Root, Requests: report.List[report.Declaration]{},
+		Findings: findings(scanned.Findings), UnpinnedHelperOverlays: result.UnpinnedHelperOverlays,
+		ManualPinUsage: result.ManualPinUsage, SymlinkedScripts: scanned.SymlinkedScripts,
+		SymlinkedDirs: scanned.SymlinkedDirs, Problems: problemList(errorStrings(result.Failed))}
+	if pin, ok := l.Pins[lock.BaseKey]; ok {
+		doc.Base, _ = pin.For(meta.NativeArch())
+	}
+	for _, request := range scanned.Requests {
+		var artifact string
+		if _, pin, ok := lock.MatchPin(l, request); ok {
+			artifact, _ = pin.For(meta.NativeArch())
+		}
+		doc.Requests = append(doc.Requests, declaration(request, artifact, request.Kind.Pinnable()))
+	}
+	for _, reason := range result.NotBuiltHere {
+		doc.Problems = append(doc.Problems, report.Problem{Message: reason})
+	}
+	return doc
+}
+
+func declaration(request lock.Request, artifact string, pinnable bool) report.Declaration {
+	return report.Declaration{Request: request.Key, Kind: string(request.Kind),
+		Scripts: request.Scripts, Pinnable: pinnable, Artifact: artifact}
+}
+
+func findings(found []lock.Finding) report.List[report.Finding] {
+	out := report.List[report.Finding]{}
+	for _, f := range found {
+		out = append(out, report.Finding{Script: f.Script, Line: f.Line, Text: f.Text, Reason: f.Reason})
+	}
+	return out
 }

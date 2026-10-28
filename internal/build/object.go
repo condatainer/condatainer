@@ -101,6 +101,10 @@ type BuildObject struct {
 	// plannedDeps is what dependencies not yet installed contribute to this
 	// node's equivalence, by the name the dependency was requested under.
 	plannedDeps map[string]plannedDep
+	// plannedEdges are the dependency edges plannedEquiv was derived from, and
+	// plannedDepPaths where each installed one is, by its name.
+	plannedEdges    []meta.Dependency
+	plannedDepPaths map[string]string
 	// prunedDeps are the dependencies a planned pull leaves out of the plan.
 	prunedDeps []string
 	// pruned marks a node the plan dropped because only pulled nodes needed it.
@@ -672,7 +676,7 @@ func (b *BuildObject) parseScriptMetadata(ctx context.Context) error {
 	if err := b.parseDependencies(); err != nil {
 		return err
 	}
-	if err := b.parseInputPrompts(); err != nil {
+	if err := b.parseInputPrompts(ctx); err != nil {
 		return err
 	}
 	if err := b.collectInputAnswers(ctx); err != nil {
@@ -698,7 +702,7 @@ func (b *BuildObject) parseDependencies() error {
 
 // parseInputPrompts reads #INPUT: lines from the build source and sets b.inputPrompts.
 // Skips parsing when the catalog already materialized the recipe.
-func (b *BuildObject) parseInputPrompts() error {
+func (b *BuildObject) parseInputPrompts(ctx context.Context) error {
 	if b.inputPrompts != nil || b.tempSource {
 		return nil
 	}
@@ -711,7 +715,7 @@ func (b *BuildObject) parseInputPrompts() error {
 	if err != nil {
 		return fmt.Errorf("failed to parse inputs: %w", err)
 	}
-	b.inputPrompts, b.recipeInputs = recipe.Prompts(), len(recipe.Inputs)
+	b.inputPrompts, b.recipeInputs = recipe.Prompts(planArch(ctx)), len(recipe.Inputs)
 	return nil
 }
 
@@ -721,7 +725,7 @@ func (b *BuildObject) parseInputPrompts() error {
 // env values, so a $ or backtick in a pasted URL would be mangled or run.
 func (b *BuildObject) collectInputAnswers(ctx context.Context) error {
 	b.inputAnswers = []string{}
-	if len(b.inputPrompts) == 0 {
+	if len(b.inputPrompts) == 0 || planOnly(ctx) {
 		return nil
 	}
 
@@ -1205,7 +1209,7 @@ func resolveBuildSource(ctx context.Context, base *BuildObject, tmpDir string) (
 	if err := validateRecipe(recipe); err != nil {
 		return false, false, err
 	}
-	if err := recipe.BuildableOn(meta.NativeArch()); err != nil {
+	if err := recipe.BuildableOn(planArch(ctx)); err != nil {
 		return false, false, err
 	}
 
@@ -1220,7 +1224,7 @@ func resolveBuildSource(ctx context.Context, base *BuildObject, tmpDir string) (
 	}
 	base.buildSource = path
 	base.tempSource = true
-	base.inputPrompts, base.recipeInputs = recipe.Prompts(), len(recipe.Inputs)
+	base.inputPrompts, base.recipeInputs = recipe.Prompts(planArch(ctx)), len(recipe.Inputs)
 
 	// The recipe is authoritative over the index entry, which can be stale.
 	base.spec.Image.Type = recipe.Type
@@ -1237,7 +1241,7 @@ func resolveBuildSource(ctx context.Context, base *BuildObject, tmpDir string) (
 	// is never recorded; the variant is recorded as its selected values.
 	source := SourceSpec{Script: &ScriptSource{
 		File:    SourceFile{Name: filepath.Base(path), Data: recipe.Text},
-		Prompts: recipe.Prompts(),
+		Prompts: recipe.Prompts(planArch(ctx)),
 	}}
 	if isContainer {
 		source = SourceSpec{Definition: &DefinitionSource{
@@ -1246,7 +1250,7 @@ func resolveBuildSource(ctx context.Context, base *BuildObject, tmpDir string) (
 	}
 	source.Placeholders = selectedPlaceholders(recipe)
 	source.TargetTemplate = recipe.TargetTemplate
-	source.RequiresInput = len(recipe.Prompts()) > 0
+	source.RequiresInput = len(recipe.Prompts(planArch(ctx))) > 0
 	source.Collection = match.Source.Desc.Source
 	base.spec.Source = source
 	base.embedSource(SourceFile{Name: meta.RecipeFileName, Data: recipe.Text})

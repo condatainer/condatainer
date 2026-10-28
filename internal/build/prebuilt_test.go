@@ -273,3 +273,35 @@ func TestPlannedDependencyEntersEquivalence(t *testing.T) {
 		t.Error("a different planned dependency key gave the same equivalence")
 	}
 }
+
+// A step says where its published copy was looked for, and whether the
+// registry could not be reached, which a copy that is simply absent is not.
+func TestPlannedStepSaysWhereAndHowTheLookupEnded(t *testing.T) {
+	oldResolve := resolvePrebuilt
+	t.Cleanup(func() { resolvePrebuilt = oldResolve })
+
+	b := prebuiltObject(t, []byte("echo demo\n"), "origin.invalid/lab")
+	for _, tc := range []struct {
+		err         error
+		unreachable bool
+	}{
+		{registry.ErrNotFound, false},
+		{registry.ErrUnavailable, true},
+	} {
+		resolvePrebuilt = func(context.Context, string, string, registry.Address) (registry.Found, error) {
+			return registry.Found{}, tc.err
+		}
+		if err := b.planPrebuilt(t.Context(), true); err != nil {
+			t.Fatal(err)
+		}
+		step := b.PlannedStep(t.Context())
+		if step.Registry != "origin.invalid/lab" || step.NoRegistry != "" || step.Unreachable != tc.unreachable || step.Equiv.Empty() {
+			t.Errorf("%v: step = %+v", tc.err, step)
+		}
+	}
+
+	b.buildType = BuildTypeConda
+	if step := b.PlannedStep(t.Context()); step.Registry != "" || step.NoRegistry == "" {
+		t.Errorf("a Conda build was looked up: %+v", step)
+	}
+}

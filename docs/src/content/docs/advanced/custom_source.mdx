@@ -237,9 +237,16 @@ condatainer registry resolve star/2.7.11b --source lab
 # Install the build the name serves, or one exact build
 condatainer registry pull star/2.7.11b --source lab
 condatainer registry pull star/2.7.11b@9f2c1ab --source lab
+# List the overlays whose recipe has no published copy yet
+condatainer registry missing --source lab --type os
+condatainer registry missing --source lab star/2.7.11b 'grch38/*'
 ```
 
 - `--source lab` uses the registry of the configured source `lab`. `--registry <repository>` takes any repository.
+- `registry missing` prints `name architecture` for each overlay the registry lacks a copy of. A copy counts as published when one was built from the same recipe.
+  - A name is exact, or a quoted pattern with `*` and `?`.
+  - `--type os,app,data` checks every recipe of those types, or narrows a pattern. It cannot be used with an exact name. With no name, pattern or `--type`, the command shows its help.
+  - `--arch amd64,arm64` checks other architectures. An unreachable registry is an error.
 - A pull takes the machine's architecture, then `noarch`. `resolve --arch arm64` prints the digest for another architecture.
 - Pushing a build that is already published uploads nothing. It writes the tags that are missing, so a push that stopped part way is finished by running it again.
 - Pushing a different build of the same name moves the name tag to it, after asking. The older build keeps its build tag.

@@ -580,3 +580,48 @@ func TestAManifestIsFetchedOncePerDigest(t *testing.T) {
 		t.Errorf("manifest reads = %d, want 1 for one digest", f.manifestGets)
 	}
 }
+
+// A lookup with an index answers a tag the registry lacks without asking it.
+func TestLookupWithATagIndexSkipsAbsentTags(t *testing.T) {
+	f := newFakeRegistry(t)
+	m := fullManifest()
+	m.Name = "star/2.7.11b"
+	tags := publishBuild(t, f, m)
+	index, err := ReadTagIndex(context.Background(), f.base(), "cnt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithTagIndex(context.Background(), index)
+
+	f.status = http.StatusInternalServerError
+	absent := Address{Name: m.Name, Equiv: "0123456789abcdef", Arch: ArchAMD64}
+	if _, err := Lookup(ctx, f.base(), "cnt", absent); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("an absent tag: err = %v, want ErrNotFound without a request", err)
+	}
+	held := Address{Name: m.Name, Equiv: m.Keys.Equiv.SHA256, Arch: ArchAMD64}
+	if found, err := Probe(ctx, f.base(), "cnt", held); err != nil || found.Tag != tags.Equiv {
+		t.Fatalf("a held tag probed without a request: found %q, err %v", found.Tag, err)
+	}
+	f.status = 0
+	found, err := Lookup(ctx, f.base(), "cnt", held)
+	if err != nil || found.Tag != tags.Equiv {
+		t.Fatalf("a held tag: found %q, err %v", found.Tag, err)
+	}
+}
+
+// A repository nobody has pushed to has no tags. A registry that refuses the read, or is down, gives no index.
+func TestReadTagIndex(t *testing.T) {
+	f := newFakeRegistry(t)
+	index, err := ReadTagIndex(context.Background(), f.base(), "cnt")
+	if err != nil || !index.Empty() {
+		t.Fatalf("an unpublished repository: index = %+v, err = %v, want an empty index", index, err)
+	}
+	f.status = http.StatusUnauthorized
+	if _, err := ReadTagIndex(context.Background(), f.base(), "cnt"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("a refusal: err = %v, want ErrUnauthorized", err)
+	}
+	f.status = http.StatusInternalServerError
+	if _, err := ReadTagIndex(context.Background(), f.base(), "cnt"); err == nil {
+		t.Fatal("an unavailable registry gave an index")
+	}
+}

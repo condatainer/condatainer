@@ -5,10 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/opencontainers/go-digest"
@@ -16,13 +21,16 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/credential"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/registry"
+	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -39,6 +47,13 @@ type registryOptions struct {
 	layer         string
 	noRecipe      bool
 }
+
+// registryRemoveJSON is --json on registry remove, registry gc and project
+// registry gc, which are never run together.
+var registryRemoveJSON bool
+
+// pullJSON is --json on registry pull.
+var pullJSON bool
 
 var registryCmd = newRegistryCommand()
 
@@ -61,6 +76,7 @@ A build pulling from a source's registry tries that source's token first.
 For reads, a refused credential is skipped for the next one, with a warning naming it.`,
 	}
 
+	var pushJSON bool
 	push := &cobra.Command{
 		Use:   "push [flags] <path|name/version>",
 		Short: "Publish an overlay to a registry",
@@ -86,6 +102,9 @@ Registry audience, public (default) or restricted, says who can download from th
 			if err != nil {
 				return err
 			}
+			if pushJSON {
+				return runPushJSON(cmd, opts, artifact)
+			}
 			dest, err := registryPushDestination(cmd, opts, artifact)
 			if err != nil {
 				return err
@@ -109,6 +128,7 @@ Registry audience, public (default) or restricted, says who can download from th
 			return nil
 		},
 	}
+	jsonFlag(push.Flags(), &pushJSON)
 	addEndpointFlags(push, opts)
 	push.Flags().StringVar(&opts.audience, "audience", string(registry.Public), "Who can download from the registry: public or restricted")
 
@@ -129,10 +149,12 @@ Registry audience, public (default) or restricted, says who can download from th
 			return runRegistryPull(cmd, opts, firstArg(args))
 		},
 	}
+	jsonFlag(pull.Flags(), &pullJSON)
 	addEndpointFlags(pull, opts)
 	pull.Flags().StringVar(&opts.digest, "digest", "", "Install the copy with this digest (sha256:<hex>)")
 	pull.Flags().StringVarP(&opts.prefix, "prefix", "p", "", "Install at this path (the image extension is optional)")
 
+	var asJSON bool
 	resolve := &cobra.Command{
 		Use:   "resolve [flags] <name|name@identity>",
 		Short: "Print the digest of a published overlay without downloading it",
@@ -145,10 +167,18 @@ Registry audience, public (default) or restricted, says who can download from th
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				spec := firstArg(args)
+				if opts.digest != "" {
+					spec = ""
+				}
+				return report.Write(cmd.OutOrStdout(), resolution(resolved, spec, opts.arch))
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), resolved.desc.Digest)
 			return nil
 		},
 	}
+	jsonFlag(resolve.Flags(), &asJSON)
 	addEndpointFlags(resolve, opts)
 	resolve.Flags().StringVar(&opts.digest, "digest", "", "Check the copy with this digest (sha256:<hex>)")
 	resolve.Flags().StringVar(&opts.arch, "arch", "", "Machine architecture: amd64, arm64 or noarch")
@@ -178,12 +208,16 @@ Registry audience, public (default) or restricted, says who can download from th
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				return report.Write(cmd.OutOrStdout(), tagsDoc(ep.repository, listed))
+			}
 			for _, tag := range listed {
 				fmt.Fprintln(cmd.OutOrStdout(), tag)
 			}
 			return nil
 		},
 	}
+	jsonFlag(tags.Flags(), &asJSON)
 	addEndpointFlags(tags, opts)
 
 	login := &cobra.Command{
@@ -295,7 +329,7 @@ Registry audience, public (default) or restricted, says who can download from th
 		},
 	}
 
-	cmd.AddCommand(push, pull, tags, resolve, newRegistryRemoveCommand(opts), newRegistryGCCommand(opts), login, logout, list)
+	cmd.AddCommand(push, pull, tags, resolve, newRegistryMissingCommand(opts), newRegistryRemoveCommand(opts), newRegistryGCCommand(opts), login, logout, list)
 	return cmd
 }
 
@@ -323,6 +357,7 @@ func newRegistryRemoveCommand(opts *registryOptions) *cobra.Command {
 		},
 	}
 	addSourceOnlyFlag(remove, opts)
+	jsonFlag(remove.Flags(), &registryRemoveJSON)
 	remove.Flags().StringVar(&opts.arch, "arch", "", "Only this machine architecture: amd64, arm64 or noarch")
 	return remove
 }
@@ -361,6 +396,7 @@ func newRegistryGCCommand(opts *registryOptions) *cobra.Command {
 		},
 	}
 	addSourceOnlyFlag(gc, opts)
+	jsonFlag(gc.Flags(), &registryRemoveJSON)
 	gc.Flags().BoolVar(&opts.noRecipe, "no-recipe", false, "Also remove builds of names the source has no recipe for")
 	return gc
 }
@@ -389,6 +425,41 @@ func recipeCheck(ep registryEndpoint) (func(string) bool, error) {
 }
 
 // firstArg is the one optional argument, or empty.
+// tagsDoc is the tags document for a repository's tags.
+func tagsDoc(repository string, listed []string) *report.Tags {
+	doc := &report.Tags{Repository: repository, Tags: make(report.List[report.Tag], 0, len(listed))}
+	for _, tag := range listed {
+		info := registry.DescribeTag(tag)
+		doc.Tags = append(doc.Tags, report.Tag{Tag: tag, Name: info.Name, Kind: info.Kind, Key: info.Key, Arch: info.Arch})
+	}
+	return doc
+}
+
+// resolution is the resolution document for a found copy. The tag is the one
+// the address asked for, from the copy's own keys, and absent for a digest.
+func resolution(found resolvedRegistryArtifact, spec, arch string) *report.Resolution {
+	ann := found.annotations
+	out := report.Resolved{
+		Overlay:  report.Overlay{Name: ann[registry.AnnTitle], Arch: ann[registry.AnnArch]},
+		Digest:   found.desc.Digest.String(),
+		Identity: registry.Identity(ann),
+		Equiv:    registry.Equiv(ann),
+	}
+	if addr, err := parseRegistryAddress(spec, arch); err == nil && spec != "" {
+		var tag string
+		switch {
+		case addr.Identity != "":
+			tag, _ = registry.BuildTag(out.Name, out.Identity, out.Arch)
+		case addr.Equiv != "":
+			tag, _ = registry.EquivTag(out.Name, out.Equiv, out.Arch)
+		default:
+			tag, _ = registry.NameTag(out.Name, out.Arch)
+		}
+		out.Tag = tag
+	}
+	return &report.Resolution{Overlay: out}
+}
+
 func firstArg(args []string) string {
 	if len(args) == 0 {
 		return ""
@@ -762,11 +833,39 @@ func runRegistryPull(cmd *cobra.Command, opts *registryOptions, spec string) err
 	if err != nil {
 		return err
 	}
-	if err := registry.Pull(ep.ctx, resolved.base, resolved.repo, resolved.desc, resolved.annotations, dest); err != nil {
-		return err
+	pullErr := registry.Pull(ep.ctx, resolved.base, resolved.repo, resolved.desc, resolved.annotations, dest)
+	if pullJSON {
+		return writePullStep(cmd, resolved, ep.repository, dest, pullErr)
+	}
+	if pullErr != nil {
+		return pullErr
 	}
 	reportDone(cmd, "pulled", dest)
 	return nil
+}
+
+// writePullStep prints the one fetch step of a pull as the steps document. A
+// pull that failed prints it with outcome failed, and ends with the error.
+func writePullStep(cmd *cobra.Command, found resolvedRegistryArtifact, repository, dest string, pullErr error) error {
+	ann := found.annotations
+	step := report.Step{
+		Overlay:  report.Overlay{Name: ann[registry.AnnTitle], Arch: ann[registry.AnnArch]},
+		Action:   report.ActionFetch,
+		Endpoint: repository,
+		Digest:   found.desc.Digest.String(),
+		Identity: registry.Identity(ann),
+		Equiv:    registry.Equiv(ann),
+		Outcome:  report.OutcomeDone,
+		Location: plannedLocation(dest, pullErr == nil),
+	}
+	if pullErr != nil {
+		step.Outcome, step.Error = report.OutcomeFailed, pullErr.Error()
+	}
+	doc := &report.Steps{Steps: report.List[report.Step]{step}}
+	if err := report.Write(cmd.OutOrStdout(), doc); err != nil {
+		return err
+	}
+	return pullErr
 }
 
 // pullExt is what every pull lands as: an overlay is SquashFS, so the
@@ -825,6 +924,9 @@ func finishRemoval(cmd *cobra.Command, ctx context.Context, repository string, b
 	base, repo, err := registry.SplitCoordinate(repository)
 	if err != nil {
 		return err
+	}
+	if registryRemoveJSON {
+		return finishRemovalJSON(cmd, ctx, repository, backend, p)
 	}
 	if len(p.Removes) == 0 {
 		reportKept(p)
@@ -1031,4 +1133,578 @@ func sourceHolding(key, layer string) string {
 		}
 	}
 	return ""
+}
+
+func newRegistryMissingCommand(opts *registryOptions) *cobra.Command {
+	var arch, types string
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "missing [flags] [name|pattern]...",
+		Short: "List the overlays a source's registry does not hold yet",
+		Long: `List the overlays whose recipe has no published copy in a source's registry.
+
+- A copy is published when the registry has the tag of the recipe's equivalence key, whatever its date. The copy itself is not read.
+- A name is exact, or a quoted pattern with * and ?. A pattern matches the variants of a template, such as 'ubuntu24/r/*'.
+- --type alone checks every recipe of those types. With no name, pattern or --type, this help is shown.
+- A recipe that does not build on an architecture is skipped for it.
+- A missing copy prints as its name and architecture.
+- A registry that cannot be read is an error: unreachable, or refusing the read. A repository nobody has pushed to has no copies.`,
+		Example: `  condatainer registry missing --source cnt --type os
+  condatainer registry missing --source cnt --arch amd64,arm64 ubuntu24/base 'ubuntu24/r/*'
+  condatainer registry missing --source lab 'tools/*' --type app`,
+		SilenceUsage: true,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if bareMissing(cmd, args) {
+				return nil
+			}
+			if strings.TrimSpace(opts.source) == "" {
+				return errors.New("--source is required, for example --source cnt")
+			}
+			return config.SelectSources([]string{opts.source})
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if bareMissing(cmd, args) {
+				return cmd.Help()
+			}
+			archs, err := parseMissingArchs(arch)
+			if err != nil {
+				return err
+			}
+			kinds, err := parseMissingTypes(types, args, cmd.Flags().Changed("type"))
+			if err != nil {
+				return err
+			}
+			ep, err := resolveRegistryEndpoint(cmd, &registryOptions{source: opts.source})
+			if err != nil {
+				return err
+			}
+			ctx := quietly(cmd.Context())
+			names, problems, err := selectRecipes(ctx, args, kinds)
+			if err != nil {
+				return err
+			}
+			if len(names)*len(archs) >= tagIndexMinLookups {
+				if ctx, err = withTagIndex(ep, ctx); err != nil {
+					return err
+				}
+			}
+			copies, more, err := checkCopies(ctx, names, archs)
+			if err != nil {
+				return err
+			}
+			return writeCopies(cmd.OutOrStdout(), ep.repository, copies, append(problems, more...), asJSON)
+		},
+	}
+	cmd.Flags().StringVarP(&opts.source, "source", "s", "", "Recipe source to read recipes and the registry from (required)")
+	cmd.Flags().StringVar(&arch, "arch", "", "Architectures to check, comma separated: amd64, arm64 (default: this machine's)")
+	cmd.Flags().StringVar(&types, "type", "", "Types to check, comma separated: os, app")
+	jsonFlag(cmd.Flags(), &asJSON)
+	_ = cmd.RegisterFlagCompletionFunc("source", sourceHandleCompletion)
+	_ = cmd.RegisterFlagCompletionFunc("type", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return []string{"os", "app"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	return cmd
+}
+
+// parseMissingArchs reads --arch: a comma list of architectures, this
+// machine's when empty.
+func parseMissingArchs(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return []string{meta.NativeArch()}, nil
+	}
+	var archs []string
+	for _, a := range strings.Split(raw, ",") {
+		a = strings.TrimSpace(a)
+		if a != registry.ArchAMD64 && a != registry.ArchARM64 {
+			return nil, fmt.Errorf("--arch: %q is not amd64 or arm64", a)
+		}
+		if !slices.Contains(archs, a) {
+			archs = append(archs, a)
+		}
+	}
+	return archs, nil
+}
+
+// bareMissing reports a call that says what to check in no way: no name, no
+// pattern and no --type. It shows the help.
+func bareMissing(cmd *cobra.Command, args []string) bool {
+	return len(args) == 0 && !cmd.Flags().Changed("type")
+}
+
+// isPattern reports whether an argument is a pattern, not an exact name.
+func isPattern(arg string) bool { return strings.ContainsAny(arg, "*?") }
+
+// parseMissingTypes reads --type: the types a pattern or no name selects, all
+// of them when unset. --type beside an exact name is refused, since it does not
+// narrow one.
+func parseMissingTypes(raw string, args []string, given bool) ([]artifact.Type, error) {
+	if !given {
+		return nil, nil
+	}
+	if slices.ContainsFunc(args, func(a string) bool { return !isPattern(a) }) {
+		return nil, errors.New("--type applies to patterns and to a run with no name, not to an exact name")
+	}
+	var kinds []artifact.Type
+	for _, t := range strings.Split(raw, ",") {
+		kind := artifact.Type(strings.TrimSpace(t))
+		if kind == artifact.TypeData {
+			return nil, errors.New("--type does not take data: a template of data overlays has too many variants to list; give a name or a pattern")
+		}
+		if kind != artifact.TypeOS && kind != artifact.TypeApp {
+			return nil, fmt.Errorf("--type: %q is not os or app", t)
+		}
+		if !slices.Contains(kinds, kind) {
+			kinds = append(kinds, kind)
+		}
+	}
+	return kinds, nil
+}
+
+// patternMatcher matches names against a pattern in which * is any run of
+// characters and ? is one.
+func patternMatcher(pattern string) *regexp.Regexp {
+	quoted := regexp.QuoteMeta(pattern)
+	quoted = strings.ReplaceAll(quoted, `\*`, ".*")
+	quoted = strings.ReplaceAll(quoted, `\?`, ".")
+	return regexp.MustCompile("^" + quoted + "$")
+}
+
+// selectRecipes names what to check: each exact name as given, then the recipes
+// of the selected source that a pattern matches, or all of them with no name.
+// Only recipes of the wanted types are listed, and a template is expanded into
+// its variants. A pattern that matches nothing is a problem.
+func selectRecipes(ctx context.Context, args []string, kinds []artifact.Type) ([]string, []report.Problem, error) {
+	var names []string
+	var patterns []string
+	for _, arg := range args {
+		if isPattern(arg) {
+			patterns = append(patterns, arg)
+		} else if name := utils.NormalizeModule(arg); !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	if len(args) > 0 && len(patterns) == 0 {
+		return names, nil, nil
+	}
+
+	cat, err := config.OpenCatalog(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	var listed []string
+	for _, source := range cat {
+		entries, err := source.Entries(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("cannot read the recipes of source %q: %w", source.Name, err)
+		}
+		for _, key := range slices.Sorted(maps.Keys(entries)) {
+			e := entries[key]
+			if kinds != nil && !slices.Contains(kinds, e.Type) {
+				continue
+			}
+			if !e.IsTemplate {
+				listed = append(listed, key)
+				continue
+			}
+			for _, v := range catalog.NewTemplate(e.TargetTemplate).Enumerate(e.PH) {
+				listed = append(listed, v.Name)
+			}
+		}
+	}
+
+	var problems []report.Problem
+	if len(patterns) == 0 {
+		return appendNew(names, listed), nil, nil
+	}
+	for _, pattern := range patterns {
+		match := patternMatcher(utils.NormalizeModule(pattern))
+		before := len(names)
+		for _, name := range listed {
+			if match.MatchString(name) && !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+		if len(names) == before {
+			problems = append(problems, report.Problem{Name: pattern, Message: "the pattern matches no recipe"})
+		}
+	}
+	return names, problems, nil
+}
+
+// appendNew adds the names of more that list does not have yet.
+func appendNew(list, more []string) []string {
+	for _, name := range more {
+		if !slices.Contains(list, name) {
+			list = append(list, name)
+		}
+	}
+	return list
+}
+
+// tagIndexMinLookups is how many lookups make a listing of the registry's tags
+// cheaper than the lookups, which cost a token and a request each.
+const tagIndexMinLookups = 50
+
+// withTagIndex reads the registry's tags once, so a tag is found or missing without
+// a request. A registry that stops the listing is an error; any other failure
+// leaves each name to its own lookup.
+func withTagIndex(ep registryEndpoint, ctx context.Context) (context.Context, error) {
+	base, repo, err := registry.SplitCoordinate(ep.repository)
+	if err != nil {
+		return ctx, nil
+	}
+	index, err := registry.ReadTagIndex(ep.ctx, base, repo)
+	switch {
+	case registryStopped(err):
+		return ctx, err
+	case err != nil:
+		logging.FromContext(ctx).Debug("tags were not listed, so each copy is looked up", "err", err)
+		return ctx, nil
+	}
+	if index.Empty() {
+		utils.PrintNote("%s holds no tags yet", ep.repository)
+	}
+	return registry.WithTagIndex(ctx, index), nil
+}
+
+// missingWorkers is how many names checkCopies looks up at once.
+const missingWorkers = 8
+
+// checkCopies asks, for each name and architecture, whether the registry holds
+// a copy built from the local recipe. An unreachable registry is an error; a
+// name that cannot be checked is a problem and leaves the others.
+//   - Names are checked at once, and the result keeps their order.
+//   - The error returned is the first name's.
+func checkCopies(ctx context.Context, names, archs []string) ([]report.Copy, []report.Problem, error) {
+	// Only names a copy would be filed under; nothing is built here.
+	dir := filepath.Join(os.TempDir(), "cnt-registry-missing")
+	type checked struct {
+		copies   []report.Copy
+		problems []report.Problem
+		err      error
+	}
+	results := make([]checked, len(names))
+	slots := make(chan struct{}, missingWorkers)
+	var wg sync.WaitGroup
+	for i, name := range names {
+		slots <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer func() { <-slots; wg.Done() }()
+			results[i].copies, results[i].problems, results[i].err = checkName(ctx, name, archs, dir)
+		}()
+	}
+	wg.Wait()
+
+	var copies []report.Copy
+	var problems []report.Problem
+	for _, r := range results {
+		if r.err != nil {
+			return nil, nil, r.err
+		}
+		copies = append(copies, r.copies...)
+		problems = append(problems, r.problems...)
+	}
+	return copies, problems, nil
+}
+
+// checkName is checkCopies for one name.
+func checkName(ctx context.Context, raw string, archs []string, dir string) ([]report.Copy, []report.Problem, error) {
+	name := utils.NormalizeModule(raw)
+	known, err := recipeKnown(ctx, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !known {
+		return nil, []report.Problem{{Name: name, Message: "the source has no recipe with this name"}}, nil
+	}
+	var copies []report.Copy
+	var problems []report.Problem
+	found := false
+	for _, arch := range archs {
+		step, err := planCopy(build.TagOnly(build.PlanOnly(build.ForArch(ctx, arch))), name, dir)
+		if errors.Is(err, catalog.ErrUnsupportedArch) {
+			continue
+		}
+		if registryStopped(err) {
+			return nil, nil, err
+		}
+		if err != nil {
+			problems = append(problems, report.Problem{Name: name, Message: err.Error()})
+			found = true
+			break
+		}
+		found = true
+		c, problem, err := copyOf(step)
+		if err != nil {
+			return nil, nil, err
+		}
+		if problem != "" {
+			problems = append(problems, report.Problem{Name: name, Message: problem})
+			break
+		}
+		copies = append(copies, c)
+		if step.Arch == meta.ArchNone {
+			break
+		}
+	}
+	if !found {
+		problems = append(problems, report.Problem{Name: name,
+			Message: fmt.Sprintf("its recipe does not build on %s", strings.Join(archs, ", "))})
+	}
+	return copies, problems, nil
+}
+
+// recipeKnown reports whether the selected source has a recipe called name. A
+// template's own name is refused, since it names no one overlay.
+func recipeKnown(ctx context.Context, name string) (bool, error) {
+	cat, err := config.OpenCatalog(ctx)
+	if err != nil {
+		return false, err
+	}
+	m, found, err := cat.Lookup(ctx, name)
+	if err != nil || !found {
+		return false, err
+	}
+	if m.Entry.IsTemplate && len(m.Vars) == 0 {
+		return false, fmt.Errorf("%s is a template; give the full name of one variant, as `condatainer avail -e %s` lists them", name, name)
+	}
+	return true, nil
+}
+
+// planCopy plans name alone, as installed nowhere, and returns its step.
+func planCopy(ctx context.Context, name, dir string) (build.PlannedStep, error) {
+	bo, err := build.NewBuildObject(ctx, name, false, dir, true)
+	if err != nil {
+		return build.PlannedStep{}, err
+	}
+	graph, err := build.NewBuildGraph(ctx, []*build.BuildObject{bo}, dir, false, true)
+	if err != nil {
+		return build.PlannedStep{}, err
+	}
+	for _, step := range graph.Plan() {
+		if step.Name == bo.NameVersion() {
+			return step, nil
+		}
+	}
+	return build.PlannedStep{}, fmt.Errorf("%s is not in its own plan", name)
+}
+
+// copyOf reads a planned step as a published or missing copy. A step that has
+// none is a problem, and an unreachable registry is an error.
+func copyOf(step build.PlannedStep) (report.Copy, string, error) {
+	switch {
+	case step.NoRegistry != "":
+		return report.Copy{}, "nothing to check: " + step.NoRegistry, nil
+	case step.Unreachable:
+		return report.Copy{}, "", fmt.Errorf("cannot reach %s to look for %s", step.Registry, step.Name)
+	case step.Equiv.Empty():
+		return report.Copy{}, "its equivalence is not known: a dependency has no key yet", nil
+	}
+	tag, err := registry.EquivTag(step.Name, step.Equiv, step.Arch)
+	if err != nil {
+		return report.Copy{}, err.Error(), nil
+	}
+	return report.Copy{
+		Overlay:   report.Overlay{Name: step.Name, Type: step.Type, Arch: step.Arch},
+		Published: step.Pull,
+		Equiv:     step.Equiv,
+		Tag:       tag,
+		Digest:    step.Digest,
+		Identity:  step.Identity,
+	}, "", nil
+}
+
+// writeCopies prints the missing copies one per line, or all of them as the
+// copies document. Problems go to stderr in text.
+func writeCopies(w io.Writer, repository string, copies []report.Copy, problems []report.Problem, asJSON bool) error {
+	if asJSON {
+		return report.Write(w, &report.Copies{Repository: repository, Overlays: copies, Problems: problems})
+	}
+	for _, c := range copies {
+		if !c.Published {
+			fmt.Fprintf(w, "%s %s\n", c.Name, c.Arch)
+		}
+	}
+	for _, p := range problems {
+		utils.PrintWarning("%s: %s", p.Name, p.Message)
+	}
+	return nil
+}
+
+// quietly returns ctx with a logger that passes warnings only, so planning
+// notes such as "will be built locally" do not read as this command's result.
+func quietly(ctx context.Context) context.Context {
+	return logging.WithLogger(ctx, slog.New(warningsOnly{logging.FromContext(ctx).Handler()}))
+}
+
+type warningsOnly struct{ slog.Handler }
+
+func (h warningsOnly) Enabled(ctx context.Context, l slog.Level) bool {
+	return l >= slog.LevelWarn && h.Handler.Enabled(ctx, l)
+}
+
+func (h warningsOnly) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return warningsOnly{h.Handler.WithAttrs(attrs)}
+}
+
+func (h warningsOnly) WithGroup(name string) slog.Handler {
+	return warningsOnly{h.Handler.WithGroup(name)}
+}
+
+// runPushJSON prints the pushes document. Without -y it only reports what the
+// push would do, and with -y it pushes. A refusal before anything moved is
+// outcome refused, and a push that started and stopped is failed; both print
+// the record and end the command with an error.
+func runPushJSON(cmd *cobra.Command, opts *registryOptions, artifact registryArtifact) error {
+	rec := report.Push{Path: artifact.path}
+	var problems []report.Problem
+	finish := func(failure error) error {
+		doc := &report.Pushes{Pushes: report.List[report.Push]{rec}, Problems: problems}
+		if err := report.Write(cmd.OutOrStdout(), doc); err != nil {
+			return err
+		}
+		return failure
+	}
+	refuse := func(err error) error {
+		rec.Outcome, rec.Error = report.OutcomeRefused, err.Error()
+		return finish(err)
+	}
+
+	dest, err := registryPushDestination(cmd, opts, artifact)
+	if err != nil {
+		return refuse(err)
+	}
+	if err := refuseFrozenForSource(artifact.path, dest); err != nil {
+		return refuse(err)
+	}
+	prepared, err := registry.Prepare(dest.ctx, registry.PublishRequest{
+		Path: artifact.path, Repository: dest.repository, Audience: dest.audience,
+		Tags:       registry.TagRequest{Name: true, Equiv: true},
+		Collection: dest.collection,
+	})
+	if err != nil {
+		if registryStopped(err) {
+			rec.Outcome, rec.Error = report.OutcomeFailed, err.Error()
+			return finish(err)
+		}
+		return refuse(err)
+	}
+	rec = pushRecord(artifact.path, prepared.Plan)
+	if m := prepared.Plan.Mismatch; m != nil {
+		recorded := "no recipe collection"
+		if m.Recorded != "" {
+			recorded = "the collection " + m.Recorded
+		}
+		problems = append(problems, report.Problem{Name: rec.Name,
+			Message: fmt.Sprintf("this overlay records %s, but the repository belongs to %s", recorded, m.Expected)})
+	}
+
+	if previewOnly(true) {
+		return finish(nil)
+	}
+	desc, err := prepared.Publish(dest.ctx)
+	if err != nil {
+		rec.Outcome, rec.Error = report.OutcomeFailed, err.Error()
+		return finish(err)
+	}
+	rec.Outcome, rec.Digest = report.OutcomeDone, desc.Digest.String()
+	return finish(nil)
+}
+
+// registryStopped reports an error from the registry itself, which stops a
+// push, as opposed to a check that refuses it.
+func registryStopped(err error) bool {
+	return errors.Is(err, registry.ErrUnavailable) || errors.Is(err, registry.ErrRateLimited) ||
+		errors.Is(err, registry.ErrUnauthorized) || errors.Is(err, registry.ErrIncompatibleRegistry)
+}
+
+// pushRecord is the record of a prepared push.
+func pushRecord(path string, plan registry.PublishPlan) report.Push {
+	rec := report.Push{
+		Overlay:    report.Overlay{Name: plan.Name, Type: plan.Type, Arch: plan.Arch},
+		Path:       path,
+		Repository: plan.Repository,
+		Identity:   plan.Identity,
+		Equiv:      plan.Equiv,
+		Digest:     plan.Digest,
+		Reference:  plan.Reference,
+		Tags:       plan.Tags,
+		Size:       plan.Size,
+		Audience:   string(plan.Audience),
+		Existing:   plan.Existing,
+	}
+	if plan.MovedTag != "" {
+		rec.Moved = &report.Move{Tag: plan.MovedTag, From: plan.MovedFrom, To: shortKey(plan.Identity)}
+	}
+	return rec
+}
+
+// shortKey is the leading hex of a key, as a tag spells it.
+func shortKey(k meta.KeyRef) string {
+	if len(k.SHA256) > 12 {
+		return k.SHA256[:12]
+	}
+	return k.SHA256
+}
+
+// finishRemovalJSON prints the removal document. Without -y it reports the plan
+// and removes nothing; with -y it removes, and reports what it did.
+func finishRemovalJSON(cmd *cobra.Command, ctx context.Context, repository string, backend registry.Backend, p registry.RemovePlan) error {
+	base, repo, err := registry.SplitCoordinate(repository)
+	if err != nil {
+		return err
+	}
+	var problems []report.Problem
+	manifests := func(held []registry.Held) report.List[report.RegistryManifest] {
+		out := report.List[report.RegistryManifest]{}
+		for _, h := range held {
+			out = append(out, manifestRecord(ctx, base, repo, h, &problems))
+		}
+		return out
+	}
+	moves := func(moved []registry.TagMove) report.List[report.Move] {
+		out := report.List[report.Move]{}
+		for _, m := range moved {
+			out = append(out, report.Move{Tag: m.Tag, From: m.FromBuild, To: m.ToBuild})
+		}
+		return out
+	}
+	kept := report.List[report.RegistryKept]{}
+	for _, h := range p.Kept {
+		kept = append(kept, report.RegistryKept{Digest: h.Desc.Digest.String(), Tags: h.Tags, Reason: report.KeptForeignTag})
+	}
+
+	if previewOnly(true) {
+		return report.Write(cmd.OutOrStdout(), &report.RegistryRemovalPlan{Repository: repository,
+			WouldRemove: manifests(p.Removes), WouldMove: moves(p.Moves), Kept: kept, Problems: problems})
+	}
+	if len(p.Removes) == 0 {
+		return report.Write(cmd.OutOrStdout(), &report.RegistryRemoval{Repository: repository,
+			Removed: report.List[report.RegistryManifest]{}, Moved: report.List[report.Move]{}, Kept: kept, Problems: problems})
+	}
+	res, applyErr := registry.Apply(ctx, base, repo, backend, p)
+	for _, h := range res.Skipped {
+		kept = append(kept, report.RegistryKept{Digest: h.Desc.Digest.String(), Tags: h.Tags, Reason: report.KeptChanged})
+	}
+	doc := &report.RegistryRemoval{Repository: repository, Removed: manifests(res.Removed), Moved: moves(res.Moved),
+		Kept: kept, Problems: problems}
+	if err := report.Write(cmd.OutOrStdout(), doc); err != nil {
+		return err
+	}
+	return applyErr
+}
+
+// manifestRecord describes a manifest by its annotations, one read. When they
+// cannot be read the record has the digest and tags, and a problem says why.
+func manifestRecord(ctx context.Context, base, repo string, h registry.Held, problems *[]report.Problem) report.RegistryManifest {
+	rec := report.RegistryManifest{Digest: h.Desc.Digest.String(), Tags: h.Tags}
+	_, ann, err := registry.ResolveArtifact(ctx, base, repo, rec.Digest)
+	if err != nil {
+		*problems = append(*problems, report.Problem{Name: rec.Digest, Message: err.Error()})
+		return rec
+	}
+	rec.Name, rec.Arch = ann[registry.AnnTitle], ann[registry.AnnArch]
+	rec.Identity, rec.Equiv = registry.Identity(ann), registry.Equiv(ann)
+	return rec
 }

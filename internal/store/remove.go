@@ -22,7 +22,37 @@ var ErrNotStored = errors.New("overlay is not a store entry")
 //   - ErrInUse: a container is running.
 //   - ErrProtected: the identity was pinned by clearing its write bit.
 //   - A missing file: a concurrent remover won.
+//   - When the entry was found and could not be removed, the candidate is returned with the error, so a caller can say which entry it was.
 func Remove(name string, q IdentityQuery, dirs []string) (Candidate, error) {
+	candidate, err := storedCandidate(name, q, dirs)
+	if err != nil {
+		return Candidate{}, err
+	}
+	if err := removeLocked(candidate.Path); err != nil {
+		return candidate, err
+	}
+	return candidate, nil
+}
+
+// Removable finds the entry Remove would delete and checks that it could be, by
+// taking and releasing its exclusive lock. Nothing is deleted. The candidate is
+// returned with the error when only the lock fails, so a caller can say which
+// entry it was.
+func Removable(name string, q IdentityQuery, dirs []string) (Candidate, error) {
+	candidate, err := storedCandidate(name, q, dirs)
+	if err != nil {
+		return Candidate{}, err
+	}
+	lock, err := image.AcquireLock(candidate.Path, true)
+	if err != nil {
+		return candidate, err
+	}
+	lock.Close() //nolint:errcheck
+	return candidate, nil
+}
+
+// storedCandidate resolves the one store entry an address names.
+func storedCandidate(name string, q IdentityQuery, dirs []string) (Candidate, error) {
 	candidate, _, err := resolveIdentityFor(name, q, dirs)
 	if err != nil {
 		return Candidate{}, err
@@ -30,9 +60,6 @@ func Remove(name string, q IdentityQuery, dirs []string) (Candidate, error) {
 	if candidate.Layout != LayoutStored {
 		return Candidate{}, fmt.Errorf("%w: %s is installed flat; use `condatainer remove`",
 			ErrNotStored, candidate.Path)
-	}
-	if err := removeLocked(candidate.Path); err != nil {
-		return Candidate{}, err
 	}
 	return candidate, nil
 }

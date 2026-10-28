@@ -282,6 +282,15 @@ func lookup(ctx context.Context, base, repo string, a Address, read bool) (Found
 			}
 			return Found{}, err
 		}
+		if held, known := indexed(ctx, base, repo, tag); known {
+			if !held {
+				miss = fmt.Errorf("cannot resolve %s: %w", FullRef(base, repo, tag), ErrNotFound)
+				continue
+			}
+			if !read {
+				return Found{Tag: tag, Arch: arch}, nil
+			}
+		}
 		var desc ocispec.Descriptor
 		var ann map[string]string
 		if read {

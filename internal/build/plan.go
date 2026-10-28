@@ -3,7 +3,6 @@ package build
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/catalog"
@@ -98,7 +97,7 @@ func (r *resolver) visit(ctx context.Context, dep utils.Dep, vars map[string]str
 	// Refused from the index, before any recipe is fetched: a build that cannot
 	// run here is not worth starting the ones before it.
 	if node.Entry != nil && node.Installed == "" {
-		if err := node.Entry.BuildableOn(runtime.GOARCH); err != nil {
+		if err := node.Entry.BuildableOn(planArch(ctx)); err != nil {
 			if parent != "" {
 				err = fmt.Errorf("%w (needed by %s)", err, parent)
 			}

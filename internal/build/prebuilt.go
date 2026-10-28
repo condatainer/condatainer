@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -21,6 +22,7 @@ type prebuiltResult bool
 
 var (
 	resolvePrebuilt = registry.Lookup
+	probePrebuilt   = registry.Probe
 	pullPrebuilt    = registry.PullLocked
 )
 
@@ -42,10 +44,12 @@ type prebuiltCandidate struct {
 	annotations map[string]string
 }
 
-// prebuiltPlan is a node's prebuilt decision, made before anything runs.
+// prebuiltPlan is a node's prebuilt decision, made before anything runs. miss
+// says why a lookup that found nothing did.
 type prebuiltPlan struct {
 	choice    prebuiltChoice
 	candidate prebuiltCandidate
+	miss      prebuiltMiss
 }
 
 // plannedDep is what a dependency that is not installed yet will contribute to
@@ -73,17 +77,30 @@ const (
 	missUnavailable                     // the registry could not be reached
 )
 
-// prebuiltEligible reports whether a prebuilt can apply at all. A Conda build
-// has none to pull.
-func (b *BuildObject) prebuiltEligible() bool {
-	return !config.Global.SkipPrebuilt && b.buildType != BuildTypeConda &&
-		b.catalogSource != nil && b.catalogSource.DescriptorErr == nil &&
-		b.catalogSource.Desc.OCI.Registry != ""
+// noPrebuiltReason says why no prebuilt can apply at all, or "" when one can. A
+// Conda build has none to pull.
+func (b *BuildObject) noPrebuiltReason() string {
+	switch {
+	case config.Global.SkipPrebuilt:
+		return "prebuilt lookup is turned off"
+	case b.buildType == BuildTypeConda:
+		return "a Conda build has nothing published"
+	case b.catalogSource == nil:
+		return "it has no recipe source"
+	case b.catalogSource.DescriptorErr != nil:
+		return "its recipe source has an invalid descriptor"
+	case b.catalogSource.Desc.OCI.Registry == "":
+		return "its recipe source declares no registry"
+	}
+	return ""
 }
 
+// prebuiltEligible reports whether a prebuilt can apply at all.
+func (b *BuildObject) prebuiltEligible() bool { return b.noPrebuiltReason() == "" }
+
 // findPrebuilt reads the source's registry by metadata alone, and returns the
-// artifact published there if it was made from the local recipe. Every other
-// outcome is a miss.
+// artifact published there for the planned architecture if it was made from the
+// local recipe. Every other outcome is a miss.
 //   - The equivalence tag is asked for directly, so it does not matter where the name tag points.
 func (b *BuildObject) findPrebuilt(ctx context.Context) (prebuiltCandidate, bool, prebuiltMiss, error) {
 	want, err := b.prebuiltEquivalence(ctx)
@@ -95,18 +112,22 @@ func (b *BuildObject) findPrebuilt(ctx context.Context) (prebuiltCandidate, bool
 	if err != nil {
 		return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot use prebuilt %s: source registry: %w", b.spec.Image.Name, err)
 	}
-	arch := meta.NativeArch()
+	arch := planArch(ctx)
 	if b.spec.Image.Noarch {
 		arch = registry.ArchNoarch
 	}
 
 	log := logging.FromContext(ctx)
 	ctx = registry.WithSource(ctx, b.catalogSource.Base)
-	found, err := resolvePrebuilt(ctx, base, repo, registry.Address{Name: b.spec.Image.Name, Equiv: want.SHA256, Arch: arch})
+	lookup := resolvePrebuilt
+	if tagOnly(ctx) {
+		lookup = probePrebuilt
+	}
+	found, err := lookup(ctx, base, repo, registry.Address{Name: b.spec.Image.Name, Equiv: want.SHA256, Arch: arch})
 	if err != nil {
 		switch {
 		case errors.Is(err, registry.ErrNotFound), errors.Is(err, registry.ErrUnsupportedPlatform),
-			closedDoor(ctx, err, endpoint):
+			closedDoor(ctx, err, endpoint) && !tagOnly(ctx):
 			return prebuiltCandidate{}, false, missNone, nil
 		case errors.Is(err, registry.ErrUnavailable):
 			log.Debug("prebuilt unavailable", "name", b.spec.Image.Name, "err", err)
@@ -114,11 +135,13 @@ func (b *BuildObject) findPrebuilt(ctx context.Context) (prebuiltCandidate, bool
 		}
 		return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot use prebuilt %s from %s: %w", b.spec.Image.Name, endpoint, err)
 	}
-	if err := registry.Check(found.Annotations, registry.Want{Name: b.spec.Image.Name}); err != nil {
-		return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot use prebuilt %s from %s: %w", b.spec.Image.Name, endpoint, err)
-	}
-	if registry.Equiv(found.Annotations) != want {
-		return prebuiltCandidate{}, false, missNone, nil
+	if !tagOnly(ctx) {
+		if err := registry.Check(found.Annotations, registry.Want{Name: b.spec.Image.Name}); err != nil {
+			return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot use prebuilt %s from %s: %w", b.spec.Image.Name, endpoint, err)
+		}
+		if registry.Equiv(found.Annotations) != want {
+			return prebuiltCandidate{}, false, missNone, nil
+		}
 	}
 	return prebuiltCandidate{endpoint: endpoint, base: base, repo: repo, equiv: want,
 		desc: found.Desc, annotations: found.Annotations}, true, missNone, nil
@@ -130,8 +153,10 @@ func (b *BuildObject) findPrebuilt(ctx context.Context) (prebuiltCandidate, bool
 // node that cannot derive its equivalence yet stays undecided until it builds.
 func (b *BuildObject) planPrebuilt(ctx context.Context, known bool) error {
 	if known {
-		if equiv, err := b.prebuiltEquivalence(ctx); err == nil {
+		if equiv, edges, err := b.recipeEquivalence(ctx); err == nil {
 			b.plannedEquiv = equiv
+			b.plannedEdges = edges
+			b.plannedDepPaths = maps.Clone(b.depImagePaths)
 		}
 	}
 	switch {
@@ -146,7 +171,7 @@ func (b *BuildObject) planPrebuilt(ctx context.Context, known bool) error {
 			if miss == missUnavailable {
 				logging.FromContext(ctx).Warn(fmt.Sprintf("Cannot fetch prebuilt %s, building from the recipe", b.spec.Image.Name))
 			}
-			b.prebuilt = prebuiltPlan{choice: prebuiltNone}
+			b.prebuilt = prebuiltPlan{choice: prebuiltNone, miss: miss}
 			return nil
 		}
 		b.prebuilt = prebuiltPlan{choice: prebuiltPull, candidate: cand}
@@ -214,9 +239,16 @@ func closedDoor(ctx context.Context, err error, endpoint string) bool {
 // artifact built against equivalent dependency instances is substitutable even
 // when their exact identities differ.
 func (b *BuildObject) prebuiltEquivalence(ctx context.Context) (meta.KeyRef, error) {
+	equiv, _, err := b.recipeEquivalence(ctx)
+	return equiv, err
+}
+
+// recipeEquivalence is prebuiltEquivalence with the dependency edges the key was
+// derived from, each with the role it plays.
+func (b *BuildObject) recipeEquivalence(ctx context.Context) (meta.KeyRef, []meta.Dependency, error) {
 	recipe, ok := b.spec.Source.RecipeFile()
 	if !ok {
-		return meta.KeyRef{}, errors.New("selected source has no recipe")
+		return meta.KeyRef{}, nil, errors.New("selected source has no recipe")
 	}
 	manifest := b.Manifest()
 	manifest.Dependencies, _ = key.Manifest(key.Artifact{
@@ -230,9 +262,9 @@ func (b *BuildObject) prebuiltEquivalence(ctx context.Context) (meta.KeyRef, err
 	})
 	derived, err := key.Generate(manifest, b.keySources())
 	if err != nil {
-		return meta.KeyRef{}, err
+		return meta.KeyRef{}, nil, err
 	}
-	return derived.Equiv.Ref, nil
+	return derived.Equiv.Ref, manifest.Dependencies, nil
 }
 
 func describePrebuiltKey(k meta.KeyRef) string {

@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/spf13/pflag"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // flagUsages renders a FlagSet's help like pflag's FlagUsages, but where no flag has
@@ -36,4 +38,11 @@ func flagUsages(fs *pflag.FlagSet) string {
 func jsonFlag(fs *pflag.FlagSet, into *bool) {
 	fs.BoolVar(into, "json", false, "Print JSON")
 	_ = fs.MarkHidden("json")
+}
+
+// previewOnly reports whether a command that asks before it acts should only
+// report. --json never prompts, so an unanswered prompt is a no: the command
+// prints what it would do, and -y makes it act.
+func previewOnly(asJSON bool) bool {
+	return asJSON && !utils.ShouldAnswerYes()
 }

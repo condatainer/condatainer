@@ -510,11 +510,11 @@ func TestComputeAdoptsAnEquivalentSubstituteByDefault(t *testing.T) {
 	if step.Action != ActionAdopt {
 		t.Fatalf("action = %q, want adopt", step.Action)
 	}
-	if step.Identity != app.Keys.Identity.Digest() {
-		t.Errorf("identity = %q, want the locked one", step.Identity)
+	if step.Identity != app.Keys.Identity {
+		t.Errorf("identity = %v, want the locked one", step.Identity)
 	}
-	if step.Found == "" || step.Found == step.Identity {
-		t.Errorf("found = %q, want the substitute's own identity", step.Found)
+	if step.Found.Empty() || step.Found == step.Identity {
+		t.Errorf("found = %v, want the substitute's own identity", step.Found)
 	}
 	if plan.Work() != 0 {
 		t.Errorf("work = %d, want none: an equivalent copy is already here", plan.Work())
@@ -541,8 +541,8 @@ func TestComputeRefusesASubstituteUnderMatchIdentity(t *testing.T) {
 	if step.Action != ActionBuild {
 		t.Fatalf("action = %q, want build: the exact identity is absent", step.Action)
 	}
-	if step.Found != "" {
-		t.Errorf("found = %q, want empty: nothing was adopted", step.Found)
+	if !step.Found.Empty() {
+		t.Errorf("found = %v, want empty: nothing was adopted", step.Found)
 	}
 }
 
@@ -558,7 +558,7 @@ func TestComputeLeavesFoundEmptyForAnExactHit(t *testing.T) {
 	for _, match := range []Match{MatchEquivalence, MatchIdentity} {
 		plan := Compute(root, l, Options{Match: match, lookup: installed("star/2.7.11b")})
 		step := plan.Steps[0]
-		if step.Action != ActionAdopt || step.Found != "" {
+		if step.Action != ActionAdopt || !step.Found.Empty() {
 			t.Errorf("%s: step = %#v, want a plain adoption", match, step)
 		}
 	}

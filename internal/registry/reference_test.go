@@ -181,3 +181,17 @@ func TestTagsFor(t *testing.T) {
 		}
 	}
 }
+
+func TestDescribeTag(t *testing.T) {
+	for tag, want := range map[string]TagInfo{
+		"salmon--1.10.2__amd64":                   {Kind: TagName, Name: "salmon/1.10.2", Arch: "amd64"},
+		"salmon--1.10.2__9f2c1ab4d3e8__arm64":     {Kind: TagIdentity, Name: "salmon/1.10.2", Key: "9f2c1ab4d3e8", Arch: "arm64"},
+		"ubuntu24--base__eq-e90d3b7714cf__noarch": {Kind: TagEquiv, Name: "ubuntu24/base", Key: "e90d3b7714cf", Arch: "noarch"},
+		"latest":                         {Kind: TagOther},
+		"salmon--1.10.2__eq-e90d__amd64": {Kind: TagOther},
+	} {
+		if got := DescribeTag(tag); got != want {
+			t.Errorf("DescribeTag(%q) = %+v, want %+v", tag, got, want)
+		}
+	}
+}

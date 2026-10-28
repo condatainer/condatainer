@@ -31,6 +31,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - `logging/`: context-carried logger and raw-output writer.
 - `project/`: `cnt-lock/`, a project's pinned identities and vendored recipes.
 - `registry/`: OCI transport. Publish, resolve, verify, pull, login.
+- `report/`: the `--json` document of the overlay commands, and the record parts they share.
 - `runtime/`: `apptainer/` wrapper, `container/` setup, `exec/`, `proxy/` for compute nodes.
 - `scheduler/`: SLURM, PBS, LSF, HTCondor. Detection, directives, translation.
 - `shell/`: the setup in a user's rc files: `PATH`, completion and the `mm` hook, as a marked block.

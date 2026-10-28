@@ -33,40 +33,40 @@ const (
 // Step is one artifact's place in a push.
 type Step struct {
 	// Artifact is the vendored directory, relative to the lock directory.
-	Artifact    string      `json:"artifact"`
-	Name        string      `json:"name"`
-	Identity    string      `json:"identity"`
-	Disposition Disposition `json:"disposition"`
+	Artifact    string
+	Name        string
+	Identity    string
+	Disposition Disposition
 	// Path is the local artifact to upload, empty for anything not uploaded.
-	Path string `json:"path,omitempty"`
+	Path string
 	// Destination is the project-relative path a `path:` pin lives at.
 	// Empty means the artifact is addressed by identity in an images root.
-	Destination string `json:"destination,omitempty"`
+	Destination string
 	// Tags are what this artifact publishes under, canonical first.
-	Tags []string `json:"tags,omitempty"`
+	Tags []string
 	// Remote is the location to record: what an upload will create, or where an
 	// existing copy was found.
-	Remote *lock.Remote `json:"remote,omitempty"`
+	Remote *lock.Remote
 	// Recorded are the locations the lock already records for this artifact.
-	Recorded []lock.Remote `json:"-"`
+	Recorded []lock.Remote
 	// Reason explains a refusal.
-	Reason string `json:"reason,omitempty"`
+	Reason string
 	// Channels are a Conda build's recorded channels, reported and never judged:
 	// no allowlist could be maintained honestly and no licence string could be
 	// interpreted safely, so the operator is shown what went into the solve.
-	Channels []string `json:"channels,omitempty"`
+	Channels []string
 }
 
 // Plan is what a push will publish, and everything that would prevent it.
 type Plan struct {
-	Repository string   `json:"repository"`
-	Audience   string   `json:"audience"`
-	Source     string   `json:"source,omitempty"`
-	Steps      []Step   `json:"steps"`
-	Problems   []string `json:"problems,omitempty"`
+	Repository string
+	Audience   string
+	Source     string
+	Steps      []Step
+	Problems   []string
 	// Ambiguous are the manifest names two pins share. Neither keeps the plain
 	// name tag; both keep their qualified one, and the push proceeds.
-	Ambiguous []string `json:"ambiguous_names,omitempty"`
+	Ambiguous []string
 }
 
 // Complete reports whether the plan can run as computed.

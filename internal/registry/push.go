@@ -101,13 +101,22 @@ type PublishRequest struct {
 
 // PublishPlan is what a push is about to do, for a caller to show and confirm.
 type PublishPlan struct {
-	Name      string
-	Reference string   // the build tag's full reference
-	Tags      []string // every tag written
-	Size      int64
-	Layers    int
-	LayerSize int64
-	Audience  Audience
+	Name string
+	// Type and Arch are the artifact's, and Identity and Equiv its keys.
+	Type     artifact.Type
+	Arch     string
+	Identity meta.KeyRef
+	Equiv    meta.KeyRef
+	// Repository is the destination coordinate. Digest is the published
+	// manifest, known only when the build is already there.
+	Repository string
+	Digest     string
+	Reference  string   // the build tag's full reference
+	Tags       []string // every tag written
+	Size       int64
+	Layers     int
+	LayerSize  int64
+	Audience   Audience
 	// Existing reports that the build is already published, so only tags are
 	// written and nothing is uploaded.
 	Existing bool
@@ -127,35 +136,51 @@ type CollectionMismatch struct {
 // ErrDeclined reports a push its caller's Confirm turned down.
 var ErrDeclined = errors.New("push declined")
 
-// Publish validates an artifact against its destination, pushes it, and returns
-// the manifest descriptor it published.
+// Prepared is a push that has been checked and surveyed, and not yet made. Plan
+// says what it would do.
+type Prepared struct {
+	Plan PublishPlan
+
+	req         PublishRequest
+	m           meta.Manifest
+	base, repo  string
+	repository  *remote.Repository
+	tags        Tags
+	annotations map[string]string
+	held        surveyed
+	mismatch    *CollectionMismatch
+}
+
+// Complete reports that the build and all its tags are already published.
+func (p *Prepared) Complete() bool { return p.held.built && len(p.held.pending) == 0 }
+
+// Prepare validates an artifact against its destination and reads what the
+// repository holds, and moves no bytes.
 //
 //   - Everything published is derived from the artifact's own bytes.
 //   - The caller supplies only where it goes and which tags it wants.
-//   - A build already published uploads nothing: the other tags are pointed at it.
-//   - The returned digest is the manifest of this architecture, the address a lock records.
-func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error) {
+func Prepare(ctx context.Context, req PublishRequest) (*Prepared, error) {
 	ctx = withPush(ctx)
 	log := logging.FromContext(ctx)
 	if req.Audience == "" {
 		req.Audience = Public
 	}
 	if err := checkDistributable(req.Path); err != nil {
-		return ocispec.Descriptor{}, err
+		return nil, err
 	}
 
 	m, err := meta.ReadManifest(req.Path)
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return nil, err
 	}
 	if err := req.Audience.Accepts(m); err != nil {
-		return ocispec.Descriptor{}, err
+		return nil, err
 	}
 	if m.Keys.Identity.Empty() || m.Keys.Equiv.Empty() {
-		return ocispec.Descriptor{}, fmt.Errorf("%s records no scheme-backed identity, so nothing could pin what was pulled", m.Name)
+		return nil, fmt.Errorf("%s records no scheme-backed identity, so nothing could pin what was pulled", m.Name)
 	}
 	if !ValidArch(m.Platform.Arch) {
-		return ocispec.Descriptor{}, fmt.Errorf("%w: %s is built for %q; only amd64, arm64 and noarch are published",
+		return nil, fmt.Errorf("%w: %s is built for %q; only amd64, arm64 and noarch are published",
 			ErrUnsupportedPlatform, m.Name, m.Platform.Arch)
 	}
 	// Held to its own claim before anyone else has to trust it: a published
@@ -163,19 +188,19 @@ func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error
 	// would refuse on arrival, and finding that out here is cheaper for everyone.
 	got, err := compare.Read(req.Path)
 	if err != nil {
-		return ocispec.Descriptor{}, fmt.Errorf("%w: %w", ErrInvalidArtifact, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidArtifact, err)
 	}
 	if err := checkRegeneratedKeys(got, m.Keys.Identity, m.Keys.Equiv, "recorded"); err != nil {
-		return ocispec.Descriptor{}, err
+		return nil, err
 	}
 
 	base, repo, err := SplitCoordinate(req.Repository)
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return nil, err
 	}
 	tags, err := TagsFor(m, req.Tags)
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return nil, err
 	}
 
 	annotations := Annotations(m, compressionOf(req.Path))
@@ -185,7 +210,7 @@ func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error
 	// a URL that links nowhere.
 	if source := strings.TrimSpace(req.Source); source != "" {
 		if err := catalog.ValidSourceURL(source); err != nil {
-			return ocispec.Descriptor{}, err
+			return nil, err
 		}
 		annotations[AnnSource] = source
 	}
@@ -204,42 +229,68 @@ func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error
 
 	repository, err := newRepository(base, repo)
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return nil, err
 	}
 	held, err := survey(ctx, repository, tags, m.Keys.Identity)
 	if err != nil {
-		return ocispec.Descriptor{}, err
-	}
-	if held.built && len(held.pending) == 0 {
-		log.Info("Already published", "name", m.Name, "reference", FullRef(base, repo, tags.Build))
-		return held.build, nil
+		return nil, err
 	}
 
-	if req.Confirm != nil {
-		var size int64
-		if info, err := os.Stat(req.Path); err == nil {
-			size = info.Size()
-		}
-		layerSize, _ := planLayerSize(size, profileFor(registryHost(base)).MaxLayerSize)
-		plan := PublishPlan{
-			Name: m.Name, Reference: FullRef(base, repo, tags.Build), Tags: held.pending,
-			Size: size, Layers: layerCount(size, layerSize), LayerSize: layerSize,
-			Audience: req.Audience, Existing: held.built,
-			MovedTag: held.movedTag, MovedFrom: held.movedFrom, Mismatch: mismatch,
-		}
-		if !req.Confirm(plan) {
-			return ocispec.Descriptor{}, ErrDeclined
-		}
-	} else if mismatch != nil {
-		log.Warn("Overlay was not built from this repository's recipe collection",
-			"name", m.Name, "recorded", mismatch.Recorded, "repository", mismatch.Expected)
+	var size int64
+	if info, err := os.Stat(req.Path); err == nil {
+		size = info.Size()
+	}
+	layerSize, _ := planLayerSize(size, profileFor(registryHost(base)).MaxLayerSize)
+	plan := PublishPlan{
+		Name: m.Name, Type: m.Type, Arch: m.Platform.Arch, Identity: m.Keys.Identity, Equiv: m.Keys.Equiv,
+		Repository: TrimBaseScheme(req.Repository), Reference: FullRef(base, repo, tags.Build), Tags: held.pending,
+		Size: size, Layers: layerCount(size, layerSize), LayerSize: layerSize,
+		Audience: req.Audience, Existing: held.built,
+		MovedTag: held.movedTag, MovedFrom: held.movedFrom, Mismatch: mismatch,
 	}
 	if held.built {
-		log.Info("Tagging published build", "name", m.Name, "tags", strings.Join(held.pending, ", "))
-		return held.build, tagAll(ctx, repository, base, repo, held.build, held.pending)
+		plan.Digest = held.build.Digest.String()
 	}
-	log.Info("Publishing", "name", m.Name, "reference", FullRef(base, repo, tags.Build))
-	return Push(ctx, req.Path, base, repo, tags.List(), annotations)
+	return &Prepared{Plan: plan, req: req, m: m, base: base, repo: repo, repository: repository,
+		tags: tags, annotations: annotations, held: held, mismatch: mismatch}, nil
+}
+
+// Publish makes a prepared push, and returns the manifest descriptor it
+// published, the address a lock records. A build already published uploads
+// nothing: the other tags are pointed at it.
+func (p *Prepared) Publish(ctx context.Context) (ocispec.Descriptor, error) {
+	ctx = withPush(ctx)
+	log := logging.FromContext(ctx)
+	if p.Complete() {
+		log.Info("Already published", "name", p.m.Name, "reference", p.Plan.Reference)
+		return p.held.build, nil
+	}
+	if p.held.built {
+		log.Info("Tagging published build", "name", p.m.Name, "tags", strings.Join(p.held.pending, ", "))
+		return p.held.build, tagAll(ctx, p.repository, p.base, p.repo, p.held.build, p.held.pending)
+	}
+	log.Info("Publishing", "name", p.m.Name, "reference", p.Plan.Reference)
+	return Push(ctx, p.req.Path, p.base, p.repo, p.tags.List(), p.annotations)
+}
+
+// Publish prepares a push, asks req.Confirm when it has something to do, and
+// makes it.
+func Publish(ctx context.Context, req PublishRequest) (ocispec.Descriptor, error) {
+	p, err := Prepare(ctx, req)
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	if !p.Complete() {
+		if req.Confirm != nil {
+			if !req.Confirm(p.Plan) {
+				return ocispec.Descriptor{}, ErrDeclined
+			}
+		} else if p.mismatch != nil {
+			logging.FromContext(ctx).Warn("Overlay was not built from this repository's recipe collection",
+				"name", p.m.Name, "recorded", p.mismatch.Recorded, "repository", p.mismatch.Expected)
+		}
+	}
+	return p.Publish(ctx)
 }
 
 // surveyed is what a repository already holds for one push.

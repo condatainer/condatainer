@@ -121,6 +121,17 @@ Builds overlay images from Conda packages, recipes or Apptainer definitions.
 - A job re-runs `create` from the name, so only a build that command can reproduce is submitted: a catalog name or an external shell script. Conda from packages or a file, a definition and an import run locally.
 - Flags that change what is built or where it lands travel with the job. Submission flags do not.
 
+## Plans that are read, not run
+
+- A plan can be made for an architecture this machine is not, so one runner can ask what each architecture is missing.
+- The architecture travels in the context. Build objects are made before the graph, and the recipe's `#ARCH:` check runs while they are made.
+- Every check reads it: the recipe's `#ARCH:`, the resolver, the prebuilt lookup, and which `#SOURCE: ask:` lines count as questions.
+- A plan-only context asks none of a recipe's questions, which are also asked while the object is made.
+  - The answers choose what is downloaded, which enters identity only, so equivalence is the same without them.
+- A plan says where it looked for a published copy, and whether the registry could not be reached.
+  - A copy that is absent and a registry that did not answer differ: only the first means the copy is missing.
+- Either kind of plan can be read, never run. A build runs where it is built, with its answers.
+
 ## Workspace
 
 - Each producer owns one directory under the tmp root, named for the build and the lock owner. Cleanup removes only the current owner's.

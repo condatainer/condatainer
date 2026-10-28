@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
@@ -29,15 +30,22 @@ func newStoreUseCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !confirmSharedPromotion(cmd, name, query) {
-				return nil
+			if candidate, shared := sharedPromotion(name, query); shared && !utils.ShouldAnswerYes() {
+				if jsonOutput {
+					// The question would be asked, so the answer is no: report the
+					// build as it is filed, and promote nothing.
+					return report.Write(cmd.OutOrStdout(), &report.Promotion{Overlay: storedRecord(candidate)})
+				}
+				if !confirmSharedPromotion(cmd, candidate) {
+					return nil
+				}
 			}
 			result, err := store.Promote(name, query, nil)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return printJSON(result)
+				return report.Write(cmd.OutOrStdout(), promotionDoc(result))
 			}
 			reportPromotion(result)
 			return nil
@@ -48,22 +56,45 @@ func newStoreUseCmd() *cobra.Command {
 	return cmd
 }
 
-// confirmSharedPromotion asks before changing what a name means for other people,
-// and reports whether to go on.
+// sharedPromotion reports whether promoting the build an address names changes
+// what a name means for other people, and returns that build.
 //   - A promotion breaks no project lock — those pin identities, and every identity stays resolvable — but everyone addressing the name gets a different build from then on.
 //   - In a personal directory there is nobody else to surprise.
-func confirmSharedPromotion(cmd *cobra.Command, name string, query store.IdentityQuery) bool {
-	if utils.ShouldAnswerYes() {
-		return true
-	}
+//   - A resolution failure is Promote's to report, with its own message.
+func sharedPromotion(name string, query store.IdentityQuery) (store.Candidate, bool) {
 	candidate, _, err := store.ResolveIdentity(name, query, nil)
 	if err != nil || candidate.Layout == store.LayoutFlat || config.IsPersonalImagesDir(candidate.Root) {
-		// A resolution failure is Promote's to report, with its own message.
-		return true
+		return candidate, false
 	}
+	return candidate, true
+}
+
+// confirmSharedPromotion asks, on stderr, and reports whether to go on.
+func confirmSharedPromotion(cmd *cobra.Command, candidate store.Candidate) bool {
 	utils.PrintWarning("%s is shared: everyone reading it gets this build for %s from now on.",
 		candidate.Root, candidate.Name)
-	return utils.Confirm(cmd.Context(), os.Stdout, "Promote anyway? [y/N]: ")
+	return utils.Confirm(cmd.Context(), os.Stderr, "Promote anyway? [y/N]: ")
+}
+
+// promotionDoc is the document of a promotion that was made. The demoted build
+// is described where it now is.
+func promotionDoc(result store.Promotion) *report.Promotion {
+	doc := &report.Promotion{
+		Overlay:        storedRecord(result.Promoted),
+		Shadows:        result.Shadows,
+		AlreadyCurrent: result.AlreadyFlat,
+		Outcome:        report.OutcomeDone,
+	}
+	if result.AlreadyFlat {
+		doc.Outcome = report.OutcomeSkipped
+	}
+	if result.DemotedTo != "" {
+		demoted := result.Demoted
+		demoted.Path, demoted.Layout = result.DemotedTo, store.LayoutStored
+		rec := storedRecord(demoted)
+		doc.Demoted = &rec
+	}
+	return doc
 }
 
 func reportPromotion(result store.Promotion) {

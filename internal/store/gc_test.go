@@ -410,3 +410,32 @@ func TestGCRetainsAnEntryWhoseAtimeWasRefreshed(t *testing.T) {
 		t.Errorf("retained for %q, want atime named as the deciding stamp", reason)
 	}
 }
+
+// Removable finds the entry and checks that it could go, and deletes nothing. A
+// protected entry fails with the candidate, so a caller can say which one it was.
+func TestRemovableChecksWithoutDeleting(t *testing.T) {
+	root := t.TempDir()
+	path := storeEntry(t, root, "star--2.7@abc.sqf", 1024)
+	previous := resolveIdentityFor
+	resolveIdentityFor = func(string, IdentityQuery, []string) (Candidate, Report, error) {
+		return Candidate{Name: "star/2.7", Path: path, Root: root, Layout: LayoutStored}, Report{}, nil
+	}
+	t.Cleanup(func() { resolveIdentityFor = previous })
+
+	candidate, err := Removable("star/2.7", IdentityQuery{}, []string{root})
+	if err != nil || candidate.Path != path {
+		t.Fatalf("Removable = %+v, %v", candidate, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("Removable deleted the entry: %v", err)
+	}
+
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0o664) }) //nolint:errcheck
+	candidate, err = Removable("star/2.7", IdentityQuery{}, []string{root})
+	if !errors.Is(err, image.ErrProtected) || candidate.Path != path {
+		t.Errorf("protected entry: candidate = %q, err = %v", candidate.Path, err)
+	}
+}

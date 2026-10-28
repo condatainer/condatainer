@@ -18,14 +18,22 @@ import (
 // ErrIncomplete reports that a push did not publish everything it planned.
 var ErrIncomplete = errors.New("push is incomplete")
 
+// Failure is a step that was not published, and why.
+type Failure struct {
+	Step   Step
+	Reason string
+}
+
+func (f Failure) String() string { return f.Step.Name + ": " + f.Reason }
+
 // Report is what a push did.
 type Report struct {
-	Repository string   `json:"repository"`
-	Published  []Step   `json:"published,omitempty"`
-	Failures   []string `json:"failures,omitempty"`
+	Repository string
+	Published  []Step
+	Failures   []Failure
 	// AmbiguousNames are pins that share a manifest name, so no plain name
 	// tag could say which one the project uses.
-	AmbiguousNames []string `json:"ambiguous_names,omitempty"`
+	AmbiguousNames []string
 }
 
 // Refine asks the network what the checkout cannot: whether a collection already
@@ -137,11 +145,11 @@ func Run(ctx context.Context, root string, plan *Plan, opts Options) (*Report, e
 	for _, step := range plan.Steps {
 		switch step.Disposition {
 		case Refused:
-			report.Failures = append(report.Failures, fmt.Sprintf("%s: %s", step.Name, step.Reason))
+			report.Failures = append(report.Failures, Failure{step, step.Reason})
 			continue
 		case Served, Present:
 			if err := record(root, step); err != nil {
-				report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", step.Name, err))
+				report.Failures = append(report.Failures, Failure{step, err.Error()})
 				continue
 			}
 			report.Published = append(report.Published, step)
@@ -150,7 +158,7 @@ func Run(ctx context.Context, root string, plan *Plan, opts Options) (*Report, e
 
 		path, err := locate(root, step)
 		if err != nil {
-			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", step.Name, err))
+			report.Failures = append(report.Failures, Failure{step, err.Error()})
 			continue
 		}
 		log.Info("Publishing", "kind", "note", "name", step.Name, "tags", strings.Join(step.Tags, ", "))
@@ -162,7 +170,7 @@ func Run(ctx context.Context, root string, plan *Plan, opts Options) (*Report, e
 			Source:     plan.Source,
 		})
 		if err != nil {
-			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", step.Name, err))
+			report.Failures = append(report.Failures, Failure{step, err.Error()})
 			if ctx.Err() != nil {
 				break
 			}
@@ -174,7 +182,7 @@ func Run(ctx context.Context, root string, plan *Plan, opts Options) (*Report, e
 			ManifestDigest: desc.Digest.String(),
 		}
 		if err := record(root, step); err != nil {
-			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", step.Name, err))
+			report.Failures = append(report.Failures, Failure{step, err.Error()})
 			continue
 		}
 		report.Published = append(report.Published, step)

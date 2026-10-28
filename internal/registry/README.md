@@ -114,6 +114,7 @@ Storage and lookup are in `internal/credential`. What is particular to registrie
 - The build tag is immutable. Publishing a build whose tag exists uploads nothing and writes the missing tags.
 - The name tag moves to every published build. The build it leaves keeps its own tag.
 - A frozen environment takes no name tag. Every one is called `env`, so only its build tag addresses it.
+- A push is prepared before it is made. Every check and every read of the repository comes first, so what a push would do can be reported with no byte moved.
 - The equivalence tag is for the prebuilt check, which asks for it directly so the name tag's position does not matter.
 - Only script and def builds get one. A Conda build has no prebuilt to match, and a frozen environment's equivalence key is its identity.
 
@@ -143,3 +144,6 @@ Storage and lookup are in `internal/credential`. What is particular to registrie
 - A check that downloads nothing resolves the tag and reads no manifest. A pull reads it, and the keys are checked then.
 - The bytes are kept as pushed or fetched, since a tag can only be written against its own digest's exact bytes.
 
+- A check of 50 lookups or more lists the repository's tags once and answers each tag from the list. A lookup costs a token and a request, and a listing costs one request per page. Thousands of lookups get an anonymous client throttled by ghcr.io.
+- `registry missing` goes by the tag alone, since a tag carries 12 hex characters of the key and the recipe has already narrowed the name. A pull reads the manifest and compares the full key.
+- `registry missing` fails when the registry refuses a read or cannot be reached, a refusal with no credential included. An auth problem must not look like a repository with nothing in it. A listing that fails for any other reason leaves each name to its own lookup.

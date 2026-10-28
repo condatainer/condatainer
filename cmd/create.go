@@ -37,6 +37,8 @@ var (
 	createStore      bool
 	createNoPrebuilt bool
 	createLayer      string
+	createDryRun     bool
+	createJSON       bool
 
 	// createFlagSet is createCmd.Flags(), held here so createJobFlags does not refer to createCmd.
 	createFlagSet *pflag.FlagSet
@@ -65,6 +67,8 @@ var createJobRules = map[string]string{
 	"update": "the command builder adds it", "store": "the command builder adds it",
 	"no-prebuilt":        "the command builder adds it",
 	"no-submit":          "the job is the submission",
+	"dry-run":            "a dry run submits no job",
+	"json":               "output format of this run",
 	"always-submit-data": "decides whether to submit, not what is built",
 }
 
@@ -90,6 +94,7 @@ var createCmd = &cobra.Command{
 	Short:   "Create a read-only SquashFS overlay",
 	Long: `Create a read-only SquashFS overlay.
 
+--dry-run shows what would be built, pulled or submitted, and does none of it.
 Exits with code 3 if build jobs were submitted to a scheduler.`,
 	Example: `  condatainer create orad/2.7.0                              # From a recipe
   condatainer create --source lab star/2.7.11b               # From a recipe in the lab source
@@ -108,6 +113,13 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 		}
 		if createFrom != "" && createName == "" && createPrefix == "" {
 			ExitWithError("When using --from, either --name or --prefix must be provided.")
+		}
+		if createJSON && !createDryRun {
+			ExitWithError("create prints JSON only with --dry-run")
+		}
+		// A dry run plans without asking a recipe's questions.
+		if createDryRun {
+			ctx = build.PlanOnly(ctx)
 		}
 		if derived := derivePrefixFromFile(createFile, createPrefix, createName); derived != "" {
 			createPrefix = derived
@@ -212,6 +224,8 @@ func init() {
 	f.BoolVar(&createStore, "store", false, "Build into the store, filed under its identity")
 	f.BoolVar(&createNoPrebuilt, "no-prebuilt", false, "Build from the recipe instead of pulling a prebuilt overlay")
 	f.StringVarP(&createLayer, "layer", "l", "", "Build into this layer: "+layerChoices)
+	f.BoolVar(&createDryRun, "dry-run", false, "Show what would be built, pulled or submitted, without doing it")
+	jsonFlag(f, &createJSON)
 	settings.AddSwitch(f, "build.always_submit_data", "always-submit-data", "true", settings.Usage("Submit data builds as scheduler jobs, even without directives"))
 	settings.AddSwitch(f, "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))
 
@@ -551,6 +565,9 @@ func runCreatePackages(ctx context.Context, packages []string) {
 		if cat, err := config.OpenCatalog(ctx); err == nil {
 			if m, found, err := cat.Lookup(ctx, pkg); err == nil && found &&
 				m.Entry.IsTemplate && len(m.Vars) == 0 {
+				if createJSON {
+					ExitWithError("%s is a template; with --json, give the full name of one variant, as `condatainer avail -e %s` lists them", pkg, pkg)
+				}
 				resolved, err := resolveTemplateInteractively(ctx, m.Entry)
 				if err != nil {
 					ExitWithError("Template resolution cancelled for %s: %v", pkg, err)
@@ -579,6 +596,10 @@ func runCreatePackages(ctx context.Context, packages []string) {
 		ExitWithError("Failed to create build graph: %v", err)
 	}
 	graph.SetJobFlags(createJobFlags())
+	if createDryRun {
+		reportCreatePlan(graph.Plan())
+		return
+	}
 
 	if err := graph.Run(ctx); err != nil {
 		exitOnBuildError(err)
@@ -707,6 +728,10 @@ func buildForeignSource(ctx context.Context, targetPrefix, source, outputDir str
 	if err != nil {
 		ExitWithError("Failed to create build graph: %v", err)
 	}
+	if createDryRun {
+		reportCreatePlan(graph.Plan())
+		return
+	}
 	if err := graph.Run(ctx); err != nil {
 		exitOnBuildError(err)
 	}
@@ -739,6 +764,10 @@ func buildExternalSource(ctx context.Context, targetPrefix, source string, isApp
 		ExitWithError("Failed to create build graph: %v", err)
 	}
 	graph.SetJobFlags(createJobFlags())
+	if createDryRun {
+		reportCreatePlan(graph.Plan())
+		return
+	}
 
 	if err := graph.Run(ctx); err != nil {
 		exitOnBuildError(err)
@@ -767,6 +796,9 @@ func runCreateWithName(ctx context.Context, packages []string) {
 		if existingPath := image.FirstPaths(scan)[normalizedName]; existingPath != "" {
 			utils.PrintMessage("Overlay %s already exists at %s. Skipping creation.",
 				filepath.Base(existingPath), existingPath)
+			if createDryRun {
+				reportCreatePlan([]build.PlannedStep{installedStep(normalizedName, existingPath)})
+			}
 			return
 		}
 	}
@@ -808,6 +840,10 @@ func runCreateWithName(ctx context.Context, packages []string) {
 		ExitWithError("Failed to create build object: %v", err)
 	}
 	applyStoreOverflow(bo)
+	if createDryRun {
+		reportObjectPlan(ctx, bo)
+		return
+	}
 
 	if err := bo.Build(ctx, false); err != nil {
 		ExitWithError("Build failed: %v", err)
@@ -835,6 +871,10 @@ func runCreateWithPrefix(ctx context.Context) {
 		bo, err := build.NewCondaObjectWithSource(filepath.Base(absPrefix), absFile, outputDir, createUpdate, prefixBuildOptions()...)
 		if err != nil {
 			ExitWithError("Failed to create build object: %v", err)
+		}
+		if createDryRun {
+			reportObjectPlan(ctx, bo)
+			return
 		}
 		if err := bo.Build(ctx, false); err != nil {
 			ExitWithError("Build failed: %v", err)
@@ -864,6 +904,10 @@ func runCreateWithPrefixAndPackages(ctx context.Context, packages []string) {
 	bo, err := build.NewCondaObjectWithSource(baseName, buildSource, outputDir, createUpdate, prefixBuildOptions()...)
 	if err != nil {
 		ExitWithError("Failed to create build object: %v", err)
+	}
+	if createDryRun {
+		reportObjectPlan(ctx, bo)
+		return
 	}
 	if err := bo.Build(ctx, false); err != nil {
 		ExitWithError("Build failed: %v", err)
@@ -902,7 +946,9 @@ func runCreateFromSource(ctx context.Context) {
 	isApptainer := strings.HasSuffix(source, ".def") || isRemote
 	targetOverlayPath := targetPrefix + ".sqf"
 
-	utils.PrintMessage("Creating overlay %s from %s", filepath.Base(targetOverlayPath), source)
+	if !createDryRun {
+		utils.PrintMessage("Creating overlay %s from %s", filepath.Base(targetOverlayPath), source)
+	}
 
 	buildExternalSource(ctx, targetPrefix, source, isApptainer, imagesDir, nil)
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/artifact"
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -48,5 +50,28 @@ func TestGraphDoesNotSkipAnInstalledNameForAStoreBuild(t *testing.T) {
 	}
 	if bg.installedAlready(store) {
 		t.Error("an installed name is skipped for a store build")
+	}
+}
+
+// A planned step lists the dependencies its key was derived from, each with its
+// role, and an installed one with where it is.
+func TestPlannedStepListsTheDependenciesOfItsKey(t *testing.T) {
+	equiv := meta.KeyRef{Scheme: "script-equiv-v1", SHA256: "e90d"}
+	b := planNode("grch38/genome/gencode", artifact.TypeData, prebuiltNone)
+	b.plannedEdges = []meta.Dependency{
+		{Name: "samtools/1.24", Type: artifact.TypeApp, Role: meta.RoleHistory},
+		{Name: "grch38/transcript/gencode/47", Type: artifact.TypeData, Role: meta.RoleData, Equiv: equiv},
+	}
+	b.plannedDepPaths = map[string]string{"samtools/1.24": "/images/samtools--1.24.sqf"}
+
+	deps := b.PlannedStep(t.Context()).Deps
+	if len(deps) != 2 {
+		t.Fatalf("deps = %+v", deps)
+	}
+	if d := deps[0]; d.Role != meta.RoleHistory || !d.Installed || d.Path != "/images/samtools--1.24.sqf" {
+		t.Errorf("installed history dep = %+v", d)
+	}
+	if d := deps[1]; d.Role != meta.RoleData || d.Installed || d.Path != "" || d.Equiv != equiv {
+		t.Errorf("planned data dep = %+v", d)
 	}
 }

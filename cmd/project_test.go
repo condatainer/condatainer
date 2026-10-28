@@ -14,7 +14,9 @@ import (
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/project/lock"
+	"github.com/condatainer/condatainer/internal/project/publish"
 	"github.com/condatainer/condatainer/internal/project/restore"
+	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -124,8 +126,25 @@ func TestProjectLockPublishesPartiallyAndFails(t *testing.T) {
 	root := newProject(t)
 	writeScript(t, root, "run.sh", "#DEP: star/2.7.11b\nrun\n")
 
-	if _, err := run(t, "project", "lock", "--json"); err == nil {
+	out, err := run(t, "project", "lock", "--json")
+	if err == nil {
 		t.Fatal("project lock succeeded with an needPin request")
+	}
+	var doc struct {
+		SchemaVersion int `json:"schema_version"`
+		Requests      []struct {
+			Request  string `json:"request"`
+			Pinnable bool   `json:"pinnable"`
+			Artifact string `json:"artifact"`
+		} `json:"requests"`
+		Problems []struct{ Message string }
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	if doc.SchemaVersion != 1 || len(doc.Requests) != 1 || doc.Requests[0].Request != "star/2.7.11b" ||
+		!doc.Requests[0].Pinnable || doc.Requests[0].Artifact != "" || len(doc.Problems) == 0 {
+		t.Errorf("document = %+v, want the unpinned request and why", doc)
 	}
 	if _, err := os.Stat(lock.FilePath(root)); err != nil {
 		t.Fatalf("no lock was published: %v", err)
@@ -257,20 +276,22 @@ func TestProjectValidateJSONReportsWhatIsWrong(t *testing.T) {
 		t.Fatal("validate passed with nothing selected")
 	}
 	var report struct {
-		Valid      bool `json:"valid"`
-		Unselected []struct {
+		SchemaVersion int  `json:"schema_version"`
+		Valid         bool `json:"valid"`
+		Problems      []any
+		Unselected    []struct {
 			Request string   `json:"request"`
 			Scripts []string `json:"scripts"`
-		} `json:"needPin"`
+		} `json:"unpinned"`
 	}
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatalf("output is not JSON: %v\n%s", err, out)
 	}
-	if report.Valid {
-		t.Error("report claims valid")
+	if report.Valid || report.SchemaVersion != 1 || report.Problems == nil {
+		t.Errorf("report = %+v", report)
 	}
 	if len(report.Unselected) != 1 || report.Unselected[0].Request != "star/2.7.11b" {
-		t.Fatalf("needPin = %#v", report.Unselected)
+		t.Fatalf("unpinned = %#v", report.Unselected)
 	}
 	if len(report.Unselected[0].Scripts) != 1 || report.Unselected[0].Scripts[0] != "run.sh" {
 		t.Errorf("scripts = %v, want the declaring script", report.Unselected[0].Scripts)
@@ -412,16 +433,31 @@ func TestProjectRestoreDryRunJSONListsTheSteps(t *testing.T) {
 		t.Fatalf("dry run failed: %v\n%s", err, out)
 	}
 	var report struct {
-		Steps []struct {
-			Name   string `json:"name"`
-			Action string `json:"action"`
+		SchemaVersion int    `json:"schema_version"`
+		Root          string `json:"root"`
+		Problems      []any  `json:"problems"`
+		Steps         []struct {
+			Name     string `json:"name"`
+			Action   string `json:"action"`
+			Artifact string `json:"artifact"`
+			Direct   bool   `json:"direct"`
+			Identity struct {
+				Scheme string `json:"scheme"`
+				SHA256 string `json:"sha256"`
+			} `json:"identity"`
 		} `json:"steps"`
 	}
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatalf("output is not JSON: %v\n%s", err, out)
 	}
+	if report.SchemaVersion != 1 || report.Root != root || report.Problems == nil {
+		t.Errorf("document = %+v", report)
+	}
 	if len(report.Steps) != 1 || report.Steps[0].Action != "build" {
-		t.Errorf("steps = %#v", report.Steps)
+		t.Fatalf("steps = %#v", report.Steps)
+	}
+	if step := report.Steps[0]; step.Artifact != relative || !step.Direct || step.Identity.Scheme == "" || step.Identity.SHA256 == "" {
+		t.Errorf("step = %+v, want its vendored directory and full locked identity", step)
 	}
 }
 
@@ -627,8 +663,11 @@ func TestProjectListJSONReportsTheManualFlag(t *testing.T) {
 		Pins []struct {
 			Request  string `json:"request"`
 			Name     string `json:"name"`
-			Identity string `json:"identity"`
-			Manual   bool   `json:"manual"`
+			Type     string `json:"type"`
+			Identity struct {
+				SHA256 string `json:"sha256"`
+			} `json:"identity"`
+			Manual bool `json:"manual"`
 		} `json:"pins"`
 	}
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
@@ -638,7 +677,7 @@ func TestProjectListJSONReportsTheManualFlag(t *testing.T) {
 		t.Fatalf("pins = %#v", report.Pins)
 	}
 	pin := report.Pins[0]
-	if !pin.Manual || pin.Name != "ubuntu24/build-essential" || !strings.HasPrefix(pin.Identity, "sha256:") {
+	if !pin.Manual || pin.Name != "ubuntu24/build-essential" || pin.Identity.SHA256 == "" || pin.Type == "" {
 		t.Errorf("pin = %#v", pin)
 	}
 }
@@ -666,6 +705,36 @@ func TestProjectListReportsAnUnreadableArtifact(t *testing.T) {
 	}
 }
 
+// In JSON the broken pin is listed too, and the reason is a problem named by the pin.
+func TestProjectListJSONReportsAnUnreadableArtifactAsAProblem(t *testing.T) {
+	root := newProject(t)
+	artifact := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
+	l := lock.New()
+	l.Pins["star/2.7.11b"] = manualPinOf(artifact)
+	if err := lock.Publish(root, l); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(lock.Dir(root), artifact)); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "project", "list", "--json")
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	var doc struct {
+		SchemaVersion int `json:"schema_version"`
+		Pins          []struct{ Request string }
+		Problems      []struct{ Name, Message string }
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	if doc.SchemaVersion != 1 || len(doc.Pins) != 1 || len(doc.Problems) != 1 || doc.Problems[0].Name != "star/2.7.11b" {
+		t.Errorf("document = %+v", doc)
+	}
+}
+
 // A path key addresses a file and says nothing about what is in it, so the name
 // is printed after it — the one case where the second column carries something.
 func TestProjectListNamesWhatAPathPinHolds(t *testing.T) {
@@ -690,8 +759,8 @@ func TestProjectListNamesWhatAPathPinHolds(t *testing.T) {
 // field names hold colons themselves, so only the colon-and-space ends one.
 func TestEquivalentNoteNamesTheInputsThatDiffer(t *testing.T) {
 	result := restore.Result{
-		Identity: "sha256:41ab1c2d3e4f5a6b7c8d",
-		Found:    "sha256:9f2b7e04a1c3d5e6f708",
+		Identity: meta.KeyRef{Scheme: "identity-v1", SHA256: "41ab1c2d3e4f5a6b7c8d"},
+		Found:    meta.KeyRef{Scheme: "identity-v1", SHA256: "9f2b7e04a1c3d5e6f708"},
 		Diffs: []string{
 			"src:gtf: 9f2b7e04a1c3 -> 3c81d5e2b7a4",
 			"dep:samtools/1.23.1: 11aa22bb33cc -> 44dd55ee66ff",
@@ -711,7 +780,7 @@ func TestEquivalentNoteNamesTheInputsThatDiffer(t *testing.T) {
 
 // With no diffs to name, the note is what it was before diffs existed.
 func TestEquivalentNoteWithoutDiffsNamesNothing(t *testing.T) {
-	got := equivalentNote(restore.Result{Identity: "sha256:41ab1c2d3e4f5a6b7c8d"})
+	got := equivalentNote(restore.Result{Identity: meta.KeyRef{Scheme: "identity-v1", SHA256: "41ab1c2d3e4f5a6b7c8d"}})
 	if want := " (equivalent, not 41ab1c2d3e4f)"; got != want {
 		t.Errorf("note = %q, want %q", got, want)
 	}
@@ -942,5 +1011,155 @@ func TestEveryRestoreFlagHasAJobRule(t *testing.T) {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("restoreJobRules lists --%s, which restore does not have", name)
 		}
+	}
+}
+
+// Each outcome of a run lands on its own step, and a path pin is told apart by its path.
+func TestRestoreDocMergesTheRunIntoThePlan(t *testing.T) {
+	key := func(hex string) meta.KeyRef { return meta.KeyRef{Scheme: "identity-v1", SHA256: hex} }
+	plan := &restore.Plan{Root: "/p", Match: restore.MatchEquivalence, Steps: []restore.Step{
+		{Artifact: "a", Name: "a", Identity: key("aa"), Action: restore.ActionBuild},
+		{Artifact: "b", Name: "b", Identity: key("bb"), Action: restore.ActionBuild, DependsOn: []string{"a"}},
+		{Artifact: "c", Name: "c", Identity: key("cc"), Action: restore.ActionFetch},
+		{Artifact: "d", Name: "d", Identity: key("dd"), Action: restore.ActionBuild},
+		{Artifact: "e", Name: "e", Identity: key("ee"), Action: restore.ActionAdopt, Destination: "x.sqf"},
+		{Artifact: "e", Name: "e", Identity: key("ee"), Action: restore.ActionAdopt, Destination: "y.sqf"},
+	}}
+	run := &restore.Report{Plan: plan,
+		Results: []restore.Result{
+			{Artifact: "c", Name: "c", Identity: key("cc"), Found: key("c2"), Outcome: restore.OutcomeBuilt, Path: "/img/c.sqf"},
+			{Artifact: "e", Name: "e", Identity: key("ee"), Outcome: restore.OutcomeAdopted, Destination: "y.sqf", Path: "/p/y.sqf"},
+		},
+		Failures:  []restore.Failure{{Artifact: "a", Name: "a", Reason: "boom"}},
+		Blocked:   []restore.Blocked{{Artifact: "b", Name: "b", Cause: "a"}},
+		Submitted: []restore.Submitted{{Artifact: "d", Name: "d", JobID: "42", DependsOn: []string{"7"}}},
+	}
+
+	doc := restoreDoc("/p", lock.New(), plan, run)
+	if doc.Root != "/p" || doc.Match != "equivalence" {
+		t.Errorf("root, match = %q, %q", doc.Root, doc.Match)
+	}
+	want := []struct {
+		outcome report.Outcome
+		action  report.Action
+	}{
+		{report.OutcomeFailed, report.ActionBuild},
+		{report.OutcomeSkipped, report.ActionBuild},
+		{report.OutcomeDone, report.ActionBuild},
+		{report.OutcomeSubmitted, report.ActionBuild},
+		{report.OutcomeSkipped, report.ActionAdopt},
+		{report.OutcomeDone, report.ActionAdopt},
+	}
+	if len(doc.Steps) != len(want) {
+		t.Fatalf("steps = %d, want %d", len(doc.Steps), len(want))
+	}
+	for i, w := range want {
+		step := doc.Steps[i]
+		if step.Outcome != w.outcome || step.Action != w.action {
+			t.Errorf("step %d = %s/%s, want %s/%s", i, step.Action, step.Outcome, w.action, w.outcome)
+		}
+	}
+	if got := doc.Steps[4]; got.Reason != "not reached" {
+		t.Errorf("unreached step reason = %q", got.Reason)
+	}
+	// The fetch fell back to a build, and a stand-in is reported with its full key.
+	if got := doc.Steps[2]; got.Found != key("c2") || got.Path != "/img/c.sqf" {
+		t.Errorf("fetched-then-built step = %+v", got)
+	}
+	if got := doc.Steps[0]; got.Error != "boom" {
+		t.Errorf("failed step error = %q", got.Error)
+	}
+	if got := doc.Steps[1]; got.Cause != "a" || got.Reason == "" {
+		t.Errorf("blocked step = %+v", got)
+	}
+	if got := doc.Steps[3]; got.JobID != "42" || got.Runs != report.RunsJob || len(got.WaitsFor) != 1 {
+		t.Errorf("submitted step = %+v", got)
+	}
+}
+
+// A run that planning stopped has no outcomes, and a dry run has none either.
+func TestRestoreDocHasNoOutcomeBeforeAnythingRan(t *testing.T) {
+	plan := &restore.Plan{Root: "/p", Steps: []restore.Step{{Artifact: "a", Name: "a", Action: restore.ActionBuild}},
+		Problems: []string{"x cannot be built"}}
+	for name, run := range map[string]*restore.Report{"dry run": nil, "stopped": {Plan: plan, Problems: plan.Problems}} {
+		doc := restoreDoc("/p", lock.New(), plan, run)
+		if doc.Steps[0].Outcome != "" || len(doc.Problems) != 1 {
+			t.Errorf("%s: step = %+v, problems = %v", name, doc.Steps[0], doc.Problems)
+		}
+	}
+}
+
+// Each disposition lands on its own record, and a run adds the outcome.
+func TestPushDocReportsEachStep(t *testing.T) {
+	remote := &lock.Remote{Repository: "ghcr.io/lab/cnt", ManifestDigest: "sha256:aa"}
+	plan := &publish.Plan{Repository: "ghcr.io/lab/cnt", Audience: "public", Steps: []publish.Step{
+		{Artifact: "a", Name: "a", Disposition: publish.Upload, Tags: []string{"a__1"}, Channels: []string{"conda-forge"}},
+		{Artifact: "b", Name: "b", Disposition: publish.Present, Remote: remote},
+		{Artifact: "c", Name: "c", Disposition: publish.Served, Remote: &lock.Remote{Repository: "ghcr.io/src/cnt", ManifestDigest: "sha256:cc"}},
+		{Artifact: "d", Name: "d", Disposition: publish.Upload, Tags: []string{"d__1"}},
+		{Artifact: "e", Name: "e", Disposition: publish.Refused, Reason: "not allowed"},
+	}}
+
+	preview := pushDoc("/p", plan, &lock.Verified{}, nil)
+	if preview.Repository != "ghcr.io/lab/cnt" || len(preview.Pushes) != 5 {
+		t.Fatalf("preview = %+v", preview)
+	}
+	for i, want := range []report.Outcome{"", "", "", "", report.OutcomeRefused} {
+		if got := preview.Pushes[i].Outcome; got != want {
+			t.Errorf("preview %d outcome = %q, want %q", i, got, want)
+		}
+	}
+	if !preview.Pushes[1].Existing || preview.Pushes[1].Digest != "sha256:aa" || len(preview.Pushes[0].Channels) != 1 {
+		t.Errorf("present or channels wrong: %+v %+v", preview.Pushes[1], preview.Pushes[0])
+	}
+	if got := preview.Pushes[2]; got.Served == nil || got.Served.Repository != "ghcr.io/src/cnt" || got.Digest != "" {
+		t.Errorf("served = %+v", got)
+	}
+
+	uploaded := plan.Steps[0]
+	uploaded.Path, uploaded.Remote = "/img/a.sqf", &lock.Remote{Repository: "ghcr.io/lab/cnt", ManifestDigest: "sha256:new"}
+	run := &publish.Report{
+		Published: []publish.Step{uploaded, plan.Steps[1], plan.Steps[2]},
+		Failures:  []publish.Failure{{Step: plan.Steps[3], Reason: "network down"}},
+	}
+	done := pushDoc("/p", plan, &lock.Verified{}, run)
+	for i, want := range []report.Outcome{report.OutcomeDone, report.OutcomeDone, report.OutcomeSkipped, report.OutcomeFailed} {
+		if got := done.Pushes[i].Outcome; got != want {
+			t.Errorf("run %d outcome = %q, want %q", i, got, want)
+		}
+	}
+	if got := done.Pushes[0]; got.Digest != "sha256:new" || got.Path != "/img/a.sqf" {
+		t.Errorf("uploaded = %+v", got)
+	}
+	if got := done.Pushes[3]; got.Error != "network down" {
+		t.Errorf("failed = %+v", got)
+	}
+}
+
+// A project validate rejects is refused with the reasons in the document, and the exit is non-zero.
+func TestProjectPushJSONPrintsWhyItWasRefused(t *testing.T) {
+	root := newProject(t)
+	writeScript(t, root, "run.sh", "#DEP: star/2.7.11b\n#DEP: env.img\nrun\n")
+	artifact := vendorArtifact(t, root, "star/2.7.11b", "echo star\n")
+	l := lock.New()
+	l.Pins["star/2.7.11b"] = pinOf(artifact)
+	if err := lock.Publish(root, l); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "project", "registry", "push", "--json")
+	if err == nil {
+		t.Fatal("push published a project validate rejects")
+	}
+	var doc struct {
+		SchemaVersion int `json:"schema_version"`
+		Pushes        []any
+		Problems      []struct{ Message string }
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	if doc.SchemaVersion != 1 || len(doc.Pushes) != 0 || len(doc.Problems) == 0 || !strings.Contains(doc.Problems[0].Message+doc.Problems[len(doc.Problems)-1].Message, "env.img") {
+		t.Errorf("document = %+v", doc)
 	}
 }

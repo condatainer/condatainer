@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/image/freeze"
+	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
@@ -58,7 +58,7 @@ func newStoreListCmd() *cobra.Command {
 			if len(args) == 1 {
 				name = args[0]
 			}
-			var report store.Report
+			var found store.Report
 			if equivalence != "" {
 				if name == "" {
 					return errors.New("store list --equiv requires a name")
@@ -67,7 +67,7 @@ func newStoreListCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				report, err = store.Equivalent(name, query, nil)
+				found, err = store.Equivalent(name, query, nil)
 				if err != nil {
 					return err
 				}
@@ -76,10 +76,13 @@ func newStoreListCmd() *cobra.Command {
 				// the plain name is the one that currently answers to it, so any
 				// question about which build a name means needs --all to be
 				// answerable at all.
-				report = store.Scan(store.ScanOptions{Name: name, Stored: true, Flat: all})
+				found = store.Scan(store.ScanOptions{Name: name, Stored: true, Flat: all})
 			}
-			store.SortReport(&report)
-			return printStoreReport(report, jsonOutput, detail)
+			store.SortReport(&found)
+			if jsonOutput {
+				return report.Write(os.Stdout, storeListDoc(found))
+			}
+			return printStoreReport(found, detail)
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "Also list the overlay installed under the plain name")
@@ -163,17 +166,10 @@ func newStoreValidateCmd() *cobra.Command {
 
 // printStoreReport lists entries grouped by images directory, as `list` does.
 //   - By default the address is the whole row, in columns: other store commands accept it. --detail adds layout, size and the filename relative to its directory heading.
-//   - The full key, absolute paths and exact byte counts are in --json.
-func printStoreReport(report store.Report, jsonOutput, detail bool) error {
-	if jsonOutput {
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(report)
-	}
-
+func printStoreReport(scanned store.Report, detail bool) error {
 	byRoot := map[string][]store.Candidate{}
 	var roots []string
-	for _, candidate := range report.Candidates {
+	for _, candidate := range scanned.Candidates {
 		if _, seen := byRoot[candidate.Root]; !seen {
 			roots = append(roots, candidate.Root)
 		}
@@ -201,7 +197,7 @@ func printStoreReport(report store.Report, jsonOutput, detail bool) error {
 				relativeTo(root, candidate.Path))
 		}
 	}
-	for _, issue := range report.Issues {
+	for _, issue := range scanned.Issues {
 		fmt.Fprintf(os.Stderr, "%-34s %s: %s\n", "invalid", issue.Path, issue.Error)
 	}
 	return nil
@@ -261,4 +257,33 @@ func shortDigest(ref meta.KeyRef) string {
 		return ref.SHA256
 	}
 	return ref.SHA256[:store.DefaultPrefixChars]
+}
+
+// storedRecord is the record of a verified store candidate. Its name and keys
+// are the ones regenerated from the sources it embeds; its type and
+// architecture come from its runtime document.
+func storedRecord(c store.Candidate) report.Stored {
+	rec := report.Stored{
+		Overlay:  report.Overlay{Name: c.Name},
+		Location: plannedLocation(c.Path, true),
+		Keys:     &meta.Keys{Identity: c.Identity, Equiv: c.Equiv},
+	}
+	rec.Layout, rec.Size = c.Layout, c.Size
+	if rt, err := meta.ReadRuntime(c.Path); err == nil {
+		rec.Type, rec.Arch, rec.Runtime = rt.Type, rt.Platform.Arch, &rt
+	}
+	return rec
+}
+
+// storeListDoc is the overlays document of a scan, one record per entry. An
+// entry that could not be trusted is a problem.
+func storeListDoc(scanned store.Report) *report.Overlays[report.Stored] {
+	doc := &report.Overlays[report.Stored]{Overlays: report.List[report.Stored]{}}
+	for _, candidate := range scanned.Candidates {
+		doc.Overlays = append(doc.Overlays, storedRecord(candidate))
+	}
+	for _, issue := range scanned.Issues {
+		doc.Problems = append(doc.Problems, report.Problem{Name: issue.Path, Message: issue.Error})
+	}
+	return doc
 }

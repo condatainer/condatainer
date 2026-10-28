@@ -561,6 +561,14 @@ func runExportOverlay(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("overlay %s does not contain a conda environment at %s (missing conda-meta)", overlayPath, envPrefix)
 	}
 
+	// stderr only, so the export on stdout is untouched.
+	if names, err := image.TopLevel(overlayPath); err == nil {
+		if outside := entriesOutsideEnv(names); len(outside) > 0 {
+			utils.PrintWarning("%s also holds files outside %s (%s); the export covers only the Conda environment. `condatainer overlay freeze` keeps everything.",
+				filepath.Base(overlayPath), envPrefix, strings.Join(outside, ", "))
+		}
+	}
+
 	// Extension follows the export format: an explicit spec (.txt) or YAML.
 	ext := ".yml"
 	if explicit {

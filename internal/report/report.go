@@ -400,3 +400,127 @@ type Checked struct {
 	Steps    List[Step]    `json:"steps,omitempty"`
 	Problems List[Problem] `json:"problems"`
 }
+
+// Why an overlay was left in place by a removal.
+const (
+	KeptInUse     = "in_use"    // an exclusive lock was refused: something is running it
+	KeptProtected = "protected" // its directory is not writable
+	KeptNotFound  = "not_found" // nothing installed answers the name
+	KeptAmbiguous = "ambiguous" // installed in several layers, and none was chosen
+	KeptFailed    = "failed"    // the removal itself failed; Error says why
+)
+
+// Removed is an overlay a removal took, or in a dry run would take.
+type Removed struct {
+	Overlay
+	Location
+}
+
+// Kept is something a removal left in place, and why.
+type Kept struct {
+	Overlay
+	Location
+	Reason string `json:"reason"`
+	Error  string `json:"error,omitempty"`
+}
+
+// Removal is the document of a removal that acted.
+type Removal struct {
+	Doc
+	Removed  List[Removed] `json:"removed"`
+	Kept     List[Kept]    `json:"kept"`
+	Problems List[Problem] `json:"problems"`
+}
+
+// RemovalPlan is the document of a removal run with --dry-run: what it would
+// take. Nothing is deleted.
+type RemovalPlan struct {
+	Doc
+	WouldRemove List[Removed] `json:"would_remove"`
+	Kept        List[Kept]    `json:"kept"`
+	Problems    List[Problem] `json:"problems"`
+}
+
+// Move is a tag moving from one build to another. From and To name the builds:
+// by build tag in a registry removal, and by leading hex in a push.
+type Move struct {
+	Tag  string `json:"tag"`
+	From string `json:"from"`
+	To   string `json:"to,omitempty"`
+}
+
+// Push is one overlay a push publishes, or in a preview would.
+//   - Path is the local file, and Tags are the tags the push writes: none, with
+//     Existing, when everything is already there.
+//   - Digest is the published manifest. It is known once the build is there.
+//   - Moved is the name tag leaving an older build.
+//   - Outcome is empty in a preview. A refusal before anything moved is
+//     refused, and a push that started and stopped is failed; Error says why.
+type Push struct {
+	Overlay
+	Path       string      `json:"path"`
+	Repository string      `json:"repository,omitempty"`
+	Identity   meta.KeyRef `json:"identity,omitzero"`
+	Equiv      meta.KeyRef `json:"equiv,omitzero"`
+	Digest     string      `json:"digest,omitempty"`
+	Reference  string      `json:"reference,omitempty"`
+	Tags       []string    `json:"tags,omitempty"`
+	Size       int64       `json:"size,omitempty"`
+	Audience   string      `json:"audience,omitempty"`
+	Existing   bool        `json:"existing"`
+	Moved      *Move       `json:"moved,omitempty"`
+	Outcome    Outcome     `json:"outcome,omitempty"`
+	Error      string      `json:"error,omitempty"`
+}
+
+// Pushes is the document of a command that publishes overlays.
+type Pushes struct {
+	Doc
+	Pushes   List[Push]    `json:"pushes"`
+	Problems List[Problem] `json:"problems"`
+}
+
+// RegistryManifest is a manifest in a registry with every tag on it. Name,
+// Arch and the keys come from its annotations, and are absent when they cannot
+// be read.
+type RegistryManifest struct {
+	Overlay
+	Digest   string      `json:"digest"`
+	Identity meta.KeyRef `json:"identity,omitzero"`
+	Equiv    meta.KeyRef `json:"equiv,omitzero"`
+	Tags     []string    `json:"tags,omitempty"`
+}
+
+// Why a registry removal left a manifest.
+const (
+	KeptForeignTag = "foreign_tag" // it holds a tag this tool did not write
+	KeptChanged    = "changed"     // it changed after the list was made
+)
+
+// RegistryKept is a manifest a registry removal left, and why.
+type RegistryKept struct {
+	Digest string   `json:"digest"`
+	Tags   []string `json:"tags,omitempty"`
+	Reason string   `json:"reason"`
+}
+
+// RegistryRemoval is the document of a registry removal that acted. Moved are
+// the name tags that moved to another build first.
+type RegistryRemoval struct {
+	Doc
+	Repository string                 `json:"repository"`
+	Removed    List[RegistryManifest] `json:"removed"`
+	Moved      List[Move]             `json:"moved"`
+	Kept       List[RegistryKept]     `json:"kept"`
+	Problems   List[Problem]          `json:"problems"`
+}
+
+// RegistryRemovalPlan is the same removal reported and not made.
+type RegistryRemovalPlan struct {
+	Doc
+	Repository  string                 `json:"repository"`
+	WouldRemove List[RegistryManifest] `json:"would_remove"`
+	WouldMove   List[Move]             `json:"would_move"`
+	Kept        List[RegistryKept]     `json:"kept"`
+	Problems    List[Problem]          `json:"problems"`
+}

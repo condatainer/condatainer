@@ -47,6 +47,13 @@ type registryOptions struct {
 	noRecipe      bool
 }
 
+// registryRemoveJSON is --json on registry remove and registry gc, which are
+// never run together.
+var registryRemoveJSON bool
+
+// pullJSON is --json on registry pull.
+var pullJSON bool
+
 var registryCmd = newRegistryCommand()
 
 func init() { rootCmd.AddCommand(registryCmd) }
@@ -68,6 +75,7 @@ A build pulling from a source's registry tries that source's token first.
 For reads, a refused credential is skipped for the next one, with a warning naming it.`,
 	}
 
+	var pushJSON bool
 	push := &cobra.Command{
 		Use:   "push [flags] <path|name/version>",
 		Short: "Publish an overlay to a registry",
@@ -93,6 +101,9 @@ Registry audience, public (default) or restricted, says who can download from th
 			if err != nil {
 				return err
 			}
+			if pushJSON {
+				return runPushJSON(cmd, opts, artifact)
+			}
 			dest, err := registryPushDestination(cmd, opts, artifact)
 			if err != nil {
 				return err
@@ -116,6 +127,7 @@ Registry audience, public (default) or restricted, says who can download from th
 			return nil
 		},
 	}
+	jsonFlag(push.Flags(), &pushJSON)
 	addEndpointFlags(push, opts)
 	push.Flags().StringVar(&opts.audience, "audience", string(registry.Public), "Who can download from the registry: public or restricted")
 
@@ -136,6 +148,7 @@ Registry audience, public (default) or restricted, says who can download from th
 			return runRegistryPull(cmd, opts, firstArg(args))
 		},
 	}
+	jsonFlag(pull.Flags(), &pullJSON)
 	addEndpointFlags(pull, opts)
 	pull.Flags().StringVar(&opts.digest, "digest", "", "Install the copy with this digest (sha256:<hex>)")
 	pull.Flags().StringVarP(&opts.prefix, "prefix", "p", "", "Install at this path (the image extension is optional)")
@@ -343,6 +356,7 @@ func newRegistryRemoveCommand(opts *registryOptions) *cobra.Command {
 		},
 	}
 	addSourceOnlyFlag(remove, opts)
+	jsonFlag(remove.Flags(), &registryRemoveJSON)
 	remove.Flags().StringVar(&opts.arch, "arch", "", "Only this machine architecture: amd64, arm64 or noarch")
 	return remove
 }
@@ -381,6 +395,7 @@ func newRegistryGCCommand(opts *registryOptions) *cobra.Command {
 		},
 	}
 	addSourceOnlyFlag(gc, opts)
+	jsonFlag(gc.Flags(), &registryRemoveJSON)
 	gc.Flags().BoolVar(&opts.noRecipe, "no-recipe", false, "Also remove builds of names the source has no recipe for")
 	return gc
 }
@@ -817,11 +832,39 @@ func runRegistryPull(cmd *cobra.Command, opts *registryOptions, spec string) err
 	if err != nil {
 		return err
 	}
-	if err := registry.Pull(ep.ctx, resolved.base, resolved.repo, resolved.desc, resolved.annotations, dest); err != nil {
-		return err
+	pullErr := registry.Pull(ep.ctx, resolved.base, resolved.repo, resolved.desc, resolved.annotations, dest)
+	if pullJSON {
+		return writePullStep(cmd, resolved, ep.repository, dest, pullErr)
+	}
+	if pullErr != nil {
+		return pullErr
 	}
 	reportDone(cmd, "pulled", dest)
 	return nil
+}
+
+// writePullStep prints the one fetch step of a pull as the steps document. A
+// pull that failed prints it with outcome failed, and ends with the error.
+func writePullStep(cmd *cobra.Command, found resolvedRegistryArtifact, repository, dest string, pullErr error) error {
+	ann := found.annotations
+	step := report.Step{
+		Overlay:  report.Overlay{Name: ann[registry.AnnTitle], Arch: ann[registry.AnnArch]},
+		Action:   report.ActionFetch,
+		Endpoint: repository,
+		Digest:   found.desc.Digest.String(),
+		Identity: registry.Identity(ann),
+		Equiv:    registry.Equiv(ann),
+		Outcome:  report.OutcomeDone,
+		Location: plannedLocation(dest, pullErr == nil),
+	}
+	if pullErr != nil {
+		step.Outcome, step.Error = report.OutcomeFailed, pullErr.Error()
+	}
+	doc := &report.Steps{Steps: report.List[report.Step]{step}}
+	if err := report.Write(cmd.OutOrStdout(), doc); err != nil {
+		return err
+	}
+	return pullErr
 }
 
 // pullExt is what every pull lands as: an overlay is SquashFS, so the
@@ -880,6 +923,9 @@ func finishRemoval(cmd *cobra.Command, ctx context.Context, repository string, b
 	base, repo, err := registry.SplitCoordinate(repository)
 	if err != nil {
 		return err
+	}
+	if registryRemoveJSON {
+		return finishRemovalJSON(cmd, ctx, repository, backend, p)
 	}
 	if len(p.Removes) == 0 {
 		reportKept(p)
@@ -1432,4 +1478,161 @@ func (h warningsOnly) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (h warningsOnly) WithGroup(name string) slog.Handler {
 	return warningsOnly{h.Handler.WithGroup(name)}
+}
+
+// runPushJSON prints the pushes document. Without -y it only reports what the
+// push would do, and with -y it pushes. A refusal before anything moved is
+// outcome refused, and a push that started and stopped is failed; both print
+// the record and end the command with an error.
+func runPushJSON(cmd *cobra.Command, opts *registryOptions, artifact registryArtifact) error {
+	rec := report.Push{Path: artifact.path}
+	var problems []report.Problem
+	finish := func(failure error) error {
+		doc := &report.Pushes{Pushes: report.List[report.Push]{rec}, Problems: problems}
+		if err := report.Write(cmd.OutOrStdout(), doc); err != nil {
+			return err
+		}
+		return failure
+	}
+	refuse := func(err error) error {
+		rec.Outcome, rec.Error = report.OutcomeRefused, err.Error()
+		return finish(err)
+	}
+
+	dest, err := registryPushDestination(cmd, opts, artifact)
+	if err != nil {
+		return refuse(err)
+	}
+	if err := refuseFrozenForSource(artifact.path, dest); err != nil {
+		return refuse(err)
+	}
+	prepared, err := registry.Prepare(dest.ctx, registry.PublishRequest{
+		Path: artifact.path, Repository: dest.repository, Audience: dest.audience,
+		Tags:       registry.TagRequest{Name: true, Equiv: true},
+		Collection: dest.collection,
+	})
+	if err != nil {
+		if registryStopped(err) {
+			rec.Outcome, rec.Error = report.OutcomeFailed, err.Error()
+			return finish(err)
+		}
+		return refuse(err)
+	}
+	rec = pushRecord(artifact.path, prepared.Plan)
+	if m := prepared.Plan.Mismatch; m != nil {
+		recorded := "no recipe collection"
+		if m.Recorded != "" {
+			recorded = "the collection " + m.Recorded
+		}
+		problems = append(problems, report.Problem{Name: rec.Name,
+			Message: fmt.Sprintf("this overlay records %s, but the repository belongs to %s", recorded, m.Expected)})
+	}
+
+	if previewOnly(true) {
+		return finish(nil)
+	}
+	desc, err := prepared.Publish(dest.ctx)
+	if err != nil {
+		rec.Outcome, rec.Error = report.OutcomeFailed, err.Error()
+		return finish(err)
+	}
+	rec.Outcome, rec.Digest = report.OutcomeDone, desc.Digest.String()
+	return finish(nil)
+}
+
+// registryStopped reports an error from the registry itself, which stops a
+// push, as opposed to a check that refuses it.
+func registryStopped(err error) bool {
+	return errors.Is(err, registry.ErrUnavailable) || errors.Is(err, registry.ErrRateLimited) ||
+		errors.Is(err, registry.ErrUnauthorized) || errors.Is(err, registry.ErrIncompatibleRegistry)
+}
+
+// pushRecord is the record of a prepared push.
+func pushRecord(path string, plan registry.PublishPlan) report.Push {
+	rec := report.Push{
+		Overlay:    report.Overlay{Name: plan.Name, Type: plan.Type, Arch: plan.Arch},
+		Path:       path,
+		Repository: plan.Repository,
+		Identity:   plan.Identity,
+		Equiv:      plan.Equiv,
+		Digest:     plan.Digest,
+		Reference:  plan.Reference,
+		Tags:       plan.Tags,
+		Size:       plan.Size,
+		Audience:   string(plan.Audience),
+		Existing:   plan.Existing,
+	}
+	if plan.MovedTag != "" {
+		rec.Moved = &report.Move{Tag: plan.MovedTag, From: plan.MovedFrom, To: shortKey(plan.Identity)}
+	}
+	return rec
+}
+
+// shortKey is the leading hex of a key, as a tag spells it.
+func shortKey(k meta.KeyRef) string {
+	if len(k.SHA256) > 12 {
+		return k.SHA256[:12]
+	}
+	return k.SHA256
+}
+
+// finishRemovalJSON prints the removal document. Without -y it reports the plan
+// and removes nothing; with -y it removes, and reports what it did.
+func finishRemovalJSON(cmd *cobra.Command, ctx context.Context, repository string, backend registry.Backend, p registry.RemovePlan) error {
+	base, repo, err := registry.SplitCoordinate(repository)
+	if err != nil {
+		return err
+	}
+	var problems []report.Problem
+	manifests := func(held []registry.Held) report.List[report.RegistryManifest] {
+		out := report.List[report.RegistryManifest]{}
+		for _, h := range held {
+			out = append(out, manifestRecord(ctx, base, repo, h, &problems))
+		}
+		return out
+	}
+	moves := func(moved []registry.TagMove) report.List[report.Move] {
+		out := report.List[report.Move]{}
+		for _, m := range moved {
+			out = append(out, report.Move{Tag: m.Tag, From: m.FromBuild, To: m.ToBuild})
+		}
+		return out
+	}
+	kept := report.List[report.RegistryKept]{}
+	for _, h := range p.Kept {
+		kept = append(kept, report.RegistryKept{Digest: h.Desc.Digest.String(), Tags: h.Tags, Reason: report.KeptForeignTag})
+	}
+
+	if previewOnly(true) {
+		return report.Write(cmd.OutOrStdout(), &report.RegistryRemovalPlan{Repository: repository,
+			WouldRemove: manifests(p.Removes), WouldMove: moves(p.Moves), Kept: kept, Problems: problems})
+	}
+	if len(p.Removes) == 0 {
+		return report.Write(cmd.OutOrStdout(), &report.RegistryRemoval{Repository: repository,
+			Removed: report.List[report.RegistryManifest]{}, Moved: report.List[report.Move]{}, Kept: kept, Problems: problems})
+	}
+	res, applyErr := registry.Apply(ctx, base, repo, backend, p)
+	for _, h := range res.Skipped {
+		kept = append(kept, report.RegistryKept{Digest: h.Desc.Digest.String(), Tags: h.Tags, Reason: report.KeptChanged})
+	}
+	doc := &report.RegistryRemoval{Repository: repository, Removed: manifests(res.Removed), Moved: moves(res.Moved),
+		Kept: kept, Problems: problems}
+	if err := report.Write(cmd.OutOrStdout(), doc); err != nil {
+		return err
+	}
+	return applyErr
+}
+
+// manifestRecord describes a manifest by its annotations, one read. When they
+// cannot be read the record has the digest and tags, and a problem says why.
+func manifestRecord(ctx context.Context, base, repo string, h registry.Held, problems *[]report.Problem) report.RegistryManifest {
+	rec := report.RegistryManifest{Digest: h.Desc.Digest.String(), Tags: h.Tags}
+	_, ann, err := registry.ResolveArtifact(ctx, base, repo, rec.Digest)
+	if err != nil {
+		*problems = append(*problems, report.Problem{Name: rec.Digest, Message: err.Error()})
+		return rec
+	}
+	rec.Name, rec.Arch = ann[registry.AnnTitle], ann[registry.AnnArch]
+	rec.Identity, rec.Equiv = registry.Identity(ann), registry.Equiv(ann)
+	return rec
 }

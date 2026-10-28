@@ -114,6 +114,7 @@ Storage and lookup are in `internal/credential`. What is particular to registrie
 - The build tag is immutable. Publishing a build whose tag exists uploads nothing and writes the missing tags.
 - The name tag moves to every published build. The build it leaves keeps its own tag.
 - A frozen environment takes no name tag. Every one is called `env`, so only its build tag addresses it.
+- A push is prepared before it is made. Every check and every read of the repository comes first, so what a push would do can be reported with no byte moved.
 - The equivalence tag is for the prebuilt check, which asks for it directly so the name tag's position does not matter.
 - Only script and def builds get one. A Conda build has no prebuilt to match, and a frozen environment's equivalence key is its identity.
 

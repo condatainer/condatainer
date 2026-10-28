@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -591,5 +592,132 @@ func TestResolutionNamesTheTagAsked(t *testing.T) {
 		if got.Tag != tag || got.Name != "star/2.7.11b" || got.Arch != "amd64" || got.Digest != "sha256:abcd" || got.Identity != identity || got.Equiv != equiv {
 			t.Errorf("%q: resolved = %+v, want tag %q", spec, got, tag)
 		}
+	}
+}
+
+// A push record carries what the plan says, and the name tag leaving an older
+// build is a move to this build's leading hex.
+func TestPushRecord(t *testing.T) {
+	identity := meta.KeyRef{Scheme: "script-identity-v1", SHA256: "9f2c1ab4d3e80000"}
+	plan := registry.PublishPlan{
+		Name: "star/2.7.11b", Type: artifact.TypeApp, Arch: "amd64", Identity: identity,
+		Repository: "ghcr.io/lab/cnt", Reference: "ghcr.io/lab/cnt:star--2.7.11b__9f2c1ab4d3e8__amd64",
+		Tags: []string{"a", "b"}, Size: 7, Audience: registry.Restricted,
+		MovedTag: "star--2.7.11b__amd64", MovedFrom: "0123456789ab",
+	}
+	got := pushRecord("/images/star--2.7.11b.sqf", plan)
+	if got.Name != "star/2.7.11b" || got.Type != artifact.TypeApp || got.Arch != "amd64" || got.Path != "/images/star--2.7.11b.sqf" ||
+		got.Identity != identity || got.Audience != "restricted" || got.Existing || got.Outcome != "" || len(got.Tags) != 2 {
+		t.Errorf("record = %+v", got)
+	}
+	if got.Moved == nil || *got.Moved != (report.Move{Tag: "star--2.7.11b__amd64", From: "0123456789ab", To: "9f2c1ab4d3e8"}) {
+		t.Errorf("moved = %+v", got.Moved)
+	}
+	if pushRecord("x", registry.PublishPlan{}).Moved != nil {
+		t.Error("a push that moves no tag has a move")
+	}
+}
+
+// An error from the registry stops a push; a check that says no refuses it.
+func TestRegistryStopped(t *testing.T) {
+	for _, err := range []error{registry.ErrUnavailable, registry.ErrRateLimited, registry.ErrUnauthorized} {
+		if !registryStopped(fmt.Errorf("push: %w", err)) {
+			t.Errorf("%v did not stop the push", err)
+		}
+	}
+	if registryStopped(errors.New("app overlays are not published to a public registry")) {
+		t.Error("a refusal stopped the push")
+	}
+}
+
+// Without -y a registry removal only reports: would_remove and would_move. With
+// -y it reports removed and moved. A manifest holding a tag this tool did not
+// write is kept either way.
+func TestFinishRemovalJSONNamesTheKeysByWhetherItActed(t *testing.T) {
+	defer func(j bool, y bool) { registryRemoveJSON, utils.YesMode = j, y }(registryRemoveJSON, utils.YesMode)
+	registryRemoveJSON = true
+	plan := registry.RemovePlan{Kept: []registry.Held{{
+		Desc: ocispec.Descriptor{Digest: "sha256:abcd"}, Tags: []string{"latest"},
+	}}}
+
+	for _, tc := range []struct {
+		yes  bool
+		want []string
+	}{
+		{false, []string{"would_remove", "would_move"}},
+		{true, []string{"removed", "moved"}},
+	} {
+		utils.YesMode = tc.yes
+		var out bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&out)
+		if err := finishRemovalJSON(cmd, t.Context(), "ghcr.io/lab/cnt", nil, plan); err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Repository string                `json:"repository"`
+			Kept       []report.RegistryKept `json:"kept"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+		var keys map[string]json.RawMessage
+		_ = json.Unmarshal(out.Bytes(), &keys)
+		for _, key := range tc.want {
+			if string(keys[key]) != "[]" {
+				t.Errorf("yes=%v: %s = %s, want []", tc.yes, key, keys[key])
+			}
+		}
+		if doc.Repository != "ghcr.io/lab/cnt" || len(doc.Kept) != 1 || doc.Kept[0].Reason != report.KeptForeignTag {
+			t.Errorf("yes=%v: document = %s", tc.yes, out.String())
+		}
+	}
+}
+
+// A pull prints one fetch step with the copy's keys and where it landed. One
+// that failed prints the step as failed, and ends with the error.
+func TestWritePullStep(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "star--2.7.11b.sqf")
+	if err := os.WriteFile(dest, []byte("sqf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	found := resolvedRegistryArtifact{
+		desc: ocispec.Descriptor{Digest: "sha256:abcd"},
+		annotations: map[string]string{
+			registry.AnnTitle: "star/2.7.11b", registry.AnnArch: "amd64",
+			registry.AnnIdentityScheme: "script-identity-v1", registry.AnnIdentitySHA: "9f2c",
+		},
+	}
+	decode := func(out *bytes.Buffer) report.Step {
+		t.Helper()
+		var doc struct {
+			Steps []report.Step `json:"steps"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &doc); err != nil || len(doc.Steps) != 1 {
+			t.Fatalf("document = %s, %v", out.String(), err)
+		}
+		return doc.Steps[0]
+	}
+
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	if err := writePullStep(cmd, found, "ghcr.io/lab/cnt", dest, nil); err != nil {
+		t.Fatal(err)
+	}
+	step := decode(&out)
+	if step.Action != report.ActionFetch || step.Outcome != report.OutcomeDone || step.Name != "star/2.7.11b" ||
+		step.Endpoint != "ghcr.io/lab/cnt" || step.Digest != "sha256:abcd" || step.Identity.SHA256 != "9f2c" ||
+		step.Path != dest || step.Size != 3 {
+		t.Errorf("step = %+v", step)
+	}
+
+	out.Reset()
+	boom := errors.New("registry is unavailable")
+	if err := writePullStep(cmd, found, "ghcr.io/lab/cnt", dest, boom); !errors.Is(err, boom) {
+		t.Fatalf("err = %v", err)
+	}
+	if step := decode(&out); step.Outcome != report.OutcomeFailed || step.Error != boom.Error() || step.Size != 0 {
+		t.Errorf("failed step = %+v", step)
 	}
 }

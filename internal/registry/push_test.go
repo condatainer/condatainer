@@ -592,3 +592,44 @@ func TestPublishStopsWhenTheConfirmationIsDeclined(t *testing.T) {
 		t.Errorf("a declined push uploaded the artifact: %v", err)
 	}
 }
+
+// Prepare reads and checks and moves no bytes: the plan names the artifact, its
+// keys and its destination, and publishing it afterwards makes what was planned.
+// A build already there is complete, with the manifest it is published as.
+func TestPrepareMovesNothingAndPublishesWhatItPlanned(t *testing.T) {
+	requireSquashfsTools(t)
+	source, m := packImage(t, imageSpec{
+		name: "grch38/genome/gencode49", typ: artifact.TypeData, recipe: "#!/bin/bash\nbuild index\n",
+	})
+	f := newFakeRegistry(t)
+	ctx := context.Background()
+
+	prepared, err := Prepare(ctx, f.request(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := prepared.Plan
+	if plan.Name != m.Name || plan.Type != artifact.TypeData || plan.Arch != m.Platform.Arch ||
+		plan.Identity != m.Keys.Identity || plan.Equiv != m.Keys.Equiv ||
+		plan.Repository != f.base()+"/cnt" || plan.Existing || plan.Digest != "" || len(plan.Tags) == 0 {
+		t.Errorf("plan = %+v", plan)
+	}
+	if prepared.Complete() || len(f.blobs) != 0 {
+		t.Fatalf("Prepare uploaded something: complete=%v blobs=%d", prepared.Complete(), len(f.blobs))
+	}
+	if _, err := Lookup(ctx, f.base(), "cnt", Address{Name: m.Name}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Prepare published the artifact: %v", err)
+	}
+
+	desc, err := prepared.Publish(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := Prepare(ctx, f.request(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again.Complete() || !again.Plan.Existing || again.Plan.Digest != desc.Digest.String() || len(again.Plan.Tags) != 0 {
+		t.Errorf("published build = %+v", again.Plan)
+	}
+}

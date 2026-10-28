@@ -229,3 +229,22 @@ type Resolution struct {
 	Overlay  Resolved      `json:"overlay"`
 	Problems List[Problem] `json:"problems"`
 }
+
+// Installed is an overlay file on this machine. Alias is its short form under
+// the default distro. Shadowed says a nearer directory holds the same name, so
+// this file is not the one used. Runtime is the image's own runtime document,
+// absent when it could not be read.
+type Installed struct {
+	Overlay
+	Alias string `json:"alias,omitempty"`
+	Location
+	Shadowed bool          `json:"shadowed"`
+	Runtime  *meta.Runtime `json:"runtime,omitempty"`
+}
+
+// Overlays is the document of a command that lists overlays, one record each.
+type Overlays[T any] struct {
+	Doc
+	Overlays List[T]       `json:"overlays"`
+	Problems List[Problem] `json:"problems"`
+}

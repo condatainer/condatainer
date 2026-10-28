@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/report"
+	"github.com/condatainer/condatainer/internal/store"
 )
 
 func TestPresentListOverlayTrustsRecordedType(t *testing.T) {
@@ -74,5 +77,56 @@ func TestScanOverlaysByDirDoesNotDescendTheStore(t *testing.T) {
 	}
 	if len(dirs[0].Paths) > 1 {
 		t.Errorf("paths = %v, want only the flat image", dirs[0].Paths)
+	}
+}
+
+// Each image is one record, nearest directory first. The name, type and
+// architecture come from the runtime document, a name already seen nearer is
+// shadowed, and a file the image disagrees with, or whose runtime cannot be
+// read, is a problem.
+func TestListDocHasOneRecordPerImage(t *testing.T) {
+	near, far := t.TempDir(), t.TempDir()
+	write := func(dir, name string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("sqf"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	rt := func(name string, typ artifact.Type) meta.Runtime {
+		return meta.Runtime{SchemaVersion: 1, Name: name, Type: typ, Platform: meta.Platform{OS: "linux", Arch: "amd64"}}
+	}
+	results := []DirOverlays{
+		{Dir: near, Files: []ListedFile{
+			{Path: write(near, "ubuntu24--base.sqf"), Runtime: rt("ubuntu24/base", artifact.TypeOS)},
+			{Path: write(near, "star--2.7.11a.sqf"), Runtime: rt("star/2.7.11b", artifact.TypeApp)},
+			{Path: write(near, "broken.sqf"), RuntimeErr: errors.New("no runtime")},
+		}},
+		{Dir: far, Files: []ListedFile{
+			{Path: write(far, "ubuntu24--base.sqf"), Runtime: rt("ubuntu24/base", artifact.TypeOS)},
+		}},
+	}
+
+	doc := listDoc(results, "ubuntu24")
+	if len(doc.Overlays) != 4 {
+		t.Fatalf("overlays = %+v", doc.Overlays)
+	}
+	base, star, broken, shadowed := doc.Overlays[0], doc.Overlays[1], doc.Overlays[2], doc.Overlays[3]
+	if base.Name != "ubuntu24/base" || base.Type != artifact.TypeOS || base.Arch != "amd64" || base.Alias != "base" ||
+		base.Format != report.FormatSquashFS || base.Layout != store.LayoutFlat || base.Dir != near || base.Size != 3 ||
+		base.Shadowed || base.Runtime == nil || base.Runtime.Name != "ubuntu24/base" {
+		t.Errorf("base = %+v", base)
+	}
+	if star.Name != "star/2.7.11b" || star.Alias != "" {
+		t.Errorf("star = %+v", star)
+	}
+	if broken.Name != "broken" || broken.Type != "" || broken.Runtime != nil {
+		t.Errorf("broken = %+v", broken)
+	}
+	if !shadowed.Shadowed || shadowed.Dir != far {
+		t.Errorf("far copy = %+v", shadowed)
+	}
+	if len(doc.Problems) != 2 {
+		t.Errorf("problems = %+v, want the misnamed file and the unreadable one", doc.Problems)
 	}
 }

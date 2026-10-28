@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,8 @@ import (
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/report"
+	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -23,6 +26,7 @@ var listRemove bool
 var listExact bool
 var listOne bool
 var listDescription bool
+var listJSON bool
 
 var listCmd = &cobra.Command{
 	Use:     "list [flags] [terms...]",
@@ -52,6 +56,7 @@ func init() {
 		})
 	listCmd.Flags().BoolVarP(&listOne, "one", "1", false, "One entry per line (disable multi-column layout)")
 	listCmd.Flags().BoolVar(&listDescription, "desc", false, "Show description for each overlay (default: off)")
+	jsonFlag(listCmd.Flags(), &listJSON)
 }
 
 // DirOverlays holds the scan results for a single image directory.
@@ -64,6 +69,15 @@ type DirOverlays struct {
 	// addresses. They are listed under the recorded name, which is the one that
 	// describes the content — and the one -o cannot resolve them by.
 	Misnamed []NameMismatch
+	// Files is every listed image, one entry each, in directory order.
+	Files []ListedFile
+}
+
+// ListedFile is one image the scan matched, with the runtime document it read.
+type ListedFile struct {
+	Path       string
+	Runtime    meta.Runtime
+	RuntimeErr error
 }
 
 // NameMismatch is one image listed under a name its filename does not address.
@@ -99,6 +113,12 @@ func runList(cmd *cobra.Command, args []string) error {
 	query := NewSearchQuery(filters, listExactLookup)
 
 	results := scanOverlaysByDir(scopedImageDirs(cmd), query)
+	if listJSON {
+		if listRemove {
+			return errors.New("--remove asks for confirmation and cannot be combined with --json; use `condatainer remove`")
+		}
+		return report.Write(os.Stdout, listDoc(results, projectDefaultDistro()))
+	}
 
 	hasAnyMatch := false
 	firstSection := true
@@ -270,11 +290,14 @@ func scanOverlaysByDir(dirs []string, query *SearchQuery) []DirOverlays {
 				runtime.Name != image.DecodeArtifactName(nameVersion)
 			mismatch := NameMismatch{File: entry.Name(), Recorded: runtime.Name}
 
+			file := ListedFile{Path: overlayPath, Runtime: runtime, RuntimeErr: runtimeErr}
+
 			if presentation.data {
 				// Data overlay
 				if query.Matches(normalized) {
 					d.DataList = append(d.DataList, presentation.name)
 					d.Paths[presentation.name] = overlayPath
+					d.Files = append(d.Files, file)
 					if misnamed {
 						d.Misnamed = append(d.Misnamed, mismatch)
 					}
@@ -299,6 +322,7 @@ func scanOverlaysByDir(dirs []string, query *SearchQuery) []DirOverlays {
 			}
 			appGrouped[name][version] = struct{}{}
 			d.Paths[name+"/"+version] = overlayPath
+			d.Files = append(d.Files, file)
 			if misnamed {
 				d.Misnamed = append(d.Misnamed, mismatch)
 			}
@@ -455,4 +479,39 @@ func readOverlayDescription(overlayPath string) string {
 		return ""
 	}
 	return rt.Description
+}
+
+// listDoc is the overlays document for a scan: one record per image, nearest
+// directory first. A name already seen in a nearer directory is shadowed there.
+func listDoc(results []DirOverlays, distro string) *report.Overlays[report.Installed] {
+	doc := &report.Overlays[report.Installed]{Overlays: report.List[report.Installed]{}}
+	distroLower := strings.ToLower(distro)
+	seen := map[string]bool{}
+	for _, d := range results {
+		for _, file := range d.Files {
+			rec := report.Installed{Location: plannedLocation(file.Path, true), Shadowed: false}
+			rec.Layout = store.LayoutFlat
+			fileName := image.DecodeArtifactName(strings.TrimSuffix(filepath.Base(file.Path), filepath.Ext(file.Path)))
+			rec.Name = fileName
+			if file.RuntimeErr != nil {
+				doc.Problems = append(doc.Problems, report.Problem{Name: fileName,
+					Message: fmt.Sprintf("cannot read the runtime of %s: %v", filepath.Base(file.Path), file.RuntimeErr)})
+			} else {
+				rt := file.Runtime
+				rec.Name, rec.Type, rec.Arch, rec.Runtime = rt.Name, rt.Type, rt.Platform.Arch, &rt
+				if rt.Name != "" && rt.Name != fileName {
+					doc.Problems = append(doc.Problems, report.Problem{Name: rt.Name,
+						Message: fmt.Sprintf("the file is named %s; the image says %s", filepath.Base(file.Path), rt.Name)})
+				}
+			}
+			lower := strings.ToLower(rec.Name)
+			if alias := catalog.ShortForm(distroLower, lower); alias != lower {
+				rec.Alias = alias
+			}
+			rec.Shadowed = seen[rec.Name]
+			seen[rec.Name] = true
+			doc.Overlays = append(doc.Overlays, rec)
+		}
+	}
+	return doc
 }

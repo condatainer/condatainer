@@ -14,6 +14,7 @@ import (
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/project/lock"
+	"github.com/condatainer/condatainer/internal/project/publish"
 	"github.com/condatainer/condatainer/internal/project/restore"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/spf13/cobra"
@@ -228,6 +229,31 @@ func TestProjectPushRefusesWhatValidateRefuses(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "env.img") {
 		t.Errorf("the refusal does not name the declaration: %v", err)
+	}
+}
+
+// A dry run with --json prints the plan and still fails when the project could not be published.
+func TestPushPlanJSONFailsOnAPlanThatCannotBePublished(t *testing.T) {
+	stdout := os.Stdout
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = write
+	reportErr := reportPushPlan(&publish.Plan{Problems: []string{"env.img is not pinned"}}, true)
+	write.Close()
+	os.Stdout = stdout
+
+	var printed publish.Plan
+	if err := json.NewDecoder(read).Decode(&printed); err != nil {
+		t.Fatalf("stdout is not the plan: %v", err)
+	}
+	read.Close()
+	if reportErr == nil {
+		t.Fatal("a plan with problems passed")
+	}
+	if len(printed.Problems) != 1 {
+		t.Fatalf("printed problems = %q", printed.Problems)
 	}
 }
 

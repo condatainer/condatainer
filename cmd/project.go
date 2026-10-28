@@ -1132,10 +1132,24 @@ func pushLabel(step publish.Step) string {
 	return utils.StyleName(lock.PathPrefix + step.Destination)
 }
 
+// reportPushPlan prints a --dry-run publish plan and fails, in either format,
+// when the project could not be published as it stands.
 func reportPushPlan(plan *publish.Plan, jsonOutput bool) error {
 	if jsonOutput {
-		return printJSON(plan)
+		if err := printJSON(plan); err != nil {
+			return err
+		}
+	} else {
+		printPushPlan(plan)
 	}
+	if !plan.Complete() {
+		return fmt.Errorf("this project cannot be published as it stands")
+	}
+	return nil
+}
+
+// printPushPlan prints a publish plan as text.
+func printPushPlan(plan *publish.Plan) {
 	utils.PrintMessage("Publishing to %s (%s)", plan.Repository, audienceOrDefault(plan.Audience))
 	if plan.Source != "" {
 		utils.PrintMessage("  packages link to %s", plan.Source)
@@ -1165,10 +1179,6 @@ func reportPushPlan(plan *publish.Plan, jsonOutput bool) error {
 	for _, problem := range plan.Problems {
 		utils.PrintError("%s", problem)
 	}
-	if !plan.Complete() {
-		return fmt.Errorf("this project cannot be published as it stands")
-	}
-	return nil
 }
 
 func reportPush(report *publish.Report, jsonOutput bool) error {

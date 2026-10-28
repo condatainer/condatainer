@@ -92,7 +92,9 @@ The script can contain these comment tags in its header:
 
 A script with any resource is submitted as a job and gets current shell's env.
 It can carry scheduler directives (e.g. #SBATCH), but only ONE set is read:
-  Current scheduler | TAG: | another scheduler.`,
+  Current scheduler | TAG: | another scheduler.
+
+--dry-run shows what would happen, and exits 1 when the run would not start.`,
 	Example: `  condatainer run script.sh                          # Check dependencies, then run
   condatainer run script.sh arg1 arg2                # Pass arguments to the script
   condatainer run -o log/s1.out run_tool.sh sample1  # Override stdout
@@ -320,6 +322,9 @@ func runScript(cmd *cobra.Command, args []string) error {
 	// Dry run: print summary and exit without executing
 	if runDryRun {
 		printDryRunSummary(cmd.Context(), contentScript, originScriptPath, scriptSpecs, scriptArgs, arraySpec, projectRun)
+		if reasons := dryRunRefusals(cmd.Context(), contentScript, scriptSpecs, arraySpec, projectRun); len(reasons) > 0 {
+			return fmt.Errorf("the run would not start: %s", strings.Join(reasons, "; "))
+		}
 		return nil
 	}
 
@@ -496,6 +501,55 @@ func applyScriptHeaders(scriptPath string) error {
 	return nil
 }
 
+// missingRunDeps returns the dependencies a run stops at: a file that does not
+// exist, or a name the solver left unchanged and no installed overlay has.
+func missingRunDeps(deps, solved []string, installed map[string]string) []string {
+	var missing []string
+	for i, dep := range deps {
+		if utils.IsOverlay(dep) || utils.IsSif(dep) {
+			if !utils.FileExists(dep) {
+				missing = append(missing, dep)
+			}
+		} else if solved[i] == dep {
+			if _, ok := installed[utils.NormalizeModule(dep)]; !ok {
+				missing = append(missing, dep)
+			}
+		}
+	}
+	return missing
+}
+
+// dryRunRefusals lists what would stop the real run before it starts, in the
+// order the run checks it. A project run has already resolved its dependencies.
+func dryRunRefusals(ctx context.Context, contentScript string, specs *scheduler.ScriptSpecs, arraySpec *scheduler.ArraySpec, projectRun *projectContext) []string {
+	var reasons []string
+	if scheduler.IsUnparsed(specs) {
+		reasons = append(reasons, "its scheduler directives could not be fully parsed")
+	}
+	if arraySpec != nil && len(arraySpec.BlankLines) > 0 {
+		reasons = append(reasons, fmt.Sprintf("the --array file has blank lines at %v", arraySpec.BlankLines))
+	}
+	if projectRun != nil {
+		return reasons
+	}
+	deps, err := utils.ScriptDependencies(contentScript)
+	if err != nil {
+		return append(reasons, fmt.Sprintf("its dependencies could not be parsed: %v", err))
+	}
+	installed, err := getInstalledOverlaysMap()
+	if err != nil {
+		return append(reasons, fmt.Sprintf("installed overlays could not be listed: %v", err))
+	}
+	solved, err := resolveOverlayValues(ctx, deps, nil, false)
+	if err != nil {
+		return append(reasons, err.Error())
+	}
+	if missing := missingRunDeps(deps, solved, installed); len(missing) > 0 {
+		reasons = append(reasons, "missing dependencies: "+strings.Join(missing, ", "))
+	}
+	return reasons
+}
+
 // resolveDeps parses #DEP dependencies, checks installed overlays, and returns resolved paths.
 // Returns errRunAborted (message already printed) if any dependencies are missing.
 func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (overlays []string, err error) {
@@ -517,20 +571,7 @@ func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (o
 		return nil, errRunAborted
 	}
 
-	missingDeps := []string{}
-	for i, dep := range deps {
-		if utils.IsOverlay(dep) || utils.IsSif(dep) {
-			if !utils.FileExists(dep) {
-				missingDeps = append(missingDeps, dep)
-			}
-		} else if solved[i] == dep {
-			normalized := utils.NormalizeModule(dep)
-			if _, ok := installedOverlays[normalized]; !ok {
-				missingDeps = append(missingDeps, dep)
-			}
-		}
-	}
-
+	missingDeps := missingRunDeps(deps, solved, installedOverlays)
 	if len(missingDeps) > 0 {
 		utils.PrintMessage("Missing dependencies:")
 		for _, md := range missingDeps {

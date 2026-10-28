@@ -340,3 +340,37 @@ type Inspection struct {
 	Checks   *Checks       `json:"checks,omitempty"`
 	Problems List[Problem] `json:"problems"`
 }
+
+// Template is the placeholder part of a recipe. A template lists every value of
+// each placeholder in Values, with Order giving the placeholder order in the
+// target. A variant has the one value it was expanded with in Placeholders.
+type Template struct {
+	Target       string              `json:"target"`
+	Order        []string            `json:"order,omitempty"`
+	Values       map[string][]string `json:"values,omitempty"`
+	Placeholders map[string]string   `json:"placeholders,omitempty"`
+}
+
+// Recipe is something a source can build. Installed says an overlay answers its
+// name, and Buildable that this machine is one of BuildsOn, or any machine is
+// when BuildsOn is empty. Recipe is its path in the source.
+type Recipe struct {
+	Overlay
+	Alias       string    `json:"alias,omitempty"`
+	Installed   bool      `json:"installed"`
+	Buildable   bool      `json:"buildable"`
+	Source      string    `json:"source,omitempty"`
+	Recipe      string    `json:"recipe,omitempty"`
+	Description string    `json:"description,omitempty"`
+	URL         string    `json:"url,omitempty"`
+	Deps        []string  `json:"deps,omitempty"`
+	BuildsOn    []string  `json:"builds_on,omitempty"`
+	Template    *Template `json:"template,omitempty"`
+}
+
+// Recipes is the document of a command that lists recipes.
+type Recipes struct {
+	Doc
+	Recipes  List[Recipe]  `json:"recipes"`
+	Problems List[Problem] `json:"problems"`
+}

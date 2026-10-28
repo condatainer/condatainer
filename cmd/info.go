@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/condatainer/condatainer/internal/image/freeze"
 	"github.com/condatainer/condatainer/internal/image/sif"
 	"github.com/condatainer/condatainer/internal/image/squashfs"
+	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -50,7 +52,10 @@ var infoOverlayCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(infoOverlayCmd)
 	infoOverlayCmd.Flags().Bool("validate", false, "Also check the embedded keys and the file contents (reads the whole overlay)")
+	jsonFlag(infoOverlayCmd.Flags(), &infoJSON)
 }
+
+var infoJSON bool
 
 func runInfoOverlay(cmd *cobra.Command, args []string) error {
 	overlayArg := args[0]
@@ -66,6 +71,10 @@ func runInfoOverlay(cmd *cobra.Command, args []string) error {
 	verify, _ := cmd.Flags().GetBool("validate")
 	if verify && !utils.IsSqf(overlayPath) {
 		return fmt.Errorf("--validate reads a .sqf overlay, not %s", filepath.Ext(overlayPath))
+	}
+
+	if infoJSON {
+		return runInfoJSON(cmd, overlayPath, verify)
 	}
 
 	switch {
@@ -93,42 +102,67 @@ func verifyImage(cmd *cobra.Command, overlayPath string) error {
 // verifyKeys reports whether the identity and equivalence keys the manifest
 // records regenerate from the sources embedded in the image.
 func verifyKeys(overlayPath string) error {
+	check, note, err := checkKeys(overlayPath)
+	switch {
+	case err != nil:
+		return err
+	case check == report.CheckOK:
+		utils.PrintSuccess("%s", note)
+	default:
+		utils.PrintMessage("%s", note)
+	}
+	return nil
+}
+
+// checkKeys is the keys check: ok, not recorded, or failed with the reason as
+// the error. The note says what a pass or a skip means.
+func checkKeys(overlayPath string) (report.Check, string, error) {
 	m, err := meta.ReadManifest(overlayPath)
 	if err != nil {
-		return err
+		return report.CheckFailed, "", err
 	}
 	switch {
 	case m.Keys.Identity.Empty():
-		utils.PrintMessage("No keys recorded; there is nothing to regenerate.")
-		return nil
+		return report.CheckNotRecorded, "No keys recorded; there is nothing to regenerate.", nil
 	case m.BuildType == meta.BuildTypeSnapshot:
-		utils.PrintMessage("A snapshot's identity is its payload; the payload check covers it.")
-		return nil
+		return report.CheckNotRecorded, "A snapshot's identity is its payload; the payload check covers it.", nil
 	}
 	artifact, err := compare.Read(overlayPath)
 	if err != nil {
-		return err
+		return report.CheckFailed, "", err
 	}
 	if reason := artifact.Unusable(); reason != "" {
-		return fmt.Errorf("keys do not regenerate: %s", reason)
+		return report.CheckFailed, "", fmt.Errorf("keys do not regenerate: %s", reason)
 	}
-	utils.PrintSuccess("Keys regenerate from the embedded sources.")
-	return nil
+	return report.CheckOK, "Keys regenerate from the embedded sources.", nil
 }
 
 // verifyPayload reads the overlay's files and reports whether they match the
 // payload key its manifest records.
 func verifyPayload(cmd *cobra.Command, overlayPath string) error {
-	err := freeze.VerifyPayload(cmd.Context(), overlayPath)
+	check, note, err := checkPayload(cmd.Context(), overlayPath)
 	switch {
-	case err == nil:
-		utils.PrintSuccess("Payload matches the recorded key.")
-	case errors.Is(err, freeze.ErrNoPayloadKey):
-		utils.PrintMessage("No payload key recorded; a Conda or definition build is checked by its other keys.")
-	default:
+	case err != nil:
 		return err
+	case check == report.CheckOK:
+		utils.PrintSuccess("%s", note)
+	default:
+		utils.PrintMessage("%s", note)
 	}
 	return nil
+}
+
+// checkPayload is the payload check: ok, not recorded, or failed with the
+// reason as the error.
+func checkPayload(ctx context.Context, overlayPath string) (report.Check, string, error) {
+	err := freeze.VerifyPayload(ctx, overlayPath)
+	switch {
+	case err == nil:
+		return report.CheckOK, "Payload matches the recorded key.", nil
+	case errors.Is(err, freeze.ErrNoPayloadKey):
+		return report.CheckNotRecorded, "No payload key recorded; a Conda or definition build is checked by its other keys.", nil
+	}
+	return report.CheckFailed, "", err
 }
 
 // imageType reports the recipe type the image was built as — app, os, data or

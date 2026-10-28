@@ -4,9 +4,11 @@ package squashfs
 import (
 	"bufio"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,6 +60,28 @@ func PathExists(sqfPath, entry string) bool {
 		return false
 	}
 	return found
+}
+
+// TopLevel lists the names directly under the archive root, sorted.
+func TopLevel(sqfPath string) ([]string, error) {
+	bin := unsquashfsBin()
+	if bin == "" {
+		return nil, fmt.Errorf("%w: %s", toolpath.ErrToolMissing, toolpath.NotFoundMessage("unsquashfs"))
+	}
+	cmd := exec.Command(bin, "-lc", "-d", "", sqfPath)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, &tool.Error{Op: "list", Path: sqfPath, Tool: "unsquashfs", BaseErr: err}
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		name, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(line), "/"), "/")
+		if name != "" {
+			seen[name] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(seen)), nil
 }
 
 // Cat reads a file from a SquashFS archive using unsquashfs -cat.

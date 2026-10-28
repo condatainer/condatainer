@@ -6,6 +6,7 @@ import "github.com/spf13/cobra"
 const overlayExportHelp = `Export the Conda environment of a writable .img overlay.
 
 - It captures the environment as it is now, including packages installed since the overlay was created.
+- Files outside /cnt_env are not exported. Use 'overlay freeze' to keep them.
 - Installed .sqf overlays are not exportable. Rebuild them from their recipe.
 - Output goes to stdout, or to <prefix>.yml (or .txt with --explicit) with --prefix.`
 

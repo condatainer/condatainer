@@ -248,3 +248,95 @@ type Overlays[T any] struct {
 	Overlays List[T]       `json:"overlays"`
 	Problems List[Problem] `json:"problems"`
 }
+
+// Check is the outcome of one --validate check.
+type Check string
+
+const (
+	CheckOK          Check = "ok"
+	CheckFailed      Check = "failed"
+	CheckNotRecorded Check = "not_recorded"
+)
+
+// Checks are the --validate results. Errors say why a check failed.
+type Checks struct {
+	Keys    Check    `json:"keys"`
+	Payload Check    `json:"payload"`
+	Errors  []string `json:"errors,omitempty"`
+}
+
+// Conda is the Conda history inside an image: the channels and the packages
+// that were asked for.
+type Conda struct {
+	Channels []string `json:"channels,omitempty"`
+	Packages []string `json:"packages"`
+}
+
+// SquashFS is what the archive's superblock says.
+type SquashFS struct {
+	Compression       string `json:"compression"`
+	CompressionLevel  int    `json:"compression_level,omitempty"`
+	BlockSize         int64  `json:"block_size"`
+	Inodes            int64  `json:"inodes"`
+	Fragments         int64  `json:"fragments"`
+	DuplicatesRemoved bool   `json:"duplicates_removed,omitempty"`
+	Created           string `json:"created,omitempty"`
+}
+
+// Filesystem is what an ext3 image's superblock says. Format is what the
+// filesystem inside reports, which may differ from the Location's format.
+type Filesystem struct {
+	Format      string `json:"format"`
+	State       string `json:"state"`
+	BlockSize   int64  `json:"block_size"`
+	Created     string `json:"created,omitempty"`
+	Modified    string `json:"modified,omitempty"`
+	LastMounted string `json:"last_mounted,omitempty"`
+}
+
+// Owner is who owns the files inside an ext3 image. Fakeroot is set when they
+// are owned by root.
+type Owner struct {
+	UID      *int `json:"uid,omitempty"`
+	GID      *int `json:"gid,omitempty"`
+	Fakeroot bool `json:"fakeroot,omitempty"`
+}
+
+// Usage is how full an ext3 image is, in bytes and inodes.
+type Usage struct {
+	Used        int64 `json:"used"`
+	Total       int64 `json:"total"`
+	InodesUsed  int64 `json:"inodes_used"`
+	InodesTotal int64 `json:"inodes_total"`
+}
+
+// Info is everything known about one overlay file, read from the file and
+// never regenerated. A field is present only when the image has it: Recipe for
+// a script or definition build, Conda for a Conda environment, and the ext3
+// blocks for an .img, which has no Name, Arch, Keys, Manifest or Runtime.
+// OtherFiles says the payload holds an entry other than /cnt_env.
+type Info struct {
+	Overlay
+	Location
+	SizeOnDisk int64          `json:"size_on_disk,omitempty"`
+	Distro     string         `json:"distro,omitempty"`
+	Keys       *meta.Keys     `json:"keys,omitempty"`
+	Manifest   *meta.Manifest `json:"manifest,omitempty"`
+	Runtime    *meta.Runtime  `json:"runtime,omitempty"`
+	Recipe     string         `json:"recipe,omitempty"`
+	Conda      *Conda         `json:"conda,omitempty"`
+	OtherFiles *bool          `json:"other_files,omitempty"`
+	SquashFS   *SquashFS      `json:"squashfs,omitempty"`
+	Filesystem *Filesystem    `json:"filesystem,omitempty"`
+	Owner      *Owner         `json:"owner,omitempty"`
+	Usage      *Usage         `json:"usage,omitempty"`
+}
+
+// Inspection is the document of a command that describes one overlay file.
+// Checks is present only after --validate.
+type Inspection struct {
+	Doc
+	Overlay  Info          `json:"overlay"`
+	Checks   *Checks       `json:"checks,omitempty"`
+	Problems List[Problem] `json:"problems"`
+}

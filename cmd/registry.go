@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/opencontainers/go-digest"
@@ -1142,15 +1143,15 @@ func newRegistryMissingCommand(opts *registryOptions) *cobra.Command {
 		Short: "List the overlays a source's registry does not hold yet",
 		Long: `List the overlays whose recipe has no published copy in a source's registry.
 
-- A copy is published when the registry holds one built from the same recipe, whatever its date.
+- A copy is published when the registry has the tag of the recipe's equivalence key, whatever its date. The copy itself is not read.
 - A name is exact, or a quoted pattern with * and ?. A pattern matches the variants of a template, such as 'ubuntu24/r/*'.
 - --type alone checks every recipe of those types. With no name, pattern or --type, this help is shown.
 - A recipe that does not build on an architecture is skipped for it.
 - A missing copy prints as its name and architecture.
-- An unreachable registry is an error.`,
+- A registry that cannot be read is an error: unreachable, or refusing the read. A repository nobody has pushed to has no copies.`,
 		Example: `  condatainer registry missing --source cnt --type os
   condatainer registry missing --source cnt --arch amd64,arm64 ubuntu24/base 'ubuntu24/r/*'
-  condatainer registry missing --source lab 'grch38/*' --type data`,
+  condatainer registry missing --source lab 'tools/*' --type app`,
 		SilenceUsage: true,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if bareMissing(cmd, args) {
@@ -1182,6 +1183,11 @@ func newRegistryMissingCommand(opts *registryOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if len(names)*len(archs) >= tagIndexMinLookups {
+				if ctx, err = withTagIndex(ep, ctx); err != nil {
+					return err
+				}
+			}
 			copies, more, err := checkCopies(ctx, names, archs)
 			if err != nil {
 				return err
@@ -1191,11 +1197,11 @@ func newRegistryMissingCommand(opts *registryOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&opts.source, "source", "s", "", "Recipe source to read recipes and the registry from (required)")
 	cmd.Flags().StringVar(&arch, "arch", "", "Architectures to check, comma separated: amd64, arm64 (default: this machine's)")
-	cmd.Flags().StringVar(&types, "type", "", "Types to check, comma separated: os, app, data (patterns: only these)")
+	cmd.Flags().StringVar(&types, "type", "", "Types to check, comma separated: os, app")
 	jsonFlag(cmd.Flags(), &asJSON)
 	_ = cmd.RegisterFlagCompletionFunc("source", sourceHandleCompletion)
 	_ = cmd.RegisterFlagCompletionFunc("type", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
-		return []string{"os", "app", "data"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"os", "app"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	return cmd
 }
@@ -1241,8 +1247,11 @@ func parseMissingTypes(raw string, args []string, given bool) ([]artifact.Type, 
 	var kinds []artifact.Type
 	for _, t := range strings.Split(raw, ",") {
 		kind := artifact.Type(strings.TrimSpace(t))
-		if kind != artifact.TypeOS && kind != artifact.TypeApp && kind != artifact.TypeData {
-			return nil, fmt.Errorf("--type: %q is not os, app or data", t)
+		if kind == artifact.TypeData {
+			return nil, errors.New("--type does not take data: a template of data overlays has too many variants to list; give a name or a pattern")
+		}
+		if kind != artifact.TypeOS && kind != artifact.TypeApp {
+			return nil, fmt.Errorf("--type: %q is not os or app", t)
 		}
 		if !slices.Contains(kinds, kind) {
 			kinds = append(kinds, kind)
@@ -1332,53 +1341,116 @@ func appendNew(list, more []string) []string {
 	return list
 }
 
+// tagIndexMinLookups is how many lookups make a listing of the registry's tags
+// cheaper than the lookups, which cost a token and a request each.
+const tagIndexMinLookups = 50
+
+// withTagIndex reads the registry's tags once, so a tag is found or missing without
+// a request. A registry that stops the listing is an error; any other failure
+// leaves each name to its own lookup.
+func withTagIndex(ep registryEndpoint, ctx context.Context) (context.Context, error) {
+	base, repo, err := registry.SplitCoordinate(ep.repository)
+	if err != nil {
+		return ctx, nil
+	}
+	index, err := registry.ReadTagIndex(ep.ctx, base, repo)
+	switch {
+	case registryStopped(err):
+		return ctx, err
+	case err != nil:
+		logging.FromContext(ctx).Debug("tags were not listed, so each copy is looked up", "err", err)
+		return ctx, nil
+	}
+	if index.Empty() {
+		utils.PrintNote("%s holds no tags yet", ep.repository)
+	}
+	return registry.WithTagIndex(ctx, index), nil
+}
+
+// missingWorkers is how many names checkCopies looks up at once.
+const missingWorkers = 8
+
 // checkCopies asks, for each name and architecture, whether the registry holds
 // a copy built from the local recipe. An unreachable registry is an error; a
 // name that cannot be checked is a problem and leaves the others.
+//   - Names are checked at once, and the result keeps their order.
+//   - The error returned is the first name's.
 func checkCopies(ctx context.Context, names, archs []string) ([]report.Copy, []report.Problem, error) {
 	// Only names a copy would be filed under; nothing is built here.
 	dir := filepath.Join(os.TempDir(), "cnt-registry-missing")
+	type checked struct {
+		copies   []report.Copy
+		problems []report.Problem
+		err      error
+	}
+	results := make([]checked, len(names))
+	slots := make(chan struct{}, missingWorkers)
+	var wg sync.WaitGroup
+	for i, name := range names {
+		slots <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer func() { <-slots; wg.Done() }()
+			results[i].copies, results[i].problems, results[i].err = checkName(ctx, name, archs, dir)
+		}()
+	}
+	wg.Wait()
+
 	var copies []report.Copy
 	var problems []report.Problem
-	for _, raw := range names {
-		name := utils.NormalizeModule(raw)
-		known, err := recipeKnown(ctx, name)
+	for _, r := range results {
+		if r.err != nil {
+			return nil, nil, r.err
+		}
+		copies = append(copies, r.copies...)
+		problems = append(problems, r.problems...)
+	}
+	return copies, problems, nil
+}
+
+// checkName is checkCopies for one name.
+func checkName(ctx context.Context, raw string, archs []string, dir string) ([]report.Copy, []report.Problem, error) {
+	name := utils.NormalizeModule(raw)
+	known, err := recipeKnown(ctx, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !known {
+		return nil, []report.Problem{{Name: name, Message: "the source has no recipe with this name"}}, nil
+	}
+	var copies []report.Copy
+	var problems []report.Problem
+	found := false
+	for _, arch := range archs {
+		step, err := planCopy(build.TagOnly(build.PlanOnly(build.ForArch(ctx, arch))), name, dir)
+		if errors.Is(err, catalog.ErrUnsupportedArch) {
+			continue
+		}
+		if registryStopped(err) {
+			return nil, nil, err
+		}
+		if err != nil {
+			problems = append(problems, report.Problem{Name: name, Message: err.Error()})
+			found = true
+			break
+		}
+		found = true
+		c, problem, err := copyOf(step)
 		if err != nil {
 			return nil, nil, err
 		}
-		if !known {
-			problems = append(problems, report.Problem{Name: name, Message: "the source has no recipe with this name"})
-			continue
+		if problem != "" {
+			problems = append(problems, report.Problem{Name: name, Message: problem})
+			break
 		}
-		found := false
-		for _, arch := range archs {
-			step, err := planCopy(build.PlanOnly(build.ForArch(ctx, arch)), name, dir)
-			if errors.Is(err, catalog.ErrUnsupportedArch) {
-				continue
-			}
-			if err != nil {
-				problems = append(problems, report.Problem{Name: name, Message: err.Error()})
-				found = true
-				break
-			}
-			found = true
-			c, problem, err := copyOf(step)
-			if err != nil {
-				return nil, nil, err
-			}
-			if problem != "" {
-				problems = append(problems, report.Problem{Name: name, Message: problem})
-				break
-			}
-			copies = append(copies, c)
-			if step.Arch == meta.ArchNone {
-				break
-			}
+		copies = append(copies, c)
+		if step.Arch == meta.ArchNone {
+			break
 		}
-		if !found {
-			problems = append(problems, report.Problem{Name: name,
-				Message: fmt.Sprintf("its recipe does not build on %s", strings.Join(archs, ", "))})
-		}
+	}
+	if !found {
+		problems = append(problems, report.Problem{Name: name,
+			Message: fmt.Sprintf("its recipe does not build on %s", strings.Join(archs, ", "))})
 	}
 	return copies, problems, nil
 }

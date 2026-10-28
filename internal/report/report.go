@@ -177,7 +177,7 @@ type Steps struct {
 
 // Copy is whether a registry holds the copy a local recipe would make, for one
 // architecture. Equiv is the recipe's key and Tag the equivalence tag asked
-// for. A published copy adds the Digest and Identity its manifest says.
+// for. Digest and Identity are set when the registry was asked for the copy, and absent when a tag list answered.
 type Copy struct {
 	Overlay
 	Published bool        `json:"published"`

@@ -40,6 +40,21 @@ func PlanOnly(ctx context.Context) context.Context {
 	return context.WithValue(ctx, planOnlyKey{}, true)
 }
 
+type tagOnlyKey struct{}
+
+// TagOnly returns a context whose prebuilt check goes by the equivalence tag
+// alone: a copy is there when its tag is, and its manifest is not read. The
+// plan is for reading, so it carries no digest or identity of the copy. A
+// registry that refuses the read is an error, not a copy that is not there.
+func TagOnly(ctx context.Context) context.Context {
+	return context.WithValue(ctx, tagOnlyKey{}, true)
+}
+
+func tagOnly(ctx context.Context) bool {
+	only, _ := ctx.Value(tagOnlyKey{}).(bool)
+	return only
+}
+
 // planOnly reports whether ctx is for a plan that is never run.
 func planOnly(ctx context.Context) bool {
 	only, _ := ctx.Value(planOnlyKey{}).(bool)

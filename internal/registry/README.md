@@ -144,3 +144,6 @@ Storage and lookup are in `internal/credential`. What is particular to registrie
 - A check that downloads nothing resolves the tag and reads no manifest. A pull reads it, and the keys are checked then.
 - The bytes are kept as pushed or fetched, since a tag can only be written against its own digest's exact bytes.
 
+- A check of 50 lookups or more lists the repository's tags once and answers each tag from the list. A lookup costs a token and a request, and a listing costs one request per page. Thousands of lookups get an anonymous client throttled by ghcr.io.
+- `registry missing` goes by the tag alone, since a tag carries 12 hex characters of the key and the recipe has already narrowed the name. A pull reads the manifest and compares the full key.
+- `registry missing` fails when the registry refuses a read or cannot be reached, a refusal with no credential included. An auth problem must not look like a repository with nothing in it. A listing that fails for any other reason leaves each name to its own lookup.

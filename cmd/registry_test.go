@@ -524,8 +524,11 @@ func TestParseMissingTypes(t *testing.T) {
 	if got, err := parseMissingTypes("", []string{"tools/*"}, false); err != nil || got != nil {
 		t.Errorf("a pattern alone = %v, %v", got, err)
 	}
-	if got, err := parseMissingTypes("app, data,app", nil, true); err != nil || !slices.Equal(got, []artifact.Type{artifact.TypeApp, artifact.TypeData}) {
+	if got, err := parseMissingTypes("os, app,os", nil, true); err != nil || !slices.Equal(got, []artifact.Type{artifact.TypeOS, artifact.TypeApp}) {
 		t.Errorf("--type alone = %v, %v", got, err)
+	}
+	if _, err := parseMissingTypes("data", nil, true); err == nil {
+		t.Error("data was accepted: its templates have too many variants to list")
 	}
 	if _, err := parseMissingTypes("os", []string{"ubuntu24/base"}, true); err == nil {
 		t.Error("--type was accepted beside an exact name")

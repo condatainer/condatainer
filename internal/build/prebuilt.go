@@ -22,6 +22,7 @@ type prebuiltResult bool
 
 var (
 	resolvePrebuilt = registry.Lookup
+	probePrebuilt   = registry.Probe
 	pullPrebuilt    = registry.PullLocked
 )
 
@@ -118,11 +119,15 @@ func (b *BuildObject) findPrebuilt(ctx context.Context) (prebuiltCandidate, bool
 
 	log := logging.FromContext(ctx)
 	ctx = registry.WithSource(ctx, b.catalogSource.Base)
-	found, err := resolvePrebuilt(ctx, base, repo, registry.Address{Name: b.spec.Image.Name, Equiv: want.SHA256, Arch: arch})
+	lookup := resolvePrebuilt
+	if tagOnly(ctx) {
+		lookup = probePrebuilt
+	}
+	found, err := lookup(ctx, base, repo, registry.Address{Name: b.spec.Image.Name, Equiv: want.SHA256, Arch: arch})
 	if err != nil {
 		switch {
 		case errors.Is(err, registry.ErrNotFound), errors.Is(err, registry.ErrUnsupportedPlatform),
-			closedDoor(ctx, err, endpoint):
+			closedDoor(ctx, err, endpoint) && !tagOnly(ctx):
 			return prebuiltCandidate{}, false, missNone, nil
 		case errors.Is(err, registry.ErrUnavailable):
 			log.Debug("prebuilt unavailable", "name", b.spec.Image.Name, "err", err)
@@ -130,11 +135,13 @@ func (b *BuildObject) findPrebuilt(ctx context.Context) (prebuiltCandidate, bool
 		}
 		return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot use prebuilt %s from %s: %w", b.spec.Image.Name, endpoint, err)
 	}
-	if err := registry.Check(found.Annotations, registry.Want{Name: b.spec.Image.Name}); err != nil {
-		return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot use prebuilt %s from %s: %w", b.spec.Image.Name, endpoint, err)
-	}
-	if registry.Equiv(found.Annotations) != want {
-		return prebuiltCandidate{}, false, missNone, nil
+	if !tagOnly(ctx) {
+		if err := registry.Check(found.Annotations, registry.Want{Name: b.spec.Image.Name}); err != nil {
+			return prebuiltCandidate{}, false, missNone, fmt.Errorf("cannot use prebuilt %s from %s: %w", b.spec.Image.Name, endpoint, err)
+		}
+		if registry.Equiv(found.Annotations) != want {
+			return prebuiltCandidate{}, false, missNone, nil
+		}
 	}
 	return prebuiltCandidate{endpoint: endpoint, base: base, repo: repo, equiv: want,
 		desc: found.Desc, annotations: found.Annotations}, true, missNone, nil

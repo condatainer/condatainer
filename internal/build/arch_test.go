@@ -53,6 +53,46 @@ func TestFindPrebuiltAsksForThePlannedArchitecture(t *testing.T) {
 	}
 }
 
+// A tag-only check probes the tag and reads no manifest, so a copy is published
+// when its tag is, and the plan carries no digest or identity of it.
+func TestFindPrebuiltTagOnlyProbesTheTag(t *testing.T) {
+	oldResolve, oldProbe := resolvePrebuilt, probePrebuilt
+	t.Cleanup(func() { resolvePrebuilt, probePrebuilt = oldResolve, oldProbe })
+	resolvePrebuilt = func(context.Context, string, string, registry.Address) (registry.Found, error) {
+		t.Error("the manifest was read")
+		return registry.Found{}, registry.ErrNotFound
+	}
+	probePrebuilt = func(context.Context, string, string, registry.Address) (registry.Found, error) {
+		return registry.Found{Tag: "demo__eq-0123456789ab__" + meta.NativeArch()}, nil
+	}
+	b := prebuiltObject(t, []byte("echo demo\n"), "origin.invalid/lab")
+	cand, found, _, err := b.findPrebuilt(TagOnly(t.Context()))
+	if err != nil || !found {
+		t.Fatalf("found = %v, err = %v, want the tag to be enough", found, err)
+	}
+	if cand.annotations != nil {
+		t.Errorf("annotations = %v, want none", cand.annotations)
+	}
+}
+
+// A registry that refuses a tag-only check is an error, where a pull would call the copy not there.
+func TestFindPrebuiltTagOnlyReportsARefusal(t *testing.T) {
+	oldProbe, oldResolve := probePrebuilt, resolvePrebuilt
+	t.Cleanup(func() { probePrebuilt, resolvePrebuilt = oldProbe, oldResolve })
+	refuse := func(context.Context, string, string, registry.Address) (registry.Found, error) {
+		return registry.Found{}, registry.ErrUnauthorized
+	}
+	probePrebuilt, resolvePrebuilt = refuse, refuse
+	b := prebuiltObject(t, []byte("echo demo\n"), "origin.invalid/lab")
+
+	if _, found, _, err := b.findPrebuilt(t.Context()); err != nil || found {
+		t.Errorf("a pull: found = %v, err = %v, want a miss", found, err)
+	}
+	if _, _, _, err := b.findPrebuilt(TagOnly(t.Context())); !errors.Is(err, registry.ErrUnauthorized) {
+		t.Errorf("a tag-only check: err = %v, want ErrUnauthorized", err)
+	}
+}
+
 // The resolver checks a recipe's #ARCH: against the planned architecture.
 func TestResolveChecksThePlannedArchitecture(t *testing.T) {
 	root := t.TempDir()

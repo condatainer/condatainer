@@ -71,3 +71,7 @@ cnt
 /docs/node_modules/
 /docs/dist/
 /docs/.astro/
+
+# --- Plans: local, except assets/plan/important ---
+/assets/plan/*
+!/assets/plan/important/

@@ -17,8 +17,10 @@ import (
 )
 
 var (
-	checkAutoInstall bool
-	checkProjectDir  string
+	checkAutoInstall   bool
+	checkProjectDir    string
+	checkInstallDryRun bool
+	checkJSON          bool
 )
 
 var scriptCheckCmd = &cobra.Command{
@@ -27,6 +29,7 @@ var scriptCheckCmd = &cobra.Command{
 	Long: `Check the dependencies declared with #DEP: in scripts.
 
 - Dependencies from all scripts are checked together.
+- With -a, --dry-run shows what would be installed, and installs nothing.
 - Exits with code 3 if creation jobs were submitted to a scheduler.`,
 	Example: `  condatainer check script.sh              # Check one script
   condatainer check samtools/1.22          # Check a recipe by name
@@ -41,6 +44,8 @@ var scriptCheckCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(scriptCheckCmd)
 	scriptCheckCmd.Flags().BoolVarP(&checkAutoInstall, "auto-install", "a", false, "Automatically install missing dependencies")
+	scriptCheckCmd.Flags().BoolVar(&checkInstallDryRun, "dry-run", false, "With -a, show what would be installed without installing")
+	jsonFlag(scriptCheckCmd.Flags(), &checkJSON)
 	settings.AddSwitch(scriptCheckCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))
 	RegisterProjectFlags(scriptCheckCmd, &checkProjectDir)
 }
@@ -48,6 +53,15 @@ func init() {
 func runCheck(cmd *cobra.Command, args []string) error {
 	if err := applyProjectFlag(checkProjectDir); err != nil {
 		return err
+	}
+	if checkInstallDryRun && !checkAutoInstall {
+		return errors.New("--dry-run previews -a; add -a")
+	}
+	if checkJSON && checkAutoInstall && !checkInstallDryRun {
+		return errors.New("check -a prints JSON only with --dry-run")
+	}
+	if checkJSON {
+		return runCheckJSON(cmd, args)
 	}
 
 	// Resolve all args to concrete script paths and metadata deps
@@ -95,6 +109,10 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if !checkAutoInstall {
 		utils.PrintHint("Run the command again with `-a` or `--auto-install` to install missing dependencies.")
 		return nil
+	}
+
+	if checkInstallDryRun {
+		return dryRunInstall(cmd.Context(), missingDeps)
 	}
 
 	// Auto-install missing dependencies
@@ -477,7 +495,11 @@ func resolveScriptPath(ctx context.Context, scriptPathOrName string) (string, bo
 	// The index carries deps, so the common case needs no recipe at all.
 	if match.Entry.Deps != nil {
 		utils.PrintDebug("[CHECK] Using indexed deps for %s (no fetch)", normalized)
-		return "", false, match.Entry.Deps, nil
+		deps := make([]string, len(match.Entry.Deps))
+		for i, dep := range match.Entry.Deps {
+			deps[i] = interpolate(dep, match.Vars)
+		}
+		return "", false, deps, nil
 	}
 
 	recipe, err := cat.Open(ctx, normalized, nil)

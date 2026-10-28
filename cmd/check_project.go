@@ -39,6 +39,10 @@ func projectCheck(ctx context.Context, scriptPaths []string, metaDeps []string) 
 		announceUnlocked(root, script)
 		return false, nil
 	}
+	if checkJSON {
+		return true, fmt.Errorf("check --json does not answer for a project yet\n"+
+			"run `condatainer project restore --project %s --dry-run`", root)
+	}
 	announceProject(root)
 	if checkAutoInstall {
 		// -a installs by name into a shared images directory, which is one

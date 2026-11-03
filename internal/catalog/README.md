@@ -21,6 +21,7 @@ Resolves a module name to a recipe.
 - It tries `raw` as given, then `distro/raw` once the first came up empty. Using the name as typed is not a guess. Prepending a distro is.
 - Each attempt stops at the first of three steps: a complete module (an exact key, or a template with its placeholders filled), the app pool, then the os pool.
 - Installed beats a catalog lookup entirely. When `have` answers, the catalog is never consulted, so an overlay keeps resolving after its recipe moved or was dropped.
+- The caller picks the rule by what it passes as `have`. Lookups that use an overlay (`load`, `exec`, `run`, helper `#DEP:`) pass what is installed. `create` passes nil, so installing a bare name always gets the newest.
 - The newest app candidate is safe to pick, because an app's candidates are the same tool at different times.
 - An os candidate is only a template's own declared version list. Its second component names a different app, not a version.
 - Data gets no autofill. Sibling entries under `grch38/genome` are alternative sources, not versions, so comparing them would compare arbitrary strings.

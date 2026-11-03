@@ -498,11 +498,11 @@ func resolveTemplateInteractively(ctx context.Context, info *catalog.Entry) (str
 	return concrete, nil
 }
 
-// solveCreateName resolves a create argument as load resolves a helper's #DEP: names
-// catalog.SolveName against what is installed, then anaconda.org's package index, so
-// "r", "rstudio-server" and a bare or partial Conda name like "openjdk/17" each land
-// on one concrete module. A channel-annotated or fully qualified name that resolves
-// nowhere is returned unchanged for the normal Conda fallback.
+// solveCreateName resolves a create argument to one concrete module: catalog.SolveName,
+// then anaconda.org's package index, so "r", "rstudio-server" and a bare or partial
+// Conda name like "openjdk/17" each land on the newest version they admit.
+//   - Installed overlays are not consulted: installing a bare name always asks for the latest.
+//   - A channel-annotated or fully qualified name that resolves nowhere is returned unchanged for the normal Conda fallback.
 func solveCreateName(ctx context.Context, nameVersion string) (string, bool, error) {
 	normalized := utils.NormalizeModule(nameVersion)
 	if normalized == "" || strings.Contains(normalized, "::") {
@@ -512,7 +512,7 @@ func solveCreateName(ctx context.Context, nameVersion string) (string, bool, err
 	if err != nil {
 		return normalized, false, nil
 	}
-	if res, found, err := cat.SolveName(ctx, build.InstalledVersions(nil), projectDefaultDistro(), normalized); err == nil && found {
+	if res, found, err := cat.SolveName(ctx, nil, projectDefaultDistro(), normalized); err == nil && found {
 		return res.Name, res.Name != normalized, nil
 	}
 

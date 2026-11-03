@@ -299,7 +299,7 @@ function _setStatus(alive, d) {
     if (d.scratch) srvScratch = d.scratch;
     srvWillSubmit = !!d.will_submit;
     const noSubmitRow = gid('no-submit-row');
-    if (noSubmitRow) noSubmitRow.hidden = !srvWillSubmit;
+    if (noSubmitRow) noSubmitRow.hidden = !(srvWillSubmit && d.debug);
     const cwdEl = gid('cfg-cwd');
     if (cwdEl) {
       const def = srvScratch || srvHome || '';

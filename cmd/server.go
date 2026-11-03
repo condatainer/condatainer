@@ -323,6 +323,9 @@ func startServerDaemon(port int, daemon bool) error {
 	}
 
 	args := []string{"_server_daemon", "--report-fd", "3", "--port", strconv.Itoa(port)}
+	if debugMode {
+		args = append(args, "--debug")
+	}
 	// Non-daemon: watch the SSH session leader so the server exits when the user
 	// logs out, regardless of how many process layers deep this call originates
 	// (e.g. auto-started from "condatainer helper run" via EnsureServer).

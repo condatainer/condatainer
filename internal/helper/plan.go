@@ -270,7 +270,7 @@ func ExecutePlan(ctx context.Context, plan *RunPlan) (string, error) {
 		jobID, err := plan.Scheduler.Submit(ctx, wrapperPath, nil)
 		if err != nil {
 			os.RemoveAll(stateDir)
-			return "", fmt.Errorf("job submission failed: %w — retry without scheduler submission (CLI: --no-submit; dashboard: run headless) to run it directly on this node", err)
+			return "", fmt.Errorf("job submission failed: %w", err)
 		}
 		run := newHelperRun(helperID, plan.Options.ScriptName, jobID, cwd, plan.Spec.Time,
 			plan.Options, plan.UserOverlays, plan.Spec, plan.Params, "pending", string(plan.Scheduler.GetType()))

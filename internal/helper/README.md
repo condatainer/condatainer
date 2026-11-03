@@ -7,7 +7,6 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 - Headless or scheduler is chosen automatically, and `RunOptions.NoSubmit` forces headless for one run.
 - `NoSubmit` is per run because the server is one long-lived process serving concurrent requests. Global config cannot be flipped for one caller.
 - A failed submit never falls back to headless. Running a compute-node job on a shared login node needs consent.
-- The error names the override instead.
 - Every run records `Runner`: `local`, or the scheduler type (`SLURM`, `PBS`, `LSF` or `HTCondor`).
   - `JobID` and the early status only say which path it took until the run is `running`. After that nothing else does.
 - Every run records `Connect`, the `helper.connect` value at submission.

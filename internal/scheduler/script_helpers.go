@@ -186,20 +186,21 @@ func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime
 		if nodes <= 0 {
 			nodes = 1
 		}
-		if nodes > 1 {
+		isMPI := rs.GetNtasks() > 1
+		cpuLabel, memLabel := "CPUs:      ", "Mem:       "
+		if isMPI {
 			fmt.Fprintf(w, "echo \"Nodes:      %d\"\n", nodes)
-		}
-		if rs.GetNtasks() > 1 {
 			fmt.Fprintf(w, "echo \"Ranks:      %d\"\n", rs.GetNtasks())
-		}
-		if rs.TasksPerNode > 0 {
-			fmt.Fprintf(w, "echo \"Ranks/Node: %d\"\n", rs.TasksPerNode)
+			if rs.TasksPerNode > 0 {
+				fmt.Fprintf(w, "echo \"Ranks/Node: %d\"\n", rs.TasksPerNode)
+			}
+			cpuLabel, memLabel = "CPUs/Rank: ", "Mem/Rank:  "
 		}
 		if rs.CpusPerTask > 0 {
-			fmt.Fprintf(w, "echo \"CPUs/Rank:  %d\"\n", rs.CpusPerTask)
+			fmt.Fprintf(w, "echo \"%s %d\"\n", cpuLabel, rs.CpusPerTask)
 		}
 		if memPerTaskMB := rs.GetMemPerTaskMB(); memPerTaskMB > 0 {
-			fmt.Fprintf(w, "echo \"Mem/Rank:   %d MB\"\n", memPerTaskMB)
+			fmt.Fprintf(w, "echo \"%s %d MB\"\n", memLabel, memPerTaskMB)
 		}
 		if rs.Time > 0 && formatTime != nil {
 			fmt.Fprintf(w, "echo \"Time:       %s\"\n", formatTime(rs.Time))

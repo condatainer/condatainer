@@ -244,7 +244,7 @@ func writeJobFooter(w io.Writer, jobIDVar string) {
 //   - Call it after the scheduler directives and before writeJobHeader.
 //   - taskIDVar is the 1-based task index expression, also the sed line number.
 //   - Log names use jobName, the index padded to the width of count, and _ARRAY_TAG.
-//   - _ARRAY_TAG is ARRAY_ARGS made filename-safe: non-alphanumerics become "_", runs squeeze, capped at 20 characters.
+//   - _ARRAY_TAG is ARRAY_ARGS made filename-safe: non-alphanumerics become "_", runs squeeze, capped at 40 characters.
 //   - Combined output goes to .log, or to .out and .err when separateOutput is set.
 func writeArrayBlock(w io.Writer, taskIDVar, inputFile, logDir, jobName string,
 	count int, separateOutput bool) {
@@ -254,7 +254,7 @@ func writeArrayBlock(w io.Writer, taskIDVar, inputFile, logDir, jobName string,
 	fmt.Fprintf(w, "_ARRAY_IDX=%s\n", taskIDVar)
 	fmt.Fprintf(w, "ARRAY_ARGS=$(sed -n \"${_ARRAY_IDX}p\" %s)\n", inputFile)
 	fmt.Fprintln(w, "export ARRAY_ARGS")
-	fmt.Fprintf(w, "_ARRAY_TAG=$(printf '%%s' \"$ARRAY_ARGS\" | tr -cs '[:alnum:]_-' '_' | cut -c1-20)\n")
+	fmt.Fprintf(w, "_ARRAY_TAG=$(printf '%%s' \"$ARRAY_ARGS\" | tr -cs '[:alnum:]_-' '_' | cut -c1-40)\n")
 	fmt.Fprintln(w, "_ARRAY_TAG=${_ARRAY_TAG%_}")
 	fmt.Fprintf(w, "_PADDED_IDX=$(printf \"%%0%dd\" \"$_ARRAY_IDX\")\n", padWidth)
 

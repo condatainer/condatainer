@@ -154,6 +154,7 @@ func absPath(path string) string {
 //   - With JobHome set it first replaces HOME, saving the current one in CNT_REAL_HOME.
 //   - jobIDVar is the shell expression for the job ID.
 //   - Resource lines print only when specs.Spec is set, and specs.ScriptPath when present.
+//   - A job with one task prints its node name. An MPI job does not, since the script runs on one of its nodes only.
 //   - formatTime renders rs.Time. nil skips that line.
 func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime func(time.Duration) string, metadata map[string]string) {
 	if JobHome != "" {
@@ -181,12 +182,15 @@ func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime
 	if specs != nil {
 		rs = specs.Spec
 	}
+	isMPI := rs != nil && rs.GetNtasks() > 1
+	if !isMPI {
+		fmt.Fprintln(w, "echo \"Node:       ${HOSTNAME:-$(hostname)}\"")
+	}
 	if rs != nil {
 		nodes := rs.Nodes
 		if nodes <= 0 {
 			nodes = 1
 		}
-		isMPI := rs.GetNtasks() > 1
 		cpuLabel, memLabel := "CPUs:      ", "Mem:       "
 		if isMPI {
 			fmt.Fprintf(w, "echo \"Nodes:      %d\"\n", nodes)

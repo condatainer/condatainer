@@ -323,7 +323,7 @@ func startServerDaemon(port int, daemon bool) error {
 	}
 
 	args := []string{"_server_daemon", "--report-fd", "3", "--port", strconv.Itoa(port)}
-	if debugMode {
+	if utils.DebugMode {
 		args = append(args, "--debug")
 	}
 	// Non-daemon: watch the SSH session leader so the server exits when the user

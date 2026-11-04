@@ -4,7 +4,7 @@
 
 - This package declares only the keys nothing else owns: `default_distro`, `home_override` and `metadata_cache_ttl`.
 - It finds and reads the layer files and hands them to `internal/settings`, which resolves every key.
-- `config.Global` holds runtime facts that are not keys: the version, the program directory, the debug flag, the resolved sources.
+- `config.Global` holds runtime facts that are not keys: the version, the program directory, the resolved sources.
 
 - `config check` is a command and not a startup warning.
   - A typo in a file is otherwise ignored, but a warning on every command costs every user and gets learned and ignored.

@@ -25,7 +25,6 @@ const GitHubRepo = "condatainer/condatainer"
 
 // Config holds the settings that are runtime facts rather than config keys.
 type Config struct {
-	Debug   bool
 	Version string
 
 	// Directory paths

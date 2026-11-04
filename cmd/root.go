@@ -133,7 +133,6 @@ var rootCmd = &cobra.Command{
 		// Step 5: Apply command-line flags (highest priority)
 		if debugMode {
 			utils.DebugMode = true
-			config.Global.Debug = true
 			utils.PrintDebug("Debug mode enabled")
 			utils.PrintDebug("CondaTainer Version: %s", config.Version)
 			utils.PrintDebug("Executable: %s", exe)
@@ -170,8 +169,7 @@ var rootCmd = &cobra.Command{
 			Stderr: os.Stderr,
 		}))
 
-		// Step 7: Apply debug mode and resource defaults from config
-		scheduler.SetDebugMode(config.Global.Debug)
+		// Step 7: Apply resource defaults from config
 		scheduler.DefaultCommandTimeout = scheduler.CommandTimeout()
 
 		// Step 8: Initialize scheduler if job submission is enabled

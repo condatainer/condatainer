@@ -710,7 +710,7 @@ func (s *SlurmScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string
 	writeJobFooter(writer, jobIDVar)
 
 	// Self-dispose: remove this script file (unless in debug mode or KeepScript)
-	if !debugMode && !jobSpec.KeepScript {
+	if !utils.DebugMode && !jobSpec.KeepScript {
 		fmt.Fprintf(writer, "rm -f %s\n", scriptPath)
 	}
 

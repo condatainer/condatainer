@@ -5,13 +5,7 @@ import "sync"
 var (
 	activeScheduler Scheduler
 	schedulerMu     sync.RWMutex
-
-	debugMode bool
 )
-
-// SetDebugMode enables or disables debug output for scheduler operations.
-// Call from cmd/root.go after loading config.
-func SetDebugMode(enabled bool) { debugMode = enabled }
 
 // SetActiveScheduler configures the scheduler instance that the application should use.
 // Passing nil clears any previously configured scheduler.

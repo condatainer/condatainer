@@ -62,24 +62,12 @@ function renderJobs() {
 }
 
 function oldestRunningJobIdsByName(jobs) {
-  const out = {};
+  const ids = {};
   jobs.forEach(j => {
     if (j.status !== 'running' || !j.name || !j.id) return;
-    const cur = out[j.name];
-    if (!cur || _jobIsOlder(j, cur)) out[j.name] = j;
+    if (!(j.name in ids) || j.id < ids[j.name]) ids[j.name] = j.id;
   });
-  const ids = {};
-  Object.keys(out).forEach(name => { ids[name] = out[name].id; });
   return ids;
-}
-
-function _jobIsOlder(a, b) {
-  const at = a.started_at ? new Date(a.started_at).getTime() : NaN;
-  const bt = b.started_at ? new Date(b.started_at).getTime() : NaN;
-  if (Number.isFinite(at) && Number.isFinite(bt)) return at < bt;
-  if (Number.isFinite(at)) return true;
-  if (Number.isFinite(bt)) return false;
-  return String(a.id || '') < String(b.id || '');
 }
 
 function stableHelperURL(j, url) {

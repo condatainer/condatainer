@@ -293,9 +293,11 @@ func (r *proxyRegistry) Get(id string) *proxyEntry {
 	return r.entries[id]
 }
 
-// GetByName returns the oldest active proxy entry whose helper name matches, or nil if none is open.
-//   - Used for stable-name subdomain routing (e.g. code-server.localhost → oldest running code-server instance).
-//   - IDs have the form "{name}-YYYYMMDD-HHMMSS", so the lexicographically smallest ID is the oldest one; this ensures the name URL stays stable when a newer instance starts alongside an existing one.
+// GetByName returns the earliest submitted active proxy entry whose helper name matches, or nil if none is open.
+//   - Used for stable-name subdomain routing (e.g. code-server.localhost → earliest submitted running code-server instance).
+//   - IDs have the form "{name}-YYYYMMDD-HHMMSS", so the lexicographically smallest ID is the earliest submitted one.
+//   - A job submitted earlier takes the name URL when it starts, even if a later submission is already running.
+//   - The dashboard picks the card that shows the name link by the same ID order.
 func (r *proxyRegistry) GetByName(name string) *proxyEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -319,7 +321,7 @@ func (r *proxyRegistry) LastError(id string) string {
 
 // serveSubdomainProxy handles requests to {id}.localhost:{port} by forwarding to the helper's tunnel.
 //   - The full request path is forwarded as-is — no URL rewriting needed since the service is at the root of its own subdomain.
-//   - Lookup order: exact ID match first, then oldest active instance by name (e.g. "code-server.localhost" → oldest running code-server).
+//   - Lookup order: exact ID match first, then earliest submitted active instance by name (e.g. "code-server.localhost" → earliest submitted running code-server).
 func (s *srv) serveSubdomainProxy(w http.ResponseWriter, r *http.Request, id string) {
 	entry := s.proxies.Get(id)
 	if entry == nil {

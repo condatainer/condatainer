@@ -32,12 +32,6 @@ grch38/salmon-gencode-template  [728 variants, cnt]
   - kmer_length:      31, *
 ```
 
-To create a specific variant, simply fill your desired values into the `→` pattern and use that full name. You never need to use the template's base name:
-
-```bash
-condatainer create grch38/salmon/2.7.0/gencode47-k31
-```
-
 A `*` among the values means the template accepts any custom value. For example, passing `kmer_length` as 25 gives `...-k25`. You can use `avail -e` to list every possible variant by its full rendered name.
 
 ### Conda packages
@@ -57,8 +51,21 @@ Alternatively, you can search directly on [anaconda.org](https://anaconda.org). 
 ### From a name
 
 ```bash
+# Create one from Bioconda
 condatainer create samtools/1.22
-condatainer create grch38/salmon/2.7.0/gencode47-k31
+
+# Create one from recipe
+condatainer create cellranger/9.0.1
+
+# Create by template name
+$ condatainer i grch38/salmon-gencode-template
+Target: grch38/salmon/{salmon_version}/gencode{gencode_version}-k{kmer_length}
+  salmon_version [1.9.0-2.10.0] (default: 2.7.0): 
+  gencode_version [23-50] (default: 50): 47
+  kmer_length [suggested: 31, or any value] (default: 31):
+
+# Create by filling the value
+$ condatainer create grch38/salmon/2.7.0/gencode47-k31
 ```
 
 When you run `create`, CondaTainer first searches for a recipe; if none is found, it falls back to looking for a Conda package.
@@ -71,16 +78,14 @@ When you run `create`, CondaTainer first searches for a recipe; if none is found
 
 | Flag | Effect |
 |---|---|
-| `--update` | Rebuild an overlay even if already exists. |
 | `--no-prebuilt` | Force fresh build instead of downloading a prebuilt. |
-| `--no-submit` | Run the build process locally instead of use scheduler. |
 | `--dry-run` | Show what would be built, downloaded or submitted as a job, and do none of it. |
 
 :::note
 A build can be submitted to the scheduler as a job. `create` then exits with code 3.
 :::
 
-### From Conda packages
+### From a group of Conda packages
 
 To bundle several Conda packages into a single overlay, use the `-n` (name) or `-p` (prefix) flags:
 
@@ -92,7 +97,7 @@ condatainer create -n nvim nvim nodejs
 condatainer create -p rnaseq salmon star samtools
 ```
 
-`-f` allows to build a overlay from a Conda file. If location not specified, next to the file.
+`-f` builds an overlay from a Conda file. If you don't give a location, the overlay is created next to the file.
 
 ```bash
 condatainer create -f environment.yml  # Conda environment file
@@ -101,7 +106,7 @@ condatainer create -f spec.txt         # Conda explicit spec
 
 ### From a build recipe
 
-`-f` also allows to build from a custom buile recipe. If location not specified, next to the file, overritten by `-p` or `-n`:
+`-f` also builds from a custom build recipe. If you don't give a location, the overlay is created next to the file. `-p` or `-n` overrides that:
 
 ```bash
 condatainer create -f build.sh

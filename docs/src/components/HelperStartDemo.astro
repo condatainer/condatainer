@@ -47,6 +47,16 @@
 							<button type="button" class="hsd-btn" data-new>New</button>
 						</div>
 					</div>
+					<div class="hsd-notice" data-notice hidden><span data-notice-text></span></div>
+					<div class="hsd-create" data-create hidden>
+						<div class="hsd-divider">Create env overlay</div>
+						<div class="hsd-grid">
+							<label class="hsd-field"><span class="hsd-label">Path</span><input class="hsd-input" data-ov-path placeholder="env.img or /full/path/to/env.img" autocomplete="off" /></label>
+							<label class="hsd-field"><span class="hsd-label">Size</span><input class="hsd-input" data-ov-size placeholder="10G" autocomplete="off" /></label>
+						</div>
+						<label class="hsd-field"><span class="hsd-label">Extra packages</span><input class="hsd-input" data-ov-pkgs placeholder="additional packages" autocomplete="off" /></label>
+						<div><button type="button" class="hsd-btn hsd-primary" data-ov-create>Create &amp; Use</button></div>
+					</div>
 					<div class="hsd-actions">
 						<button type="button" class="hsd-btn hsd-ghost hsd-text-icon" data-defaults title="Save default resources for this helper">
 							<svg viewBox="0 -960 960 960" aria-hidden="true"><path d="m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24.5 12t22.5 15l119-50 110 190-103 78q1 7 1 13.5v27q0 6.5-2 13.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm112-260q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Z" /></svg>Defaults
@@ -410,6 +420,30 @@
 		fill: currentColor;
 		height: 18px;
 		width: 18px;
+	}
+	.hsd-notice {
+		align-items: center;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		color: var(--muted);
+		display: flex;
+		font-size: 12px;
+		padding: 6px 10px;
+	}
+	.hsd-notice[data-level='error'] {
+		border-color: var(--danger);
+		color: var(--danger);
+	}
+	.hsd-notice[hidden] {
+		display: none;
+	}
+	.hsd-create {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+	.hsd-create[hidden] {
+		display: none;
 	}
 	.hsd-actions {
 		align-items: center;
@@ -826,9 +860,10 @@
 		const tbody = q('[data-history]');
 		const env = q<HTMLInputElement>('[data-env]');
 		// The sources offer these. A helper is on the Start tab only after it is added; code-server starts added.
-		const OFFERED = [
+		// envRequired: the helper cannot start without an environment overlay.
+		const OFFERED: { name: string; description: string; envRequired?: boolean }[] = [
 			{ name: 'code-server', description: 'Open-source VS Code' },
-			{ name: 'rstudio-server', description: 'RStudio Server' },
+			{ name: 'rstudio-server', description: 'RStudio Server', envRequired: true },
 			{ name: 'igv', description: 'Integrative Genomics Viewer' },
 		];
 		const installed: string[] = ['code-server'];
@@ -871,12 +906,28 @@
 		const startButton = q<HTMLButtonElement>('[data-start]');
 		const defaultsButton = q<HTMLButtonElement>('[data-defaults]');
 
+		const notice = q('[data-notice]');
+		const noticeText = q('[data-notice-text]');
+		const create = q('[data-create]');
+		// Without an environment overlay the dashboard says so, and blocks Start when the helper needs one.
+		function refreshNotice() {
+			const required = !!OFFERED.find((o) => o.name === helper)?.envRequired;
+			const none = env.value.trim() === '';
+			notice.hidden = !helper || !none;
+			notice.dataset.level = required ? 'error' : 'info';
+			noticeText.textContent = required
+				? `No env overlay selected \u2014 required by ${helper} helper`
+				: 'No env overlay selected \u2014 helpful for storing packages and conda env';
+			startButton.disabled = !helper || (none && required);
+		}
+		env.addEventListener('input', refreshNotice);
+
 		function select(name: string) {
 			helper = name;
 			for (const item of list.querySelectorAll<HTMLElement>('[data-helper]')) {
 				item.setAttribute('aria-checked', String(item.dataset.helper === name));
 			}
-			startButton.disabled = !name;
+			refreshNotice();
 			defaultsButton.disabled = !name;
 			refreshPlaceholders();
 		}
@@ -987,9 +1038,17 @@
 
 		q('[data-clear]').addEventListener('click', () => {
 			env.value = '';
+			refreshNotice();
 		});
+		const ovPath = q<HTMLInputElement>('[data-ov-path]');
 		q('[data-new]').addEventListener('click', () => {
-			env.value = 'env.img';
+			create.hidden = !create.hidden;
+			if (!create.hidden && !ovPath.value.trim()) ovPath.value = 'env.img';
+		});
+		q('[data-ov-create]').addEventListener('click', () => {
+			env.value = ovPath.value.trim() || 'env.img';
+			create.hidden = true;
+			refreshNotice();
 		});
 
 		function refreshJobs() {

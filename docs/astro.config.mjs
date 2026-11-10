@@ -65,6 +65,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Environment Overlay Issues', slug: 'troubleshooting/environment_overlay' },
 						{ label: 'Helper Issues', slug: 'troubleshooting/helper' },
+						{ label: 'Running Issues', slug: 'troubleshooting/running' },
 					],
 				},
 				{

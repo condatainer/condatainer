@@ -40,7 +40,7 @@ When creating an overlay, CondaTainer searches for the package in this order:
 1. Search the **recipe sources** by name, and pick the newest version that matches.
 2. If no recipe is found, search the **Conda channels** by name, and pick the newest version that matches.
 
-**Key Benefits:**
+**Key Features:**
 
 - **Saves Inodes**: A cluster limits the number of files, and one Conda environment can hold 10k+; as an overlay, it counts as one.
 - **Scheduler Integration**: CondaTainer will automatically submit the heavy build recipe as a scheduler job.
@@ -141,16 +141,14 @@ The first line of the script picks the program that runs it, as on any Linux sys
 ```python title="count.py"
 #!/bin/env python3
 #DEP: samtools/1.22
+#DEP: python/3.12.13
 
 import subprocess
 subprocess.run(["samtools", "--version"])
 ```
 
 - Use `#!/bin/bash` for bash, or `#!/bin/env <program>` for another language, such as `python3` or `Rscript`.
-- The script needs no executable permission. Run it with `condatainer run count.py`.
-- The program must exist inside the container, in the base image or in an overlay listed by `#DEP:`. A program that is missing stops the script when it starts.
-- Any other first line, or none, is refused before anything runs.
-- `#DEP:` and the other headers work in any language whose comments start with `#`.
+- The program must exist inside the container, in the base image or in an overlay listed by `#DEP:`.
 
 ## List and remove overlays
 

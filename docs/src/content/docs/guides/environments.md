@@ -59,7 +59,7 @@ condatainer e
 # Shorthand for: condatainer exec -o env.img -w
 ```
 
-Inside the container, use `mm` to manage Conda packages. `mm` is a shell function for `condatainer env`:
+Inside the container, use `mm` to manage Conda packages:
 
 ```bash
 mm install r-base=4.4 r-tidyverse   # Install new packages
@@ -69,9 +69,7 @@ mm remove r-tidyverse               # Remove a package
 mm update --all                     # Update all installed packages
 ```
 
-- Tab completes the `mm` commands.
-- `condatainer shell init` sets `mm` up for bash, zsh and fish. The installer offers it.
-- In fish, `mm install`, `mm update` and `mm remove` re-run only the `.fish` activation scripts of packages. Most packages ship `.sh` scripts, which apply in a new container shell.
+**NOTE:** `mm` is a **shell function** for `condatainer env`. It requires `condatainer shell init` for zsh and fish.
 
 ### Install R packages
 

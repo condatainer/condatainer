@@ -59,11 +59,11 @@ CondaTainer categorizes overlays into four types, each serving a distinct purpos
 
 **Data overlays** automatically set **environment variables** pointing to their contents. You can see these variables by running `condatainer info <overlay>`.
 
+OS, App and Data overlays are together called **[module overlays](overlays.md)**. They are all read-only.
+
 **[Environment overlays](environments.md)** are the only writable layers. Any new packages you install land here. Once you are finished experimenting, you can **freeze** an environment, converting its current state into an immutable `.sqf` **snapshot**.
 
-OS, App and Data overlays are together called **[module overlays](overlays.md)**. They are all read-only. The environment overlay, and the `env.sqf` snapshot you freeze from it, are not module overlays.
-
-## Overlay Names
+## Overlay Naming Convention
 
 An OS, App or Data overlay is referred to by name, such as `samtools/1.22`. The number of parts in the name sets its default kind:
 
@@ -79,8 +79,6 @@ An environment overlay has no name. Give its file, such as `env.img`.
 - **Omit the version of an app.** A missing or partial version picks the newest match: `samtools` or `openjdk/17`. Write a data name in full.
 
 Valid separators are `/`, `--` and `=`. CondaTainer translates each to `/`, so `samtools=1.22` means `samtools/1.22`.
-
-A recipe can state its kind explicitly. See [Custom Build Recipe](../advanced/custom_recipe.mdx).
 
 ## Prefixes and Stacking Order
 

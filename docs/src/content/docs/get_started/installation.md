@@ -6,7 +6,8 @@ description: Install CondaTainer for personal use on Linux.
 ## Prerequisites
 
 - **Linux** on amd64 (x86_64) or arm64 (aarch64).
-- **Host Apptainer or Singularity** is optional. CondaTainer builds `.def` files with the downloaded Apptainer, or with `host_apptainer` if set.
+- **Unprivileged user namespaces**: a kernel feature that lets a normal user run a container without root. Most current HPC systems enable it. On Ubuntu 24.04 and later, see [Running Issues](../troubleshooting/running.md#cannot-create-a-user-namespace).
+- **FUSE**: a kernel feature that lets a normal user mount an image file. It needs `/dev/fuse` to be readable and writable by users, which is the usual default.
 
 **NOTE**: Slurm is the primary supported [scheduler](../guides/scheduler.mdx). PBS (PBS Pro or OpenPBS) and LSF support is experimental.
 

@@ -57,6 +57,8 @@ When you execute `condatainer run`, CondaTainer parses these directives and head
 - If a scheduler is detected, it submits the script as a job and prints the resulting job ID.
 - If no scheduler is found (or if the script asks for no resources), it executes the script immediately on the current machine.
 
+**NOTE:** This page assumes single-task jobs. If you are looking for MPI, check the [MPI](../advanced/mpi.mdx) page.
+
 ## Overriding Resources
 
 While resources are typically defined inside the script via headers or directives, you can easily override them for a specific run using command-line flags:
@@ -133,7 +135,7 @@ Each scheduler uses different directive syntax, but `condatainer run` standardiz
 </Tabs>
 
 :::note
-CondaTainer translates another scheduler's directives to this cluster's scheduler, such as `#SBATCH` lines on a PBS cluster. The partition and account are not translated, so set them with `-p` and `-A`.
+CondaTainer translates another scheduler's directives to this cluster's scheduler, such as `#SBATCH` lines on a PBS cluster. The partition and account are not translated.
 
 Only one set of directives in a script is read, in this order:
 
@@ -152,13 +154,50 @@ When your script runs through `condatainer run`, these variables hold the resour
 | `$MEM` | Memory of the job in MB |
 | `$MEM_GB` | Memory of the job in GB |
 
-An [MPI job](../advanced/mpi.mdx) runs several copies of the program at once. Each copy gets these values for itself, not for the whole job.
-
 ```bash
 samtools sort -@ "$NCPU" -o sorted.bam input.bam
 ```
 
-CondaTainer can also translate generic resource directives between schedulers.
+## Script Layout
+
+A script starts with a first line that names the program that runs it. Next comes the header block, the comment lines that tell CondaTainer and the scheduler what the job needs. The commands follow.
+
+<Tabs syncKey="script">
+  <TabItem label="Bash">
+    ```bash title="count.sh"
+    #!/bin/bash
+    #DEP: samtools/1.22
+
+    #NCPU: 4
+
+    samtools --version
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python title="count.py"
+    #!/bin/env python3
+    #DEP: samtools/1.22
+    #DEP: python/3.12.13
+
+    import subprocess
+    subprocess.run(["samtools", "--version"])
+    ```
+  </TabItem>
+  <TabItem label="R">
+    ```r title="version.R"
+    #!/bin/env Rscript
+    #DEP: ubuntu24/r/4.4.3
+    #DEP: ubuntu24/r-build-essential
+
+    cat(R.version.string, "\n")
+    ```
+  </TabItem>
+</Tabs>
+
+- The first line is `#!/bin/bash`, or `#!/bin/env <program>` for another language, such as `python3` or `Rscript`. `#!/usr/bin/bash` and `#!/usr/bin/env` work too.
+- Any other first line is refused, including `#!/bin/sh` and a script with none. The word after `env` must be a program, not an option such as `-S`.
+- The program must exist inside the container, in the base image or in an overlay listed by `#DEP:`.
+- The header block is the first line, the blank lines and the comment lines, up to the first line of code. Directives, such as `#SBATCH` and `#NCPU:`, after the first command are ignored.
 
 ## Run Execution Options
 
@@ -166,13 +205,8 @@ You can control exactly how `condatainer run` behaves using the following flags:
 
 ```bash
 # Dry Run: Show what would happen without actually submitting or running anything
-condatainer run --dry-run analysis.sh   
-
-# Local Execution: Force the script to run locally, ignoring scheduler directives
-condatainer run --no-submit analysis.sh   
+condatainer run --dry-run analysis.sh
 ```
-
-- `--dry-run` exits 1 when the run would not start, such as when a dependency is missing, and names each reason.
 
 Any values provided after the script name are passed directly into the script as positional arguments (`$1`, `$2`, etc.):
 
@@ -203,7 +237,7 @@ When submitted, this file spawns three separate jobs:
 - Every line must contain the same number of arguments. A quoted string counts as one.
 - Blank lines are refused.
 
-The script reads them as positinal arguments `$1`, `$2`:
+The script reads them as positional arguments `$1`, `$2`:
 
 <Tabs syncKey="scheduler">
   <TabItem label="Slurm">
@@ -331,8 +365,5 @@ bcftools view /data/input.vcf | head
 | `#WRITABLE:` | Mount `.img` overlays as writable. |
 | `#FAKEROOT:` | Appear as root inside the container. |
 
-- `#WRITABLE:` and `#FAKEROOT:` take no value. Any value other than `true` is an error.
+- `#WRITABLE:` and `#FAKEROOT:` are switches. Write the line with nothing after the colon to turn the option on, and delete the line to turn it off. Writing a value other than `true` is an error.
 - A `--bind` on the command line to the same container path replaces the script's `#BIND:`.
-- To set an environment variable, write `export MYVAR=value` in the script, which already runs inside the container, or pass `--env MYVAR=value`.
-- These headers follow the same rule as the others: they go in the comment lines at the top of the script.
-- They work in any language whose comments start with `#`. See [Scripts in Other Languages](../get_started/quick_start.mdx#scripts-in-other-languages).

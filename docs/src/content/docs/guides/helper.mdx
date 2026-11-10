@@ -93,12 +93,22 @@ In the demo below, code-server is already added. Click **Manage** to add another
 
     1. Select a helper application from the list.
     2. Configure the requested resources (CPUs, memory, walltime, and GPUs).
-    3. Select a writable environment overlay, plus any additional overlays you might need.
+    3. Select a writable environment overlay, plus any additional overlays you might need. See the **Env** tab.
     4. Click **Start**.
 
     The gear **Defaults** button saves the resources and options you prefer for the selected helper, such as CPUs, memory, time and the R version. The next launch of that helper starts from them.
+  </TabItem>
+  <TabItem label="Env">
+    The **Env Overlay (.img)** field on the **Start** tab holds the writable environment overlay, where packages are installed (see [Environment Overlay](environments.md)).
 
-    **NOTE:** Some helpers require a **environment overlay** for packages installation.  If you don't have one, just click **New** to create it on the fly (see [Environment Overlay](environments.md)).
+    With the field empty, the tab shows a message under it:
+
+    - `No env overlay selected — required by <helper> helper`: the helper needs one for its packages. **Start** stays disabled until you select one.
+    - `No env overlay selected — helpful for storing packages and conda env`: the helper runs without one.
+
+    Click **New** to create an overlay on the fly. The **Create env overlay** form takes a path (`env.img` by default), a size and extra packages. **Create & Use** puts the new overlay in the field.
+
+    When the file already exists and is writable, **New** becomes **Edit**. The form lets you change the size and add or remove packages. Click **Update** to apply them.
   </TabItem>
   <TabItem label="Jobs">
     The **Jobs** tab displays active cards for every running or pending helper. From these cards, you can **Open** the app in a new tab, **Copy** the link, or **Stop** the job.
@@ -106,7 +116,7 @@ In the demo below, code-server is already added. Click **Manage** to add another
     **Understanding the Links:**
     Every helper generates two unique addresses:
     - `<id>.localhost`: Routes directly to that specific job ID.
-    - `<helper-name>.localhost`: Routes to the oldest running job of that type. (The `link` button next to `copy`)
+    - `<helper-name>.localhost`: Routes to the running job of that type that was submitted first. (The `link` button next to `copy`)
 
     **Why use the name link?** Browsers tie saved settings, layouts, and cookies to specific URLs. If you use a new `<id>.localhost` link every time you start code-server, you will get a default-config workspace every time. By using the `<helper-name>.localhost` link, your address stays consistent across sessions.
   </TabItem>

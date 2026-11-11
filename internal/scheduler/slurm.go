@@ -18,7 +18,7 @@ import (
 
 var emitMem = settings.Bool("scheduler.slurm.emit_mem",
 	settings.Default(true), settings.Order(9),
-	settings.Help("Write --mem or --mem-per-cpu in generated SLURM scripts. Turn off where memory is not a scheduled resource."))
+	settings.Help("Write --mem or --mem-per-cpu in generated Slurm scripts. Turn off where memory is not a scheduled resource."))
 
 // slurmBlacklistedFlags lists SLURM directives that describe CPU topology / task
 // distribution that cannot be reliably translated. Any match leaves the resource directives unparsed.

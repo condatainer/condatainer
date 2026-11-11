@@ -7,6 +7,8 @@ The site is built with [Starlight](https://starlight.astro.build). Pages are Mar
 - The page's headings are listed in the left sidebar, under the page's entry. There is no right-hand column.
 - `plugins/sidebar-toc/` does this. Its `minHeadingLevel` and `maxHeadingLevel` options in `astro.config.mjs` set which headings are listed.
 - A page overrides them with `tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 4 }` in its frontmatter, or turns the list off with `tableOfContents: false`.
+- The plugin's `collapsed` option in `astro.config.mjs` names the pages whose list starts hidden: a page id such as `reference/cli`, or a prefix that ends in `/`. It is `['reference/']` now.
+- A reader's choice is saved in the browser for each page, and wins over that default.
 
 ## Code tabs
 
@@ -25,13 +27,16 @@ The site is built with [Starlight](https://starlight.astro.build). Pages are Mar
 
 ## Build
 
-Requires Node.js 22.12 or later.
+Requires Node.js 22.12 or later, and Go for the generated reference pages.
 
 ```bash
 cd docs
 npm ci
+npm run gen         # reference/config.md and reference/cli.md, from the Go code
 npm run build       # static site in dist/
 ```
+
+`npm run gen` writes `src/content/docs/reference/`, which git ignores. Run it again after a change to a setting, a command or its help.
 
 ## Preview
 
@@ -48,5 +53,5 @@ npm run serve:dev           # live reload
 
 ## Publish
 
-- A push to `main` that changes `docs/` deploys the latest docs to GitHub Pages.
+- A push to `main` that changes `docs/` or the Go code deploys the latest docs to GitHub Pages.
 - Read the Docs builds each release tag.

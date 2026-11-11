@@ -48,3 +48,53 @@ ul.sidebar-toc ul.sidebar-toc {
 .sidebar-toc a.is-active {
 	color: var(--sl-color-text-accent);
 }
+
+ul.sidebar-toc[hidden] {
+	display: none;
+}
+
+/* The button sits at the end of the page's entry, on the row of its link, in the link's own colors. */
+#starlight__sidebar li:has(> .sidebar-toc-toggle) {
+	position: relative;
+}
+
+#starlight__sidebar li:has(> .sidebar-toc-toggle) > a {
+	padding-inline-end: 2rem;
+}
+
+.sidebar-toc-toggle {
+	position: absolute;
+	inset-block-start: 0;
+	inset-inline-end: 0.5rem;
+	display: flex;
+	align-items: center;
+	/* As tall as the link's row: its line height of 1.4 plus 0.3em of padding above and below, in the link's font size. */
+	height: 2em;
+	font-size: var(--sl-text-base);
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--sl-color-gray-3);
+	cursor: pointer;
+}
+
+@media (min-width: 50rem) {
+	.sidebar-toc-toggle {
+		font-size: var(--sl-text-sm);
+	}
+}
+
+/* On the highlighted entry the link's text is the inverted color, so the button follows it. */
+.sidebar-toc-toggle:where(a[aria-current='page'] + *) {
+	color: var(--sl-color-text-invert);
+}
+
+/* The caret is the one a sidebar group uses: it points right when the list is hidden and down when it is shown. */
+.sidebar-toc-toggle svg {
+	flex-shrink: 0;
+	transition: transform 0.2s ease-in-out;
+}
+
+.sidebar-toc-toggle[aria-expanded='true'] svg {
+	transform: rotateZ(90deg);
+}

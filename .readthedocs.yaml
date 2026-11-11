@@ -1,10 +1,12 @@
-# Builds the tagged versions; the latest docs are on GitHub Pages.
+# The docs build: generate the reference pages, then build the site.
 version: 2
 
 build:
   os: ubuntu-24.04
   tools:
     nodejs: "22"
+    golang: "latest"
   commands:
+    - CGO_ENABLED=0 go run . _gen_reference docs/src/content/docs/reference
     - cd docs && npm ci && npm run build
     - mkdir -p $READTHEDOCS_OUTPUT/html && cp -r docs/dist/. $READTHEDOCS_OUTPUT/html/

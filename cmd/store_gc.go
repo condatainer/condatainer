@@ -142,7 +142,7 @@ func newStoreGCCmd() *cobra.Command {
 				return nil
 			}
 			if !utils.ShouldAnswerYes() && !utils.Confirm(cmd.Context(), os.Stderr,
-				fmt.Sprintf("Remove %d entrie(s)? Cannot be undone. [y/N]: ", len(found.Collectable))) {
+				fmt.Sprintf("Remove %s? Cannot be undone. [y/N]: ", entryCount(len(found.Collectable)))) {
 				return nil
 			}
 			opts.Apply = true
@@ -150,12 +150,12 @@ func newStoreGCCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			utils.PrintSuccess("Removed %d entrie(s), %s freed%s.",
-				len(removed.Collectable), utils.FormatSize(removed.Reclaimable), config.LayerNote(collectablePaths(removed)...))
+			utils.PrintSuccess("Removed %s, %s freed%s.",
+				entryCount(len(removed.Collectable)), utils.FormatSize(removed.Reclaimable), config.LayerNote(collectablePaths(removed)...))
 			return nil
 		},
 	}
-	cmd.Flags().IntVar(&graceDay, "grace", 0, "Days below which nothing is collected (0 uses store_gc_grace)")
+	cmd.Flags().IntVar(&graceDay, "grace", 0, "Never collect an entry younger than this many days (0 uses store_gc_grace)")
 	cmd.Flags().StringVarP(&layer, "layer", "l", "", "Limit to a layer: "+layerChoices)
 	jsonFlag(cmd.Flags(), &jsonOut)
 	cmd.RegisterFlagCompletionFunc("layer", //nolint:errcheck
@@ -194,12 +194,20 @@ func printGCReport(found *store.GCReport) {
 		utils.PrintDebug("kept %s: %s", entry.Path, entry.Reason)
 	}
 	if len(found.Collectable) == 0 {
-		utils.PrintSuccess("Nothing to collect (%d entries kept, grace %s).",
-			len(found.Retained), utils.FormatDuration(found.Grace))
+		utils.PrintSuccess("Nothing to collect (%s kept, grace %s).",
+			entryCount(len(found.Retained)), utils.FormatDuration(found.Grace))
 		return
 	}
-	utils.PrintSuccess("%d entrie(s) collectable, %s reclaimable%s.",
-		len(found.Collectable), utils.FormatSize(found.Reclaimable), config.LayerNote(collectablePaths(found)...))
+	utils.PrintSuccess("%s collectable, %s reclaimable%s.",
+		entryCount(len(found.Collectable)), utils.FormatSize(found.Reclaimable), config.LayerNote(collectablePaths(found)...))
+}
+
+// entryCount words a number of store entries, such as "1 entry" or "3 entries".
+func entryCount(n int) string {
+	if n == 1 {
+		return "1 entry"
+	}
+	return fmt.Sprintf("%d entries", n)
 }
 
 // collectablePaths lists the paths of the entries a gc run found.

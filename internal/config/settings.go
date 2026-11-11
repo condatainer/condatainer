@@ -9,7 +9,7 @@ import (
 var (
 	keyDefaultDistro = settings.String("default_distro",
 		settings.AllowEmpty(), settings.Order(1),
-		settings.Help("The os overlay that is the container root, such as ubuntu24. Recorded from the first source that recommends one."))
+		settings.Help("The OS overlay that is the container root, such as ubuntu24. Recorded from the first source that recommends one."))
 
 	keyHomeOverride = settings.String("home_override",
 		settings.AllowEmpty(), settings.OmitEmpty(), settings.Order(2),

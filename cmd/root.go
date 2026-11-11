@@ -61,7 +61,7 @@ var rootCmd = &cobra.Command{
 		// Skip initialization entirely for completion script generation
 		// (no config needed, and any stdout output corrupts the script)
 		cmdName := cmd.Name()
-		if cmdName == "completion" {
+		if cmdName == "completion" || cmdName == "_gen_reference" {
 			return
 		}
 

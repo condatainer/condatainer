@@ -3,7 +3,7 @@ name: Deploy Docs
 on:
   push:
     branches: [main]
-    paths: ['docs/**', '.github/workflows/docs.yml']
+    paths: ['docs/**', 'cmd/**', 'internal/**', 'main.go', 'go.mod', 'go.sum', '.github/workflows/docs.yml']
   workflow_dispatch:
 
 permissions:
@@ -24,6 +24,14 @@ jobs:
         working-directory: docs
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Generate the reference pages
+        working-directory: .
+        run: CGO_ENABLED=0 go run . _gen_reference docs/src/content/docs/reference
 
       - uses: actions/setup-node@v7
         with:

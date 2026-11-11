@@ -7,8 +7,8 @@ import sidebarToc from './plugins/sidebar-toc/index.mjs';
 import codeTabs from './plugins/code-tabs/index.mjs';
 import relativeMdLinks from 'astro-rehype-relative-markdown-links';
 
-// The address the site is served at: Read the Docs sets it for a tag, e.g.
-// /en/v1.2.0/, and SITE_URL for anything else. Unset, the site is served at /.
+// The address the site is served at: Read the Docs gives it in READTHEDOCS_CANONICAL_URL,
+// and SITE_URL for anything else. Unset, the site is served at /.
 const url = process.env.READTHEDOCS_CANONICAL_URL ?? process.env.SITE_URL;
 const base = url ? new URL(url).pathname : '/';
 
@@ -33,7 +33,7 @@ export default defineConfig({
 			head: [{ tag: 'script', content: readFileSync(new URL('./plugins/code-tabs/client.js', import.meta.url), 'utf8') }],
 			customCss: ['./src/styles/custom.css'],
 				components: { Header: './src/components/Header.astro', Hero: './src/components/Hero.astro', Footer: './src/components/Footer.astro' },
-			plugins: [sidebarToc({ minHeadingLevel: 2, maxHeadingLevel: 3 })],
+			plugins: [sidebarToc({ minHeadingLevel: 2, maxHeadingLevel: 3, collapsed: ['reference/'] })],
 			expressiveCode: { defaultProps: { frame: 'code' }, frames: { extractFileNameFromCode: false } },
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/condatainer/condatainer' }],
 			editLink: { baseUrl: 'https://github.com/condatainer/condatainer/edit/main/docs/' },
@@ -83,6 +83,13 @@ export default defineConfig({
 						{ label: 'Group Install', slug: 'deployment/group_install' },
 						{ label: 'Site Install', slug: 'deployment/site_install' },
 						{ label: 'Site Install with Modules', slug: 'deployment/site_modules' },
+					],
+				},
+				{
+					label: 'Reference',
+					items: [
+						{ label: 'CLI', slug: 'reference/cli' },
+						{ label: 'Configuration', slug: 'reference/config' },
 					],
 				},
 			],

@@ -56,6 +56,9 @@ logs/
 /images
 /libexec*
 
+# Reference pages the docs build generates
+/docs/src/content/docs/reference/
+
 # Ignore the configuration files
 /config.yaml
 /credentials.json

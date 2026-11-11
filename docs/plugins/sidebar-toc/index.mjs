@@ -9,8 +9,13 @@ const file = (name) => fileURLToPath(new URL(name, import.meta.url));
  * `minHeadingLevel` and `maxHeadingLevel` set which headings are listed. A page
  * overrides them with `tableOfContents: { minHeadingLevel, maxHeadingLevel }` in
  * its frontmatter, or turns the list off with `tableOfContents: false`.
+ *
+ * A button beside the page's entry shows or hides the list. The list starts open.
+ * `collapsed` names the pages whose list starts hidden: a page id such as
+ * `reference/cli`, or a prefix that ends in `/` such as `reference/`. A reader's
+ * own choice on a page is kept in the browser and wins over that default.
  */
-export default function sidebarToc({ minHeadingLevel = 2, maxHeadingLevel = 3 } = {}) {
+export default function sidebarToc({ minHeadingLevel = 2, maxHeadingLevel = 3, collapsed = [] } = {}) {
 	return {
 		name: 'sidebar-toc',
 		hooks: {
@@ -29,6 +34,7 @@ export default function sidebarToc({ minHeadingLevel = 2, maxHeadingLevel = 3 } 
 				updateConfig({
 					components,
 					tableOfContents: config.tableOfContents ?? { minHeadingLevel, maxHeadingLevel },
+					head: [...(config.head ?? []), { tag: 'meta', attrs: { name: 'sidebar-toc-collapsed', content: collapsed.join(',') } }],
 					customCss: [...(config.customCss ?? []), file('sidebar-toc.css')],
 				});
 			},

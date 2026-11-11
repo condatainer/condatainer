@@ -3,7 +3,18 @@ import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter';
 import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
 import SidebarSublist from '@astrojs/starlight/components/SidebarSublist.astro';
 
-const { sidebar, toc } = Astro.locals.starlightRoute;
+const route = Astro.locals.starlightRoute;
+const { sidebar, toc } = route;
+const pageId: string = route.id ?? route.entry?.id ?? '';
+
+// The pages whose list starts hidden come from the plugin's `collapsed` option, which it carries in a <meta> tag.
+const collapsedPages = (
+	route.head.find((tag) => tag.tag === 'meta' && tag.attrs?.name === 'sidebar-toc-collapsed')?.attrs?.content ?? ''
+)
+	.toString()
+	.split(',')
+	.filter(Boolean);
+const startCollapsed = collapsedPages.some((page) => (page.endsWith('/') ? pageId.startsWith(page) : pageId === page));
 
 // Starlight puts a page-title entry first, and nests headings deeper than the
 // minimum level under it. Both are lifted out so the list holds only headings.
@@ -20,7 +31,17 @@ const items = (toc?.items ?? []).flatMap((item) =>
 	<MobileMenuFooter />
 </div>
 
-{items.length > 0 && <script type="application/json" id="sidebar-toc-data" set:html={JSON.stringify(items)} />}
+{
+	items.length > 0 && (
+		<script
+			type="application/json"
+			id="sidebar-toc-data"
+			data-page={pageId}
+			data-collapsed={String(startCollapsed)}
+			set:html={JSON.stringify(items)}
+		/>
+	)
+}
 
 <script>
 	interface Item {
@@ -49,7 +70,36 @@ const items = (toc?.items ?? []).flatMap((item) =>
 
 	if (dataEl && current) {
 		const list = render(JSON.parse(dataEl.textContent || '[]'));
-		current.after(list);
+
+		// The button shows or hides the list. A reader's choice is kept per page; without one, the page's default applies.
+		const storeKey = `sidebar-toc:${dataEl.dataset.page ?? ''}`;
+		const button = document.createElement('button');
+		button.type = 'button';
+		button.className = 'sidebar-toc-toggle';
+		button.setAttribute('aria-label', 'Show or hide the headings of this page');
+		// The path is Starlight's right-caret icon, the one its sidebar groups show.
+		button.innerHTML =
+			'<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg>';
+		const setCollapsed = (collapsed: boolean, remember: boolean) => {
+			list.hidden = collapsed;
+			button.setAttribute('aria-expanded', String(!collapsed));
+			button.title = collapsed ? 'Show the headings of this page' : 'Hide the headings of this page';
+			if (!remember) return;
+			try {
+				localStorage.setItem(storeKey, collapsed ? 'hidden' : 'shown');
+			} catch {
+				// The choice is lost with the page when the browser blocks storage.
+			}
+		};
+		let saved: string | null = null;
+		try {
+			saved = localStorage.getItem(storeKey);
+		} catch {
+			// Storage blocked: the page's default applies.
+		}
+		setCollapsed(saved ? saved === 'hidden' : dataEl.dataset.collapsed === 'true', false);
+		button.addEventListener('click', () => setCollapsed(!list.hidden, true));
+		current.after(button, list);
 
 		// Marks the last heading that has scrolled past the top of the page.
 		const links = [...list.querySelectorAll<HTMLAnchorElement>('a')];

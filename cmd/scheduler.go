@@ -34,6 +34,14 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm", minutes)
 }
 
+// formatMemMB writes a per-node memory figure as whole GB, or MB when under 1 GB.
+func formatMemMB(mb int64) string {
+	if mb >= 1024 {
+		return fmt.Sprintf("%.0f GB", float64(mb)/1024)
+	}
+	return fmt.Sprintf("%d MB", mb)
+}
+
 var schedulerShowPartitions bool
 
 // schedulerGpuFilter is a tri-state set from the mutually exclusive --cpu/--gpu
@@ -54,7 +62,11 @@ var schedulerCmd = &cobra.Command{
 	Short: "Show the detected job scheduler",
 	Long: `Show the detected job scheduler: type, binary path, version, and availability.
 
-- -p also shows the resource limits of each partition (or queue).`,
+- -p also shows each partition (or queue): whether it is up, its limits, and its GPU types.
+- A partition that is not up is listed last.
+- A * after a partition name marks the default one. Many sites have none.
+- A + after CPUs or memory means the nodes differ. The figure is the smallest, and the largest node has more.
+- MAX NODES is the most nodes one job can use.`,
 	Example: `  condatainer scheduler           # Scheduler information
   condatainer scheduler -p        # Add per-partition limits
   condatainer scheduler -p --gpu  # Only GPU partitions
@@ -170,6 +182,11 @@ func runScheduler(cmd *cobra.Command, args []string) {
 				filteredLimits = append(filteredLimits, limit)
 			}
 
+			// Partitions that are not up go last, each group in the scheduler's order.
+			sort.SliceStable(filteredLimits, func(i, j int) bool {
+				return filteredLimits[i].IsUp() && !filteredLimits[j].IsUp()
+			})
+
 			if len(filteredLimits) > 0 {
 				fmt.Println()
 				switch schedulerGpuFilter {
@@ -184,26 +201,37 @@ func runScheduler(cmd *cobra.Command, args []string) {
 
 				// Create table writer
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "PARTITION\tCPUs\tMEMORY\tTIME\tNODES\tGPU TYPES")
-				fmt.Fprintln(w, "---------\t----\t------\t----\t-----\t---------")
+				fmt.Fprintln(w, "PARTITION\tAVAIL\tCPUs\tMEMORY\tTIME\tMAX NODES\tGPU TYPES")
+				fmt.Fprintln(w, "---------\t-----\t----\t------\t----\t---------\t---------")
 				for _, limit := range filteredLimits {
 					partitionName := limit.Partition
 					if partitionName == "" {
 						partitionName = "default"
 					}
 
-					// Format values
+					// Format values. A "+" marks the smallest of unequal nodes.
+					availStr := "-"
+					if limit.State != "" {
+						availStr = limit.State
+					}
+					displayName := partitionName
+					if limit.Default {
+						displayName += "*"
+					}
+
 					cpuStr := "-"
 					if limit.MaxCpusPerNode > 0 {
 						cpuStr = fmt.Sprintf("%d", limit.MaxCpusPerNode)
+						if limit.CpusLowerBound {
+							cpuStr += "+"
+						}
 					}
 
 					memStr := "-"
 					if limit.MaxMemMBPerNode > 0 {
-						if limit.MaxMemMBPerNode >= 1024 {
-							memStr = fmt.Sprintf("%.0f GB", float64(limit.MaxMemMBPerNode)/1024)
-						} else {
-							memStr = fmt.Sprintf("%d MB", limit.MaxMemMBPerNode)
+						memStr = formatMemMB(limit.MaxMemMBPerNode)
+						if limit.MemLowerBound {
+							memStr += "+"
 						}
 					}
 
@@ -213,8 +241,8 @@ func runScheduler(cmd *cobra.Command, args []string) {
 					}
 
 					nodesStr := "-"
-					if limit.MaxNodes > 0 {
-						nodesStr = fmt.Sprintf("%d", limit.MaxNodes)
+					if n := limit.EffectiveMaxNodes(); n > 0 {
+						nodesStr = fmt.Sprintf("%d", n)
 					}
 
 					// Collect GPU types for this partition
@@ -226,6 +254,8 @@ func runScheduler(cmd *cobra.Command, args []string) {
 							if existing, ok := gpuMap[gpu.Type]; ok {
 								existing.Total += gpu.Total
 								existing.Available += gpu.Available
+								existing.CpusPerNode = max(existing.CpusPerNode, gpu.CpusPerNode)
+								existing.MemMBPerNode = max(existing.MemMBPerNode, gpu.MemMBPerNode)
 							} else {
 								gpuCopy := gpu
 								gpuMap[gpu.Type] = &gpuCopy
@@ -243,7 +273,11 @@ func runScheduler(cmd *cobra.Command, args []string) {
 						gpuLines := make([]string, 0)
 						for _, gpuType := range gpuNames {
 							gpu := gpuMap[gpuType]
-							gpuLines = append(gpuLines, fmt.Sprintf("%s (%d)", gpu.Type, gpu.Total))
+							line := fmt.Sprintf("%s (%d)", gpu.Type, gpu.Total)
+							if gpu.CpusPerNode > 0 && gpu.MemMBPerNode > 0 {
+								line += fmt.Sprintf("  %d CPUs, %s per node", gpu.CpusPerNode, formatMemMB(gpu.MemMBPerNode))
+							}
+							gpuLines = append(gpuLines, line)
 						}
 						gpuTypesStr = strings.Join(gpuLines, "\n")
 					}
@@ -252,16 +286,16 @@ func runScheduler(cmd *cobra.Command, args []string) {
 					if strings.Contains(gpuTypesStr, "\n") {
 						// Multiple GPU types - print first line with all data
 						gpuTypeLines := strings.Split(gpuTypesStr, "\n")
-						fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-							partitionName, cpuStr, memStr, timeStr, nodesStr, gpuTypeLines[0])
+						fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+							displayName, availStr, cpuStr, memStr, timeStr, nodesStr, gpuTypeLines[0])
 						// Print remaining GPU types on separate rows
 						for i := 1; i < len(gpuTypeLines); i++ {
-							fmt.Fprintf(w, "\t\t\t\t\t%s\n", gpuTypeLines[i])
+							fmt.Fprintf(w, "\t\t\t\t\t\t%s\n", gpuTypeLines[i])
 						}
 					} else {
 						// Single or no GPU type - print normally
-						fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-							partitionName, cpuStr, memStr, timeStr, nodesStr, gpuTypesStr)
+						fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+							displayName, availStr, cpuStr, memStr, timeStr, nodesStr, gpuTypesStr)
 					}
 				}
 
@@ -306,13 +340,7 @@ func runScheduler(cmd *cobra.Command, args []string) {
 				fmt.Printf("  Max CPUs/Node:  %s\n", fmt.Sprintf("%d", maxCpusPerNode))
 			}
 			if maxMemMBPerNode > 0 {
-				var memStr string
-				if maxMemMBPerNode >= 1024 {
-					memStr = fmt.Sprintf("%.0f GB", float64(maxMemMBPerNode)/1024)
-				} else {
-					memStr = fmt.Sprintf("%d MB", maxMemMBPerNode)
-				}
-				fmt.Printf("  Max Mem/Node:   %s\n", memStr)
+				fmt.Printf("  Max Mem/Node:   %s\n", formatMemMB(maxMemMBPerNode))
 			}
 			if maxTime > 0 {
 				fmt.Printf("  Max Time:       %s\n", formatDuration(maxTime))

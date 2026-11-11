@@ -23,3 +23,22 @@ func TestSpecDefaultsInitialValues(t *testing.T) {
 		t.Errorf("Time = %v; want 2h", defaults.Time)
 	}
 }
+
+func TestEffectiveMaxNodes(t *testing.T) {
+	tests := []struct {
+		name string
+		l    ResourceLimits
+		want int
+	}{
+		{"cap below the partition", ResourceLimits{MaxNodes: 4, Nodes: 10}, 4},
+		{"no cap", ResourceLimits{Nodes: 10}, 10},
+		{"cap above the partition", ResourceLimits{MaxNodes: 40, Nodes: 10}, 10},
+		{"cap only", ResourceLimits{MaxNodes: 4}, 4},
+		{"neither", ResourceLimits{}, 0},
+	}
+	for _, tc := range tests {
+		if got := tc.l.EffectiveMaxNodes(); got != tc.want {
+			t.Errorf("%s: got %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}

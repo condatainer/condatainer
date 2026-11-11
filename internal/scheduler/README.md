@@ -93,6 +93,17 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - They are cleared on cross-scheduler translation for the same reason.
 - HTCondor has no account. Its `accounting_group` is a fairshare group, so it fills the partition and the account stays unset.
 
+## Cluster limits
+
+- SLURM partitions come from one grouped `sinfo` call, never `sinfo -N`.
+  - The node-based listing is orders of magnitude slower on a large cluster.
+- A figure the scheduler gives as a minimum is reported as a lower bound, never as exact.
+- A GPU type keeps the CPUs and memory of its own nodes.
+  - A partition's own figures are the largest over its node types, so they do not describe a GPU node.
+- A partition with no default is normal.
+  - The site's submit plugin may choose one, so a job names no partition unless the user does.
+- LSF hosts and GPUs come from `lshosts`, not `bhosts`. This is untested on a real cluster.
+
 ## Excluded nodes
 
 - Each scheduler's script writer adds `scheduler.exclude_nodes`, so run, build, restore and helper jobs all get it.

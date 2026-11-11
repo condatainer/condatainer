@@ -21,7 +21,7 @@ import (
 type LsfScheduler struct {
 	bsubBin           string
 	bjobsBin          string
-	bhostsBin         string
+	lshostsBin        string
 	bqueuesBin        string
 	directiveRe       *regexp.Regexp
 	jobIDRe           *regexp.Regexp
@@ -60,13 +60,13 @@ func newLsfSchedulerWithBinary(bsubBin string) (*LsfScheduler, error) {
 	}
 
 	bjobsCmd := siblingBin(binPath, "bjobs")
-	bhostsCmd := siblingBin(binPath, "bhosts")
+	lshostsCmd := siblingBin(binPath, "lshosts")
 	bqueuesCmd := siblingBin(binPath, "bqueues")
 
 	return &LsfScheduler{
 		bsubBin:     binPath,
 		bjobsBin:    bjobsCmd,
-		bhostsBin:   bhostsCmd,
+		lshostsBin:  lshostsCmd,
 		bqueuesBin:  bqueuesCmd,
 		directiveRe: regexp.MustCompile(`^\s*#BSUB\s+(.+)$`),
 		jobIDRe:     regexp.MustCompile(`Job <(\d+)> is submitted`),
@@ -834,8 +834,8 @@ func (l *LsfScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, error)
 		Limits:        make([]ResourceLimits, 0),
 	}
 
-	// Single pass: get host CPU/mem (bhosts -w + lshosts -w).
-	if l.bhostsBin != "" {
+	// Two lshosts calls: CPUs and memory per host, then one row per GPU.
+	if l.lshostsBin != "" {
 		maxCpus, maxMem, err := l.getHostResources()
 		if err == nil {
 			info.MaxCpusPerNode = maxCpus
@@ -864,59 +864,36 @@ func (l *LsfScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, error)
 	return info, nil
 }
 
-// getHostResources queries LSF for host resources using bhosts and lshosts
+// getHostResources queries LSF for the largest host CPU count and memory using lshosts -w.
 func (l *LsfScheduler) getHostResources() (int, int64, error) {
-	// First get CPU info from bhosts
-	output, err := runCommand(context.Background(), "LSF", "query-hosts", l.bhostsBin, "-w")
+	output, err := runCommand(context.Background(), "LSF", "query-hosts", l.lshostsBin, "-w")
 	if err != nil {
 		return 0, 0, NewClusterError("LSF", "query hosts", err)
 	}
+	maxCpus, maxMemMB := parseLshostsResources(string(output))
+	return maxCpus, maxMemMB, nil
+}
 
+// parseLshostsResources reads lshosts -w rows of
+// "HOST_NAME type model cpuf ncpus maxmem maxswp server RESOURCES" and returns the largest
+// ncpus and maxmem. A host with "-" for a figure does not count for it.
+// https://www.ibm.com/docs/en/SSWRJV_10.1.0/lsf_command_ref/lshosts.1.html
+func parseLshostsResources(output string) (int, int64) {
 	var maxCpus int
-
-	lines := strings.Split(string(output), "\n")
-	for i, line := range lines {
-		if i == 0 {
-			continue // Skip header line
-		}
-
+	var maxMemMB int64
+	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 4 {
+		if len(fields) < 6 || fields[0] == "HOST_NAME" {
 			continue
 		}
-
-		// bhosts -w output: HOST_NAME STATUS JL/U MAX NJOBS RUN SSUSP USUSP RSV
-		if cpus, err := strconv.Atoi(fields[3]); err == nil && cpus > maxCpus {
+		if cpus, err := strconv.Atoi(fields[4]); err == nil && cpus > maxCpus {
 			maxCpus = cpus
 		}
-	}
-
-	// Get memory info from lshosts
-	var maxMemMB int64
-	lshostsCmd, err := exec.LookPath("lshosts")
-	if err == nil {
-		output, err := runCommand(context.Background(), "LSF", "query-host-memory", lshostsCmd, "-w")
-		if err == nil {
-			lines := strings.Split(string(output), "\n")
-			for i, line := range lines {
-				if i == 0 {
-					continue // Skip header line
-				}
-
-				fields := strings.Fields(line)
-				// lshosts output: HOST_NAME type model cpuf ncpus maxmem maxswp server RESOURCES
-				// maxmem is typically in format like "32G" or "65536M"
-				if len(fields) >= 6 {
-					memStr := fields[5]
-					if memMB, err := parseLsfMemoryToMB(memStr); err == nil && memMB > maxMemMB {
-						maxMemMB = memMB
-					}
-				}
-			}
+		if memMB, err := parseLsfHostMemoryMB(fields[5]); err == nil && memMB > maxMemMB {
+			maxMemMB = memMB
 		}
 	}
-
-	return maxCpus, maxMemMB, nil
+	return maxCpus, maxMemMB
 }
 
 // getQueueLimits queries LSF for queue resource limits using bqueues.
@@ -1044,146 +1021,67 @@ func (l *LsfScheduler) getQueueLimits(maxCpus int, maxMemMB int64, gpuInfo []Gpu
 	return limits, nil
 }
 
-// getGpuInfo queries LSF for GPU information using bhosts
+// getGpuInfo queries LSF for the GPUs of every host using lshosts -gpu.
 func (l *LsfScheduler) getGpuInfo() ([]GpuInfo, error) {
-	// Try bhosts -gpu first (LSF 10.1+)
-	output, err := runCommand(context.Background(), "LSF", "query-gpu-info", l.bhostsBin, "-gpu")
-	if err != nil {
-		// If -gpu flag not supported, try parsing bhosts -l output
-		return l.getGpuInfoFromHostDetails()
-	}
-
-	gpuMap := make(map[string]*GpuInfo)
-	lines := strings.Split(string(output), "\n")
-
-	for i, line := range lines {
-		if i == 0 {
-			continue // Skip header line
-		}
-
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-
-		// bhosts -gpu output format (varies by LSF version):
-		// HOST_NAME ngpus gputype ...
-		// or HOST_NAME gpu_shared_avg_mut gpu_shared_avg_ut ngpus_physical ...
-
-		var gpuCount int
-		var gpuType string
-
-		// Try to find ngpus field (usually contains number of GPUs)
-		for _, field := range fields[1:] {
-			if count, err := strconv.Atoi(field); err == nil && count > 0 {
-				gpuCount = count
-				break
-			}
-		}
-
-		if gpuCount == 0 {
-			continue
-		}
-
-		// Look for GPU type in the output (often contains "nvidia", "tesla", etc.)
-		gpuType = "gpu" // default
-		for _, field := range fields {
-			lower := strings.ToLower(field)
-			if strings.Contains(lower, "nvidia") || strings.Contains(lower, "tesla") ||
-				strings.Contains(lower, "a100") || strings.Contains(lower, "v100") ||
-				strings.Contains(lower, "h100") || strings.Contains(lower, "gpu") {
-				gpuType = field
-				break
-			}
-		}
-
-		// Aggregate by GPU type
-		if existing, ok := gpuMap[gpuType]; ok {
-			existing.Total += gpuCount
-			existing.Available += gpuCount // LSF doesn't easily expose available vs used
-		} else {
-			gpuMap[gpuType] = &GpuInfo{
-				Type:      gpuType,
-				Total:     gpuCount,
-				Available: gpuCount,
-			}
-		}
-	}
-
-	gpus := make([]GpuInfo, 0, len(gpuMap))
-	for _, info := range gpuMap {
-		gpus = append(gpus, *info)
-	}
-
-	return gpus, nil
-}
-
-// getGpuInfoFromHostDetails attempts to extract GPU info from detailed host info
-func (l *LsfScheduler) getGpuInfoFromHostDetails() ([]GpuInfo, error) {
-	// This is a fallback for older LSF versions
-	// Query bhosts for list of hosts, then bhosts -l for each
-	output, err := runCommand(context.Background(), "LSF", "query-gpu-hosts", l.bhostsBin)
+	output, err := runCommand(context.Background(), "LSF", "query-gpu-info", l.lshostsBin, "-gpu")
 	if err != nil {
 		return nil, NewClusterError("LSF", "query GPU info", err)
 	}
-
-	gpuMap := make(map[string]*GpuInfo)
-	lines := strings.Split(string(output), "\n")
-
-	// Parse bhosts output to find hosts, then query detailed info
-	for i, line := range lines {
-		if i == 0 {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		hostName := fields[0]
-
-		// Query detailed host info
-		detailOutput, err := runCommand(context.Background(), "LSF", "query-gpu-host-detail", l.bhostsBin, "-l", hostName)
-		if err != nil {
-			continue
-		}
-
-		// Parse for GPU-related resources
-		// LSF stores GPU info in resources like "ngpus_physical", "gpu", etc.
-		detailStr := string(detailOutput)
-		if strings.Contains(detailStr, "ngpus") || strings.Contains(detailStr, "gpu") {
-			// Found GPU info - parse it
-			// This is simplified - real parsing would be more sophisticated
-			gpuType := "gpu"
-			gpuCount := 1 // Conservative estimate
-
-			if existing, ok := gpuMap[gpuType]; ok {
-				existing.Total += gpuCount
-				existing.Available += gpuCount
-			} else {
-				gpuMap[gpuType] = &GpuInfo{
-					Type:      gpuType,
-					Total:     gpuCount,
-					Available: gpuCount,
-				}
-			}
-		}
-	}
-
-	gpus := make([]GpuInfo, 0, len(gpuMap))
-	for _, info := range gpuMap {
-		gpus = append(gpus, *info)
-	}
-
-	return gpus, nil
+	return parseLshostsGpu(string(output)), nil
 }
 
-// parseLsfMemoryToMB parses LSF memory format from lshosts (e.g., "32G", "65536M") to MB
-func parseLsfMemoryToMB(memStr string) (int64, error) {
-	memStr = strings.TrimSpace(memStr)
+// parseLshostsGpu reads lshosts -gpu rows of "HOST_NAME gpu_id gpu_model gpu_driver ...".
+// There is one row per GPU, so a model's total is its row count. Models keep the order of
+// their first row. The queue is not known, so the partition stays empty.
+func parseLshostsGpu(output string) []GpuInfo {
+	var gpus []GpuInfo
+	idx := make(map[string]int)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[0] == "HOST_NAME" {
+			continue
+		}
+		if _, err := strconv.Atoi(fields[1]); err != nil {
+			continue
+		}
+		model := fields[2]
+		i, ok := idx[model]
+		if !ok {
+			gpus = append(gpus, GpuInfo{Type: model})
+			i = len(gpus) - 1
+			idx[model] = i
+		}
+		gpus[i].Total++
+		gpus[i].Available++ // LSF does not report how many are in use here
+	}
+	return gpus
+}
+
+// parseLsfHostMemoryMB reads an lshosts memory figure such as "31.9G", "65536M" or "262144".
+//   - A bare number is KB, the lshosts default. LSF_UNIT_FOR_LIMITS overrides it when set.
+//   - "-" means the host did not report it.
+func parseLsfHostMemoryMB(memStr string) (int64, error) {
+	memStr = strings.ToUpper(strings.TrimSpace(memStr))
 	if memStr == "" || memStr == "-" {
 		return 0, fmt.Errorf("no memory info")
 	}
-	return parseMemoryMB(memStr)
+	digits := strings.TrimRight(memStr, "BKMGTPE")
+	value, err := strconv.ParseFloat(digits, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %s", ErrInvalidMemoryFormat, memStr)
+	}
+	unit := strings.TrimSuffix(strings.TrimPrefix(memStr, digits), "B")
+	if unit == "" {
+		unit = strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(os.Getenv("LSF_UNIT_FOR_LIMITS"))), "B")
+	}
+	if unit == "" {
+		unit = "K"
+	}
+	factor := map[string]float64{"K": 1.0 / 1024, "M": 1, "G": 1024, "T": 1024 * 1024}[unit]
+	if factor == 0 {
+		return 0, fmt.Errorf("%w: %s", ErrInvalidMemoryFormat, memStr)
+	}
+	return int64(value * factor), nil
 }
 
 // parseLsfMemoryWithUnits parses an LSF rusage[mem=] or select[mem=] value to MB.

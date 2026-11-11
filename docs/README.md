@@ -53,5 +53,5 @@ npm run serve:dev           # live reload
 
 ## Publish
 
-- A push to `main` that changes `docs/` or the Go code deploys the latest docs to GitHub Pages.
-- Read the Docs builds each release tag.
+- A stable release tag, such as `v0.2.0`, deploys the docs to GitHub Pages.
+- Read the Docs builds each stable release tag.

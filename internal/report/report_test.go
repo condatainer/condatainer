@@ -123,3 +123,41 @@ func TestCopyAddsTheManifestOnlyWhenPublished(t *testing.T) {
 		t.Errorf("published copy = %s", published)
 	}
 }
+
+// A scheduler document says its scheduler when there is one, and a lower-bound flag is written even when false.
+func TestSchedulerDocuments(t *testing.T) {
+	empty := write(t, &SchedulerInfo{})
+	if want := "{\n  \"schema_version\": 1,\n  \"problems\": []\n}\n"; empty != want {
+		t.Fatalf("empty document =\n%s\nwant\n%s", empty, want)
+	}
+
+	doc := &Partitions{
+		Scheduler: &Scheduler{Type: "slurm", Available: true},
+		Partitions: List[Partition]{{
+			Name: "gpu", State: "up", MaxTimeS: 3600,
+			NodeTypes: List[NodeType]{{Nodes: 2, Cpus: 64, Gpus: List[NodeGpu]{{Type: "h100", PerNode: 8}}}},
+		}},
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(write(t, doc)), &got); err != nil {
+		t.Fatal(err)
+	}
+	part := got["partitions"].([]any)[0].(map[string]any)
+	if part["default"] != false || part["time_unlimited"] != false {
+		t.Errorf("default = %v, time_unlimited = %v, want both written as false", part["default"], part["time_unlimited"])
+	}
+	if _, ok := part["max_nodes"]; ok {
+		t.Error("max_nodes written with no cap")
+	}
+	node := part["node_types"].([]any)[0].(map[string]any)
+	if node["cpus_lower_bound"] != false || node["mem_lower_bound"] != false {
+		t.Errorf("lower-bound flags = %v, %v, want both written as false", node["cpus_lower_bound"], node["mem_lower_bound"])
+	}
+	if _, ok := node["mem_mb"]; ok {
+		t.Error("mem_mb written when not reported")
+	}
+	sched := got["scheduler"].(map[string]any)
+	if sched["inside_job"] != false || sched["available"] != true {
+		t.Errorf("scheduler = %v", sched)
+	}
+}

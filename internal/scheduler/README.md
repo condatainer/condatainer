@@ -95,9 +95,12 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 
 ## Cluster limits
 
-- SLURM partitions come from one grouped `sinfo` call, never `sinfo -N`.
+- SLURM partitions come from one grouped `sinfo -e` call, never `sinfo -N`.
   - The node-based listing is orders of magnitude slower on a large cluster.
+  - `-e` keeps nodes of different memory in separate rows. Without it `sinfo` shows only the smallest, as `748G+`.
 - A figure the scheduler gives as a minimum is reported as a lower bound, never as exact.
+- The `sinfo` call runs without the user's `SINFO_*` variables. They are defaults that filter or reorder the listing, and no option switches each of them off.
+- The JSON lists node types exactly. The table joins types whose memory is within 10%, so a few MB do not add a row.
 - A GPU type keeps the CPUs and memory of its own nodes.
   - A partition's own figures are the largest over its node types, so they do not describe a GPU node.
 - A partition with no default is normal.

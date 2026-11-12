@@ -66,26 +66,46 @@ type GpuSpec struct {
 
 // GpuInfo holds information about available GPU types in the cluster
 type GpuInfo struct {
-	Type         string // GPU type/model
-	Total        int    // Total number of this GPU type
-	Available    int    // Currently available
-	Partition    string // Partition/queue name (optional)
-	CpusPerNode  int    // CPUs per node of the nodes that carry this type, 0 when not reported
-	MemMBPerNode int64  // Memory per node of the nodes that carry this type, 0 when not reported
+	Type      string // GPU type/model
+	Total     int    // Total number of this GPU type
+	Available int    // Currently available
+	Partition string // Partition/queue name (optional)
+}
+
+// NodeGpu is one GPU type of a node type and how many of it one node carries.
+type NodeGpu struct {
+	Type    string
+	PerNode int
+}
+
+// NodeType is a group of nodes of one partition with the same CPUs, GPUs and memory class.
+type NodeType struct {
+	Nodes int
+	// NodesUp is how many of Nodes are up and take jobs. Nil when the scheduler does not report node state.
+	NodesUp *int
+	Cpus    int   // CPUs per node
+	MemMB   int64 // Memory per node in MB
+	// CpusLowerBound and MemLowerBound mark a figure that is the smallest of unequal nodes.
+	// The largest node has more.
+	CpusLowerBound bool
+	MemLowerBound  bool
+	Gpus           []NodeGpu // The GPU types every node of the group carries
 }
 
 // ResourceLimits holds scheduler resource limits per partition/queue.
 // CPU and memory limits are per-node (matching how schedulers report them).
+// Where NodeTypes is set, the per-node figures and Nodes are the largest and the sum over it.
 type ResourceLimits struct {
 	MaxNodes        int           // Maximum nodes per job, 0 when unlimited or not reported
 	Nodes           int           // Nodes in the partition, 0 when not reported
 	MaxCpusPerNode  int           // Maximum CPUs per node in this partition
 	MaxMemMBPerNode int64         // Maximum memory per node in MB
 	MaxGpus         int           // Maximum GPUs per job (total across all nodes)
-	DefaultTime     time.Duration // Default walltime if not specified
-	MaxTime         time.Duration // Maximum walltime (e.g., "7-00:00:00")
+	MaxTime         time.Duration // Longest one job may run, 0 when unlimited or not reported
+	TimeUnlimited   bool          // The scheduler says the partition has no time limit
 	Partition       string        // Partition/queue name these limits apply to
 	State           string        // "up" when the partition runs jobs, else the scheduler's word; "" when not reported
+	NodeTypes       []NodeType    // The partition's node groups, empty when the scheduler does not report them
 	Default         bool          // The partition a job goes to when none is named
 	// CpusLowerBound and MemLowerBound mark a figure that is the smallest of unequal nodes.
 	// The largest node has more.
@@ -95,15 +115,6 @@ type ResourceLimits struct {
 
 // IsUp reports whether the partition runs jobs. A partition whose state is not reported counts as up.
 func (l ResourceLimits) IsUp() bool { return l.State == "" || l.State == "up" }
-
-// EffectiveMaxNodes is how many nodes one job can use: the per-job cap, or the whole partition
-// when the cap is unset or larger than the partition. 0 when neither is known.
-func (l ResourceLimits) EffectiveMaxNodes() int {
-	if l.MaxNodes > 0 && (l.Nodes == 0 || l.MaxNodes < l.Nodes) {
-		return l.MaxNodes
-	}
-	return l.Nodes
-}
 
 // ResourceSpec holds compute geometry for a job.
 // A nil pointer means resource parsing failed.

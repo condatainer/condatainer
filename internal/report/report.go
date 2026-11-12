@@ -1,5 +1,5 @@
-// Package report is the JSON an overlay command prints with --json: one
-// document on stdout, built from parts every such command shares.
+// Package report is the JSON a command prints with --json: one
+// document on stdout, built from parts the commands share.
 package report
 
 import (

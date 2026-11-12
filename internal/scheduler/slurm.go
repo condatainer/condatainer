@@ -809,7 +809,7 @@ func (s *SlurmScheduler) Submit(ctx context.Context, scriptPath string, deps []D
 	return jobID, nil
 }
 
-// GetClusterInfo retrieves SLURM cluster configuration
+// GetClusterInfo retrieves SLURM cluster configuration. A failed sinfo call is returned and not cached.
 func (s *SlurmScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, error) {
 	if s.cachedClusterInfo != nil {
 		return s.cachedClusterInfo, nil
@@ -821,11 +821,12 @@ func (s *SlurmScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, erro
 	}
 
 	if s.sinfoCommand != "" {
-		limits, gpus, err := s.getPartitions()
-		if err == nil {
-			info.Limits = limits
-			info.AvailableGpus = gpus
+		limits, gpus, err := s.getPartitions(ctx)
+		if err != nil {
+			return nil, err
 		}
+		info.Limits = limits
+		info.AvailableGpus = gpus
 	}
 
 	s.cachedClusterInfo = info
@@ -834,10 +835,10 @@ func (s *SlurmScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, erro
 
 // getPartitions queries SLURM for every partition's state, time limits, node shape and GPUs in one sinfo call.
 // It never passes -N, which lists a row per node per partition and is far slower on a large cluster.
-func (s *SlurmScheduler) getPartitions() ([]ResourceLimits, []GpuInfo, error) {
-	// %P=partition (* marks the default) %a=state %l=max time %L=default time %s=job size
-	// %c=CPUs/node %m=mem/node(MB) %G=GRES %D=node-count
-	output, err := runCommand(context.Background(), "SLURM", "query-partitions", s.sinfoCommand, "-o", sinfoPartitionFormat, "--noheader")
+func (s *SlurmScheduler) getPartitions(ctx context.Context) ([]ResourceLimits, []GpuInfo, error) {
+	// %P=partition (* marks the default) %a=state %l=max time %s=job size
+	// %c=CPUs/node %m=mem/node(MB) %G=GRES %F=nodes allocated/idle/other/total
+	output, err := runCommandEnv(ctx, sinfoEnv(), "SLURM", "query-partitions", s.sinfoCommand, "-e", "-o", sinfoPartitionFormat, "--noheader")
 	if err != nil {
 		return nil, nil, NewClusterError("SLURM", "query partitions", err)
 	}
@@ -845,22 +846,42 @@ func (s *SlurmScheduler) getPartitions() ([]ResourceLimits, []GpuInfo, error) {
 	return limits, gpus, nil
 }
 
+// sinfoEnv is the environment of a sinfo call, without the user's SINFO_* defaults.
+// They filter, sort and widen what sinfo lists, and no option switches each of them off.
+func sinfoEnv() []string {
+	env := commandEnv()
+	if env == nil {
+		env = os.Environ()
+	}
+	kept := make([]string, 0, len(env))
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, "SINFO_") {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
+}
+
 // sinfoPartitionFormat has no %T, which would split a partition into a row per node state.
-const sinfoPartitionFormat = "%P|%a|%l|%L|%s|%c|%m|%G|%D"
+// It is used with -e, so a row holds only nodes that agree on every column.
+const sinfoPartitionFormat = "%P|%a|%l|%s|%c|%m|%G|%F"
 
 // parseSinfoPartitions reads the rows of sinfoPartitionFormat, in the order sinfo prints them.
-//   - A partition has several rows when its nodes differ in GRES. Nodes add up and the largest
-//     CPUs and memory win.
+//   - A partition has several rows when its nodes differ in CPUs, memory or GRES. Rows that agree on
+//     CPUs, memory and GRES are one node type. Their nodes add up. A socket suffix such as "(S:0-3)" is ignored.
+//   - The node column is "allocated/idle/other/total", or a plain total. Nodes that are allocated or idle
+//     are up and take jobs. The rest are down, drained or in another state that takes none.
 //   - A trailing "+" on CPUs or memory marks the smallest value of a row that groups unequal nodes.
+//   - The per-node figures and the node count of a partition are the largest and the sum over its
+//     node types.
 func parseSinfoPartitions(output string) ([]ResourceLimits, []GpuInfo) {
 	var limits []ResourceLimits
-	var gpus []GpuInfo
 	limitIdx := make(map[string]int)
-	gpuIdx := make(map[string]int) // key = "partition:gpuType"
+	typeIdx := make(map[string]int) // key = partition, CPUs, memory and GPUs; the index in the node types of the partition
 
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		f := strings.Split(line, "|")
-		if len(f) < 9 {
+		if len(f) < 8 {
 			continue
 		}
 		name := strings.TrimSpace(f[0])
@@ -870,74 +891,107 @@ func parseSinfoPartitions(output string) ([]ResourceLimits, []GpuInfo) {
 		i, ok := limitIdx[name]
 		if !ok {
 			limits = append(limits, ResourceLimits{
-				Partition:   name,
-				State:       strings.ToLower(strings.TrimSpace(f[1])),
-				Default:     isDefault,
-				MaxTime:     parseSlurmTime(f[2]),
-				DefaultTime: parseSlurmTime(f[3]),
-				MaxNodes:    parseSlurmMaxNodes(f[4]),
+				Partition:     name,
+				State:         strings.ToLower(strings.TrimSpace(f[1])),
+				Default:       isDefault,
+				MaxTime:       parseSlurmTime(f[2]),
+				TimeUnlimited: strings.EqualFold(strings.TrimSpace(f[2]), "infinite"),
+				MaxNodes:      parseSlurmMaxNodes(f[3]),
 			})
 			i = len(limits) - 1
 			limitIdx[name] = i
 		}
 		l := &limits[i]
 
-		cpuText, cpuLower := splitLowerBound(f[5])
+		cpuText, cpuLower := splitLowerBound(f[4])
 		cpus, _ := strconv.Atoi(cpuText)
-		memText, memLower := splitLowerBound(f[6])
+		memText, memLower := splitLowerBound(f[5])
 		memMB, _ := parseMemoryMB(memText)
-		nodes, _ := strconv.Atoi(strings.TrimSpace(f[8]))
+		nodes, nodesUp := parseSlurmNodeCounts(f[7])
+		gpus := parseSlurmGres(f[6])
 
-		l.Nodes += nodes
-		l.CpusLowerBound = l.CpusLowerBound || cpuLower
-		l.MemLowerBound = l.MemLowerBound || memLower
-		l.MaxCpusPerNode = max(l.MaxCpusPerNode, cpus)
-		l.MaxMemMBPerNode = max(l.MaxMemMBPerNode, memMB)
+		key := name + "|" + strconv.Itoa(cpus) + "|" + strconv.FormatInt(memMB, 10) + "|" + gpuKey(gpus)
+		j, ok := typeIdx[key]
+		if !ok {
+			l.NodeTypes = append(l.NodeTypes, NodeType{Cpus: cpus, MemMB: memMB, Gpus: gpus})
+			j = len(l.NodeTypes) - 1
+			typeIdx[key] = j
+		}
+		t := &l.NodeTypes[j]
+		t.Nodes += nodes
+		t.NodesUp = addNodesUp(t.NodesUp, nodesUp)
+		t.CpusLowerBound = t.CpusLowerBound || cpuLower
+		t.MemLowerBound = t.MemLowerBound || memLower
+	}
 
-		// Example: gpu:nvidia_h100:8(S:0-3),gpu:nvidia_a100:4
-		for _, entry := range strings.Split(strings.TrimSpace(f[7]), ",") {
-			if !strings.HasPrefix(entry, "gpu:") {
-				continue
+	var gpus []GpuInfo
+	gpuIdx := make(map[string]int) // key = "partition:gpuType"
+	for i := range limits {
+		l := &limits[i]
+		for _, t := range l.NodeTypes {
+			l.Nodes += t.Nodes
+			l.MaxCpusPerNode = max(l.MaxCpusPerNode, t.Cpus)
+			l.MaxMemMBPerNode = max(l.MaxMemMBPerNode, t.MemMB)
+			l.CpusLowerBound = l.CpusLowerBound || t.CpusLowerBound
+			l.MemLowerBound = l.MemLowerBound || t.MemLowerBound
+			for _, g := range t.Gpus {
+				key := l.Partition + ":" + g.Type
+				k, ok := gpuIdx[key]
+				if !ok {
+					gpus = append(gpus, GpuInfo{Type: g.Type, Partition: l.Partition})
+					k = len(gpus) - 1
+					gpuIdx[key] = k
+				}
+				gpus[k].Total += g.PerNode * t.Nodes
+				l.MaxGpus += g.PerNode * t.Nodes
 			}
-			entry = strings.TrimPrefix(entry, "gpu:")
-			if idx := strings.Index(entry, "("); idx > 0 {
-				entry = entry[:idx]
-			}
-
-			gpuType := "gpu"
-			gpuCount := 0
-			if strings.Contains(entry, ":") {
-				ep := strings.Split(entry, ":")
-				gpuType = ep[0]
-				gpuCount, _ = strconv.Atoi(ep[len(ep)-1])
-			} else {
-				gpuCount, _ = strconv.Atoi(entry)
-			}
-			if gpuCount == 0 || nodes == 0 {
-				continue
-			}
-
-			key := name + ":" + gpuType
-			j, ok := gpuIdx[key]
-			if !ok {
-				gpus = append(gpus, GpuInfo{Type: gpuType, Partition: name})
-				j = len(gpus) - 1
-				gpuIdx[key] = j
-			}
-			gpus[j].Total += gpuCount * nodes
-			gpus[j].CpusPerNode = max(gpus[j].CpusPerNode, cpus)
-			gpus[j].MemMBPerNode = max(gpus[j].MemMBPerNode, memMB)
 		}
 	}
-
-	gpusByPartition := make(map[string]int)
-	for _, g := range gpus {
-		gpusByPartition[g.Partition] += g.Total
-	}
-	for i := range limits {
-		limits[i].MaxGpus = gpusByPartition[limits[i].Partition]
-	}
 	return limits, gpus
+}
+
+// parseSlurmNodeCounts reads the node column of sinfoPartitionFormat. It returns the total, and the
+// nodes that are allocated or idle, which is nil when the column is a plain total.
+func parseSlurmNodeCounts(s string) (total int, up *int) {
+	parts := strings.Split(strings.TrimSpace(s), "/")
+	if len(parts) != 4 {
+		total, _ = strconv.Atoi(parts[0])
+		return total, nil
+	}
+	allocated, _ := strconv.Atoi(parts[0])
+	idle, _ := strconv.Atoi(parts[1])
+	total, _ = strconv.Atoi(parts[3])
+	n := allocated + idle
+	return total, &n
+}
+
+// parseSlurmGres reads the GPUs of a sinfo GRES column, such as
+// "gpu:nvidia_h100:8(S:0-3),gpu:nvidia_a100:4". A GPU with no type is "gpu", and other GRES are skipped.
+func parseSlurmGres(gres string) []NodeGpu {
+	var gpus []NodeGpu
+	for _, entry := range strings.Split(strings.TrimSpace(gres), ",") {
+		if !strings.HasPrefix(entry, "gpu:") {
+			continue
+		}
+		entry = strings.TrimPrefix(entry, "gpu:")
+		if idx := strings.Index(entry, "("); idx > 0 {
+			entry = entry[:idx]
+		}
+
+		gpuType := "gpu"
+		count := 0
+		if strings.Contains(entry, ":") {
+			parts := strings.Split(entry, ":")
+			gpuType = parts[0]
+			count, _ = strconv.Atoi(parts[len(parts)-1])
+		} else {
+			count, _ = strconv.Atoi(entry)
+		}
+		if count > 0 {
+			gpus = append(gpus, NodeGpu{Type: gpuType, PerNode: count})
+		}
+	}
+	return gpus
 }
 
 // splitLowerBound drops the trailing "+" of a sinfo figure and reports whether it was there.

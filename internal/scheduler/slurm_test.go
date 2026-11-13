@@ -1513,3 +1513,69 @@ func TestParseSlurmMaxNodes(t *testing.T) {
 		}
 	}
 }
+
+func TestSlurmGresAndNodelistParsing(t *testing.T) {
+	tests := []struct {
+		name          string
+		directives    []string
+		wantUnparsed  bool
+		wantGpuCount  int // 0: no GPU in the spec
+		wantRemaining []string
+	}{
+		{name: "gres gpu with count", directives: []string{"--gres=gpu:2"}, wantGpuCount: 2},
+		{name: "gres gpu without count", directives: []string{"--gres=gpu"}, wantGpuCount: 1},
+		{name: "gres in the space form", directives: []string{"--gres gpu:a100:2"}, wantGpuCount: 2},
+		{name: "gres that is not a GPU passes through", directives: []string{"--gres=lscratch:10"},
+			wantRemaining: []string{"--gres=lscratch:10"}},
+		{name: "gres that mixes a GPU with another resource", directives: []string{"--gres=lscratch:10,gpu:1"}, wantUnparsed: true},
+		{name: "topology flag", directives: []string{"--ntasks-per-socket=2"}, wantUnparsed: true},
+		{name: "short distribution", directives: []string{"-m cyclic"}, wantUnparsed: true},
+		{name: "extra node info", directives: []string{"-B 2:4"}, wantUnparsed: true},
+		{name: "hint", directives: []string{"--hint=nomultithread"}, wantUnparsed: true},
+		{name: "mincpus", directives: []string{"--mincpus=8"}, wantUnparsed: true},
+		{name: "overcommit", directives: []string{"--overcommit"}, wantUnparsed: true},
+		{name: "short overcommit", directives: []string{"-O"}, wantUnparsed: true},
+		{name: "node file", directives: []string{"--nodefile=nodes.txt"}, wantUnparsed: true},
+		{name: "heterogeneous job", directives: []string{"-c 2", "hetjob", "-c 4"}, wantUnparsed: true},
+		{name: "flag that changes no counts", directives: []string{"--constraint=gpu"}, wantRemaining: []string{"--constraint=gpu"}},
+		{name: "nodelist of one node", directives: []string{"--nodelist=n01"}, wantRemaining: []string{"--nodelist=n01"}},
+		{name: "short nodelist of one node", directives: []string{"-w n01"}, wantRemaining: []string{"-w n01"}},
+		{name: "nodelist within --nodes", directives: []string{"-N 2", "--nodelist=n[01-02]"}, wantRemaining: []string{"--nodelist=n[01-02]"}},
+		{name: "nodelist longer than --nodes", directives: []string{"-N 1", "--nodelist=n[01-02]"}, wantUnparsed: true},
+		{name: "nodelist without --nodes", directives: []string{"--nodelist=n01,n02"}, wantUnparsed: true},
+		{name: "nodelist that is a file", directives: []string{"--nodelist=/home/u/nodes.txt"}, wantUnparsed: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := []string{"#!/bin/bash", "#SBATCH -t 10"}
+			for _, d := range tt.directives {
+				lines = append(lines, "#SBATCH "+d)
+			}
+			path := filepath.Join(t.TempDir(), "test.sh")
+			if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+				t.Fatal(err)
+			}
+			specs, err := newTestSlurmScheduler().ReadScriptSpecs(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := IsUnparsed(specs); got != tt.wantUnparsed {
+				t.Fatalf("IsUnparsed = %v; want %v", got, tt.wantUnparsed)
+			}
+			if tt.wantUnparsed {
+				return
+			}
+			gpus := 0
+			if specs.Spec.Gpu != nil {
+				gpus = specs.Spec.Gpu.Count
+			}
+			if gpus != tt.wantGpuCount {
+				t.Errorf("GPU count = %d; want %d", gpus, tt.wantGpuCount)
+			}
+			if !slices.Equal(specs.RemainingFlags, tt.wantRemaining) {
+				t.Errorf("RemainingFlags = %q; want %q", specs.RemainingFlags, tt.wantRemaining)
+			}
+		})
+	}
+}

@@ -15,7 +15,10 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
   - Resource geometry is best effort.
 - **Unparsed.** When geometry cannot be resolved, `run`, builds and restore refuse the script, since there is nothing to regenerate it from.
   - Callers tell the three states apart: no directives, parsed, unparsed.
-- Some SLURM directives have no place in the geometry and leave the script unparsed, for example `--gpus-per-socket` and `--distribution`.
+- A SLURM directive that changes the CPUs, tasks or nodes a job gets, in a way the geometry cannot hold, leaves the script unparsed.
+  - Passing it through would make the exported `NCPU`, `MEM` and `NRANK` wrong.
+  - A `--nodelist` longer than `--nodes` is one, since it raises the node count.
+  - Other directives pass through as written.
 - `RawFlags` keeps every original directive. Only what is not absorbed goes to `RemainingFlags`.
 
 ## Resource priority

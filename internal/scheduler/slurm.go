@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,8 +21,9 @@ var emitMem = settings.Bool("scheduler.slurm.emit_mem",
 	settings.Default(true), settings.Order(9),
 	settings.Help("Write --mem or --mem-per-cpu in generated Slurm scripts. Turn off where memory is not a scheduled resource."))
 
-// slurmBlacklistedFlags lists SLURM directives that describe CPU topology / task
-// distribution that cannot be reliably translated. Any match leaves the resource directives unparsed.
+// slurmBlacklistedFlags lists SLURM directives that change the CPUs, tasks or nodes a job gets in a
+// way the resource spec cannot hold: CPU topology, task distribution, a CPU floor, oversubscription,
+// a node file and heterogeneous jobs. Any match leaves the resource directives unparsed.
 var slurmBlacklistedFlags = []string{
 	"--gpus-per-socket",
 	"--sockets-per-node",
@@ -29,7 +31,13 @@ var slurmBlacklistedFlags = []string{
 	"--threads-per-core",
 	"--ntasks-per-socket",
 	"--ntasks-per-core",
-	"--distribution",
+	"--distribution", "-m",
+	"--extra-node-info", "-B",
+	"--hint",
+	"--mincpus",
+	"--overcommit", "-O",
+	"--nodefile", "-F",
+	"hetjob",
 }
 
 // SlurmScheduler implements the Scheduler interface for SLURM
@@ -267,6 +275,9 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 		timeStr      string
 
 		exclusive bool
+
+		nodelist    string
+		hasNodelist bool
 	)
 
 	var unconsumed []string
@@ -298,8 +309,19 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 		case flagMatches(flag, "--cpus-per-gpu"):
 			_, parseErr = flagScanInt(flag, &cpusPerGpu, "--cpus-per-gpu")
 			hasCpusPerGpu = true
-		case strings.HasPrefix(flag, "--gres=gpu:"):
-			gpuGresStr = strings.TrimPrefix(flag, "--gres=")
+		case flagMatches(flag, "--gres"):
+			v, _ := flagValue(flag, "--gres")
+			entries := strings.Split(v, ",")
+			hasGpu := slices.ContainsFunc(entries, func(e string) bool { return e == "gpu" || strings.HasPrefix(e, "gpu:") })
+			switch {
+			case !hasGpu:
+				consumed = false
+			case len(entries) > 1:
+				logParseWarning("SLURM: --gres mixes a GPU with other resources; resource directives not parsed")
+				return nil, directives
+			default:
+				gpuGresStr = v
+			}
 		case flagMatches(flag, "--gpus"):
 			gpuTotalStr, _ = flagValue(flag, "--gpus")
 		case flagMatches(flag, "--gpus-per-node"):
@@ -319,6 +341,10 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 			timeStr, _ = flagValue(flag, "--time", "-t")
 		case flag == "--exclusive", strings.HasPrefix(flag, "--exclusive="):
 			exclusive = true
+		case flagMatches(flag, "--nodelist", "-w"):
+			nodelist, _ = flagValue(flag, "--nodelist", "-w")
+			hasNodelist = true
+			consumed = false
 		default:
 			consumed = false
 		}
@@ -350,6 +376,13 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 
 	// 1. Nodes
 	rs.Nodes = nodes
+	if hasNodelist {
+		// A node list longer than --nodes raises the node count, and a file of names has none to count.
+		if n, ok := slurmNodelistCount(nodelist); !ok || n > max(rs.Nodes, 1) {
+			logParseWarning("SLURM: --nodelist %q is a file or names more nodes than --nodes; resource directives not parsed", nodelist)
+			return nil, directives
+		}
+	}
 
 	// 2. GPU Resolution
 	switch {
@@ -1219,6 +1252,15 @@ func TryParseSlurmScript(scriptPath string) (*ScriptSpecs, error) {
 		directiveRe: regexp.MustCompile(`^\s*#SBATCH\s+(.+)$`),
 	}
 	return parser.ReadScriptSpecs(scriptPath)
+}
+
+// slurmNodelistCount counts the nodes a --nodelist value names. It reports false for a file name.
+func slurmNodelistCount(list string) (int, bool) {
+	if strings.Contains(list, "/") {
+		return 0, false
+	}
+	n := len(expandSlurmNodeList(list))
+	return n, n > 0
 }
 
 // splitSlurmNodeList splits a node list on the commas outside brackets, so "n[1,3],m" is two entries.

@@ -1360,11 +1360,9 @@ func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPa
 		return err
 	}
 
-	// A compute node is not the far end of a tunnel, so a job submitted from a job starts no proxy.
-	if scheduler.ProxyPerJob(scheduler.ProxyRun) && !scheduler.IsInsideJob() {
-		if h, err2 := os.Hostname(); err2 == nil && h != "" {
-			specs.ProxyVia = h
-		}
+	// The proxy tunnels through the login node, which a job submitted from a job inherits. With none known, no proxy starts.
+	if scheduler.ProxyPerJob(scheduler.ProxyRun) {
+		specs.ProxyVia = scheduler.LoginNode()
 	}
 
 	// Generate names: short name for job, timestamped name for files

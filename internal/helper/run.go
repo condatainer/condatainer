@@ -655,9 +655,7 @@ func buildHelperScriptSpecs(name, cwd, account, partition string, excludeNodes [
 		HasDirectives: spec != nil,
 	}
 	if scheduler.ProxyPerJob(scheduler.ProxyHelper) {
-		if h, err := os.Hostname(); err == nil && h != "" {
-			ss.ProxyVia = h
-		}
+		ss.ProxyVia = scheduler.LoginNode()
 	}
 	return ss
 }

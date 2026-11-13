@@ -3,12 +3,41 @@ package scheduler
 import (
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 )
 
 // exportPrefix names the copy of each resource variable that CondaTainer reads back.
 // A user's own NCPU or MEM cannot shadow it.
 const exportPrefix = "CNT_"
+
+// LoginNodeVar names the variable that records the login node a job was submitted from.
+const LoginNodeVar = "CNT_LOGIN_NODE"
+
+// LoginNode returns the login node a job is tied to, or "" when none is known.
+//   - A recorded value that is a plain host name wins, so a chain of jobs keeps the first login node.
+//   - Outside a job it is this node's name.
+//   - Inside a job with none recorded it is "", since a compute node is not a login node.
+func LoginNode() string {
+	if node := os.Getenv(LoginNodeVar); validateNodeName(node) == nil {
+		return node
+	}
+	if IsInsideJob() {
+		return ""
+	}
+	if node, err := os.Hostname(); err == nil && validateNodeName(node) == nil {
+		return node
+	}
+	return ""
+}
+
+// writeLoginNodeExport writes the login node as an export line, when one is known.
+//   - Every scheduler's job script calls it, with or without a resource spec.
+func writeLoginNodeExport(w io.Writer) {
+	if node := LoginNode(); node != "" {
+		fmt.Fprintf(w, "export %s=%s\n\n", LoginNodeVar, node)
+	}
+}
 
 // resourceVar is one normalized resource variable.
 type resourceVar struct{ name, value string }

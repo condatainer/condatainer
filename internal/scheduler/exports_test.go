@@ -93,15 +93,121 @@ func TestHTCondorScriptExportsResourceVars(t *testing.T) {
 }
 
 // An unparsed script has no spec to export.
-func TestScriptsWithoutSpecExportNothing(t *testing.T) {
+func TestScriptsWithoutSpecExportNoResources(t *testing.T) {
 	jobSpec := &JobSpec{Name: "none", Command: "echo hi", Specs: &ScriptSpecs{RemainingFlags: []string{}}, Metadata: map[string]string{}}
 	path, err := newTestPbsScheduler().CreateScriptWithSpec(jobSpec, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	body, _ := os.ReadFile(path)
-	if strings.Contains(string(body), "export CNT_") {
+	if strings.Contains(string(body), "export CNT_NCPU") {
 		t.Errorf("a script without a spec exports resource variables\n%s", body)
+	}
+}
+
+// unsetLoginNode leaves CNT_LOGIN_NODE unset for the test.
+func unsetLoginNode(t *testing.T) {
+	t.Helper()
+	t.Setenv(LoginNodeVar, "")
+	os.Unsetenv(LoginNodeVar)
+}
+
+func TestLoginNode(t *testing.T) {
+	t.Run("a recorded value wins", func(t *testing.T) {
+		clearJobEnvVars(t)
+		t.Setenv(LoginNodeVar, "login02")
+		if got := LoginNode(); got != "login02" {
+			t.Errorf("LoginNode = %q, want login02", got)
+		}
+	})
+	t.Run("a recorded value wins in a job", func(t *testing.T) {
+		clearJobEnvVars(t)
+		t.Setenv("SLURM_JOB_ID", "1")
+		t.Setenv(LoginNodeVar, "login02")
+		if got := LoginNode(); got != "login02" {
+			t.Errorf("LoginNode = %q, want login02", got)
+		}
+	})
+	t.Run("a value that is not a host name is ignored", func(t *testing.T) {
+		clearJobEnvVars(t)
+		t.Setenv("SLURM_JOB_ID", "1")
+		t.Setenv(LoginNodeVar, "a b;c")
+		if got := LoginNode(); got != "" {
+			t.Errorf("LoginNode = %q, want none", got)
+		}
+	})
+	t.Run("outside a job it is this node", func(t *testing.T) {
+		clearJobEnvVars(t)
+		unsetLoginNode(t)
+		host, err := os.Hostname()
+		if err != nil || validateNodeName(host) != nil {
+			t.Skipf("hostname %q is not a plain host name", host)
+		}
+		if got := LoginNode(); got != host {
+			t.Errorf("LoginNode = %q, want %q", got, host)
+		}
+	})
+	t.Run("in a job with none recorded it is empty", func(t *testing.T) {
+		clearJobEnvVars(t)
+		t.Setenv("SLURM_JOB_ID", "1")
+		unsetLoginNode(t)
+		if got := LoginNode(); got != "" {
+			t.Errorf("LoginNode = %q, want none", got)
+		}
+	})
+}
+
+// Every scheduler's job script records the login node, whether or not it has a resource spec.
+func TestScriptsExportTheLoginNode(t *testing.T) {
+	writers := map[string]func(*JobSpec, string) (string, error){
+		"slurm": func(j *JobSpec, d string) (string, error) { return newTestSlurmScheduler().CreateScriptWithSpec(j, d) },
+		"pbs":   func(j *JobSpec, d string) (string, error) { return newTestPbsScheduler().CreateScriptWithSpec(j, d) },
+		"lsf":   func(j *JobSpec, d string) (string, error) { return newTestLsfScheduler().CreateScriptWithSpec(j, d) },
+		"htcondor": func(j *JobSpec, d string) (string, error) {
+			if _, err := newTestHTCondorScheduler().CreateScriptWithSpec(j, d); err != nil {
+				return "", err
+			}
+			return filepath.Join(d, j.Name+".sh"), nil
+		},
+	}
+	specs := map[string]*ScriptSpecs{
+		"with a spec":    {Spec: hybridSpec(), RemainingFlags: []string{}},
+		"without a spec": {RemainingFlags: []string{}},
+	}
+	for name, write := range writers {
+		for kind, spec := range specs {
+			t.Run(name+" "+kind, func(t *testing.T) {
+				clearJobEnvVars(t)
+				t.Setenv(LoginNodeVar, "login01")
+				path, err := write(&JobSpec{Name: "login", Command: "echo hi", Specs: spec, Metadata: map[string]string{}}, t.TempDir())
+				if err != nil {
+					t.Fatalf("CreateScriptWithSpec: %v", err)
+				}
+				body, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(body), "export CNT_LOGIN_NODE=login01\n") {
+					t.Errorf("script does not record the login node\n%s", body)
+				}
+			})
+		}
+	}
+}
+
+// Inside a job with no record, no node is known and the script exports none.
+func TestScriptExportsNoLoginNodeWhenNoneIsKnown(t *testing.T) {
+	clearJobEnvVars(t)
+	t.Setenv("SLURM_JOB_ID", "1")
+	unsetLoginNode(t)
+	jobSpec := &JobSpec{Name: "none", Command: "echo hi", Specs: &ScriptSpecs{RemainingFlags: []string{}}, Metadata: map[string]string{}}
+	path, err := newTestSlurmScheduler().CreateScriptWithSpec(jobSpec, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := os.ReadFile(path)
+	if strings.Contains(string(body), LoginNodeVar) {
+		t.Errorf("a script exports a login node that is not known\n%s", body)
 	}
 }
 

@@ -118,10 +118,14 @@ func FreePort() (int, error) {
 }
 
 // ResolveViaHost resolves the SSH server to tunnel through for a per-job proxy.
-// Uses the --via flag value, or returns an error if not provided.
+//   - The --via value wins, then the login node the job was submitted from.
+//   - It is an error when neither is known.
 func ResolveViaHost(flagVia string) (string, error) {
 	if flagVia != "" {
 		return flagVia, nil
+	}
+	if node := scheduler.LoginNode(); node != "" {
+		return node, nil
 	}
 	return "", errors.New("cannot determine login node: use --via to specify the SSH server to tunnel through")
 }

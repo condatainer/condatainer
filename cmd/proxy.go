@@ -46,7 +46,8 @@ var proxyStartCmd = &cobra.Command{
 	Long: `Start a SOCKS5 proxy so compute-node jobs can reach the internet through the login node.
 
 - --host runs the proxy on another login node instead, over SSH.
-- --via tunnels through this SSH server. It is required in per-job mode.`,
+- --via tunnels through this SSH server.
+  In per-job mode it defaults to the login node the job was submitted from.`,
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if config.IsInsideContainer() {
@@ -343,7 +344,7 @@ var proxyDaemonCmd = &cobra.Command{
 
 func init() {
 	proxyStartCmd.Flags().StringVar(&proxyStartHost, "host", "", "Run the proxy on this login node (over SSH if it is not the current one)")
-	proxyStartCmd.Flags().StringVar(&proxyStartVia, "via", "", "SSH server to tunnel through (default: current node)")
+	proxyStartCmd.Flags().StringVar(&proxyStartVia, "via", "", "SSH server to tunnel through (default: this node; in a job, its login node)")
 	proxyStartCmd.Flags().IntVarP(&proxyStartPort, "port", "p", 0, "Port to listen on (default: a free port)")
 
 	proxyDaemonCmd.Flags().BoolVar(&proxyDaemonLocalMode, "local", false, "Per-job mode: bind 127.0.0.1 and write node-local PID file")

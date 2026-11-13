@@ -1468,7 +1468,7 @@ func TestSinfoIgnoresUserDefaults(t *testing.T) {
 	if err != nil || len(limits) != 1 {
 		t.Fatalf("partitions = %+v, err = %v: a SINFO_ default must not reach sinfo", limits, err)
 	}
-	if !slices.Contains(sinfoEnv(), "SLURM_CONF=/etc/slurm.conf") {
+	if !slices.Contains(slurmToolEnv("SINFO_", false), "SLURM_CONF=/etc/slurm.conf") {
 		t.Error("sinfo must keep the other SLURM variables")
 	}
 }

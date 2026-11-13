@@ -838,28 +838,12 @@ func (s *SlurmScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, erro
 func (s *SlurmScheduler) getPartitions(ctx context.Context) ([]ResourceLimits, []GpuInfo, error) {
 	// %P=partition (* marks the default) %a=state %l=max time %s=job size
 	// %c=CPUs/node %m=mem/node(MB) %G=GRES %F=nodes allocated/idle/other/total
-	output, err := runCommandEnv(ctx, sinfoEnv(), "SLURM", "query-partitions", s.sinfoCommand, "-e", "-o", sinfoPartitionFormat, "--noheader")
+	output, err := runCommandEnv(ctx, slurmToolEnv("SINFO_", false), "SLURM", "query-partitions", s.sinfoCommand, "-e", "-o", sinfoPartitionFormat, "--noheader")
 	if err != nil {
 		return nil, nil, NewClusterError("SLURM", "query partitions", err)
 	}
 	limits, gpus := parseSinfoPartitions(string(output))
 	return limits, gpus, nil
-}
-
-// sinfoEnv is the environment of a sinfo call, without the user's SINFO_* defaults.
-// They filter, sort and widen what sinfo lists, and no option switches each of them off.
-func sinfoEnv() []string {
-	env := commandEnv()
-	if env == nil {
-		env = os.Environ()
-	}
-	kept := make([]string, 0, len(env))
-	for _, entry := range env {
-		if !strings.HasPrefix(entry, "SINFO_") {
-			kept = append(kept, entry)
-		}
-	}
-	return kept
 }
 
 // sinfoPartitionFormat has no %T, which would split a partition into a row per node state.

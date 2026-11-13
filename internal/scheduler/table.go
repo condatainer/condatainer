@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -280,4 +281,296 @@ func WritePartitionTable(w io.Writer, limits []ResourceLimits, gpusByPartition m
 		}
 	}
 	writeTable(w, header, rows, right, style)
+}
+
+// maxNodeCell is the widest a node list is shown. A longer list shows as a count.
+const maxNodeCell = 26
+
+// minFlexWidth is the narrowest the NAME and NOTE columns are cut to.
+const minFlexWidth = 8
+
+// jobColumn is a column of the jobs table. A flex column is cut with "…" when the table does not fit.
+type jobColumn struct {
+	header string
+	right  bool
+	flex   bool
+	cell   func(JobInfo) string
+}
+
+var jobColumns = []jobColumn{
+	{header: "JOBID", cell: func(j JobInfo) string { return j.ID }},
+	{header: "NAME", flex: true, cell: func(j JobInfo) string { return j.Name }},
+	{header: "STATE", cell: func(j JobInfo) string { return string(j.State) }},
+	{header: "CPUS", right: true, cell: func(j JobInfo) string { return orDash(j.Cpus, strconv.Itoa(j.Cpus)) }},
+	{header: "GPUS", cell: jobGpus},
+	{header: "MEM", right: true, cell: func(j JobInfo) string { return orDash(int(j.MemMB), formatMem(j.MemMB)) }},
+	{header: "TIME", cell: jobTime},
+	{header: "NODE", cell: jobNode},
+	{header: "NOTE", flex: true, cell: jobNote},
+}
+
+// orDash is text when n is positive, and "-" when the scheduler reported none.
+func orDash(n int, text string) string {
+	if n <= 0 {
+		return "-"
+	}
+	return text
+}
+
+// jobGpus is the GPU types of a job as type:count, or "-".
+func jobGpus(j JobInfo) string {
+	parts := make([]string, len(j.Gpus))
+	for i, g := range j.Gpus {
+		parts[i] = g.Type + ":" + strconv.Itoa(g.Count)
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ",")
+}
+
+// jobTime is the limit of a job that waits, elapsed over limit for one that runs, and elapsed for one that ended.
+// An array shows its per-task limit only.
+func jobTime(j JobInfo) string {
+	limit := "-"
+	switch {
+	case j.TimeUnlimited:
+		limit = "inf"
+	case j.TimeLimit > 0:
+		limit = formatHM(j.TimeLimit)
+	}
+	switch {
+	case j.IsArray():
+		return limit
+	case j.State == JobRunning:
+		return formatHM(j.Elapsed) + "/" + limit
+	case ended(j.State) && j.Elapsed > 0:
+		return formatHM(j.Elapsed)
+	case ended(j.State):
+		return "-"
+	}
+	return limit
+}
+
+// jobNode is the node a job runs on, cut at the first dot. A list shows when it fits, else a count.
+// It is "-" for a job that never had one, and for an array.
+func jobNode(j JobInfo) string {
+	if j.IsArray() || len(j.NodeList) == 0 && j.NodeCount == 0 {
+		return "-"
+	}
+	names := make([]string, len(j.NodeList))
+	for i, n := range j.NodeList {
+		names[i], _, _ = strings.Cut(n, ".")
+	}
+	list := strings.Join(names, ",")
+	switch {
+	case len(names) == 0 && j.NodeCount > 1:
+		return strconv.Itoa(j.NodeCount) + " nodes"
+	case len(names) == 0:
+		return "-"
+	case len(names) == 1:
+		return cutText(list, maxNodeCell)
+	case utf8.RuneCountInString(list) <= maxNodeCell:
+		return list
+	}
+	return strconv.Itoa(len(names)) + " nodes"
+}
+
+// jobNote is the layout of a job of several ranks, then the item that explains the row.
+func jobNote(j JobInfo) string {
+	layout, note := compactLayout(j), jobReason(j)
+	if layout != "" && note != "" {
+		return layout + ", " + note
+	}
+	return layout + note
+}
+
+// compactLayout is "2n x 4r x 2c" for a job whose ranks per node the user fixed, and "8r x 2c" for one
+// whose ranks the scheduler places. A job of one rank, and an array, have none.
+func compactLayout(j JobInfo) string {
+	if j.IsArray() || j.Ranks <= 1 {
+		return ""
+	}
+	cpus := ""
+	if j.CpusPerRank > 0 {
+		cpus = " x " + strconv.Itoa(j.CpusPerRank) + "c"
+	}
+	if uniformLayout(j) {
+		return strconv.Itoa(j.NodeCount) + "n x " + strconv.Itoa(j.RanksPerNode) + "r" + cpus
+	}
+	return strconv.Itoa(j.Ranks) + "r" + cpus
+}
+
+// jobReason is the one item that explains a row: the task counts of an array, that the job is suspended,
+// a parent that failed, a dependency that is not met, the scheduler's reason for a job that waits,
+// or why a job failed.
+func jobReason(j JobInfo) string {
+	if j.IsArray() {
+		t := j.Tasks
+		var parts []string
+		for _, c := range []struct {
+			n    int
+			word string
+		}{{len(t.Running), "running"}, {len(t.Pending), "pending"}, {len(t.Success), "success"},
+			{len(t.Failed), "failed"}, {len(t.Cancelled), "cancelled"}, {len(t.Other), "unknown"}} {
+			if c.n > 0 {
+				parts = append(parts, strconv.Itoa(c.n)+" "+c.word)
+			}
+		}
+		return strings.Join(parts, ", ")
+	}
+	if j.Suspended {
+		return "suspended"
+	}
+	if j.State == JobPending || j.State == JobCancelled {
+		for _, d := range j.DependsOn {
+			if d.Failed {
+				return "dep failed " + d.JobID
+			}
+		}
+	}
+	switch j.State {
+	case JobFailed:
+		if j.Failure == FailureNonzeroExit && j.ExitCode != nil {
+			return "exit " + strconv.Itoa(*j.ExitCode)
+		}
+		return j.Failure
+	case JobPending:
+		var open []JobDependency
+		for _, d := range j.DependsOn {
+			if !d.Satisfied {
+				open = append(open, d)
+			}
+		}
+		if len(open) > 0 {
+			note := dependencyWord(open[0].Type)
+			if open[0].JobID != "" {
+				note += " " + open[0].JobID
+			}
+			if len(open) > 1 {
+				note += " +" + strconv.Itoa(len(open)-1)
+			}
+			return note
+		}
+		return j.Reason
+	}
+	return ""
+}
+
+// dependencyWord is how a dependency rule reads in a note. A job that needs its parent to succeed
+// "waits after" it, and the other rules keep their own words.
+func dependencyWord(t string) string {
+	if t == DependencyAfterOK {
+		return "after"
+	}
+	return t
+}
+
+// cutText cuts s to width characters, ending in "…" when it was longer.
+func cutText(s string, width int) string {
+	if utf8.RuneCountInString(s) <= width {
+		return s
+	}
+	if width <= 1 {
+		return "…"
+	}
+	runes := []rune(s)
+	return string(runes[:width-1]) + "…"
+}
+
+// WriteJobTable prints jobs as one table, a row each, in the order given.
+//   - GPUS shows only when a job has a GPU.
+//   - The table fits width. NAME and NOTE share what the other columns leave, and a longer value is cut.
+//   - A failed job's state is in red.
+func WriteJobTable(w io.Writer, jobs []JobInfo, width int) {
+	cols := make([]jobColumn, 0, len(jobColumns))
+	for _, c := range jobColumns {
+		if c.header == "GPUS" && !slicesAnyGpu(jobs) {
+			continue
+		}
+		cols = append(cols, c)
+	}
+
+	header := make([]string, len(cols))
+	right := map[int]bool{}
+	for i, c := range cols {
+		header[i] = c.header
+		right[i] = c.right
+	}
+	rows := make([][]string, len(jobs))
+	style := map[[2]int]func(string) string{}
+	for r, j := range jobs {
+		rows[r] = make([]string, len(cols))
+		for i, c := range cols {
+			rows[r][i] = c.cell(j)
+			if c.header == "STATE" && j.State == JobFailed {
+				style[[2]int{r, i}] = utils.StyleError
+			}
+		}
+	}
+
+	flex := fitFlexColumns(header, rows, cols, width)
+	for r := range rows {
+		for i, limit := range flex {
+			rows[r][i] = cutText(rows[r][i], limit)
+		}
+	}
+	writeTable(w, header, rows, right, style)
+}
+
+func slicesAnyGpu(jobs []JobInfo) bool {
+	for _, j := range jobs {
+		if len(j.Gpus) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// fitFlexColumns returns the width each flex column is cut to, keyed by column, so the table fits width.
+// A flex column that needs no more than its share keeps its width, and the other takes the rest.
+// No column is cut below minFlexWidth, so a very narrow width is exceeded.
+func fitFlexColumns(header []string, rows [][]string, cols []jobColumn, width int) map[int]int {
+	need := make([]int, len(cols))
+	for i := range cols {
+		need[i] = utf8.RuneCountInString(header[i])
+		for _, row := range rows {
+			need[i] = max(need[i], utf8.RuneCountInString(row[i]))
+		}
+	}
+	fixed, flex := 2*(len(cols)-1), []int{}
+	for i, c := range cols {
+		if c.flex {
+			flex = append(flex, i)
+		} else {
+			fixed += need[i]
+		}
+	}
+	room := width - fixed
+	limits := map[int]int{}
+	total := 0
+	for _, i := range flex {
+		total += need[i]
+	}
+	if total <= room || len(flex) == 0 {
+		return limits
+	}
+	remaining, left := room, len(flex)
+	for _, i := range sortedByNeed(flex, need) {
+		share := max(remaining/left, minFlexWidth)
+		take := min(need[i], share)
+		if take < need[i] {
+			limits[i] = take
+		}
+		remaining -= take
+		left--
+	}
+	return limits
+}
+
+// sortedByNeed orders column indexes by the width they need, smallest first.
+func sortedByNeed(idx, need []int) []int {
+	out := append([]int{}, idx...)
+	sort.SliceStable(out, func(a, b int) bool { return need[out[a]] < need[out[b]] })
+	return out
 }

@@ -3,8 +3,11 @@ package scheduler
 import (
 	"bytes"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/fatih/color"
 )
 
 func TestFormatMem(t *testing.T) {
@@ -141,5 +144,186 @@ func TestPartitionRowsWithoutNodeTypes(t *testing.T) {
 		if rows[0][i] != w {
 			t.Errorf("column %s = %q, want %q", partitionColumns[i], rows[0][i], w)
 		}
+	}
+}
+
+func jobTableText(jobs []JobInfo, width int) string {
+	var b bytes.Buffer
+	WriteJobTable(&b, jobs, width)
+	return b.String()
+}
+
+func sampleJobs() []JobInfo {
+	return []JobInfo{
+		{ID: "245070", Name: "step04_star", State: JobRunning, Cpus: 16, MemMB: 72 * 1024, Elapsed: 72 * time.Minute, TimeLimit: 24 * time.Hour,
+			NodeList: []string{"cpu-node-01"}, NodeCount: 1},
+		{ID: "245071", Name: "step04_star", State: JobPending, Cpus: 16, MemMB: 72 * 1024, TimeLimit: 24 * time.Hour, Reason: "Dependency",
+			DependsOn: []JobDependency{{Type: "afterok", JobID: "245069", Failed: true}}},
+		{ID: "245073", Name: "step05_count", State: JobPending, Cpus: 4, MemMB: 16 * 1024, TimeLimit: 4 * time.Hour, Reason: "Dependency",
+			DependsOn: []JobDependency{{Type: "afterok", JobID: "245070"}}},
+		{ID: "245080", ArrayID: "245080", Name: "step05_count", State: JobRunning, Cpus: 4, MemMB: 16 * 1024, TimeLimit: 4 * time.Hour,
+			Tasks: &ArrayTasks{Running: []string{"245080_1", "245080_2", "245080_3"}, Pending: []string{"245080_4", "245080_5"}}},
+	}
+}
+
+func TestJobTable(t *testing.T) {
+	got := jobTableText(sampleJobs(), 100)
+	want := `JOBID   NAME          STATE    CPUS  MEM  TIME         NODE         NOTE
+245070  step04_star   running    16  72G  01:12/24:00  cpu-node-01
+245071  step04_star   pending    16  72G  24:00        -            dep failed 245069
+245073  step05_count  pending     4  16G  04:00        -            after 245070
+245080  step05_count  running     4  16G  04:00        -            3 running, 2 pending
+`
+	if got != want {
+		t.Errorf("table:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestJobTableShowsGPUsOnlyWhenAJobHasOne(t *testing.T) {
+	jobs := sampleJobs()
+	if strings.Contains(jobTableText(jobs, 100), "GPUS") {
+		t.Error("no job has a GPU, so the column must be hidden")
+	}
+	jobs[0].Gpus = []JobGpu{{Type: "h100", Count: 1}}
+	got := jobTableText(jobs, 100)
+	if !strings.Contains(got, "GPUS") || !strings.Contains(got, "h100:1") {
+		t.Errorf("a GPU job must show the column:\n%s", got)
+	}
+}
+
+func TestJobTableWithNoJobsIsTheHeader(t *testing.T) {
+	got := jobTableText(nil, 100)
+	if strings.Count(got, "\n") != 1 || !strings.HasPrefix(got, "JOBID") {
+		t.Errorf("got %q, want the header only", got)
+	}
+}
+
+func TestJobTableCutsNameAndNoteToFit(t *testing.T) {
+	jobs := []JobInfo{{ID: "1", Name: strings.Repeat("n", 60), State: JobPending, Reason: strings.Repeat("r", 40), Cpus: 1, MemMB: 1024, TimeLimit: time.Hour}}
+	for _, line := range strings.Split(strings.TrimRight(jobTableText(jobs, 80), "\n"), "\n") {
+		if n := len([]rune(line)); n > 80 {
+			t.Errorf("line is %d wide, want at most 80: %q", n, line)
+		}
+	}
+	got := jobTableText(jobs, 80)
+	if !strings.Contains(got, "…") {
+		t.Errorf("a cut value ends in …:\n%s", got)
+	}
+}
+
+func TestJobTableKeepsAShortNoteWhole(t *testing.T) {
+	jobs := []JobInfo{{ID: "1", Name: strings.Repeat("n", 90), State: JobPending, Reason: "Priority", Cpus: 1, MemMB: 1024, TimeLimit: time.Hour}}
+	got := jobTableText(jobs, 80)
+	if !strings.Contains(got, "Priority") {
+		t.Errorf("the long name takes the cut, not the short note:\n%s", got)
+	}
+}
+
+func TestJobNode(t *testing.T) {
+	tests := []struct {
+		name string
+		job  JobInfo
+		want string
+	}{
+		{"one node, domain cut", JobInfo{State: JobRunning, NodeList: []string{"node03.example.org"}}, "node03"},
+		{"list that fits", JobInfo{State: JobRunning, NodeList: []string{"c161", "c162"}}, "c161,c162"},
+		{"list too long", JobInfo{State: JobRunning, NodeList: []string{"node-aaaaaa", "node-bbbbbb", "node-cccccc"}}, "3 nodes"},
+		{"one long name", JobInfo{State: JobRunning, NodeList: []string{strings.Repeat("x", 40)}}, strings.Repeat("x", 25) + "…"},
+		{"list cut by the scheduler", JobInfo{State: JobRunning, NodeCount: 60}, "60 nodes"},
+		{"pending", JobInfo{State: JobPending}, "-"},
+		{"an ended job keeps its node", JobInfo{State: JobSuccess, NodeList: []string{"c1.example.org"}}, "c1"},
+		{"never had a node", JobInfo{State: JobCancelled}, "-"},
+		{"array", JobInfo{State: JobRunning, Tasks: &ArrayTasks{}, NodeList: []string{"c1"}}, "-"},
+	}
+	for _, tt := range tests {
+		if got := jobNode(tt.job); got != tt.want {
+			t.Errorf("%s: %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestJobTime(t *testing.T) {
+	tests := []struct {
+		name string
+		job  JobInfo
+		want string
+	}{
+		{"pending shows the limit", JobInfo{State: JobPending, TimeLimit: 24 * time.Hour}, "24:00"},
+		{"running shows elapsed over limit", JobInfo{State: JobRunning, Elapsed: 3*time.Hour + 10*time.Minute + 59*time.Second, TimeLimit: 12 * time.Hour}, "03:10/12:00"},
+		{"hours do not wrap", JobInfo{State: JobPending, TimeLimit: 72 * time.Hour}, "72:00"},
+		{"unlimited", JobInfo{State: JobRunning, Elapsed: time.Hour, TimeUnlimited: true}, "01:00/inf"},
+		{"not set", JobInfo{State: JobPending}, "-"},
+		{"an ended job shows its elapsed time", JobInfo{State: JobSuccess, Elapsed: 48*time.Minute + 6*time.Second, TimeLimit: time.Hour}, "00:48"},
+		{"an ended job that never ran", JobInfo{State: JobCancelled, TimeLimit: time.Hour}, "-"},
+		{"an array shows its limit only", JobInfo{State: JobRunning, Elapsed: time.Hour, TimeLimit: 4 * time.Hour, Tasks: &ArrayTasks{}}, "04:00"},
+	}
+	for _, tt := range tests {
+		if got := jobTime(tt.job); got != tt.want {
+			t.Errorf("%s: %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestJobNote(t *testing.T) {
+	tests := []struct {
+		name string
+		job  JobInfo
+		want string
+	}{
+		{"reason", JobInfo{State: JobPending, Reason: "QOSMaxJobsPerUserLimit"}, "QOSMaxJobsPerUserLimit"},
+		{"running has no note", JobInfo{State: JobRunning, Reason: "None"}, ""},
+		{"suspended", JobInfo{State: JobRunning, Suspended: true}, "suspended"},
+		{"afterok", JobInfo{State: JobPending, DependsOn: []JobDependency{{Type: "afterok", JobID: "5"}}}, "after 5"},
+		{"afternotok", JobInfo{State: JobPending, DependsOn: []JobDependency{{Type: "afternotok", JobID: "5"}}}, "afternotok 5"},
+		{"afterany", JobInfo{State: JobPending, DependsOn: []JobDependency{{Type: "afterany", JobID: "5"}}}, "afterany 5"},
+		{"singleton", JobInfo{State: JobPending, DependsOn: []JobDependency{{Type: "singleton"}}}, "singleton"},
+		{"two open parents", JobInfo{State: JobPending, DependsOn: []JobDependency{{Type: "afterok", JobID: "5"}, {Type: "afterok", JobID: "6"}}}, "after 5 +1"},
+		{"a failed parent comes first", JobInfo{State: JobPending, DependsOn: []JobDependency{{Type: "afterok", JobID: "5"}, {Type: "afterok", JobID: "6", Failed: true}}}, "dep failed 6"},
+		{"met dependency leaves the reason", JobInfo{State: JobPending, Reason: "Priority", DependsOn: []JobDependency{{Type: "afterok", JobID: "5", Satisfied: true}}}, "Priority"},
+		{"array with only running tasks", JobInfo{State: JobRunning, Tasks: &ArrayTasks{Running: []string{"1_1"}}}, "1 running"},
+		{"failed with an exit code", JobInfo{State: JobFailed, Failure: FailureNonzeroExit, ExitCode: intp(3)}, "exit 3"},
+		{"failed by the scheduler", JobInfo{State: JobFailed, Failure: FailureOutOfMemory}, "out_of_memory"},
+		{"cancelled child of a failed parent", JobInfo{State: JobCancelled, DependsOn: []JobDependency{{Type: "afterok", JobID: "5", Failed: true}}}, "dep failed 5"},
+		{"success", JobInfo{State: JobSuccess, Reason: "None"}, ""},
+		{"ended array", JobInfo{State: JobFailed, Tasks: &ArrayTasks{Success: []string{"a", "b"}, Failed: []string{"c"}}}, "2 success, 1 failed"},
+		{"fixed ranks per node", JobInfo{State: JobRunning, NodeCount: 2, Ranks: 8, RanksPerNode: 4, CpusPerRank: 2}, "2n x 4r x 2c"},
+		{"ranks the scheduler placed", JobInfo{State: JobRunning, NodeCount: 2, Ranks: 8, CpusPerRank: 2}, "8r x 2c"},
+		{"layout comes before the reason", JobInfo{State: JobPending, Reason: "Resources", NodeCount: 2, Ranks: 8, RanksPerNode: 4, CpusPerRank: 2}, "2n x 4r x 2c, Resources"},
+		{"a job of one rank has no layout", JobInfo{State: JobRunning, NodeCount: 2, Ranks: 0}, ""},
+		{"an array has no layout", JobInfo{State: JobRunning, Ranks: 4, Tasks: &ArrayTasks{Running: []string{"a"}}}, "1 running"},
+		{"array with only pending tasks", JobInfo{State: JobPending, Tasks: &ArrayTasks{Pending: []string{"1_1", "1_2"}}}, "2 pending"},
+	}
+	for _, tt := range tests {
+		if got := jobNote(tt.job); got != tt.want {
+			t.Errorf("%s: %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestJobTableColoursOnlyAFailedState(t *testing.T) {
+	was := color.NoColor
+	t.Cleanup(func() { color.NoColor = was })
+	jobs := []JobInfo{{ID: "1", State: JobFailed}, {ID: "2", State: JobCancelled}, {ID: "3", State: JobSuccess}}
+
+	color.NoColor = false
+	lines := strings.Split(strings.TrimRight(jobTableText(jobs, 100), "\n"), "\n")
+	for i, want := range []bool{true, false, false} {
+		if got := strings.Contains(lines[i+1], "\x1b["); got != want {
+			t.Errorf("job %d coloured = %v, want %v", i+1, got, want)
+		}
+	}
+	color.NoColor = true
+	if strings.Contains(jobTableText(jobs, 100), "\x1b[") {
+		t.Error("no colour is written when colour is off")
+	}
+}
+
+func intp(n int) *int { return &n }
+
+func TestJobTableCutsNameAndNoteNoLowerThanTheMinimum(t *testing.T) {
+	jobs := []JobInfo{{ID: "1", Name: strings.Repeat("n", 40), State: JobPending, Reason: strings.Repeat("r", 40), Cpus: 1, MemMB: 1024, TimeLimit: time.Hour}}
+	got := jobTableText(jobs, 10)
+	if !strings.Contains(got, strings.Repeat("n", minFlexWidth-1)+"…") || !strings.Contains(got, strings.Repeat("r", minFlexWidth-1)+"…") {
+		t.Errorf("a narrow terminal keeps %d columns for the name and the note:\n%s", minFlexWidth, got)
 	}
 }

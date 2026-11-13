@@ -81,7 +81,7 @@ type NodeGpu struct {
 // NodeType is a group of nodes of one partition with the same CPUs, GPUs and memory class.
 type NodeType struct {
 	Nodes int
-	// NodesUp is how many of Nodes are up and take jobs. Nil when the scheduler does not report node state.
+	// NodesUp is how many of Nodes are allocated or idle, so not down or drained. Nil when the scheduler does not report node state.
 	NodesUp *int
 	Cpus    int   // CPUs per node
 	MemMB   int64 // Memory per node in MB

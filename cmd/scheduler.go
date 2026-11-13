@@ -21,17 +21,20 @@ var (
 
 var schedulerCmd = &cobra.Command{
 	Use:   "scheduler",
-	Short: "Show the job scheduler and its partitions",
-	Long: `Show the job scheduler of this system.
+	Short: "Show the job scheduler, its partitions and your jobs",
+	Long: `Show the job scheduler of this system, and your jobs on it.
 
 - info shows the scheduler and whether it takes jobs.
-- partitions lists the partitions/queues you can pass to --partition.`,
+- partitions lists the partitions/queues you can pass to --partition.
+- jobs lists your jobs, or shows one job in full.
+- cancel cancels your jobs.`,
 }
 
 var schedulerInfoCmd = &cobra.Command{
-	Use:   "info",
-	Args:  cobra.NoArgs,
-	Short: "Show the detected job scheduler",
+	SilenceUsage: true, // Runtime errors should not show usage
+	Use:          "info",
+	Args:         cobra.NoArgs,
+	Short:        "Show the detected job scheduler",
 	Long: `Show the detected job scheduler: type, binary path, version, and availability.
 
 Inside a scheduled job it reports the scheduler as unavailable.`,
@@ -40,9 +43,10 @@ Inside a scheduled job it reports the scheduler as unavailable.`,
 }
 
 var schedulerPartitionsCmd = &cobra.Command{
-	Use:   "partitions",
-	Args:  cobra.NoArgs,
-	Short: "List the partitions of the scheduler",
+	SilenceUsage: true, // Runtime errors should not show usage
+	Use:          "partitions",
+	Args:         cobra.NoArgs,
+	Short:        "List the partitions of the scheduler",
 	Long: `List the partitions/queues you can pass to --partition.
 
 A partition has a row for each type of node in it.
@@ -50,8 +54,7 @@ A type is a group of nodes with the same CPUs and GPUs.
 
 - A * after a partition name marks the default partition.
 - AVAIL is whether the partition takes jobs. Partitions that are not up are listed last.
-- NODES, CPUS and MEM describe one node type.
-- A + after CPUS or MEM marks the smallest of nodes that differ.
+- NODES, CPUS and MEM are per node type. A + marks the smallest of nodes that differ.
 - MAXTIME is the longest one job can run. inf means no limit, - means none is reported.
 - MAXNODES is the most nodes one job can use. It is left out when no partition has a limit.
 - GPUS is each GPU type of the node type, as type:count per node.`,
@@ -59,17 +62,6 @@ A type is a group of nodes with the same CPUs and GPUs.
   condatainer scheduler partitions --gpu  # Only GPU partitions
   condatainer scheduler partitions --cpu  # Only CPU-only partitions`,
 	RunE: runSchedulerPartitions,
-}
-
-func init() {
-	rootCmd.AddCommand(schedulerCmd)
-	schedulerCmd.AddCommand(schedulerInfoCmd)
-	schedulerCmd.AddCommand(schedulerPartitionsCmd)
-	jsonFlag(schedulerInfoCmd.Flags(), &schedulerInfoJSON)
-	jsonFlag(schedulerPartitionsCmd.Flags(), &schedulerPartitionsJSON)
-	schedulerPartitionsCmd.Flags().Bool("cpu", false, "Show only CPU-only partitions (no GPUs)")
-	schedulerPartitionsCmd.Flags().Bool("gpu", false, "Show only GPU partitions")
-	schedulerPartitionsCmd.MarkFlagsMutuallyExclusive("cpu", "gpu")
 }
 
 var errNoScheduler = errors.New("no job scheduler detected on this system")
@@ -277,4 +269,15 @@ func runSchedulerPartitions(cmd *cobra.Command, args []string) error {
 
 	scheduler.WritePartitionTable(os.Stdout, shown, gpus)
 	return nil
+}
+
+func init() {
+	rootCmd.AddCommand(schedulerCmd)
+	schedulerCmd.AddCommand(schedulerInfoCmd)
+	schedulerCmd.AddCommand(schedulerPartitionsCmd)
+	jsonFlag(schedulerInfoCmd.Flags(), &schedulerInfoJSON)
+	jsonFlag(schedulerPartitionsCmd.Flags(), &schedulerPartitionsJSON)
+	schedulerPartitionsCmd.Flags().Bool("cpu", false, "Show only CPU-only partitions (no GPUs)")
+	schedulerPartitionsCmd.Flags().Bool("gpu", false, "Show only GPU partitions")
+	schedulerPartitionsCmd.MarkFlagsMutuallyExclusive("cpu", "gpu")
 }

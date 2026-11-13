@@ -60,6 +60,20 @@ func (k *Key) DefaultText() string {
 // IsList reports whether the key holds a list.
 func (k *Key) IsList() bool { return k.kind.list }
 
+// MergesLayers reports whether a list key is the union of every layer's list. A list key that does not merge takes the list of the highest layer that sets it.
+func (k *Key) MergesLayers() bool { return k.kind.list && k.opts.merge }
+
+// LayerRule says how the layers of a list key combine, for help and the reference. It is "" for a key that is not a list.
+func (k *Key) LayerRule() string {
+	switch {
+	case !k.kind.list:
+		return ""
+	case k.opts.merge:
+		return "merged: every layer's list is added together, highest layer first"
+	}
+	return "replaced: the highest layer that sets it wins"
+}
+
 // IsBool reports whether the key is a boolean.
 func (k *Key) IsBool() bool { return k.kind.name == "bool" }
 
@@ -141,6 +155,8 @@ func register(k *Key) *Key {
 		panic(fmt.Sprintf("settings: key %q is not lower case", k.Name))
 	case k.Help == "":
 		panic(fmt.Sprintf("settings: key %q has no Help", k.Name))
+	case k.opts.merge && !k.kind.list:
+		panic(fmt.Sprintf("settings: key %q merges layers but is not a list", k.Name))
 	}
 	regMu.Lock()
 	defer regMu.Unlock()

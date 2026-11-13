@@ -11,6 +11,8 @@ The relay that lets a program in a container run a command on the host.
 ## Where it opens
 
 - A launch opens it when `host_run.launch` names its kind. The default is `helper`.
+- `host_run.launch` merges every layer's list, as `scheduler.proxy_per_job` does, so a site adds to what a user sets. `none` in any layer turns every launch off.
+  - The default is not part of the merge. It applies only when no layer sets the key.
 - It opens on a compute node, a login node and a single server alike.
 - A launch inside a container opens none, since its host parent is the container, not the host.
   - A container inside a container has no host-run. Nothing needs the host from there, so the inherited bind and socket variable are removed.

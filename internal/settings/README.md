@@ -16,6 +16,8 @@ The registry of config keys. A package declares the keys it reads, and reads the
   - `build.logs_dir` follows `$SCRATCH` and `HOME`, so a replaced `HOME` moves it without any hook.
 - `Validate` rejects a value the kind accepts but the key does not, such as a block size that is not a power of two.
 - `MergeLists` makes a list the union of every layer, highest first and each element once. `Resolution.Origins` names the layer of each element.
+  - A list key either merges or replaces. The key knows which (`MergesLayers`), and help and the reference print it from the key, so no help text states it.
+  - `MergeLists` on a key that is not a list is refused at registration.
 - A list key reads its environment variable split on `|`, or on `:` when there is no `|`. The first flag element replaces the config list.
 - `Get()` before any layer is installed returns the default. The in-container commands skip config and must stay safe.
 - Precedence is flag, `CNT_CONFIG_*`, layers (user, extra-root, cnt-root), default. An empty variable counts as unset.

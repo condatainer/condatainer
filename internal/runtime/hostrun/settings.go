@@ -24,11 +24,11 @@ const (
 
 var (
 	keyLaunch = settings.List("host_run.launch",
-		settings.DefaultList(KindHelper), settings.Order(1),
+		settings.DefaultList(KindHelper), settings.Order(1), settings.MergeLists(),
 		settings.Validate(validateKind),
 		settings.Accepts("a list of helper, exec, run, or none"),
 		settings.Suggest(KindHelper, KindExec, KindRun, KindNone),
-		settings.Help("Launches whose container can run commands on the host with host-run: helper, exec, run, or none for no launch."))
+		settings.Help("Launches whose container can run commands on the host with host-run: helper, exec, run. None in any layer turns every launch off."))
 
 	keyOn = settings.String("host_run.on",
 		settings.Default(OnLocalhost), settings.Order(2),

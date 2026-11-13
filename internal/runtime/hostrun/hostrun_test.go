@@ -14,6 +14,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -416,5 +417,39 @@ func TestAcceptNewIsLeftOutForAnOldSSH(t *testing.T) {
 		if !slices.Contains(sshOptions(), "BatchMode=yes") {
 			t.Errorf("%q: BatchMode is missing", tc.version)
 		}
+	}
+}
+
+// fakeLayer is a config layer that holds the host_run.launch list it is given.
+type fakeLayer struct {
+	name   string
+	launch []string
+}
+
+func (l fakeLayer) Name() string               { return l.name }
+func (l fakeLayer) Text(string) (string, bool) { return "", false }
+func (l fakeLayer) List(key string) ([]string, bool) {
+	return l.launch, key == "host_run.launch" && l.launch != nil
+}
+
+// Every layer's list is merged, and none in any layer turns every launch off.
+func TestLaunchListsMergeAcrossLayers(t *testing.T) {
+	t.Cleanup(func() { settings.SetLayers(nil) })
+
+	settings.SetLayers([]settings.Layer{fakeLayer{"user", []string{KindRun}}, fakeLayer{"site", []string{KindExec}}})
+	if !Enabled(KindRun) || !Enabled(KindExec) || Enabled(KindHelper) {
+		t.Error("a site's list and the user's list add together, and the default is not part of them")
+	}
+
+	settings.SetLayers([]settings.Layer{fakeLayer{"user", []string{KindHelper, KindExec}}, fakeLayer{"site", []string{KindNone}}})
+	for _, kind := range []string{KindHelper, KindExec, KindRun} {
+		if Enabled(kind) {
+			t.Errorf("a lower layer's none leaves %s on", kind)
+		}
+	}
+
+	settings.SetLayers([]settings.Layer{fakeLayer{"user", []string{KindNone}}, fakeLayer{"site", []string{KindHelper}}})
+	if Enabled(KindHelper) {
+		t.Error("the user's none leaves helper on")
 	}
 }

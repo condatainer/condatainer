@@ -12,7 +12,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 
 - Tests skip when `mksquashfs`, `squashfuse` or `fuse-overlayfs` are missing. Put the libexec `bin` and `lib/apptainer/bin` on `PATH` to run them.
 - Tests that read config call `testenv.Isolate()` in `TestMain`. The root dir is cached, so isolating later is too late.
-- `gopls` and `staticcheck` are in `$(go env GOPATH)/bin`, which is not on `PATH`. Run `staticcheck ./...` after editing Go files.
+- `gopls` and `staticcheck` are in `$(go env GOPATH)/bin`, which is not on `PATH`. After editing Go files, run `staticcheck ./...` and `gopls check` on the files changed. Each reports what the other misses.
 - `golang.org/x/crypto` is replaced by `github.com/condatainer/x-crypto`. A workflow bumps it.
 
 ## Architecture
@@ -91,6 +91,12 @@ Three places, three jobs.
 - Commands, flags, output, what is refused and how to proceed.
 - Never a design argument or how it works inside. State the rule and its consequence.
 - Cobra `Long` replaces `Short` in `--help`, so `Long` must stand alone. No `Example` on group commands.
+- Terminal text fits a terminal of 100 columns, so every line is not greater than 100 columns.
+  - A longer line wraps and breaks its bullet. Never hard-wrap a sentence to fix it.
+  - Write short sentences, one fact per bullet.
+  - A bullet list in help has at most 6 bullets. Cut the minor ones or group related ones.
+  - A table fits the terminal width, down to a minimum, and 80 columns when the output is piped.
+  - Existing help that is longer is fixed when it is edited.
 
 **A package `README.md` records decisions.**
 

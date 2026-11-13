@@ -50,10 +50,10 @@ func commandEnv() []string {
 	return append(env, "HOME="+real)
 }
 
-// schedulerCommand is exec.CommandContext with commandEnv.
-func schedulerCommand(ctx context.Context, bin string, args ...string) *exec.Cmd {
+// schedulerCommand is exec.CommandContext with env. A nil env inherits the process's.
+func schedulerCommand(ctx context.Context, env []string, bin string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Env = commandEnv()
+	cmd.Env = env
 	return cmd
 }
 
@@ -62,16 +62,21 @@ func schedulerCommand(ctx context.Context, bin string, args ...string) *exec.Cmd
 //   - If DefaultCommandTimeout is 0, the command runs without a time limit.
 //   - It runs with the user's own HOME, not home_override.
 func runCommand(ctx context.Context, schedulerName, operation, bin string, args ...string) ([]byte, error) {
+	return runCommandEnv(ctx, commandEnv(), schedulerName, operation, bin, args...)
+}
+
+// runCommandEnv is runCommand with the given environment. A nil env inherits the process's.
+func runCommandEnv(ctx context.Context, env []string, schedulerName, operation, bin string, args ...string) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if DefaultCommandTimeout == 0 {
-		out, err := schedulerCommand(ctx, bin, args...).CombinedOutput()
+		out, err := schedulerCommand(ctx, env, bin, args...).CombinedOutput()
 		return out, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, DefaultCommandTimeout)
 	defer cancel()
-	out, err := schedulerCommand(ctx, bin, args...).CombinedOutput()
+	out, err := schedulerCommand(ctx, env, bin, args...).CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return nil, &TimeoutError{Scheduler: schedulerName, Operation: operation, Timeout: DefaultCommandTimeout}
 	}

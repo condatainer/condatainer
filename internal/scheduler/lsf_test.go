@@ -16,7 +16,7 @@ func newTestLsfScheduler() *LsfScheduler {
 	return &LsfScheduler{
 		bsubBin:     "/usr/bin/bsub",
 		bjobsBin:    "/usr/bin/bjobs",
-		bhostsBin:   "/usr/bin/bhosts",
+		lshostsBin:  "/usr/bin/lshosts",
 		directiveRe: regexp.MustCompile(`^\s*#BSUB\s+(.+)$`),
 		jobIDRe:     regexp.MustCompile(`Job <(\d+)> is submitted`),
 	}
@@ -1652,4 +1652,65 @@ func TestLsfGetJobResources(t *testing.T) {
 			t.Errorf("MemPerCpuMB should be 0 for negative value, got %d", res.MemPerCpuMB)
 		}
 	})
+}
+
+func TestParseLshostsResources(t *testing.T) {
+	out := `HOST_NAME  type    model       cpuf ncpus maxmem maxswp server RESOURCES
+node01     X86_64  Intel_Xeon  60.0    32  31.9G      -    Yes (mg)
+node02     X86_64  Intel_Xeon  60.0    64 251.6G      -    Yes (mg)
+node03     X86_64  Intel_Xeon  60.0     -      -      -    Yes ()
+`
+	cpus, memMB := parseLshostsResources(out)
+	if cpus != 64 {
+		t.Errorf("cpus = %d, want 64", cpus)
+	}
+	if memMB != 257638 { // 251.6 GB
+		t.Errorf("memory = %d MB, want 257638", memMB)
+	}
+}
+
+func TestParseLshostsGpuCountsOneRowPerGpu(t *testing.T) {
+	out := `HOST_NAME   gpu_id       gpu_model   gpu_driver   gpu_factor      numa_id
+kilenc           0 TeslaV100_PCIE_       396.37          7.0            8
+kilenc           1 TeslaV100_PCIE_       396.37          7.0            8
+tizenot          0 A100_SXM4_       535.54          8.0            0
+kilenc           2 TeslaV100_PCIE_       396.37          7.0            8
+`
+	gpus := parseLshostsGpu(out)
+	if len(gpus) != 2 {
+		t.Fatalf("got %d models, want 2: %+v", len(gpus), gpus)
+	}
+	if gpus[0].Type != "TeslaV100_PCIE_" || gpus[0].Total != 3 {
+		t.Errorf("first model = %+v, want TeslaV100_PCIE_ x3", gpus[0])
+	}
+	if gpus[1].Type != "A100_SXM4_" || gpus[1].Total != 1 {
+		t.Errorf("second model = %+v, want A100_SXM4_ x1", gpus[1])
+	}
+}
+
+func TestParseLsfHostMemoryMB(t *testing.T) {
+	tests := map[string]int64{
+		"31.9G":  32665,
+		"65536M": 65536,
+		"64GB":   65536,
+		"262144": 256, // a bare number is KB
+		"1.5T":   1572864,
+		"  8G  ": 8192,
+	}
+	for in, want := range tests {
+		got, err := parseLsfHostMemoryMB(in)
+		if err != nil || got != want {
+			t.Errorf("parseLsfHostMemoryMB(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "-", "lots"} {
+		if _, err := parseLsfHostMemoryMB(bad); err == nil {
+			t.Errorf("parseLsfHostMemoryMB(%q) succeeded, want an error", bad)
+		}
+	}
+
+	t.Setenv("LSF_UNIT_FOR_LIMITS", "M")
+	if got, _ := parseLsfHostMemoryMB("4096"); got != 4096 {
+		t.Errorf("bare number with LSF_UNIT_FOR_LIMITS=M = %d, want 4096", got)
+	}
 }

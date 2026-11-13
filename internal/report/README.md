@@ -1,6 +1,6 @@
 # internal/report
 
-The JSON an overlay command prints with `--json`.
+The JSON a command prints with `--json`.
 
 ## Document
 
@@ -19,6 +19,7 @@ The JSON an overlay command prints with `--json`.
 - A key is always full, `{scheme, sha256}`. Only a tag holds a short key, because that is all a tag has.
 - An optional field is omitted when empty. A boolean that decides something, such as `requires_input`, is always written.
 - Enums are lower-case strings, so a new value never shifts an old one.
+- A record of another package, such as the scheduler, is plain data here. `cmd` converts into it, so this package never imports that package.
 - HTML characters are not escaped: paths and placeholders such as `<timestamp>` print as written.
 
 ## Imports

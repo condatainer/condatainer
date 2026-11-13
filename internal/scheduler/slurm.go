@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,8 +21,9 @@ var emitMem = settings.Bool("scheduler.slurm.emit_mem",
 	settings.Default(true), settings.Order(9),
 	settings.Help("Write --mem or --mem-per-cpu in generated Slurm scripts. Turn off where memory is not a scheduled resource."))
 
-// slurmBlacklistedFlags lists SLURM directives that describe CPU topology / task
-// distribution that cannot be reliably translated. Any match leaves the resource directives unparsed.
+// slurmBlacklistedFlags lists SLURM directives that change the CPUs, tasks or nodes a job gets in a
+// way the resource spec cannot hold: CPU topology, task distribution, a CPU floor, oversubscription,
+// a node file and heterogeneous jobs. Any match leaves the resource directives unparsed.
 var slurmBlacklistedFlags = []string{
 	"--gpus-per-socket",
 	"--sockets-per-node",
@@ -29,14 +31,19 @@ var slurmBlacklistedFlags = []string{
 	"--threads-per-core",
 	"--ntasks-per-socket",
 	"--ntasks-per-core",
-	"--distribution",
+	"--distribution", "-m",
+	"--extra-node-info", "-B",
+	"--hint",
+	"--mincpus",
+	"--overcommit", "-O",
+	"--nodefile", "-F",
+	"hetjob",
 }
 
 // SlurmScheduler implements the Scheduler interface for SLURM
 type SlurmScheduler struct {
 	sbatchBin         string
 	sinfoCommand      string
-	scontrolCommand   string
 	srunCommand       string
 	directiveRe       *regexp.Regexp
 	jobIDRe           *regexp.Regexp
@@ -75,15 +82,13 @@ func newSlurmSchedulerWithBinary(sbatchBin string) (*SlurmScheduler, error) {
 	}
 
 	sinfoCmd := siblingBin(binPath, "sinfo")
-	scontrolCmd := siblingBin(binPath, "scontrol")
 
 	return &SlurmScheduler{
-		sbatchBin:       binPath,
-		sinfoCommand:    sinfoCmd,
-		scontrolCommand: scontrolCmd,
-		srunCommand:     siblingBin(binPath, "srun"),
-		directiveRe:     regexp.MustCompile(`^\s*#SBATCH\s+(.+)$`),
-		jobIDRe:         regexp.MustCompile(`Submitted batch job (\d+)`),
+		sbatchBin:    binPath,
+		sinfoCommand: sinfoCmd,
+		srunCommand:  siblingBin(binPath, "srun"),
+		directiveRe:  regexp.MustCompile(`^\s*#SBATCH\s+(.+)$`),
+		jobIDRe:      regexp.MustCompile(`Submitted batch job (\d+)`),
 	}, nil
 }
 
@@ -270,6 +275,9 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 		timeStr      string
 
 		exclusive bool
+
+		nodelist    string
+		hasNodelist bool
 	)
 
 	var unconsumed []string
@@ -301,8 +309,19 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 		case flagMatches(flag, "--cpus-per-gpu"):
 			_, parseErr = flagScanInt(flag, &cpusPerGpu, "--cpus-per-gpu")
 			hasCpusPerGpu = true
-		case strings.HasPrefix(flag, "--gres=gpu:"):
-			gpuGresStr = strings.TrimPrefix(flag, "--gres=")
+		case flagMatches(flag, "--gres"):
+			v, _ := flagValue(flag, "--gres")
+			entries := strings.Split(v, ",")
+			hasGpu := slices.ContainsFunc(entries, func(e string) bool { return e == "gpu" || strings.HasPrefix(e, "gpu:") })
+			switch {
+			case !hasGpu:
+				consumed = false
+			case len(entries) > 1:
+				logParseWarning("SLURM: --gres mixes a GPU with other resources; resource directives not parsed")
+				return nil, directives
+			default:
+				gpuGresStr = v
+			}
 		case flagMatches(flag, "--gpus"):
 			gpuTotalStr, _ = flagValue(flag, "--gpus")
 		case flagMatches(flag, "--gpus-per-node"):
@@ -322,6 +341,10 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 			timeStr, _ = flagValue(flag, "--time", "-t")
 		case flag == "--exclusive", strings.HasPrefix(flag, "--exclusive="):
 			exclusive = true
+		case flagMatches(flag, "--nodelist", "-w"):
+			nodelist, _ = flagValue(flag, "--nodelist", "-w")
+			hasNodelist = true
+			consumed = false
 		default:
 			consumed = false
 		}
@@ -353,6 +376,13 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 
 	// 1. Nodes
 	rs.Nodes = nodes
+	if hasNodelist {
+		// A node list longer than --nodes raises the node count, and a file of names has none to count.
+		if n, ok := slurmNodelistCount(nodelist); !ok || n > max(rs.Nodes, 1) {
+			logParseWarning("SLURM: --nodelist %q is a file or names more nodes than --nodes; resource directives not parsed", nodelist)
+			return nil, directives
+		}
+	}
 
 	// 2. GPU Resolution
 	switch {
@@ -812,7 +842,7 @@ func (s *SlurmScheduler) Submit(ctx context.Context, scriptPath string, deps []D
 	return jobID, nil
 }
 
-// GetClusterInfo retrieves SLURM cluster configuration
+// GetClusterInfo retrieves SLURM cluster configuration. A failed sinfo call is returned and not cached.
 func (s *SlurmScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, error) {
 	if s.cachedClusterInfo != nil {
 		return s.cachedClusterInfo, nil
@@ -823,217 +853,226 @@ func (s *SlurmScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, erro
 		Limits:        make([]ResourceLimits, 0),
 	}
 
-	// Single sinfo call: CPU, memory, GPU types per partition.
-	var nodeInfo map[string]ResourceLimits
 	if s.sinfoCommand != "" {
-		ni, gpus, err := s.getNodeInfoByPartition()
-		if err == nil {
-			nodeInfo = ni
-			info.AvailableGpus = gpus
+		limits, gpus, err := s.getPartitions(ctx)
+		if err != nil {
+			return nil, err
 		}
-	}
-
-	// scontrol: partition limits (TIME, NODES, mem policy); merges nodeInfo for CPU/mem.
-	if s.scontrolCommand != "" {
-		limits, err := s.getPartitionLimits(nodeInfo, info.AvailableGpus)
-		if err == nil {
-			info.Limits = limits
-		}
+		info.Limits = limits
+		info.AvailableGpus = gpus
 	}
 
 	s.cachedClusterInfo = info
 	return info, nil
 }
 
-// getNodeInfoByPartition queries SLURM for CPU, memory, and GPU info per partition in a single sinfo call.
-// Returns a map of partition→ResourceLimits (max CPU/mem per node) and a slice of GpuInfo.
-func (s *SlurmScheduler) getNodeInfoByPartition() (map[string]ResourceLimits, []GpuInfo, error) {
-	// %R=partition %c=CPUs/node %m=mem/node(MB) %G=GRES %D=node-count
-	output, err := runCommand(context.Background(), "SLURM", "query-node-info", s.sinfoCommand, "-o", "%R|%c|%m|%G|%D", "--noheader")
+// getPartitions queries SLURM for every partition's state, time limits, node shape and GPUs in one sinfo call.
+// It never passes -N, which lists a row per node per partition and is far slower on a large cluster.
+func (s *SlurmScheduler) getPartitions(ctx context.Context) ([]ResourceLimits, []GpuInfo, error) {
+	// %P=partition (* marks the default) %a=state %l=max time %s=job size
+	// %c=CPUs/node %m=mem/node(MB) %G=GRES %F=nodes allocated/idle/other/total
+	output, err := runCommandEnv(ctx, slurmToolEnv("SINFO_", false), "SLURM", "query-partitions", s.sinfoCommand, "-e", "-o", sinfoPartitionFormat, "--noheader")
 	if err != nil {
-		return nil, nil, NewClusterError("SLURM", "query node info", err)
+		return nil, nil, NewClusterError("SLURM", "query partitions", err)
 	}
-
-	nodeInfo := make(map[string]ResourceLimits)
-	gpuMap := make(map[string]*GpuInfo) // key = "partition:gpuType"
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
-		parts := strings.Split(line, "|")
-		if len(parts) < 5 {
-			continue
-		}
-
-		partition := strings.TrimSpace(strings.TrimSuffix(parts[0], "*"))
-		var cpus int
-		var memMB int64
-		fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &cpus)
-		memMB, _ = parseMemoryMB(strings.TrimSpace(parts[2]))
-		gresStr := strings.TrimSpace(parts[3])
-		var nodes int
-		fmt.Sscanf(strings.TrimSpace(parts[4]), "%d", &nodes)
-
-		// Update max CPU/mem for partition
-		if existing, ok := nodeInfo[partition]; ok {
-			if cpus > existing.MaxCpusPerNode {
-				existing.MaxCpusPerNode = cpus
-			}
-			if memMB > existing.MaxMemMBPerNode {
-				existing.MaxMemMBPerNode = memMB
-			}
-			nodeInfo[partition] = existing
-		} else {
-			nodeInfo[partition] = ResourceLimits{
-				Partition:       partition,
-				MaxCpusPerNode:  cpus,
-				MaxMemMBPerNode: memMB,
-			}
-		}
-
-		// Parse GPU GRES entries
-		// Example: gpu:nvidia_h100:8(S:0-3),gpu:nvidia_a100:4
-		for _, entry := range strings.Split(gresStr, ",") {
-			if !strings.HasPrefix(entry, "gpu:") {
-				continue
-			}
-			entry = strings.TrimPrefix(entry, "gpu:")
-			// Remove socket info like (S:0-3)
-			if idx := strings.Index(entry, "("); idx > 0 {
-				entry = entry[:idx]
-			}
-
-			gpuType := "gpu"
-			gpuCount := 0
-			if strings.Contains(entry, ":") {
-				ep := strings.Split(entry, ":")
-				gpuType = ep[0]
-				fmt.Sscanf(ep[len(ep)-1], "%d", &gpuCount)
-			} else {
-				fmt.Sscanf(entry, "%d", &gpuCount)
-			}
-			if gpuCount == 0 || nodes == 0 {
-				continue
-			}
-
-			total := gpuCount * nodes
-			key := partition + ":" + gpuType
-			if existing, ok := gpuMap[key]; ok {
-				existing.Total += total
-			} else {
-				gpuMap[key] = &GpuInfo{
-					Type:      gpuType,
-					Total:     total,
-					Partition: partition,
-				}
-			}
-		}
-	}
-
-	gpus := make([]GpuInfo, 0, len(gpuMap))
-	for _, g := range gpuMap {
-		gpus = append(gpus, *g)
-	}
-	return nodeInfo, gpus, nil
+	limits, gpus := parseSinfoPartitions(string(output))
+	return limits, gpus, nil
 }
 
-// getPartitionLimits queries SLURM for partition resource limits via scontrol.
-// nodeInfo (from getNodeInfoByPartition) provides actual CPU/mem maxima per partition.
-// gpuInfo (also from getNodeInfoByPartition) provides GPU totals per partition.
-func (s *SlurmScheduler) getPartitionLimits(nodeInfo map[string]ResourceLimits, gpuInfo []GpuInfo) ([]ResourceLimits, error) {
-	output, err := runCommand(context.Background(), "SLURM", "query-partition-limits", s.scontrolCommand, "show", "partition", "-o")
-	if err != nil {
-		return nil, NewClusterError("SLURM", "query partition limits", err)
+// sinfoPartitionFormat has no %T, which would split a partition into a row per node state.
+// It is used with -e, so a row holds only nodes that agree on every column.
+const sinfoPartitionFormat = "%P|%a|%l|%s|%c|%m|%G|%F"
+
+// parseSinfoPartitions reads the rows of sinfoPartitionFormat, in the order sinfo prints them.
+//   - A partition has several rows when its nodes differ in CPUs, memory or GRES. Rows that agree on
+//     CPUs, memory and GRES are one node type. Their nodes add up. A socket suffix such as "(S:0-3)" is ignored.
+//   - The node column is "allocated/idle/other/total", or a plain total. Nodes that are allocated or idle
+//     are up and take jobs. The rest are down, drained or in another state that takes none.
+//   - A trailing "+" on CPUs or memory marks the smallest value of a row that groups unequal nodes.
+//   - The per-node figures and the node count of a partition are the largest and the sum over its
+//     node types.
+func parseSinfoPartitions(output string) ([]ResourceLimits, []GpuInfo) {
+	var limits []ResourceLimits
+	limitIdx := make(map[string]int)
+	typeIdx := make(map[string]int) // key = partition, CPUs, memory and GPUs; the index in the node types of the partition
+
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		f := strings.Split(line, "|")
+		if len(f) < 8 {
+			continue
+		}
+		name := strings.TrimSpace(f[0])
+		isDefault := strings.HasSuffix(name, "*")
+		name = strings.TrimSuffix(name, "*")
+
+		i, ok := limitIdx[name]
+		if !ok {
+			limits = append(limits, ResourceLimits{
+				Partition:     name,
+				State:         strings.ToLower(strings.TrimSpace(f[1])),
+				Default:       isDefault,
+				MaxTime:       parseSlurmTime(f[2]),
+				TimeUnlimited: strings.EqualFold(strings.TrimSpace(f[2]), "infinite"),
+				MaxNodes:      parseSlurmMaxNodes(f[3]),
+			})
+			i = len(limits) - 1
+			limitIdx[name] = i
+		}
+		l := &limits[i]
+
+		cpuText, cpuLower := splitLowerBound(f[4])
+		cpus, _ := strconv.Atoi(cpuText)
+		memText, memLower := splitLowerBound(f[5])
+		memMB, _ := parseMemoryMB(memText)
+		nodes, nodesUp := parseSlurmNodeCounts(f[7])
+		gpus := parseSlurmGres(f[6])
+
+		key := name + "|" + strconv.Itoa(cpus) + "|" + strconv.FormatInt(memMB, 10) + "|" + gpuKey(gpus)
+		j, ok := typeIdx[key]
+		if !ok {
+			l.NodeTypes = append(l.NodeTypes, NodeType{Cpus: cpus, MemMB: memMB, Gpus: gpus})
+			j = len(l.NodeTypes) - 1
+			typeIdx[key] = j
+		}
+		t := &l.NodeTypes[j]
+		t.Nodes += nodes
+		t.NodesUp = addNodesUp(t.NodesUp, nodesUp)
+		t.CpusLowerBound = t.CpusLowerBound || cpuLower
+		t.MemLowerBound = t.MemLowerBound || memLower
 	}
 
-	limits := make([]ResourceLimits, 0)
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
-		limit := s.parsePartitionLine(line)
-		if limit != nil {
-			limits = append(limits, *limit)
-		}
-	}
-
-	// Merge actual node CPU/mem into limits (overrides scontrol UNLIMITED values)
-	if nodeInfo != nil {
-		for i := range limits {
-			if node, ok := nodeInfo[limits[i].Partition]; ok {
-				if node.MaxCpusPerNode > 0 {
-					limits[i].MaxCpusPerNode = node.MaxCpusPerNode
-				}
-				if node.MaxMemMBPerNode > 0 {
-					limits[i].MaxMemMBPerNode = node.MaxMemMBPerNode
-				}
-			}
-		}
-	}
-
-	// Merge GPU totals per partition
-	gpusByPartition := make(map[string]int)
-	for _, gpu := range gpuInfo {
-		p := gpu.Partition
-		if p == "" {
-			p = "default"
-		}
-		gpusByPartition[p] += gpu.Total
-	}
+	var gpus []GpuInfo
+	gpuIdx := make(map[string]int) // key = "partition:gpuType"
 	for i := range limits {
-		if maxGpus, ok := gpusByPartition[limits[i].Partition]; ok {
-			limits[i].MaxGpus = maxGpus
+		l := &limits[i]
+		for _, t := range l.NodeTypes {
+			l.Nodes += t.Nodes
+			l.MaxCpusPerNode = max(l.MaxCpusPerNode, t.Cpus)
+			l.MaxMemMBPerNode = max(l.MaxMemMBPerNode, t.MemMB)
+			l.CpusLowerBound = l.CpusLowerBound || t.CpusLowerBound
+			l.MemLowerBound = l.MemLowerBound || t.MemLowerBound
+			for _, g := range t.Gpus {
+				key := l.Partition + ":" + g.Type
+				k, ok := gpuIdx[key]
+				if !ok {
+					gpus = append(gpus, GpuInfo{Type: g.Type, Partition: l.Partition})
+					k = len(gpus) - 1
+					gpuIdx[key] = k
+				}
+				gpus[k].Total += g.PerNode * t.Nodes
+				l.MaxGpus += g.PerNode * t.Nodes
+			}
 		}
 	}
-
-	return limits, nil
+	return limits, gpus
 }
 
-// parsePartitionLine parses a single partition line from scontrol output
-func (s *SlurmScheduler) parsePartitionLine(line string) *ResourceLimits {
-	// https://slurm.schedmd.com/slurm.conf.html#SECTION_PARTITION-CONFIGURATION
-	limit := &ResourceLimits{}
+// parseSlurmNodeCounts reads the node column of sinfoPartitionFormat. It returns the total, and the
+// nodes that are allocated or idle, which is nil when the column is a plain total.
+func parseSlurmNodeCounts(s string) (total int, up *int) {
+	parts := strings.Split(strings.TrimSpace(s), "/")
+	if len(parts) != 4 {
+		total, _ = strconv.Atoi(parts[0])
+		return total, nil
+	}
+	allocated, _ := strconv.Atoi(parts[0])
+	idle, _ := strconv.Atoi(parts[1])
+	total, _ = strconv.Atoi(parts[3])
+	n := allocated + idle
+	return total, &n
+}
 
-	fields := strings.Fields(line)
-	for _, field := range fields {
-		kv := strings.SplitN(field, "=", 2)
-		if len(kv) != 2 {
+// parseSlurmGres reads the GPUs of a sinfo GRES column, such as
+// "gpu:nvidia_h100:8(S:0-3),gpu:nvidia_a100:4". A GPU with no type is "gpu", and other GRES are skipped.
+func parseSlurmGres(gres string) []NodeGpu {
+	var gpus []NodeGpu
+	for _, entry := range strings.Split(strings.TrimSpace(gres), ",") {
+		if !strings.HasPrefix(entry, "gpu:") {
 			continue
 		}
+		entry = strings.TrimPrefix(entry, "gpu:")
+		if idx := strings.Index(entry, "("); idx > 0 {
+			entry = entry[:idx]
+		}
 
-		key := kv[0]
-		value := kv[1]
-
-		switch key {
-		case "PartitionName":
-			limit.Partition = value
-		case "MaxTime":
-			if value != "UNLIMITED" {
-				if dur, err := utils.ParseDHMSTime(value); err == nil {
-					limit.MaxTime = dur
-				}
-			}
-		case "DefaultTime":
-			if value != "NONE" && value != "UNLIMITED" {
-				if dur, err := utils.ParseDHMSTime(value); err == nil {
-					limit.DefaultTime = dur
-				}
-			}
-		case "MaxCPUsPerNode":
-			fmt.Sscanf(value, "%d", &limit.MaxCpusPerNode)
-		case "MaxMemPerNode":
-			if value != "UNLIMITED" {
-				limit.MaxMemMBPerNode, _ = parseMemoryMB(value)
-			}
-		case "MaxNodes":
-			if value != "UNLIMITED" {
-				fmt.Sscanf(value, "%d", &limit.MaxNodes)
-			}
+		gpuType := "gpu"
+		count := 0
+		if strings.Contains(entry, ":") {
+			parts := strings.Split(entry, ":")
+			gpuType = parts[0]
+			count, _ = strconv.Atoi(parts[len(parts)-1])
+		} else {
+			count, _ = strconv.Atoi(entry)
+		}
+		if count > 0 {
+			gpus = append(gpus, NodeGpu{Type: gpuType, PerNode: count})
 		}
 	}
+	return gpus
+}
 
-	if limit.Partition == "" {
-		return nil
+// splitLowerBound drops the trailing "+" of a sinfo figure and reports whether it was there.
+func splitLowerBound(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	trimmed := strings.TrimSuffix(s, "+")
+	return trimmed, trimmed != s
+}
+
+// parseSlurmMaxNodes reads sinfo's job size, "min-max" or one number, and returns the maximum.
+// 0 means "infinite" or unreadable.
+func parseSlurmMaxNodes(s string) int {
+	s = strings.TrimSpace(s)
+	if _, after, found := strings.Cut(s, "-"); found {
+		s = after
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// parseSlurmTime reads a SLURM time: "minutes", "minutes:seconds", "hours:minutes:seconds",
+// "days-hours", "days-hours:minutes" or "days-hours:minutes:seconds".
+// "15:00" is 15 minutes, not 15 hours. "infinite" and anything unreadable give 0.
+func parseSlurmTime(s string) time.Duration {
+	s = strings.TrimSpace(s)
+	var days int64
+	hasDays := false
+	if before, after, found := strings.Cut(s, "-"); found {
+		n, err := strconv.ParseInt(before, 10, 64)
+		if err != nil {
+			return 0
+		}
+		days, s, hasDays = n, after, true
 	}
 
-	return limit
+	parts := strings.Split(s, ":")
+	nums := make([]int64, len(parts))
+	for i, p := range parts {
+		n, err := strconv.ParseInt(p, 10, 64)
+		if err != nil || n < 0 {
+			return 0
+		}
+		nums[i] = n
+	}
+
+	var h, m, sec int64
+	switch {
+	case hasDays && len(nums) == 1:
+		h = nums[0]
+	case hasDays && len(nums) == 2:
+		h, m = nums[0], nums[1]
+	case len(nums) == 3:
+		h, m, sec = nums[0], nums[1], nums[2]
+	case !hasDays && len(nums) == 2:
+		m, sec = nums[0], nums[1]
+	case !hasDays && len(nums) == 1:
+		m = nums[0]
+	default:
+		return 0
+	}
+	return time.Duration(days*86400+h*3600+m*60+sec) * time.Second
 }
 
 // parseSlurmGpu parses a SLURM GPU spec:
@@ -1213,6 +1252,15 @@ func TryParseSlurmScript(scriptPath string) (*ScriptSpecs, error) {
 		directiveRe: regexp.MustCompile(`^\s*#SBATCH\s+(.+)$`),
 	}
 	return parser.ReadScriptSpecs(scriptPath)
+}
+
+// slurmNodelistCount counts the nodes a --nodelist value names. It reports false for a file name.
+func slurmNodelistCount(list string) (int, bool) {
+	if strings.Contains(list, "/") {
+		return 0, false
+	}
+	n := len(expandSlurmNodeList(list))
+	return n, n > 0
 }
 
 // splitSlurmNodeList splits a node list on the commas outside brackets, so "n[1,3],m" is two entries.

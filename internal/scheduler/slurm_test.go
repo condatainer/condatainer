@@ -1,11 +1,14 @@
 package scheduler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,11 +21,10 @@ import (
 // without requiring sbatch to be installed
 func newTestSlurmScheduler() *SlurmScheduler {
 	return &SlurmScheduler{
-		sbatchBin:       "/usr/bin/sbatch",   // fake path for testing
-		sinfoCommand:    "/usr/bin/sinfo",    // fake path for testing
-		scontrolCommand: "/usr/bin/scontrol", // fake path for testing
-		directiveRe:     regexp.MustCompile(`^#SBATCH\s+(.+)`),
-		jobIDRe:         regexp.MustCompile(`Submitted batch job (\d+)`),
+		sbatchBin:    "/usr/bin/sbatch", // fake path for testing
+		sinfoCommand: "/usr/bin/sinfo",  // fake path for testing
+		directiveRe:  regexp.MustCompile(`^#SBATCH\s+(.+)`),
+		jobIDRe:      regexp.MustCompile(`Submitted batch job (\d+)`),
 	}
 }
 
@@ -1314,5 +1316,266 @@ func TestSlurmJobExecCommand(t *testing.T) {
 	want := "/usr/bin/srun --jobid 7 --overlap --nodes=1 --ntasks=1"
 	if err != nil || strings.Join(got, " ") != want {
 		t.Fatalf("JobExecCommand = %v, %v; want %q", got, err, want)
+	}
+}
+
+func TestParseSinfoPartitions(t *testing.T) {
+	out := `cpubase_interac|up|8:00:00|1-infinite|192|766000|(null)|702
+cpubackfill*|up|1-00:00:00|1-infinite|192|766000+|(null)|709
+gpubase_bynode_b4|up|3-00:00:00|1-infinite|112|2048000|gpu:h100:8|6
+gpubase_bynode_b4|up|3-00:00:00|1-infinite|112|2048000|gpu:nvidia_h100_80gb_hbm3_3g.40gb:8(S:0-3),gpu:nvidia_h100_80gb_hbm3_1g.10gb:16(S:0-3)|5
+gpubase_bynode_b4|up|3-00:00:00|1-infinite|96|507000|gpu:mi300a:4|3
+gpubase_bynode_b4|up|3-00:00:00|1-infinite|96|507000|gpu:mi300a:4(S:0-3)|1
+retired|down|1:00:00|1-4|8|1000|(null)|3
+`
+	limits, gpus := parseSinfoPartitions(out)
+
+	var names []string
+	byName := map[string]ResourceLimits{}
+	for _, l := range limits {
+		names = append(names, l.Partition)
+		byName[l.Partition] = l
+	}
+	if got := strings.Join(names, ","); got != "cpubase_interac,cpubackfill,gpubase_bynode_b4,retired" {
+		t.Fatalf("partitions = %s, want sinfo order without the default mark", got)
+	}
+
+	interac := byName["cpubase_interac"]
+	if interac.State != "up" || interac.Default || interac.MaxTime != 8*time.Hour || interac.MaxNodes != 0 ||
+		interac.Nodes != 702 || interac.MaxCpusPerNode != 192 || interac.MaxMemMBPerNode != 766000 {
+		t.Errorf("cpubase_interac = %+v", interac)
+	}
+	if len(interac.NodeTypes) != 1 || interac.NodeTypes[0].Nodes != 702 || interac.NodeTypes[0].MemLowerBound {
+		t.Errorf("cpubase_interac node types = %+v", interac.NodeTypes)
+	}
+
+	backfill := byName["cpubackfill"]
+	if !backfill.Default || backfill.MaxTime != 24*time.Hour || backfill.MaxMemMBPerNode != 766000 ||
+		!backfill.MemLowerBound || backfill.CpusLowerBound || !backfill.NodeTypes[0].MemLowerBound {
+		t.Errorf("cpubackfill = %+v", backfill)
+	}
+
+	retired := byName["retired"]
+	if retired.IsUp() || retired.MaxNodes != 4 {
+		t.Errorf("retired = %+v", retired)
+	}
+
+	gpu := byName["gpubase_bynode_b4"]
+	if gpu.Nodes != 15 || gpu.MaxCpusPerNode != 112 || gpu.MaxMemMBPerNode != 2048000 || gpu.MaxGpus != 48+40+80+16 {
+		t.Errorf("gpubase_bynode_b4 = %+v", gpu)
+	}
+	want := []NodeType{
+		{Nodes: 6, Cpus: 112, MemMB: 2048000, Gpus: []NodeGpu{{"h100", 8}}},
+		{Nodes: 5, Cpus: 112, MemMB: 2048000, Gpus: []NodeGpu{
+			{"nvidia_h100_80gb_hbm3_3g.40gb", 8}, {"nvidia_h100_80gb_hbm3_1g.10gb", 16}}},
+		{Nodes: 4, Cpus: 96, MemMB: 507000, Gpus: []NodeGpu{{"mi300a", 4}}},
+	}
+	if !reflect.DeepEqual(gpu.NodeTypes, want) {
+		t.Errorf("gpubase_bynode_b4 node types = %+v\nwant %+v", gpu.NodeTypes, want)
+	}
+
+	totals := map[string]int{}
+	for _, g := range gpus {
+		if g.Partition != "gpubase_bynode_b4" {
+			t.Errorf("unexpected gpu entry %+v", g)
+		}
+		totals[g.Type] = g.Total
+	}
+	wantTotals := map[string]int{
+		"h100": 48, "mi300a": 16,
+		"nvidia_h100_80gb_hbm3_3g.40gb": 40, "nvidia_h100_80gb_hbm3_1g.10gb": 80,
+	}
+	if !reflect.DeepEqual(totals, wantTotals) {
+		t.Errorf("gpu totals = %v, want %v", totals, wantTotals)
+	}
+}
+
+func TestParseSinfoKeepsEachMemorySize(t *testing.T) {
+	out := `cpularge_bycore_b1|up|3:00:00|1-infinite|192|766000|(null)|203
+cpularge_bycore_b1|up|3:00:00|1-infinite|192|6144000|(null)|10
+general*|up|infinite|1-infinite|64|524072|(null)|1
+general*|up|infinite|1-infinite|64|523547|(null)|1
+`
+	limits, _ := parseSinfoPartitions(out)
+	if len(limits) != 2 {
+		t.Fatalf("partitions = %+v", limits)
+	}
+
+	large := limits[0]
+	wantLarge := []NodeType{
+		{Nodes: 203, Cpus: 192, MemMB: 766000},
+		{Nodes: 10, Cpus: 192, MemMB: 6144000},
+	}
+	if !reflect.DeepEqual(large.NodeTypes, wantLarge) || large.Nodes != 213 || large.MaxMemMBPerNode != 6144000 || large.MemLowerBound {
+		t.Errorf("memory sizes 8x apart = %+v, want two exact node types", large)
+	}
+
+	general := limits[1]
+	wantGeneral := []NodeType{
+		{Nodes: 1, Cpus: 64, MemMB: 524072},
+		{Nodes: 1, Cpus: 64, MemMB: 523547},
+	}
+	if !reflect.DeepEqual(general.NodeTypes, wantGeneral) || general.MaxMemMBPerNode != 524072 || general.MemLowerBound {
+		t.Errorf("memory sizes within 10%% = %+v, want an exact node type for each", general)
+	}
+}
+
+func TestParseSinfoNodeStates(t *testing.T) {
+	out := `cpu*|up|infinite|1-infinite|64|256000|(null)|10/5/3/18
+cpu*|up|infinite|1-infinite|64|260000|(null)|2/0/0/2
+gpu|up|infinite|1-infinite|64|256000|(null)|0/0/4/4
+plain|up|infinite|1-infinite|8|1000|(null)|7
+`
+	limits, _ := parseSinfoPartitions(out)
+	up := func(l ResourceLimits) string {
+		if l.NodeTypes[0].NodesUp == nil {
+			return "unreported"
+		}
+		return fmt.Sprintf("%d/%d", *l.NodeTypes[0].NodesUp, l.NodeTypes[0].Nodes)
+	}
+	got := []string{up(limits[0]), up(limits[1]), up(limits[2])}
+	if want := []string{"15/18", "0/4", "unreported"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("up/total = %v, want %v: allocated and idle are up", got, want)
+	}
+
+	// Rows of one node type add up.
+	limits, _ = parseSinfoPartitions("a|up|infinite|1-infinite|8|1000|gpu:t4:2(S:0)|1/1/0/2\na|up|infinite|1-infinite|8|1000|gpu:t4:2|0/0/1/1\n")
+	if types := limits[0].NodeTypes; len(types) != 1 || types[0].Nodes != 3 || *types[0].NodesUp != 2 {
+		t.Errorf("rows of one type = %+v", types)
+	}
+}
+
+func TestGetClusterInfoReturnsSinfoFailure(t *testing.T) {
+	s := &SlurmScheduler{sinfoCommand: "false"}
+	if _, err := s.GetClusterInfo(context.Background()); err == nil {
+		t.Fatal("a failed sinfo call must be returned")
+	}
+	if s.cachedClusterInfo != nil {
+		t.Error("a failed sinfo call must not be cached")
+	}
+}
+
+func TestSinfoIgnoresUserDefaults(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "sinfo")
+	script := "#!/bin/sh\n[ -n \"${SINFO_PARTITION+x}\" ] && exit 0\necho 'open|up|infinite|1-infinite|8|1000|(null)|1/0/0/1'\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SINFO_PARTITION", "elsewhere")
+	t.Setenv("SLURM_CONF", "/etc/slurm.conf")
+
+	limits, _, err := (&SlurmScheduler{sinfoCommand: fake}).getPartitions(context.Background())
+	if err != nil || len(limits) != 1 {
+		t.Fatalf("partitions = %+v, err = %v: a SINFO_ default must not reach sinfo", limits, err)
+	}
+	if !slices.Contains(slurmToolEnv("SINFO_", false), "SLURM_CONF=/etc/slurm.conf") {
+		t.Error("sinfo must keep the other SLURM variables")
+	}
+}
+
+func TestParseSinfoUnlimitedTime(t *testing.T) {
+	limits, _ := parseSinfoPartitions("open|up|infinite|1-infinite|8|1000|(null)|2\nshort|up|1:00:00|1-infinite|8|1000|(null)|2\n")
+	if len(limits) != 2 {
+		t.Fatalf("got %d partitions, want 2", len(limits))
+	}
+	if !limits[0].TimeUnlimited || limits[0].MaxTime != 0 {
+		t.Errorf("infinite = %+v, want TimeUnlimited with no MaxTime", limits[0])
+	}
+	if limits[1].TimeUnlimited || limits[1].MaxTime != time.Hour {
+		t.Errorf("1:00:00 = %+v, want a one hour limit", limits[1])
+	}
+}
+
+func TestParseSlurmTime(t *testing.T) {
+	tests := map[string]time.Duration{
+		"15:00":      15 * time.Minute,
+		"30":         30 * time.Minute,
+		"8:00:00":    8 * time.Hour,
+		"1-00:00:00": 24 * time.Hour,
+		"2-12":       60 * time.Hour,
+		"2-12:30":    60*time.Hour + 30*time.Minute,
+		"infinite":   0,
+		"n/a":        0,
+		"":           0,
+	}
+	for in, want := range tests {
+		if got := parseSlurmTime(in); got != want {
+			t.Errorf("parseSlurmTime(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestParseSlurmMaxNodes(t *testing.T) {
+	tests := map[string]int{"1-infinite": 0, "1-4": 4, "4": 4, "infinite": 0, "": 0}
+	for in, want := range tests {
+		if got := parseSlurmMaxNodes(in); got != want {
+			t.Errorf("parseSlurmMaxNodes(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestSlurmGresAndNodelistParsing(t *testing.T) {
+	tests := []struct {
+		name          string
+		directives    []string
+		wantUnparsed  bool
+		wantGpuCount  int // 0: no GPU in the spec
+		wantRemaining []string
+	}{
+		{name: "gres gpu with count", directives: []string{"--gres=gpu:2"}, wantGpuCount: 2},
+		{name: "gres gpu without count", directives: []string{"--gres=gpu"}, wantGpuCount: 1},
+		{name: "gres in the space form", directives: []string{"--gres gpu:a100:2"}, wantGpuCount: 2},
+		{name: "gres that is not a GPU passes through", directives: []string{"--gres=lscratch:10"},
+			wantRemaining: []string{"--gres=lscratch:10"}},
+		{name: "gres that mixes a GPU with another resource", directives: []string{"--gres=lscratch:10,gpu:1"}, wantUnparsed: true},
+		{name: "topology flag", directives: []string{"--ntasks-per-socket=2"}, wantUnparsed: true},
+		{name: "short distribution", directives: []string{"-m cyclic"}, wantUnparsed: true},
+		{name: "extra node info", directives: []string{"-B 2:4"}, wantUnparsed: true},
+		{name: "hint", directives: []string{"--hint=nomultithread"}, wantUnparsed: true},
+		{name: "mincpus", directives: []string{"--mincpus=8"}, wantUnparsed: true},
+		{name: "overcommit", directives: []string{"--overcommit"}, wantUnparsed: true},
+		{name: "short overcommit", directives: []string{"-O"}, wantUnparsed: true},
+		{name: "node file", directives: []string{"--nodefile=nodes.txt"}, wantUnparsed: true},
+		{name: "heterogeneous job", directives: []string{"-c 2", "hetjob", "-c 4"}, wantUnparsed: true},
+		{name: "flag that changes no counts", directives: []string{"--constraint=gpu"}, wantRemaining: []string{"--constraint=gpu"}},
+		{name: "nodelist of one node", directives: []string{"--nodelist=n01"}, wantRemaining: []string{"--nodelist=n01"}},
+		{name: "short nodelist of one node", directives: []string{"-w n01"}, wantRemaining: []string{"-w n01"}},
+		{name: "nodelist within --nodes", directives: []string{"-N 2", "--nodelist=n[01-02]"}, wantRemaining: []string{"--nodelist=n[01-02]"}},
+		{name: "nodelist longer than --nodes", directives: []string{"-N 1", "--nodelist=n[01-02]"}, wantUnparsed: true},
+		{name: "nodelist without --nodes", directives: []string{"--nodelist=n01,n02"}, wantUnparsed: true},
+		{name: "nodelist that is a file", directives: []string{"--nodelist=/home/u/nodes.txt"}, wantUnparsed: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := []string{"#!/bin/bash", "#SBATCH -t 10"}
+			for _, d := range tt.directives {
+				lines = append(lines, "#SBATCH "+d)
+			}
+			path := filepath.Join(t.TempDir(), "test.sh")
+			if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+				t.Fatal(err)
+			}
+			specs, err := newTestSlurmScheduler().ReadScriptSpecs(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := IsUnparsed(specs); got != tt.wantUnparsed {
+				t.Fatalf("IsUnparsed = %v; want %v", got, tt.wantUnparsed)
+			}
+			if tt.wantUnparsed {
+				return
+			}
+			gpus := 0
+			if specs.Spec.Gpu != nil {
+				gpus = specs.Spec.Gpu.Count
+			}
+			if gpus != tt.wantGpuCount {
+				t.Errorf("GPU count = %d; want %d", gpus, tt.wantGpuCount)
+			}
+			if !slices.Equal(specs.RemainingFlags, tt.wantRemaining) {
+				t.Errorf("RemainingFlags = %q; want %q", specs.RemainingFlags, tt.wantRemaining)
+			}
+		})
 	}
 }

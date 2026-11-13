@@ -15,7 +15,10 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
   - Resource geometry is best effort.
 - **Unparsed.** When geometry cannot be resolved, `run`, builds and restore refuse the script, since there is nothing to regenerate it from.
   - Callers tell the three states apart: no directives, parsed, unparsed.
-- Some SLURM directives have no place in the geometry and leave the script unparsed, for example `--gpus-per-socket` and `--distribution`.
+- A SLURM directive that changes the CPUs, tasks or nodes a job gets, in a way the geometry cannot hold, leaves the script unparsed.
+  - Passing it through would make the exported `NCPU`, `MEM` and `NRANK` wrong.
+  - A `--nodelist` longer than `--nodes` is one, since it raises the node count.
+  - Other directives pass through as written.
 - `RawFlags` keeps every original directive. Only what is not absorbed goes to `RemainingFlags`.
 
 ## Resource priority
@@ -92,6 +95,54 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - They are rendered to each scheduler's own directive and never validated. A name is valid on one cluster and meaningless on another.
 - They are cleared on cross-scheduler translation for the same reason.
 - HTCondor has no account. Its `accounting_group` is a fairshare group, so it fills the partition and the account stays unset.
+
+## Cluster limits
+
+- SLURM partitions come from one grouped `sinfo -e` call, never `sinfo -N`.
+  - The node-based listing is orders of magnitude slower on a large cluster.
+  - `-e` keeps nodes of different memory in separate rows. Without it `sinfo` shows only the smallest, as `748G+`.
+- A figure the scheduler gives as a minimum is reported as a lower bound, never as exact.
+- The JSON lists node types exactly. The table joins types whose memory is within 10%, so a few MB do not add a row.
+- A GPU type keeps the CPUs and memory of its own nodes.
+  - A partition's own figures are the largest over its node types, so they do not describe a GPU node.
+- A partition with no default is normal.
+  - The site's submit plugin may choose one, so a job names no partition unless the user does.
+- LSF hosts and GPUs come from `lshosts`, not `bhosts`. This is untested on a real cluster.
+
+## Jobs and cancel
+
+Rules for every scheduler.
+
+- The model is scheduler-neutral, so another scheduler adds no command or table code.
+  - A scheduler without it is refused by name. There is no half implementation.
+- Call counts are fixed, since each call loads the scheduler's server.
+- A call runs without the user's defaults for that tool, with a standard time format.
+  - They reshape the output, and no option switches each of them off.
+  - This includes `sinfo`.
+- Output is read at fixed widths with a delimiter check, since a job name may hold the delimiter.
+- A state the map does not know is `unknown`, never a guess.
+- An exit code is reported only when the job's own program ended it.
+  - When the scheduler ended the job, the code is its kill, and its tools can disagree on it.
+- An ID with no record is `notfound`, never `success`.
+  - A failed history call is `unknown`, unless the site says it keeps no history.
+- A waiting job's start and a running job's end are estimates, so they are not reported.
+- Ownership comes from the listing of the user's jobs, not from the cancel tool.
+  - The tool's output is not trusted to say what it cancelled.
+  - Output that names no ID it was given fails the whole call.
+- Peak memory is a lower bound, and CPU time depends on the site's accounting.
+- Ranks per node are shown only when the user fixed them.
+  - Otherwise the scheduler places the ranks, possibly unevenly, and only the totals are known.
+
+SLURM.
+
+- `scontrol` is not called. `squeue -t all` gives the same records.
+- `JobID` is the raw ID of each array element, so a task comes from `ArrayJobID` and `ArrayTaskID`.
+- Whether `tres-alloc` counts GPUs depends on the site.
+  - Where it does not, the request fields are read.
+- `sacct -X` zeroes `TotalCPU`, so `sacct` runs without it.
+- `squeue` and `sacct` give different exit codes for a job the scheduler ended.
+- `scancel --me` is silent and exits 0 for a job of another user.
+- One malformed ID makes `scancel` cancel none of the call, so only found IDs are passed.
 
 ## Excluded nodes
 

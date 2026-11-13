@@ -53,3 +53,19 @@ func TestCommandEnvRestoresRealHome(t *testing.T) {
 		t.Errorf("HOME entries = %v, want exactly HOME=/home/u", homes)
 	}
 }
+
+func TestWriteJobHeaderNodeOnlyForSingleTask(t *testing.T) {
+	single := &ScriptSpecs{Spec: &ResourceSpec{Nodes: 1, TasksPerNode: 1, CpusPerTask: 2}}
+	mpi := &ScriptSpecs{Spec: &ResourceSpec{Nodes: 2, TasksPerNode: 4, CpusPerTask: 2}}
+	for _, c := range []struct {
+		name  string
+		specs *ScriptSpecs
+		want  bool
+	}{{"single task", single, true}, {"no resource spec", nil, true}, {"mpi", mpi, false}} {
+		var out bytes.Buffer
+		writeJobHeader(&out, "$ID", c.specs, nil, nil)
+		if got := strings.Contains(out.String(), "Node:       "); got != c.want {
+			t.Errorf("%s: node line = %v, want %v\n%s", c.name, got, c.want, out.String())
+		}
+	}
+}

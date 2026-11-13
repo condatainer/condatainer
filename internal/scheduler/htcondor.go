@@ -423,8 +423,10 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 	}
 
 	// Set log path based on job name; only override if caller requests it or script has no output set
+	// Capture before override: separate output when stderr is explicitly set to a different path
+	arraySeparateOutput := jobSpec.Array != nil && specs.Control.Stderr != "" && specs.Control.Stderr != specs.Control.Stdout
 	if jobSpec.Array != nil {
-		// Array job: output/error paths are set per-task in the submit file using $(Process)_$(array_args)
+		// Array job: the wrapper script redirects each task's output
 		specs.Control.Stdout = ""
 		specs.Control.Stderr = ""
 	} else if jobSpec.Name != "" && (jobSpec.OverrideOutput || specs.Control.Stdout == "") {
@@ -457,8 +459,11 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 	// .sub file, not the bash script), so the script exports them.
 	writeResourceExports(shWriter, htcRS)
 
-	// Array job: ARRAY_ARGS is set by HTCondor via the environment directive in the submit file
+	// Array job: extract input line, set ARRAY_ARGS, and redirect output. ProcId is 0-based.
 	if jobSpec.Array != nil {
+		writeArrayBlock(shWriter, "$(("+jobAdExpr("ProcId")+" + 1))",
+			jobSpec.Array.InputFile, outputDir, name,
+			jobSpec.Array.Count, arraySeparateOutput)
 		jobSpec.Metadata["Array Index"] = jobAdExpr("ProcId")
 		jobSpec.Metadata["Array File"] = jobSpec.Array.InputFile
 		jobSpec.Metadata["Array Args"] = "$ARRAY_ARGS"
@@ -526,10 +531,9 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 
 	// Output/error/log
 	if jobSpec.Array != nil {
-		// Array job: per-task output using $(Process) index and $(array_args) value
-		perTaskLog := fmt.Sprintf("%s/%s_$(Process)_$(array_args).log", outputDir, name)
-		fmt.Fprintf(subWriter, "output = %s\n", perTaskLog)
-		fmt.Fprintf(subWriter, "error = %s\n", perTaskLog)
+		// Array job: silence scheduler output; exec redirect in the wrapper handles per-task logs
+		fmt.Fprintln(subWriter, "output = /dev/null")
+		fmt.Fprintln(subWriter, "error = /dev/null")
 	} else {
 		if specs.Control.Stdout != "" {
 			fmt.Fprintf(subWriter, "output = %s\n", specs.Control.AbsStdout())
@@ -577,9 +581,7 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 	// Queue directive
 	fmt.Fprintln(subWriter, "")
 	if jobSpec.Array != nil {
-		// Array job: use item-based queue; ARRAY_ARGS is set from the queue variable
-		fmt.Fprintln(subWriter, "environment = \"ARRAY_ARGS=$(array_args)\"")
-		fmt.Fprintf(subWriter, "queue array_args from %s\n", jobSpec.Array.InputFile)
+		fmt.Fprintf(subWriter, "queue %d\n", jobSpec.Array.Count)
 	} else {
 		fmt.Fprintln(subWriter, "queue")
 	}

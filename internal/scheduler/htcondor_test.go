@@ -1055,3 +1055,39 @@ func TestHTCondorWrapperJobID(t *testing.T) {
 		t.Errorf("wrapper does not read the job ad\n%s", body)
 	}
 }
+
+// An array task's log is named by the wrapper from its ProcId, the same as the other schedulers.
+func TestHTCondorArrayLogInWrapper(t *testing.T) {
+	dir := t.TempDir()
+	jobSpec := &JobSpec{
+		Name:     "arr",
+		Command:  "echo hi",
+		Specs:    &ScriptSpecs{Spec: &ResourceSpec{CpusPerTask: 1}, RemainingFlags: []string{}},
+		Metadata: map[string]string{},
+		Array:    &ArraySpec{InputFile: "/in/args.txt", Count: 3},
+	}
+	if _, err := newTestHTCondorScheduler().CreateScriptWithSpec(jobSpec, dir); err != nil {
+		t.Fatalf("CreateScriptWithSpec: %v", err)
+	}
+	sh, err := os.ReadFile(filepath.Join(dir, "arr.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, err := os.ReadFile(filepath.Join(dir, "arr.sub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ProcId", "+ 1))", `sed -n "${_ARRAY_IDX}p" /in/args.txt`, "cut -c1-40", "exec &>"} {
+		if !strings.Contains(string(sh), want) {
+			t.Errorf("wrapper missing %q\n%s", want, sh)
+		}
+	}
+	for _, want := range []string{"output = /dev/null", "queue 3"} {
+		if !strings.Contains(string(sub), want) {
+			t.Errorf("submit file missing %q\n%s", want, sub)
+		}
+	}
+	if strings.Contains(string(sub), "array_args") {
+		t.Errorf("submit file still names logs from array_args\n%s", sub)
+	}
+}

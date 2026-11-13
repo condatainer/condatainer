@@ -40,6 +40,10 @@ type Options struct {
 
 	BaseImage string
 
+	// HostRun names the launch kind that decides whether the container gets the
+	// host-run relay (hostrun.KindHelper, KindExec or KindRun). "" gets none.
+	HostRun string
+
 	// StopGrace is how long the container gets to exit after this process is
 	// told to stop; zero keeps the default.
 	StopGrace time.Duration

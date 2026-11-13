@@ -27,3 +27,13 @@ Ephemeral container execution: the container setup pipeline plus Apptainer.
 - An active SOCKS5 proxy, found by `proxy.FindActiveProxy`, is injected as `http_proxy`, `https_proxy` and `all_proxy` (and uppercase), so tools inside use the tunnel.
 - An overlay's own `etc/conda/activate.d` scripts are sourced by rewriting the command as `bash -c <activation + exec "$@">`.
   - A static `--env` list cannot express it. It is shell script, not values.
+
+## Host relay
+
+- A launch that sets `HostRun` may get the host-run relay. `internal/runtime/hostrun` decides from the kind and `host_run.launch`.
+- The relay's directory is bound at `/.condatainer/host`, beside the executable's `/.condatainer/bin`, so the root of the container gains one entry.
+- The relay opens last in `Prepare`, once nothing after it can fail and leave it running. `Close` stops it.
+- A relay that cannot open is a warning. The container starts without it.
+- A launch inside a container opens none and removes the inherited bind and `CNT_HOST_RUN_SOCK`.
+  - The outer apptainer exports its binds to the environment, and a nested apptainer would take the relay from there.
+- Kinds: a helper's wrapper names `helper` through a hidden `exec` option, a typed `exec` or `e` is `exec`, and the container of a `run` script is `run`. Builds set none.

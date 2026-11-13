@@ -187,6 +187,18 @@ func TestRunPassesNoProjectToExec(t *testing.T) {
 	}
 }
 
+// A helper's exec names its launch kind, so the container gets the host-run relay a helper launch may have.
+func TestRunNamesTheHelperLaunchToExec(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "demo")
+	if err := os.WriteFile(script, []byte("#!/bin/bash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := buildCondatainerCmd(RunOptions{ScriptPath: script}, nil)
+	if err != nil || !strings.Contains(cmd, " --launch-kind helper ") {
+		t.Errorf("command = %q, %v; want --launch-kind helper", cmd, err)
+	}
+}
+
 // A helper that asks for a GPU makes its exec load the GPU even with autoload_gpu off.
 func TestRunPassesLoadGPUToExecWhenAGPUIsRequested(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "demo")

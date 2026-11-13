@@ -17,6 +17,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
+	"github.com/condatainer/condatainer/internal/runtime/hostrun"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -753,6 +754,7 @@ func runLocally(ctx context.Context, contentScript string, overlays []string, sp
 		BaseImage:    runBaseImage,
 		HidePrompt:   true,
 		GpuRequested: gpuRequested,
+		HostRun:      hostrun.KindRun,
 	}
 
 	if err := execpkg.Run(ctx, options, execpkg.IO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}); err != nil {

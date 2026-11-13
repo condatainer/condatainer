@@ -70,6 +70,8 @@ func TestRegisteredKeyNames(t *testing.T) {
 		"helper.notification CNT_CONFIG_HELPER_NOTIFICATION",
 		"home_override CNT_CONFIG_HOME_OVERRIDE",
 		"host_apptainer CNT_CONFIG_HOST_APPTAINER",
+		"host_run.launch CNT_CONFIG_HOST_RUN_LAUNCH",
+		"host_run.on CNT_CONFIG_HOST_RUN_ON",
 		"metadata_cache_ttl CNT_CONFIG_METADATA_CACHE_TTL",
 		"nested_run CNT_CONFIG_NESTED_RUN",
 		"scheduler.account CNT_CONFIG_SCHEDULER_ACCOUNT",

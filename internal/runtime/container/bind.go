@@ -18,10 +18,9 @@ import (
 // than a directory and refuses every package — "trying to overwrite '/usr',
 // which is also in package login".
 //
-// Not under the metadata directory /.cnt either, which belongs to the image's own
-// metadata. Its own directory is CondaTainer's, and no package writes there.
+// Under config.ContainerRoot, which is CondaTainer's own and no package writes there.
 const (
-	BoundExecDir  = "/.cnt_bin"
+	BoundExecDir  = config.ContainerRoot + "/bin"
 	BoundExecPath = BoundExecDir + "/condatainer"
 )
 

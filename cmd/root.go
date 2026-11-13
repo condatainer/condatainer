@@ -80,6 +80,12 @@ var rootCmd = &cobra.Command{
 			return
 		}
 
+		// host-run runs inside the container and only talks to its socket.
+		if cmd.CommandPath() == "condatainer host-run" {
+			initializeLightweightCommand(cmd)
+			return
+		}
+
 		// The shell setup commands run from a shell's rc file, before any
 		// configuration exists, and read none of the host build state.
 		if strings.HasPrefix(cmd.CommandPath(), "condatainer shell") {

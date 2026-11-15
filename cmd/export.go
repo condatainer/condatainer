@@ -5,16 +5,16 @@ import "github.com/spf13/cobra"
 // overlayExportHelp is the help body for 'overlay export'.
 const overlayExportHelp = `Export the Conda environment of a writable .img overlay.
 
-- It captures the environment as it is now, including packages installed since the overlay was created.
-- Files outside /cnt_env are not exported. Use 'overlay freeze' to keep them.
+- It exports the current environment, with packages installed since creation.
+- Files outside /cnt_env are not exported. Use ` + "`overlay freeze`" + ` to keep them.
 - Installed .sqf overlays are not exportable. Rebuild them from their recipe.
-- Output goes to stdout, or to <prefix>.yml (or .txt with --explicit) with --prefix.`
+- Output goes to stdout. --prefix writes <prefix>.yml (.txt with --explicit).`
 
 // overlayExportExample is the example block for 'overlay export'.
-const overlayExportExample = `  condatainer overlay export ./env.img                 # environment.yml on stdout
-  condatainer overlay export ./env.img --from-history  # Only explicitly installed packages
-  condatainer overlay export ./env.img -e              # Explicit spec (.txt)
-  condatainer overlay export ./env.img -p ./env        # Write ./env.yml`
+const overlayExportExample = `  condatainer overlay export ./env.img           # environment.yml on stdout
+  condatainer overlay export ./env.img --from-history
+  condatainer overlay export ./env.img -e        # Explicit spec (.txt)
+  condatainer overlay export ./env.img -p ./env  # Write ./env.yml`
 
 // registerExportFlags registers the micromamba env-export flags for 'overlay export'.
 func registerExportFlags(cmd *cobra.Command) {

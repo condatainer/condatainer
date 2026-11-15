@@ -25,7 +25,7 @@ var errSomeNotCancelled = errors.New("some jobs were not cancelled")
 
 var schedulerCancelCmd = &cobra.Command{
 	SilenceUsage: true, // Runtime errors should not show usage
-	Use:          "cancel <id>...|<name>...",
+	Use:          "cancel [flags] <id>...|<name>...",
 	Args:         cobra.MinimumNArgs(1),
 	Short:        "Cancel your jobs by ID or by name",
 	Long: `Cancel your own jobs that wait or run. Jobs of other users are never touched.
@@ -34,7 +34,7 @@ Arguments are all job IDs, or all name filters, as for jobs.
 
 - An array ID cancels every task. A task ID (245068_4) cancels one.
 - IDs cancel at once. A name asks first.
-- An ID that is not your job in the queue is not found, and the exit status is not zero.`,
+- An ID that is not your job in the queue is not found, and exits non-zero.`,
 	Example: `  condatainer scheduler cancel 245068 245070
   condatainer scheduler cancel 245080        # Every task of the array
   condatainer scheduler cancel 245080_4      # One task
@@ -80,7 +80,7 @@ func runSchedulerCancel(cmd *cobra.Command, args []string) error {
 				jobs = append(jobs, p.job)
 			}
 		}
-		scheduler.WriteJobTable(out, jobs, jobTableWidth(out))
+		scheduler.WriteJobTable(out, jobs, writerWidth(out))
 	}
 	if asks {
 		switch {

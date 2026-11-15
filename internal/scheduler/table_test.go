@@ -156,7 +156,7 @@ func jobTableText(jobs []JobInfo, width int) string {
 func sampleJobs() []JobInfo {
 	return []JobInfo{
 		{ID: "245070", Name: "step04_star", State: JobRunning, Cpus: 16, MemMB: 72 * 1024, Elapsed: 72 * time.Minute, TimeLimit: 24 * time.Hour,
-			NodeList: []string{"cpu-node-01"}, NodeCount: 1},
+			NodeList: []string{"cpu-node-1"}, NodeCount: 1},
 		{ID: "245071", Name: "step04_star", State: JobPending, Cpus: 16, MemMB: 72 * 1024, TimeLimit: 24 * time.Hour, Reason: "Dependency",
 			DependsOn: []JobDependency{{Type: "afterok", JobID: "245069", Failed: true}}},
 		{ID: "245073", Name: "step05_count", State: JobPending, Cpus: 4, MemMB: 16 * 1024, TimeLimit: 4 * time.Hour, Reason: "Dependency",
@@ -168,11 +168,11 @@ func sampleJobs() []JobInfo {
 
 func TestJobTable(t *testing.T) {
 	got := jobTableText(sampleJobs(), 100)
-	want := `JOBID   NAME          STATE    CPUS  MEM  TIME         NODE         NOTE
-245070  step04_star   running    16  72G  01:12/24:00  cpu-node-01
-245071  step04_star   pending    16  72G  24:00        -            dep failed 245069
-245073  step05_count  pending     4  16G  04:00        -            after 245070
-245080  step05_count  running     4  16G  04:00        -            3 running, 2 pending
+	want := `JOBID   NAME          STATE    CPUS  MEM  TIME               NODE        NOTE
+245070  step04_star   running    16  72G  01:12:00/24:00:00  cpu-node-1
+245071  step04_star   pending    16  72G  24:00:00           -           dep failed 245069
+245073  step05_count  pending     4  16G  04:00:00           -           after 245070
+245080  step05_count  running     4  16G  04:00:00           -           3 running, 2 pending
 `
 	if got != want {
 		t.Errorf("table:\n%s\nwant:\n%s", got, want)
@@ -226,9 +226,8 @@ func TestJobNode(t *testing.T) {
 		want string
 	}{
 		{"one node, domain cut", JobInfo{State: JobRunning, NodeList: []string{"node03.example.org"}}, "node03"},
-		{"list that fits", JobInfo{State: JobRunning, NodeList: []string{"c161", "c162"}}, "c161,c162"},
-		{"list too long", JobInfo{State: JobRunning, NodeList: []string{"node-aaaaaa", "node-bbbbbb", "node-cccccc"}}, "3 nodes"},
-		{"one long name", JobInfo{State: JobRunning, NodeList: []string{strings.Repeat("x", 40)}}, strings.Repeat("x", 25) + "…"},
+		{"several nodes", JobInfo{State: JobRunning, NodeList: []string{"c161", "c162"}}, "2 nodes"},
+		{"one long name is whole", JobInfo{State: JobRunning, NodeList: []string{strings.Repeat("x", 40)}}, strings.Repeat("x", 40)},
 		{"list cut by the scheduler", JobInfo{State: JobRunning, NodeCount: 60}, "60 nodes"},
 		{"pending", JobInfo{State: JobPending}, "-"},
 		{"an ended job keeps its node", JobInfo{State: JobSuccess, NodeList: []string{"c1.example.org"}}, "c1"},
@@ -248,14 +247,14 @@ func TestJobTime(t *testing.T) {
 		job  JobInfo
 		want string
 	}{
-		{"pending shows the limit", JobInfo{State: JobPending, TimeLimit: 24 * time.Hour}, "24:00"},
-		{"running shows elapsed over limit", JobInfo{State: JobRunning, Elapsed: 3*time.Hour + 10*time.Minute + 59*time.Second, TimeLimit: 12 * time.Hour}, "03:10/12:00"},
-		{"hours do not wrap", JobInfo{State: JobPending, TimeLimit: 72 * time.Hour}, "72:00"},
-		{"unlimited", JobInfo{State: JobRunning, Elapsed: time.Hour, TimeUnlimited: true}, "01:00/inf"},
+		{"pending shows the limit", JobInfo{State: JobPending, TimeLimit: 24 * time.Hour}, "24:00:00"},
+		{"running shows elapsed over limit", JobInfo{State: JobRunning, Elapsed: 3*time.Hour + 10*time.Minute + 59*time.Second, TimeLimit: 12 * time.Hour}, "03:10:59/12:00:00"},
+		{"hours do not wrap", JobInfo{State: JobPending, TimeLimit: 72 * time.Hour}, "72:00:00"},
+		{"unlimited", JobInfo{State: JobRunning, Elapsed: time.Hour, TimeUnlimited: true}, "01:00:00/inf"},
 		{"not set", JobInfo{State: JobPending}, "-"},
-		{"an ended job shows its elapsed time", JobInfo{State: JobSuccess, Elapsed: 48*time.Minute + 6*time.Second, TimeLimit: time.Hour}, "00:48"},
+		{"an ended job shows its elapsed time", JobInfo{State: JobSuccess, Elapsed: 48*time.Minute + 6*time.Second, TimeLimit: time.Hour}, "00:48:06"},
 		{"an ended job that never ran", JobInfo{State: JobCancelled, TimeLimit: time.Hour}, "-"},
-		{"an array shows its limit only", JobInfo{State: JobRunning, Elapsed: time.Hour, TimeLimit: 4 * time.Hour, Tasks: &ArrayTasks{}}, "04:00"},
+		{"an array shows its limit only", JobInfo{State: JobRunning, Elapsed: time.Hour, TimeLimit: 4 * time.Hour, Tasks: &ArrayTasks{}}, "04:00:00"},
 	}
 	for _, tt := range tests {
 		if got := jobTime(tt.job); got != tt.want {
@@ -325,5 +324,26 @@ func TestJobTableCutsNameAndNoteNoLowerThanTheMinimum(t *testing.T) {
 	got := jobTableText(jobs, 10)
 	if !strings.Contains(got, strings.Repeat("n", minFlexWidth-1)+"…") || !strings.Contains(got, strings.Repeat("r", minFlexWidth-1)+"…") {
 		t.Errorf("a narrow terminal keeps %d columns for the name and the note:\n%s", minFlexWidth, got)
+	}
+}
+
+func TestJobTableCutsALongNodeNameOnlyWhenTheTableDoesNotFit(t *testing.T) {
+	job := JobInfo{ID: "1", Name: "n", State: JobRunning, Cpus: 1, MemMB: 1024, TimeLimit: time.Hour,
+		NodeList: []string{strings.Repeat("x", 30)}}
+	if got := jobTableText([]JobInfo{job}, 100); !strings.Contains(got, strings.Repeat("x", 30)) {
+		t.Errorf("a wide terminal shows the whole node name:\n%s", got)
+	}
+	got := jobTableText([]JobInfo{job}, 10)
+	if !strings.Contains(got, strings.Repeat("x", minNodeWidth-1)+"…") {
+		t.Errorf("a narrow terminal keeps %d columns for the node:\n%s", minNodeWidth, got)
+	}
+}
+
+func TestJobTableWithNoWidthCutsNothing(t *testing.T) {
+	job := JobInfo{ID: "1", Name: strings.Repeat("n", 90), State: JobPending, Reason: strings.Repeat("r", 90),
+		Cpus: 1, MemMB: 1024, TimeLimit: time.Hour}
+	got := jobTableText([]JobInfo{job}, 0)
+	if strings.Contains(got, "…") || !strings.Contains(got, strings.Repeat("n", 90)) || !strings.Contains(got, strings.Repeat("r", 90)) {
+		t.Errorf("a table with no width limit shows every value whole:\n%s", got)
 	}
 }

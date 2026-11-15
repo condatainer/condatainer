@@ -54,7 +54,7 @@ var helperCmd = &cobra.Command{
 	Short: "Run web apps like RStudio on HPC",
 	Long: `Run web apps like RStudio inside CondaTainer on HPC.
 
-- A helper submits a job, starts the app, and opens an SSH tunnel to your browser.
+- It submits a job, starts the app, and opens an SSH tunnel to your browser.
 - With no arguments, it shows the apps you have running.
 - It cannot run inside a container or a scheduler job.`,
 	Example: `  condatainer helper                       # Show running apps
@@ -75,9 +75,10 @@ var helperRunCmd = &cobra.Command{
 	Long: `Start a helper on a compute node.
 
 - It submits a job, starts the app, and opens an SSH tunnel to your browser.
-- It returns once the job is submitted, and prints the access URL when the app is ready.
-- Each helper has its own flags, shown by 'condatainer helper run <name> -h'.
-- Scheduler options (cpu, mem, time, gpu, account, partition) can be set per run or saved as defaults.`,
+- It returns after submitting, and prints the access URL when the app is ready.
+- Each helper has its own flags, shown by ` + "`condatainer helper run <name> -h`" + `.
+- Per-run scheduler options: cpu, mem, time, gpu, account, partition.
+- They can also be saved as defaults.`,
 	Example: `  condatainer helper run code-server
   condatainer helper run code-server -h
   condatainer helper run rstudio-server --cpu 8 --mem 32G`,
@@ -90,7 +91,7 @@ var helperRunCmd = &cobra.Command{
 var helperStopAll bool
 
 var helperStopCmd = &cobra.Command{
-	Use:   "stop [name]",
+	Use:   "stop [flags] [name]",
 	Short: "Stop a running helper",
 	Long: `Stop a running helper.
 
@@ -112,7 +113,7 @@ var helperStopCmd = &cobra.Command{
 }
 
 var helperConfigCmd = &cobra.Command{
-	Use:   "config <name> [path|list|get <key>|set <key> <value>]",
+	Use:   "config [flags] <name> [path|list|get <key>|set <key> <value>]",
 	Short: "List or save a helper's defaults",
 	Example: `  condatainer helper config code-server
   condatainer helper config code-server set cpu 4
@@ -144,10 +145,10 @@ func init() {
 		if cmd.HasExample() {
 			fmt.Fprintf(out, "\nExamples:\n%s\n", cmd.Example)
 		}
-		fmt.Fprintf(out, "\nFlags:\n%s\n", cmd.LocalFlags().FlagUsages())
+		fmt.Fprintf(out, "\nFlags:\n%s\n", wrappedFlagUsages(cmd.LocalFlags()))
 		helper.PrintRunFlags(out, nil)
 		if cmd.HasAvailableInheritedFlags() {
-			fmt.Fprintf(out, "\nGlobal Flags:\n%s", cmd.InheritedFlags().FlagUsages())
+			fmt.Fprintf(out, "\nGlobal Flags:\n%s", wrappedFlagUsages(cmd.InheritedFlags()))
 		}
 		return nil
 	})

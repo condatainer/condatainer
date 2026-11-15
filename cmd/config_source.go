@@ -32,7 +32,7 @@ var sourceOpts struct {
 var tokenLines *bufio.Reader
 
 const sourceOrderHelp = `Search order (first match wins):
-- Layers first: user, extra-root, cnt-root.
+- Layers first: user > extra-root > cnt-root.
 - Within a layer, the order of its list.
 - cnt last, unless a layer lists it.`
 
@@ -55,18 +55,17 @@ var configSourceAddCmd = &cobra.Command{
 	Long: `Add a recipe source, or replace the URL of one already in the layer.
 
 - The source is read first. Nothing is saved unless its recipes can be read.
-- If it needs a token, a recipe token is asked for.
-- If it needed a token and declares a registry, a registry token is asked for too. Leave it empty to skip.
-- With --token-stdin, each line of stdin answers one of these, in that order.
-- A token for a layer other than user is asked for only after you confirm the layer. With --token-stdin, -y confirms it.
-- Tokens are saved in the layer's credentials.json, never in config.yaml.
 - A new source goes last in its layer unless a position flag says otherwise.
 
-` + sourceOrderHelp,
+Tokens:
+- If the source needs a token, a recipe token is asked for.
+- If it also declares a registry, a registry token is asked for. Empty skips it.
+- A token for a layer other than user is asked for only after you confirm it.`,
 	Example: `  condatainer config source add lab /shared/lab/recipes
   condatainer config source add lab https://raw.githubusercontent.com/my-lab/recipes/main
   condatainer config source add lab https://raw.githubusercontent.com/my-lab/recipes/main -l extra-root --first
-  printf '%s\n%s\n' "$RECIPE_TOKEN" "$REGISTRY_TOKEN" | condatainer config source add lab https://raw.githubusercontent.com/my-lab/recipes/main --token-stdin`,
+  # Tokens from stdin, saved in a shared layer: -y confirms the layer
+  printf '%s\n%s\n' "$RECIPE_TOKEN" "$REGISTRY_TOKEN" | condatainer config source add lab https://raw.githubusercontent.com/my-lab/recipes/main -l extra-root --token-stdin -y`,
 	Args:         cobra.ExactArgs(2),
 	SilenceUsage: true,
 	RunE:         runSourceAdd,
@@ -79,9 +78,7 @@ var configSourceMoveCmd = &cobra.Command{
 
 - Give exactly one of --first, --last, --before, --after.
 - The other source must be in the same layer.
-- Moving the default cnt writes it into the layer, then places it.
-
-` + sourceOrderHelp,
+- Moving the default cnt writes it into the layer, then places it.`,
 	Example: `  condatainer config source move lab --first
   condatainer config source move lab --before site`,
 	Args:              cobra.ExactArgs(1),
@@ -97,8 +94,10 @@ var configSourceListCmd = &cobra.Command{
 	Long: `List recipe sources in search order, with the layer each comes from.
 
 - A source is private when it is read with a token, or is a directory.
-- Under each source, its registry and the credential its prebuilt pulls send first.
-- Tokens are never shown.`,
+- Under each source, its registry and the credential prebuilt pulls send first.
+- Tokens are never shown.
+
+` + sourceOrderHelp,
 	Args:         cobra.NoArgs,
 	SilenceUsage: true,
 	RunE:         runSourceList,
@@ -110,7 +109,8 @@ var configSourceRemoveCmd = &cobra.Command{
 	Short:   "Remove a recipe source and its token",
 	Long: `Remove a recipe source from its config layer, with its recipe token.
 
-- Its registry token goes with it. Registry logins stay; ` + "`condatainer registry logout`" + ` removes them.
+- Its registry token goes with it.
+- Registry logins stay. ` + "`condatainer registry logout`" + ` removes them.
 - Removing cnt from a layer returns it to the default, searched last.`,
 	Example:           `  condatainer config source remove lab`,
 	Args:              cobra.ExactArgs(1),

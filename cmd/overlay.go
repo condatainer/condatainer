@@ -198,11 +198,11 @@ var overlayCreateCmd = &cobra.Command{
 	Use:   "create [flags] [path] [-- packages...]",
 	Short: "Create a new ext3 overlay",
 	Long:  overlayCreateHelp,
-	Example: `  condatainer overlay create                          # env.img, 10G
+	Example: `  condatainer overlay create                           # env.img, 10G
   condatainer overlay create my_data.img -s 50g -p large
   condatainer overlay create --fakeroot --sparse
   condatainer overlay create -f environment.yml
-  condatainer overlay create myenv.img -- python=3.11`,
+  condatainer overlay create myenv.img -- python=3.11  # With Conda packages`,
 
 	Args: cobra.ArbitraryArgs,
 
@@ -214,7 +214,7 @@ var overlayCreateCmd = &cobra.Command{
 // ---------------------------------------------------------
 
 var resizeCmd = &cobra.Command{
-	Use:   "resize [flags] <overlay>",
+	Use:   "resize [flags] <overlay.img>",
 	Short: "Expand or shrink an overlay",
 	Example: `  condatainer overlay resize env.img -s 20g
   condatainer overlay resize data.img --size 512M
@@ -260,7 +260,7 @@ var infoCmd = &cobra.Command{
 	Long: `Show details about a writable ext3 overlay.
 
 - Filesystem stats, disk and inode usage, block size, ownership.
-- For a SquashFS overlay or an installed name, use 'condatainer info'.`,
+- For a SquashFS overlay or an installed name, use ` + "`condatainer info`" + `.`,
 	Example:      `  condatainer overlay info env.img  # Usage of a writable overlay`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
@@ -281,11 +281,11 @@ var infoCmd = &cobra.Command{
 // ---------------------------------------------------------
 
 var fscheckCmd = &cobra.Command{
-	Use:     "fscheck [flags] <overlay>",
+	Use:     "fscheck [flags] <overlay.img>",
 	Aliases: []string{"fsck"},
 	Short:   "Verify filesystem integrity (e2fsck)",
 	Example: `  condatainer overlay fscheck env.img     # Check and repair automatically
-  condatainer overlay fscheck env.img -f  # Force a check even if marked clean`,
+  condatainer overlay fscheck env.img -f`,
 	Args: cobra.ExactArgs(1),
 
 	// Enable Smart Tab Completion for .img files
@@ -306,16 +306,13 @@ var fscheckCmd = &cobra.Command{
 // ---------------------------------------------------------
 
 var chownCmd = &cobra.Command{
-	Use:   "chown [flags] <overlay>",
+	Use:   "chown [flags] <overlay.img>",
 	Short: "Change file ownership inside an overlay",
-	Long: `Change the UID/GID of files inside an overlay, without mounting it.
-
-- The default owner is the current user.
-- The default path is '/' inside the image.`,
-	Example: `  condatainer overlay chown env.img                   # Set entire image to current user
-  condatainer overlay chown env.img --root            # Set entire image to root
-  condatainer overlay chown env.img -u 1001 -g 1001   # Set to specific ID
-  condatainer overlay chown env.img -p /ext3 -p /data # Chown multiple paths`,
+	Long:  `Change the UID/GID of files inside an overlay, without mounting it.`,
+	Example: `  condatainer overlay chown env.img  # Set entire image to current user
+  condatainer overlay chown env.img --root
+  condatainer overlay chown env.img -u 1001 -g 1001
+  condatainer overlay chown env.img -p /ext3 -p /data`,
 	Args: cobra.ExactArgs(1),
 
 	// Enable Smart Tab Completion for .img files

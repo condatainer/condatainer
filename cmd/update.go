@@ -39,11 +39,13 @@ var updateCmd = &cobra.Command{
   micromamba: the standalone micromamba binary.
   With no name, both are installed or updated.
   Writes to $CNT_ROOT/libexec, or $CNT_LIBEXEC when set.`,
-	Example: `  condatainer update                            # Refresh recipe and helper caches
-  condatainer update --libexec                  # Install or update apptainer and micromamba
-  condatainer update --libexec apptainer        # Install or update apptainer only
-  condatainer update --libexec apptainer@1.5.4  # A specific version
-  condatainer update --libexec apptainer@1.5    # The newest 1.5.x`,
+	Example: `  condatainer update                          # Refresh recipe and helper caches
+  # Install or update apptainer and micromamba
+  condatainer update --libexec
+  condatainer update --libexec apptainer      # Install or update apptainer only
+  # A specific version
+  condatainer update --libexec apptainer@1.5.4
+  condatainer update --libexec apptainer@1.5  # The newest 1.5.x`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 && !updateLibexec {
 			return fmt.Errorf("tools can only be named with --libexec")
@@ -133,8 +135,8 @@ var selfUpdateCmd = &cobra.Command{
 
 - The replaced binary is kept as a hidden .prev beside it.`,
 	Example: `  condatainer self-update        # Update to the latest stable version
-  condatainer self-update --yes  # Update without confirmation
-  condatainer self-update -f     # Update even if already on the latest version`,
+  condatainer self-update --yes
+  condatainer self-update -f`,
 	Args:         cobra.NoArgs,
 	SilenceUsage: true,
 	RunE:         runSelfUpdate,

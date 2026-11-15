@@ -194,6 +194,8 @@ func cliUsage(c *cobra.Command) string {
 
 // commandHelp returns what --help prints for c, without the global flags.
 func commandHelp(c *cobra.Command) string {
+	defer func(w func() int) { helpWidth = w }(helpWidth)
+	helpWidth = func() int { return 0 }
 	var out bytes.Buffer
 	c.SetOut(&out)
 	defer c.SetOut(nil)

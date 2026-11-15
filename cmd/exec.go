@@ -32,7 +32,6 @@ var execCmd = &execCommand{
 		SilenceUsage: true,
 		Long: `Execute a command inside a container with specified overlays.
 
-- Overlays are given with -o/--overlay.
 - All positional arguments form the command (default: bash).
 - Extra Apptainer flags must use --flag=value format (no space).`,
 		Example: `  # Run samtools command with overlay

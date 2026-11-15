@@ -25,7 +25,7 @@ var (
 var helperWatchCmd = &cobra.Command{
 	Use:    "_helper_watch",
 	Hidden: true,
-	Short:  "Watch a helper in the background (started by 'condatainer helper')",
+	Short:  "Watch a helper in the background (started by `condatainer helper`)",
 	Args:   cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true

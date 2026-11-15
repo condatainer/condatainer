@@ -96,12 +96,18 @@ var createCmd = &cobra.Command{
 
 --dry-run shows what would be built, pulled or submitted, and does none of it.
 Exits with code 3 if build jobs were submitted to a scheduler.`,
-	Example: `  condatainer create orad/2.7.0                              # From a recipe
-  condatainer create --source lab star/2.7.11b               # From a recipe in the lab source
-  condatainer create -n nvim nvim nodejs                     # Conda packages, named nvim
-  condatainer create matplotlib pandas -p /path              # Conda packages at a custom path
-  condatainer create -f environment.yml -p myenv             # From a Conda file
-  condatainer create --from docker://ubuntu:22.04 -p ubuntu  # From a container image`,
+	Example: `  # From a recipe
+  condatainer create orad/2.7.0
+  # From a recipe in the lab source
+  condatainer create --source lab star/2.7.11b
+  # Conda packages, named nvim
+  condatainer create -n nvim nvim nodejs
+  # Conda packages at a custom path
+  condatainer create matplotlib pandas -p /path
+  # From a Conda file
+  condatainer create -f environment.yml -p myenv
+  # From a container image
+  condatainer create --from docker://ubuntu:22.04 -p ubuntu`,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		return config.SelectSources(createSources)
 	},
@@ -272,7 +278,7 @@ func init() {
 			fmt.Fprintf(cmd.OutOrStderr(), "\nCompression Flags:\n%s", flagUsages(compress))
 		}
 		if cmd.HasAvailableInheritedFlags() {
-			fmt.Fprintf(cmd.OutOrStderr(), "\nGlobal Flags:\n%s", cmd.InheritedFlags().FlagUsages())
+			fmt.Fprintf(cmd.OutOrStderr(), "\nGlobal Flags:\n%s", wrappedFlagUsages(cmd.InheritedFlags()))
 		}
 		return nil
 	})

@@ -24,7 +24,8 @@ var envCmd = &cobra.Command{
 - Enter a writable container first:
     condatainer exec -w -o env.img bash
     condatainer e env.img
-- Inside it, mm is a shortcut for these commands. 'condatainer shell init' sets it up for bash, zsh and fish.`,
+- Inside it, mm is a shortcut for these commands.
+- ` + "`condatainer shell init`" + ` sets it up for bash, zsh and fish.`,
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
@@ -39,23 +40,24 @@ func init() {
 	envCmd.AddCommand(withRmAlias(newMicromambaCommand("remove", "Remove installed packages", runEnvMutation("remove"))))
 	envCmd.AddCommand(newMicromambaCommand("list", "List installed packages", runEnvRead("list")))
 	envCmd.AddCommand(newMicromambaCommand("export", "Print the environment specification", runEnvRead("env", "export")))
+	// Search needs a writable overlay so its repodata cache lands in the overlay's own pkgs.
 	envCmd.AddCommand(newMicromambaCommand("search", "Search the channels for a package", runEnvMutation("search")))
 	envCmd.AddCommand(newMicromambaCommand("clean", "Clean the package caches", runEnvMutation("clean")))
 
 	channelsCmd := &cobra.Command{Use: "channels", Short: "Manage the environment's Conda channels"}
 	channelsCmd.AddCommand(
 		envStructuredCommand("list", "List the channels, highest priority first", cobra.NoArgs, runEnvChannelsList),
-		envStructuredCommand("append <channel>", "Add a channel with the lowest priority", cobra.ExactArgs(1), runEnvChannelsAppend),
-		envStructuredCommand("prepend <channel>", "Add a channel with the highest priority", cobra.ExactArgs(1), runEnvChannelsPrepend),
-		withRmAlias(envStructuredCommand("remove <channel>", "Remove a channel", cobra.ExactArgs(1), runEnvChannelsRemove)),
+		envStructuredCommand("append [flags] <channel>", "Add a channel with the lowest priority", cobra.ExactArgs(1), runEnvChannelsAppend),
+		envStructuredCommand("prepend [flags] <channel>", "Add a channel with the highest priority", cobra.ExactArgs(1), runEnvChannelsPrepend),
+		withRmAlias(envStructuredCommand("remove [flags] <channel>", "Remove a channel", cobra.ExactArgs(1), runEnvChannelsRemove)),
 	)
 	envCmd.AddCommand(channelsCmd)
 
 	pinCmd := &cobra.Command{Use: "pin", Short: "Keep packages at a chosen version"}
 	pinCmd.AddCommand(
 		envStructuredCommand("list", "List the pinned packages", cobra.NoArgs, runEnvPinList),
-		envStructuredCommand("add <spec>", "Pin a package; a bare name pins the installed version", cobra.ExactArgs(1), runEnvPinAdd),
-		withRmAlias(envStructuredCommand("remove <package>", "Unpin a package", cobra.ExactArgs(1), runEnvPinRemove)),
+		envStructuredCommand("add [flags] <spec>", "Pin a package; a bare name pins the installed version", cobra.ExactArgs(1), runEnvPinAdd),
+		withRmAlias(envStructuredCommand("remove [flags] <package>", "Unpin a package", cobra.ExactArgs(1), runEnvPinRemove)),
 	)
 	envCmd.AddCommand(pinCmd)
 

@@ -43,9 +43,9 @@ var projectCmd = &cobra.Command{
 
 Every overlay has two keys:
 - identity:     one exact build.
-- equivalence:  builds that differ only in ways that should not change the result.
+- equivalence:  builds that differ only in ways that should not matter.
 
-A project accepts equivalent builds by default. See 'project set-match'.`,
+A project accepts equivalent builds by default. See ` + "`project set-match`" + `.`,
 }
 
 func init() {
@@ -111,8 +111,9 @@ func newProjectLockCmd() *cobra.Command {
 
 - A script is a file that starts with #!/bin/bash or #!/bin/env <interpreter>.
 - Creates cnt-lock/ if needed, and drops pins that no script declares any more.
-- Pins this machine's architecture and keeps the others. Run it on each one to cover it.
-- Skips dot directories and what .gitignore and project ignore list. Never follows a symlink.
+- It pins this architecture and keeps the others. Run it on each to cover all.
+- Skips dot directories and what .gitignore and ` + "`project ignore`" + ` list.
+- Never follows a symlink.
 - Fails if a declared overlay is not installed.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
@@ -141,7 +142,7 @@ func newProjectStatusCmd() *cobra.Command {
 
 - Number of pinned overlays.
 - #DEP: declarations that have no pin yet.
-- Read-only. Use 'condatainer project lock' to update the lock.`,
+- Read-only. Use ` + "`condatainer project lock`" + ` to update the lock.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -259,9 +260,12 @@ func newProjectPinCmd() *cobra.Command {
 
 - name/version:    pin one installed overlay.
 - a project .sqf:  record the current identity of that file.
-- An identity is a full scheme@sha256:<hex> key, or any unambiguous prefix of it.
-- Give one to choose between installed builds of the same name. A project path takes none.`,
-		Example: `  condatainer project pin star/2.7.11b a31f902c12ab
+- An identity is a full scheme@sha256:<hex> key, or an unambiguous prefix.
+- Give one to choose between installed builds of a name.
+- A project path takes none.`,
+		Example: `  # One installed build, chosen by identity
+  condatainer project pin star/2.7.11b a31f902c12ab
+  # A project .sqf file
   condatainer project pin overlays/combined.sqf`,
 		Args:         cobra.RangeArgs(1, 2),
 		SilenceUsage: true,
@@ -378,8 +382,8 @@ func newProjectSelectMatchCmd() *cobra.Command {
 - identity: only the pinned build is accepted.
 
 With identity:
-- 'project restore' fetches or rebuilds the exact build.
-- 'run' and 'exec' stop if only an equivalent build is installed.
+- ` + "`project restore`" + ` fetches or rebuilds the exact build.
+- ` + "`run`" + ` and ` + "`exec`" + ` stop if only an equivalent build is installed.
 
 The choice is saved in the lock.`,
 		Example: `  condatainer project set-match identity     # Require the exact pinned builds
@@ -418,7 +422,7 @@ func newProjectUnpinCmd() *cobra.Command {
 		Short: "Remove a manual pin",
 		Long: `Remove a manual pin, one that no script declares.
 
-- To drop any other pin, remove its #DEP: line and run 'condatainer project lock'.
+- To drop any other pin, remove its #DEP: line and run ` + "`project lock`" + `.
 - The overlay file itself is never deleted.`,
 		Example: `  condatainer project unpin overlays/env.sqf
   condatainer project unpin ubuntu24/build-essential`,
@@ -493,7 +497,7 @@ func newProjectIgnoreCmd() *cobra.Command {
 - Their #DEP: lines are not pinned, and ` + "`run`" + ` resolves them by name.
 - A path is relative to the current directory. A leading / is the project root.
 - Quote a wildcard, or the shell expands it first.
-- The list is cnt-lock/ignore. A path that .gitignore already ignores is not added.`,
+- The list is cnt-lock/ignore. A path .gitignore already ignores is not added.`,
 		Example: `  condatainer project ignore old_scripts/
   condatainer project ignore 'tmp/*.py'
   condatainer project ignore --list
@@ -622,8 +626,9 @@ func newProjectListCmd() *cobra.Command {
 		Long: `List every pin and the overlay it names.
 
 - Works in a fresh clone that has restored nothing.
-- To check whether the overlays are available, use 'condatainer project restore --dry-run'.
-- A 'manual' pin is one no script declares. 'project lock' keeps it, and 'project unpin' removes it.`,
+- To check that the overlays are available, use ` + "`project restore --dry-run`" + `.
+- A 'manual' pin is one no script declares.
+- ` + "`project lock`" + ` keeps it, and ` + "`project unpin`" + ` removes it.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -800,10 +805,10 @@ func newProjectRegistryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "registry",
 		Short: "Manage the publish destination, and publish to it",
-		Long: `Show where 'condatainer project registry push' publishes.
+		Long: `Show where ` + "`condatainer project registry push`" + ` publishes.
 
-- 'set' records the destination, and 'unset' clears it.
-- 'push' publishes to it, and 'gc' removes what the lock no longer pins.`,
+- ` + "`set`" + ` records the destination, and ` + "`unset`" + ` clears it.
+- ` + "`push`" + ` publishes to it, and ` + "`gc`" + ` removes what the lock no longer pins.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -836,12 +841,11 @@ func newProjectRegistrySetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set [flags] <host>/<owner>/<repo>",
 		Short: "Set the publish destination",
-		Long: `Record where 'condatainer project registry push' publishes.
+		Long: `Record where ` + "`condatainer project registry push`" + ` publishes.
 
 - Give a repository with no tag or digest. Every overlay goes into it.
-- --audience sets what a push may publish: public (default) or restricted.
-- A public destination refuses an app whose recipe does not allow redistribution.
-- --audience does not control who can pull.`,
+- A public destination refuses an app whose recipe forbids redistribution.
+- --audience only declares who can pull. Nothing enforces it.`,
 		Example:      `  condatainer project registry set ghcr.io/my-lab/rnaseq-2026/cnt --audience restricted`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
@@ -894,7 +898,7 @@ func newProjectRegistrySetCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&audience, "audience", "public", "Who can download from the registry: public or restricted")
+	cmd.Flags().StringVar(&audience, "audience", "public", "Declare who can download from the registry: public or restricted")
 	cmd.Flags().StringVar(&codeURL, "code-url", "", "Code repository URL that published packages link to (default: origin remote)")
 	return cmd
 }
@@ -905,8 +909,8 @@ func newProjectRegistryUnsetCmd() *cobra.Command {
 		Short: "Clear the publish destination",
 		Long: `Clear the publish destination.
 
-- 'project registry push' cannot publish until one is set again.
-- Overlays already published stay where they are, and a restore can still download them.`,
+- ` + "`project registry push`" + ` cannot publish until one is set again.
+- Published overlays stay where they are, and a restore can still download them.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -950,12 +954,12 @@ func newProjectRegistryPushCmd() *cobra.Command {
 		Long: `Publish the locked overlays to the project's registry.
 
 - A later restore downloads them instead of rebuilding.
-- The project must pass 'condatainer project validate', or nothing is uploaded.
-- Only overlays that are already built are published. Run 'project restore' first for the rest.
-- Pins that a recipe source already serves are skipped. --all uploads them too.`,
-		Example: `  condatainer project registry push --dry-run       # Show the plan, upload nothing
-  condatainer project registry push                 # Publish
-  condatainer project registry push --all           # Include pins a recipe source serves`,
+- The project must pass ` + "`condatainer project validate`" + `, or nothing is uploaded.
+- Only built overlays are published. Run ` + "`project restore`" + ` first for the rest.
+- Pins that a recipe source already serves are skipped.`,
+		Example: `  condatainer project registry push --dry-run
+  condatainer project registry push
+  condatainer project registry push --all`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1030,7 +1034,7 @@ func newProjectRegistryGCCmd() *cobra.Command {
 		Short: "Remove published overlays the project no longer pins",
 		Long: `Remove overlays from the project's registry that its lock does not pin.
 
-- The project must pass 'condatainer project validate', or nothing is removed.
+- The project must pass ` + "`condatainer project validate`" + `, or nothing is removed.
 - An older commit of the project can no longer download an overlay removed here.`,
 		Example: `  condatainer project registry gc
   condatainer project registry gc --git-history`,
@@ -1228,15 +1232,14 @@ func newProjectValidateCmd() *cobra.Command {
 
 - Every declaration in the scripts has a pin.
 - Every pin points at a recorded overlay.
-- Every pin has an overlay for each architecture the lock covers, unless its recipe does not build there.
+- Every pin has an overlay for each locked architecture that its recipe builds.
 - Every recorded overlay still matches its keys.
 - Every dependency resolves to another recorded overlay.
 - Every pin is installed on this machine.
 
-- --lock-only skips the installed check, so it needs no overlays (for CI).
-- --payload also checks the installed file contents. It reads the whole overlays, and needs squashfuse and unshare.`,
-		Example: `  condatainer project validate              # Lock, scripts and installed overlays
-  condatainer project validate --lock-only  # Lock and scripts only, for CI`,
+--payload needs squashfuse and unshare.`,
+		Example: `  condatainer project validate  # Lock, scripts and installed overlays
+  condatainer project validate --lock-only`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1450,10 +1453,10 @@ func newProjectRestoreCmd() *cobra.Command {
 		Short: "Make every locked overlay available on this machine",
 		Long: `Make every locked overlay available, by reusing, downloading, or rebuilding it.
 
-- A named pin is installed under its name. A path pin goes to the path it declares.
-- An overlay is downloaded only from a registry the lock records. Otherwise it is rebuilt.
-- A rebuild with scheduler directives is submitted as a job, unless --no-submit is given.
-- A path that already holds a different file is refused unless you pass --replace.`,
+- A named pin is installed under its name. A path pin goes to its own path.
+- An overlay is downloaded only from a registry the lock records, else rebuilt.
+- A rebuild with scheduler directives is submitted as a job.
+- A path that already holds a different file is refused unless --replace.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {

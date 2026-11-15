@@ -283,30 +283,31 @@ func WritePartitionTable(w io.Writer, limits []ResourceLimits, gpusByPartition m
 	writeTable(w, header, rows, right, style)
 }
 
-// maxNodeCell is the widest a node list is shown. A longer list shows as a count.
-const maxNodeCell = 26
-
 // minFlexWidth is the narrowest the NAME and NOTE columns are cut to.
 const minFlexWidth = 8
 
-// jobColumn is a column of the jobs table. A flex column is cut with "…" when the table does not fit.
+// minNodeWidth is the narrowest the NODE column is cut to.
+const minNodeWidth = 10
+
+// jobColumn is a column of the jobs table.
+// A column with a minWidth is cut with "…" when the table does not fit, but not below minWidth.
 type jobColumn struct {
-	header string
-	right  bool
-	flex   bool
-	cell   func(JobInfo) string
+	header   string
+	right    bool
+	minWidth int
+	cell     func(JobInfo) string
 }
 
 var jobColumns = []jobColumn{
 	{header: "JOBID", cell: func(j JobInfo) string { return j.ID }},
-	{header: "NAME", flex: true, cell: func(j JobInfo) string { return j.Name }},
+	{header: "NAME", minWidth: minFlexWidth, cell: func(j JobInfo) string { return j.Name }},
 	{header: "STATE", cell: func(j JobInfo) string { return string(j.State) }},
 	{header: "CPUS", right: true, cell: func(j JobInfo) string { return orDash(j.Cpus, strconv.Itoa(j.Cpus)) }},
 	{header: "GPUS", cell: jobGpus},
 	{header: "MEM", right: true, cell: func(j JobInfo) string { return orDash(int(j.MemMB), formatMem(j.MemMB)) }},
 	{header: "TIME", cell: jobTime},
-	{header: "NODE", cell: jobNode},
-	{header: "NOTE", flex: true, cell: jobNote},
+	{header: "NODE", minWidth: minNodeWidth, cell: jobNode},
+	{header: "NOTE", minWidth: minFlexWidth, cell: jobNote},
 }
 
 // orDash is text when n is positive, and "-" when the scheduler reported none.
@@ -330,50 +331,42 @@ func jobGpus(j JobInfo) string {
 }
 
 // jobTime is the limit of a job that waits, elapsed over limit for one that runs, and elapsed for one that ended.
-// An array shows its per-task limit only.
+// An array shows its per-task limit only. Every time is HH:MM:SS.
 func jobTime(j JobInfo) string {
 	limit := "-"
 	switch {
 	case j.TimeUnlimited:
 		limit = "inf"
 	case j.TimeLimit > 0:
-		limit = formatHM(j.TimeLimit)
+		limit = formatHMS(j.TimeLimit)
 	}
 	switch {
 	case j.IsArray():
 		return limit
 	case j.State == JobRunning:
-		return formatHM(j.Elapsed) + "/" + limit
+		return formatHMS(j.Elapsed) + "/" + limit
 	case ended(j.State) && j.Elapsed > 0:
-		return formatHM(j.Elapsed)
+		return formatHMS(j.Elapsed)
 	case ended(j.State):
 		return "-"
 	}
 	return limit
 }
 
-// jobNode is the node a job runs on, cut at the first dot. A list shows when it fits, else a count.
+// jobNode is the node a job runs on, cut at the first dot, or "N nodes" for a job on several.
 // It is "-" for a job that never had one, and for an array.
 func jobNode(j JobInfo) string {
-	if j.IsArray() || len(j.NodeList) == 0 && j.NodeCount == 0 {
+	if j.IsArray() {
 		return "-"
 	}
-	names := make([]string, len(j.NodeList))
-	for i, n := range j.NodeList {
-		names[i], _, _ = strings.Cut(n, ".")
+	if n := max(len(j.NodeList), j.NodeCount); n > 1 {
+		return strconv.Itoa(n) + " nodes"
 	}
-	list := strings.Join(names, ",")
-	switch {
-	case len(names) == 0 && j.NodeCount > 1:
-		return strconv.Itoa(j.NodeCount) + " nodes"
-	case len(names) == 0:
+	if len(j.NodeList) == 0 {
 		return "-"
-	case len(names) == 1:
-		return cutText(list, maxNodeCell)
-	case utf8.RuneCountInString(list) <= maxNodeCell:
-		return list
 	}
-	return strconv.Itoa(len(names)) + " nodes"
+	name, _, _ := strings.Cut(j.NodeList[0], ".")
+	return name
 }
 
 // jobNote is the layout of a job of several ranks, then the item that explains the row.
@@ -480,7 +473,8 @@ func cutText(s string, width int) string {
 
 // WriteJobTable prints jobs as one table, a row each, in the order given.
 //   - GPUS shows only when a job has a GPU.
-//   - The table fits width. NAME and NOTE share what the other columns leave, and a longer value is cut.
+//   - The table fits width. NAME, NODE and NOTE share what the other columns leave, and a longer value is cut.
+//   - A width of 0 means no limit, and nothing is cut.
 //   - A failed job's state is in red.
 func WriteJobTable(w io.Writer, jobs []JobInfo, width int) {
 	cols := make([]jobColumn, 0, len(jobColumns))
@@ -528,9 +522,12 @@ func slicesAnyGpu(jobs []JobInfo) bool {
 }
 
 // fitFlexColumns returns the width each flex column is cut to, keyed by column, so the table fits width.
-// A flex column that needs no more than its share keeps its width, and the other takes the rest.
-// No column is cut below minFlexWidth, so a very narrow width is exceeded.
+// A flex column is one with a minWidth. One that needs no more than its share keeps its width, and the others take the rest.
+// No column is cut below its minWidth, so a very narrow width is exceeded. A width of 0 cuts none.
 func fitFlexColumns(header []string, rows [][]string, cols []jobColumn, width int) map[int]int {
+	if width <= 0 {
+		return map[int]int{}
+	}
 	need := make([]int, len(cols))
 	for i := range cols {
 		need[i] = utf8.RuneCountInString(header[i])
@@ -540,7 +537,7 @@ func fitFlexColumns(header []string, rows [][]string, cols []jobColumn, width in
 	}
 	fixed, flex := 2*(len(cols)-1), []int{}
 	for i, c := range cols {
-		if c.flex {
+		if c.minWidth > 0 {
 			flex = append(flex, i)
 		} else {
 			fixed += need[i]
@@ -557,7 +554,7 @@ func fitFlexColumns(header []string, rows [][]string, cols []jobColumn, width in
 	}
 	remaining, left := room, len(flex)
 	for _, i := range sortedByNeed(flex, need) {
-		share := max(remaining/left, minFlexWidth)
+		share := max(remaining/left, cols[i].minWidth)
 		take := min(need[i], share)
 		if take < need[i] {
 			limits[i] = take

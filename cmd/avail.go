@@ -28,14 +28,14 @@ var availCmd = &cobra.Command{
 	Long: `List available recipes (local and remote).
 
 - When duplicates exist, local recipes take precedence.
-- Install one with 'condatainer install <name>'.
+- Install one with ` + "`condatainer install <name>`" + `.
 
 ` + searchSyntaxHint,
 	Example: `  condatainer avail                    # List all
   condatainer avail cellranger         # Substring match
   condatainer avail cellranger 9       # AND search (multiple terms)
   condatainer avail 'cell*'            # Wildcard
-  condatainer avail --source lab       # Search only the lab source
+  condatainer avail --source lab
   condatainer install cellranger/9.0.1 # Install one of the results`,
 	SilenceUsage: true, // Runtime errors should not show usage
 	PreRunE: func(cmd *cobra.Command, args []string) error {

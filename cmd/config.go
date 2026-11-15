@@ -189,33 +189,41 @@ func configValueCompletion(key string) []string {
 // configLayersHelp documents the -l/--layer values. Shared by every config
 // subcommand that accepts --layer so the list stays consistent, not copy-pasted.
 const configLayersHelp = `Config file layers (-l, --layer):
-  u, user        ~/.config/condatainer/config.yaml (standard/home install)
-  r, cnt-root    <install-dir>/config.yaml         (dedicated install, or CNT_ROOT)
-  e, extra-root  $CNT_EXTRA_ROOT/config.yaml       (group, needs CNT_EXTRA_ROOT)`
+  u, user        ~/.config/condatainer/config.yaml
+  e, extra-root  $CNT_EXTRA_ROOT/config.yaml
+  r, cnt-root    <cnt-root>/config.yaml
+` + cntRootHelp
+
+// cntRootHelp says where cnt-root is.
+const cntRootHelp = `<cnt-root> is $CNT_ROOT, or the folder above the bin/ that holds condatainer.
+That folder is not used if it is /, /opt, /usr, /usr/local, $HOME or ~/.local.`
+
+// dataDirsHelp says which data directory reads and writes use.
+const dataDirsHelp = `- Reads use the first match: user > extra-root > cnt-root.
+- Writes use the first writable one: extra-root > cnt-root > user.`
 
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage condatainer configuration",
 	Long: `Manage condatainer configuration.
 
-Setting priority (highest to lowest):
-  1. Command-line flags
-  2. Environment variables (CNT_CONFIG_*)
-  3. User config file (~/.config/condatainer/config.yaml)
-  4. Extra-root config ($CNT_EXTRA_ROOT/config.yaml, group layer)
-  5. cnt-root config (<install-dir>/config.yaml, in dedicated folder or CNT_ROOT set)
-  6. Defaults
+Each layer has a config file and a data directory:
+  layer       config file                        data directory
+  user        ~/.config/condatainer/config.yaml  $SCRATCH/condatainer,
+                                                 ~/.local/share/condatainer
+  extra-root  $CNT_EXTRA_ROOT/config.yaml        $CNT_EXTRA_ROOT
+  cnt-root    <cnt-root>/config.yaml             <cnt-root>
 
-Data directory priority — reads go nearest-first, writes furthest-first:
+` + cntRootHelp + `
 
-  read (first match wins)          write (first writable)
-  1. Scratch ($SCRATCH)            1. Extra-root ($CNT_EXTRA_ROOT, group layer)
-  2. User XDG (~/.local/share)     2. cnt-root (auto-detected or CNT_ROOT)
-  3. Extra-root ($CNT_EXTRA_ROOT)  3. Scratch ($SCRATCH/condatainer)
-  4. cnt-root (auto-detected)      4. User XDG (~/.local/share/condatainer)
+Settings, highest priority first:
+1. Command-line flags
+2. Environment variables (CNT_CONFIG_*)
+3. Config files: user > extra-root > cnt-root
+4. Defaults
 
-- A build goes to the first writable directory in the write column.
-- Build into your own directory to have your version win for you.`,
+Data directories hold overlays and helper scripts:
+` + dataDirsHelp,
 }
 
 var showOrigin bool
@@ -227,11 +235,10 @@ var configListCmd = &cobra.Command{
 	Short:   "List current configuration",
 	Long: `List the current settings and where each comes from.
 
-- The config files searched, in priority order.
+- The config files searched: user > extra-root > cnt-root.
 - Every value.
 - Environment variable overrides.
-- With --origin, each value is tagged with the layer or environment variable that sets it, or [default].
-- Use 'condatainer config paths' for the data directories.`,
+- Use ` + "`condatainer config paths`" + ` for the data directories.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Show config file search paths
 		fmt.Println(utils.StyleTitle("Config File Search Paths:"))
@@ -318,14 +325,13 @@ var configGetCmd = &cobra.Command{
 	Short: "Get a configuration value",
 	Long: `Get a configuration value.
 
-- Without -l, it returns the effective value (environment and all config layers).
-- With -l, it reads only that layer's config file.
+- Without -l, it returns the effective value (environment and every layer).
 
 ` + configLayersHelp,
 	Example: `  condatainer config get host_apptainer
   condatainer config get build.ncpu
   condatainer config get sources
-  condatainer config get sources -l cnt-root`,
+  condatainer config get sources -l cnt-root  # Only that layer's file`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: configKeysCompletion,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -457,12 +463,10 @@ var configInitCmd = &cobra.Command{
 
 ` + configLayersHelp + `
 
-Without -l, the layer follows the install location:
-  - Executable in a dedicated folder (e.g. /apps/condatainer/bin/): that folder's parent.
-  - Otherwise: the user config directory.`,
-	Example: `  condatainer config init                # Layer chosen from the install location
-  condatainer config init -l cnt-root    # A specific layer
-  condatainer config init -l r           # Same, using the shortcut`,
+Without -l, the layer is cnt-root if it is writable, otherwise user.`,
+	Example: `  condatainer config init
+  condatainer config init -l cnt-root  # A specific layer
+  condatainer config init -l r         # Same, using the shortcut`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Before anything is asked or resolved, so a container never gets as far as
 		// an overwrite prompt.
@@ -573,14 +577,9 @@ var configPathsCmd = &cobra.Command{
 	Short: "Show data search paths",
 	Long: `Show the search paths for overlays and helper scripts.
 
-Reads check these nearest-first, and the first match wins:
-  1. Scratch ($SCRATCH/condatainer)
-  2. User XDG directory (~/.local/share/condatainer)
-  3. Extra-root ($CNT_EXTRA_ROOT, group layer)
-  4. cnt-root (auto-detected or $CNT_ROOT)
+` + dataDirsHelp + `
 
-Writes use the first writable directory in the reverse order:
-extra-root, cnt-root, scratch, user.`,
+` + cntRootHelp,
 	Run: func(cmd *cobra.Command, args []string) {
 		// pathStatus returns inline status tags for a search-path entry.
 		// writeTarget is the resolved writable directory for this section (empty = not applicable).
@@ -768,8 +767,8 @@ var configRemoveCmd = &cobra.Command{
 	Long: `Remove a config key entirely, or one value from an array config key.
 
 ` + configLayersHelp,
-	Example: `  condatainer config remove host_apptainer
-  condatainer config remove bind /scratch`,
+	Example: `  condatainer config remove host_apptainer  # The whole key
+  condatainer config remove bind /scratch   # One value of a list`,
 	Args:              cobra.RangeArgs(1, 2),
 	ValidArgsFunction: arrayRemoveValueCompletion,
 	SilenceUsage:      true,
@@ -830,7 +829,7 @@ func init() {
 	configRemoveCmd.Flags().StringVarP(&setLayer, "layer", "l", "", "Layer to write: "+layerChoices)
 
 	// Add subcommands
-	configListCmd.Flags().BoolVar(&showOrigin, "origin", false, "Tag each value with the layer or environment variable that sets it")
+	configListCmd.Flags().BoolVar(&showOrigin, "origin", false, "Tag each value with its layer, environment variable or [default]")
 	configCmd.AddCommand(configListCmd)
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configSetCmd)

@@ -106,9 +106,8 @@ var serverStopCmd = &cobra.Command{
 
 - Without arguments, it stops the server on the current login node.
 - A node name (or part of one) stops the server on another login node.`,
-	Example: `  condatainer server stop                # Stop the local server
-  condatainer server stop login2         # Stop the server on the node matching login2
-  condatainer server stop --node login2  # Same, using the flag`,
+	Example: `  condatainer server stop         # Stop the local server
+  condatainer server stop login2  # Stop the server on the node matching login2`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true

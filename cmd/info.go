@@ -34,9 +34,8 @@ const overlayInfoHelp = `Show details about an installed overlay or a local over
 - SquashFS (.sqf): compression details, inode count, block size, mount path
 - ext3 (.img): filesystem stats, disk/inode usage, block size, ownership
 
---validate (.sqf only) also checks the embedded keys and the file contents.
-- It reads the whole overlay, and needs squashfuse and unshare.
-- A Conda or definition build has no payload key, so only its other keys are checked.`
+--validate (.sqf only) needs squashfuse and unshare.
+- A Conda or definition build has no payload key; its other keys are checked.`
 
 // overlayInfoExample is the example block for 'info'.
 const overlayInfoExample = `  condatainer info samtools/1.22  # An installed overlay
@@ -550,6 +549,10 @@ func printWrapped(label, content string, maxLines int) {
 	prefix := "  " + label + " "
 	indent := "    "
 	tw := terminalWidth()
+	if tw <= 0 {
+		fmt.Printf("%s%s\n", prefix, strings.Join(strings.Fields(content), "   "))
+		return
+	}
 	availFirst := max(tw-len(prefix), 20)
 	availRest := max(tw-len(indent), 20)
 

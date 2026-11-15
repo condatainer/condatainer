@@ -20,9 +20,9 @@ var storeCmd = &cobra.Command{
 	Short: "Inspect overlays kept under an exact build identity",
 	Long: `Inspect and manage overlays kept under an exact build identity.
 
-- The store holds builds that could not take a plain name because another build of it was installed.
-- An entry is addressed as <name>@<identity>, so several builds of a name can coexist.
-- Overlays under a plain name are handled by 'condatainer list' and 'condatainer remove'.`,
+- It holds builds that could not take a plain name because another build had it.
+- An entry is <name>@<identity>, so several builds of a name can coexist.
+- Overlays under a plain name: use ` + "`condatainer list`" + ` and ` + "`condatainer remove`" + `.`,
 }
 
 func init() {
@@ -44,10 +44,7 @@ func newStoreListCmd() *cobra.Command {
 
 - Give a name to list only its builds.
 - Each address can be pasted into the other store commands.
-- An identity in grey belongs to the build installed under the plain name.
-- --detail adds the layout, size and relative file path.
-- --all includes the overlay installed under the plain name.
-- --equiv lists the installed builds that can stand in for an equivalence key.`,
+- An identity in grey belongs to the build installed under the plain name.`,
 		Example: `  condatainer store list
   condatainer store list star/2.7.11b --all --detail
   condatainer store list star/2.7.11b --equiv 9f2c1ab`,
@@ -87,7 +84,7 @@ func newStoreListCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "Also list the overlay installed under the plain name")
 	cmd.Flags().BoolVar(&detail, "detail", false, "Show layout, size and path for each entry")
-	cmd.Flags().StringVar(&equivalence, "equiv", "", "List the builds matching an equivalence key or prefix")
+	cmd.Flags().StringVar(&equivalence, "equiv", "", "List the installed builds that can stand in for an equivalence key or prefix")
 	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
 }
@@ -125,12 +122,11 @@ func newStoreValidateCmd() *cobra.Command {
 	var payload bool
 	cmd := &cobra.Command{
 		Use:   "validate [flags] [name]",
-		Short: "Check that every entry still matches the identity it is filed under",
+		Short: "Check that every entry matches its identity",
 		Long: `Check that every entry still matches the identity it is filed under.
 
 - Give a name to check only its builds.
 - It prints one line per entry, and fails if any entry does not match.
-- --payload also checks each entry's file contents. This reads the whole store.
 - --payload needs squashfuse and unshare.
 - Conda and definition builds have no payload key, so --payload skips them.`,
 		Args:         cobra.MaximumNArgs(1),

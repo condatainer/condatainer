@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/condatainer/condatainer/internal/artifact"
 	artifactcache "github.com/condatainer/condatainer/internal/artifact/cache"
@@ -39,8 +38,8 @@ var listCmd = &cobra.Command{
   condatainer list cellranger           # Substring match
   condatainer list cellranger 9         # AND search (multiple terms)
   condatainer list 'cell*'              # Wildcard
-  condatainer list cellranger/9.0.1 -e  # Exact match
-  condatainer list cellranger 9 -r      # Remove the matches after confirmation`,
+  condatainer list cellranger/9.0.1 -e
+  condatainer list cellranger 9 -r`,
 	SilenceUsage: true,
 	RunE:         runList,
 }
@@ -398,13 +397,9 @@ func dirHeader(path string) string {
 	return strings.Repeat("═", left) + inner + strings.Repeat("═", right)
 }
 
-// terminalWidth returns the current terminal width, defaulting to 80.
-func terminalWidth() int {
-	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
-		return w
-	}
-	return 80
-}
+// terminalWidth returns the width of the terminal, or 0 when stdout is not one.
+// A width of 0 means output is not laid out: one entry per line and no wrapping.
+func terminalWidth() int { return writerWidth(os.Stdout) }
 
 // listTermWidth returns 0 (single column) when -1 or --desc is set, otherwise the terminal width.
 func listTermWidth() int {

@@ -22,11 +22,11 @@ var proxyCmd = &cobra.Command{
 	Long: `Manage SSH proxy tunnels so compute-node jobs can reach the internet.
 
 Shared mode (login node):
-  - Run 'condatainer proxy start' once on the login node.
+  - Run ` + "`condatainer proxy start`" + ` once on the login node.
   - condatainer commands inside jobs then use the tunnel automatically.
 
 Per-job mode (compute node):
-  - Run 'condatainer proxy start --via <login-node>' inside a job.
+  - Run ` + "`condatainer proxy start --via <login-node>`" + ` inside a job.
   - Or start one for each job automatically:
       condatainer config append scheduler.proxy_per_job all
     Use create, helper or run instead of all to limit it to those jobs.`,
@@ -40,14 +40,10 @@ var (
 )
 
 var proxyStartCmd = &cobra.Command{
-	Use:   "start",
-	Args:  cobra.NoArgs,
-	Short: "Start the proxy",
-	Long: `Start a SOCKS5 proxy so compute-node jobs can reach the internet through the login node.
-
-- --host runs the proxy on another login node instead, over SSH.
-- --via tunnels through this SSH server.
-  In per-job mode it defaults to the login node the job was submitted from.`,
+	Use:          "start",
+	Args:         cobra.NoArgs,
+	Short:        "Start the proxy",
+	Long:         `Start a SOCKS5 proxy so compute-node jobs reach the internet via the login node.`,
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if config.IsInsideContainer() {
@@ -247,7 +243,7 @@ var proxyURLCmd = &cobra.Command{
 	Short: "Print the proxy URL",
 	Long: `Print the active proxy URL (http://host:PORT), or nothing if no proxy is active.
 
-- To load every proxy variable into your shell, use 'condatainer proxy export'.`,
+- To load every proxy variable into your shell, use ` + "`condatainer proxy export`" + `.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if httpURL, ok := proxy.FindActiveProxy(); ok {
 			fmt.Println(httpURL)
@@ -259,7 +255,7 @@ var proxyExportCmd = &cobra.Command{
 	Use:   "export",
 	Args:  cobra.NoArgs,
 	Short: "Print export statements for the proxy variables",
-	Long: `Print export statements for all proxy variables, or nothing if no proxy is active.
+	Long: `Print export statements for the proxy variables, or nothing if none is active.
 
 - Covers http_proxy, https_proxy, all_proxy, no_proxy and their uppercase forms.
 - Load them into the current shell: source <(condatainer proxy export)`,
@@ -329,7 +325,8 @@ var proxyDaemonLocalMode bool
 var proxyDaemonReportFd int
 
 var proxyDaemonCmd = &cobra.Command{
-	Use:    "_proxy_daemon",
+	Use:    "_proxy_daemon [flags] <ssh-destination> <port>",
+	Short:  "Run the proxy's SSH tunnel until it exits (started by `proxy start`)",
 	Hidden: true,
 	Args:   cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {

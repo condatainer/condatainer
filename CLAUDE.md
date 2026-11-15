@@ -96,6 +96,12 @@ Three places, three jobs.
   - Write short sentences, one fact per bullet.
   - A bullet list in help has at most 6 bullets. Cut the minor ones or group related ones.
   - A table on a terminal fits its width, down to a minimum. Piped output is never cut.
+  - In an `Example`, never wrap a command. A comment is optional.
+    - A comment says the result or when to use it. Skip one that is obvious or repeats the flag's help.
+    - Comment alike lines alike within a block.
+    - A comment trails its command when the line fits. Trailing comments in a block start in one column.
+    - A comment that would make the line too long goes on the line above its command.
+    - A block where most comments go above puts all of them above.
   - Existing help that is longer is fixed when it is edited.
 
 **A package `README.md` records decisions.**

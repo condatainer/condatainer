@@ -35,7 +35,7 @@ var availCmd = &cobra.Command{
   condatainer avail cellranger         # Substring match
   condatainer avail cellranger 9       # AND search (multiple terms)
   condatainer avail 'cell*'            # Wildcard
-  condatainer avail --source lab       # Search only the lab source
+  condatainer avail --source lab
   condatainer install cellranger/9.0.1 # Install one of the results`,
 	SilenceUsage: true, // Runtime errors should not show usage
 	PreRunE: func(cmd *cobra.Command, args []string) error {

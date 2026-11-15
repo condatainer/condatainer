@@ -25,7 +25,7 @@ var searchCmd = &cobra.Command{
 - Results are limited to the configured channels, or to --channel.
 - By default the name must match exactly. -f matches approximately.`,
 	Example: `  condatainer search samtools              # Exact match
-  condatainer search samtools -c bioconda  # One channel
+  condatainer search samtools -c bioconda
   condatainer search -f samtool            # Fuzzy match
   condatainer search -f samtool -l 200     # Fuzzy match, more results`,
 	Args:         cobra.ExactArgs(1),

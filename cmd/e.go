@@ -41,11 +41,12 @@ var eCmd = &cobra.Command{
 - Loads env.img from the current directory unless a .img is given or -n is set.
 - If only env.sqf exists there, it is loaded instead, read-only.
 - Extra Apptainer flags must use --flag=value format (no space).`,
-	Example: `  condatainer e                               # Load env.img if present, run bash
-  condatainer e testing.img                   # Use a specific writable overlay
-  condatainer e samtools/1.22 bcftools/1.20   # Multiple overlays
-  condatainer e samtools/1.22 -- samtools     # Run a command
-  condatainer e --home=/custom samtools/1.22  # Pass Apptainer flags`,
+	Example: `  condatainer e                              # Load env.img if present, run bash
+  condatainer e testing.img                  # Use a specific writable overlay
+  condatainer e samtools/1.22 bcftools/1.20  # Multiple overlays
+  condatainer e samtools/1.22 -- samtools    # Run a command
+  # Pass Apptainer flags
+  condatainer e --home=/custom samtools/1.22`,
 	SilenceUsage: true,
 	RunE:         runE,
 }

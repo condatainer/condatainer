@@ -44,11 +44,16 @@ var overlayFreezeCmd = &cobra.Command{
 	Short: "Pack a writable overlay into an immutable snapshot",
 	Long:  overlayFreezeHelp,
 	Args:  cobra.RangeArgs(1, 2),
-	Example: `  condatainer overlay freeze env.img                     # env.sqf beside it, env.img removed
-  condatainer overlay freeze env.img --keep              # env.sqf beside it, env.img kept
-  condatainer overlay freeze env-alice.img               # env.sqf, replacing the shared one
-  condatainer overlay freeze env.img ./overlays/env.sqf  # That path, env.img kept
-  condatainer overlay freeze env.img --zstd-high         # Smaller file, slower to pack`,
+	Example: `  # env.sqf beside it, env.img removed
+  condatainer overlay freeze env.img
+  # env.sqf beside it, env.img kept
+  condatainer overlay freeze env.img --keep
+  # env.sqf, replacing the shared one
+  condatainer overlay freeze env-alice.img
+  # That path, env.img kept
+  condatainer overlay freeze env.img ./overlays/env.sqf
+  # Smaller file, slower to pack
+  condatainer overlay freeze env.img --zstd-high`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
 		source := args[0]

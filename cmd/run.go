@@ -105,11 +105,11 @@ It can carry scheduler directives (e.g. #SBATCH), but only ONE set is read:
   Current scheduler | TAG: | another scheduler.
 
 --dry-run shows what would happen, and exits 1 when the run would not start.`,
-	Example: `  condatainer run script.sh                          # Check dependencies, then run
-  condatainer run script.sh arg1 arg2                # Pass arguments to the script
-  condatainer run -o log/s1.out run_tool.sh sample1  # Override stdout
-  condatainer run -g a100:2 gpu_job.sh               # Override GPUs
-  condatainer run -c 8 -m 16G -t 2h job.sh           # Override resources
+	Example: `  condatainer run script.sh            # Check dependencies, then run
+  condatainer run script.sh arg1 arg2  # Pass arguments to the script
+  condatainer run -o log/s1.out run_tool.sh sample1
+  condatainer run -g a100:2 gpu_job.sh
+  condatainer run -c 8 -m 16G -t 2h job.sh
 
   # Run one job after another
   JOB=$(condatainer run run_align.sh sample1)

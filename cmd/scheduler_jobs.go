@@ -42,10 +42,11 @@ One ID shows the job in full instead, a line for each fact the scheduler reporte
 A finished job has its exit code, CPU time and peak memory. A failed job has why it failed.
 An array lists its tasks by state, and the IDs of the tasks that failed.`,
 	Example: `  condatainer scheduler jobs
-  condatainer scheduler jobs align           # Jobs with "align" in the name
-  condatainer scheduler jobs 245068          # One job in full, even after it ended
-  condatainer scheduler jobs 245068 245070   # Several jobs as rows
-  condatainer scheduler jobs --tasks 245080  # Each task of an array`,
+  condatainer scheduler jobs align   # Jobs with "align" in the name
+  condatainer scheduler jobs 245068  # One job in full, even after it ended
+  # Several jobs as rows
+  condatainer scheduler jobs 245068 245070
+  condatainer scheduler jobs --tasks 245080`,
 	RunE: runSchedulerJobs,
 }
 

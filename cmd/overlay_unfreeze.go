@@ -28,9 +28,10 @@ var overlayUnfreezeCmd = &cobra.Command{
 	Short: "Rebuild a writable overlay from a snapshot",
 	Long:  overlayUnfreezeHelp,
 	Args:  cobra.RangeArgs(1, 2),
-	Example: `  condatainer overlay unfreeze env.sqf                 # env.img beside it
-  condatainer overlay unfreeze ./overlays/env.sqf      # ./overlays/env.img
-  condatainer overlay unfreeze env.sqf dev.img -s 40G  # That path, with room to install more`,
+	Example: `  condatainer overlay unfreeze env.sqf             # env.img beside it
+  condatainer overlay unfreeze ./overlays/env.sqf  # ./overlays/env.img
+  # That path, with room to install more
+  condatainer overlay unfreeze env.sqf dev.img -s 40G`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
 		artifact := args[0]

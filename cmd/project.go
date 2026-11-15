@@ -261,7 +261,9 @@ func newProjectPinCmd() *cobra.Command {
 - a project .sqf:  record the current identity of that file.
 - An identity is a full scheme@sha256:<hex> key, or any unambiguous prefix of it.
 - Give one to choose between installed builds of the same name. A project path takes none.`,
-		Example: `  condatainer project pin star/2.7.11b a31f902c12ab
+		Example: `  # One installed build, chosen by identity
+  condatainer project pin star/2.7.11b a31f902c12ab
+  # A project .sqf file
   condatainer project pin overlays/combined.sqf`,
 		Args:         cobra.RangeArgs(1, 2),
 		SilenceUsage: true,
@@ -953,9 +955,9 @@ func newProjectRegistryPushCmd() *cobra.Command {
 - The project must pass 'condatainer project validate', or nothing is uploaded.
 - Only overlays that are already built are published. Run 'project restore' first for the rest.
 - Pins that a recipe source already serves are skipped. --all uploads them too.`,
-		Example: `  condatainer project registry push --dry-run       # Show the plan, upload nothing
-  condatainer project registry push                 # Publish
-  condatainer project registry push --all           # Include pins a recipe source serves`,
+		Example: `  condatainer project registry push --dry-run
+  condatainer project registry push
+  condatainer project registry push --all`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1235,8 +1237,8 @@ func newProjectValidateCmd() *cobra.Command {
 
 - --lock-only skips the installed check, so it needs no overlays (for CI).
 - --payload also checks the installed file contents. It reads the whole overlays, and needs squashfuse and unshare.`,
-		Example: `  condatainer project validate              # Lock, scripts and installed overlays
-  condatainer project validate --lock-only  # Lock and scripts only, for CI`,
+		Example: `  condatainer project validate  # Lock, scripts and installed overlays
+  condatainer project validate --lock-only`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {

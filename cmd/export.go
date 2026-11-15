@@ -11,10 +11,10 @@ const overlayExportHelp = `Export the Conda environment of a writable .img overl
 - Output goes to stdout, or to <prefix>.yml (or .txt with --explicit) with --prefix.`
 
 // overlayExportExample is the example block for 'overlay export'.
-const overlayExportExample = `  condatainer overlay export ./env.img                 # environment.yml on stdout
-  condatainer overlay export ./env.img --from-history  # Only explicitly installed packages
-  condatainer overlay export ./env.img -e              # Explicit spec (.txt)
-  condatainer overlay export ./env.img -p ./env        # Write ./env.yml`
+const overlayExportExample = `  condatainer overlay export ./env.img           # environment.yml on stdout
+  condatainer overlay export ./env.img --from-history
+  condatainer overlay export ./env.img -e        # Explicit spec (.txt)
+  condatainer overlay export ./env.img -p ./env  # Write ./env.yml`
 
 // registerExportFlags registers the micromamba env-export flags for 'overlay export'.
 func registerExportFlags(cmd *cobra.Command) {

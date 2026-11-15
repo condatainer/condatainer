@@ -32,11 +32,12 @@ var removeCmd = &cobra.Command{
 - Several terms must all match (AND).
 - Wildcards (*, ?) and regex also work.
 - It asks for confirmation before removing and exit an error when cannot remove.`,
-	Example: `  condatainer rm cellranger/9.0.1                   # One version
-  condatainer rm cellranger                         # Every version of cellranger
-  condatainer rm cellranger/9.0.1 cellranger/8.0.1  # Several overlays
-  condatainer rm cellranger 9                       # AND search (multiple terms)
-  condatainer rm 'cell*'                            # Wildcard`,
+	Example: `  condatainer rm cellranger/9.0.1  # One version
+  condatainer rm cellranger        # Every version of cellranger
+  # Several overlays
+  condatainer rm cellranger/9.0.1 cellranger/8.0.1
+  condatainer rm cellranger 9      # AND search (multiple terms)
+  condatainer rm 'cell*'           # Wildcard`,
 	Args:         cobra.MinimumNArgs(1),
 	SilenceUsage: true,
 	RunE:         runRemove,

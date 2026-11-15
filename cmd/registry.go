@@ -342,7 +342,9 @@ func newRegistryRemoveCommand(opts *registryOptions) *cobra.Command {
 - name@identity removes one build on every architecture. A name alone removes all builds.
 - If the build was the one its name installs, the name moves to the newest other build.
 - A project that pins a removed build can no longer download it.`,
-		Example: `  condatainer registry remove star/2.7.11b@9f2c1ab --source lab
+		Example: `  # One build, every architecture
+  condatainer registry remove star/2.7.11b@9f2c1ab --source lab
+  # All builds, arm64 only
   condatainer registry remove star/2.7.11b --source lab --arch arm64`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,

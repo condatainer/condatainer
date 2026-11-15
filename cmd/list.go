@@ -39,8 +39,8 @@ var listCmd = &cobra.Command{
   condatainer list cellranger           # Substring match
   condatainer list cellranger 9         # AND search (multiple terms)
   condatainer list 'cell*'              # Wildcard
-  condatainer list cellranger/9.0.1 -e  # Exact match
-  condatainer list cellranger 9 -r      # Remove the matches after confirmation`,
+  condatainer list cellranger/9.0.1 -e
+  condatainer list cellranger 9 -r`,
 	SilenceUsage: true,
 	RunE:         runList,
 }

@@ -325,7 +325,7 @@ var configGetCmd = &cobra.Command{
 	Example: `  condatainer config get host_apptainer
   condatainer config get build.ncpu
   condatainer config get sources
-  condatainer config get sources -l cnt-root`,
+  condatainer config get sources -l cnt-root  # Only that layer's file`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: configKeysCompletion,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -460,9 +460,9 @@ var configInitCmd = &cobra.Command{
 Without -l, the layer follows the install location:
   - Executable in a dedicated folder (e.g. /apps/condatainer/bin/): that folder's parent.
   - Otherwise: the user config directory.`,
-	Example: `  condatainer config init                # Layer chosen from the install location
-  condatainer config init -l cnt-root    # A specific layer
-  condatainer config init -l r           # Same, using the shortcut`,
+	Example: `  condatainer config init              # Layer chosen from the install location
+  condatainer config init -l cnt-root  # A specific layer
+  condatainer config init -l r         # Same, using the shortcut`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Before anything is asked or resolved, so a container never gets as far as
 		// an overwrite prompt.
@@ -768,8 +768,8 @@ var configRemoveCmd = &cobra.Command{
 	Long: `Remove a config key entirely, or one value from an array config key.
 
 ` + configLayersHelp,
-	Example: `  condatainer config remove host_apptainer
-  condatainer config remove bind /scratch`,
+	Example: `  condatainer config remove host_apptainer  # The whole key
+  condatainer config remove bind /scratch   # One value of a list`,
 	Args:              cobra.RangeArgs(1, 2),
 	ValidArgsFunction: arrayRemoveValueCompletion,
 	SilenceUsage:      true,

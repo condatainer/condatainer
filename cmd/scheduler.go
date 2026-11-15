@@ -59,8 +59,8 @@ A type is a group of nodes with the same CPUs and GPUs.
 - MAXNODES is the most nodes one job can use. It is left out when no partition has a limit.
 - GPUS is each GPU type of the node type, as type:count per node.`,
 	Example: `  condatainer scheduler partitions
-  condatainer scheduler partitions --gpu  # Only GPU partitions
-  condatainer scheduler partitions --cpu  # Only CPU-only partitions`,
+  condatainer scheduler partitions --gpu
+  condatainer scheduler partitions --cpu`,
 	RunE: runSchedulerPartitions,
 }
 

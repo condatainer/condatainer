@@ -38,7 +38,7 @@ var scriptCheckCmd = &cobra.Command{
   condatainer check samtools/1.22          # Check a recipe by name
   condatainer check script1.sh script2.sh  # Check several scripts
   condatainer check ./my-scripts/          # Check all .sh files in a directory
-  condatainer check -a script.sh           # Install missing dependencies`,
+  condatainer check -a script.sh`,
 	Args:         cobra.MinimumNArgs(1),
 	SilenceUsage: true, // Runtime errors should not show usage
 	RunE:         runCheck,

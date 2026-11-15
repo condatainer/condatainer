@@ -24,7 +24,8 @@ var envCmd = &cobra.Command{
 - Enter a writable container first:
     condatainer exec -w -o env.img bash
     condatainer e env.img
-- Inside it, mm is a shortcut for these commands. 'condatainer shell init' sets it up for bash, zsh and fish.`,
+- Inside it, mm is a shortcut for these commands.
+- ` + "`condatainer shell init`" + ` sets it up for bash, zsh and fish.`,
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
@@ -39,6 +40,7 @@ func init() {
 	envCmd.AddCommand(withRmAlias(newMicromambaCommand("remove", "Remove installed packages", runEnvMutation("remove"))))
 	envCmd.AddCommand(newMicromambaCommand("list", "List installed packages", runEnvRead("list")))
 	envCmd.AddCommand(newMicromambaCommand("export", "Print the environment specification", runEnvRead("env", "export")))
+	// Search needs a writable overlay so its repodata cache lands in the overlay's own pkgs.
 	envCmd.AddCommand(newMicromambaCommand("search", "Search the channels for a package", runEnvMutation("search")))
 	envCmd.AddCommand(newMicromambaCommand("clean", "Clean the package caches", runEnvMutation("clean")))
 

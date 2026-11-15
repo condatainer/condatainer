@@ -23,7 +23,7 @@ var searchCmd = &cobra.Command{
 	Long: `Search Conda packages via anaconda.org API.
 
 - Results are limited to the configured channels, or to --channel.
-- By default the name must match exactly. -f matches approximately.`,
+- By default the name must match exactly.`,
 	Example: `  condatainer search samtools              # Exact match
   condatainer search samtools -c bioconda
   condatainer search -f samtool            # Fuzzy match

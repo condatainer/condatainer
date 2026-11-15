@@ -32,7 +32,6 @@ var scriptCheckCmd = &cobra.Command{
 	Long: `Check the dependencies declared with #DEP: in scripts.
 
 - Dependencies from all scripts are checked together.
-- With -a, --dry-run shows what would be installed, and installs nothing.
 - Exits with code 3 if creation jobs were submitted to a scheduler.`,
 	Example: `  condatainer check script.sh              # Check one script
   condatainer check samtools/1.22          # Check a recipe by name

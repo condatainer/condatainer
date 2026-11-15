@@ -24,7 +24,7 @@ func newStoreRemoveCmd() *cobra.Command {
 		Short:   "Remove one store entry",
 		Long: `Delete one build from the store, chosen by name and identity.
 
-- Only store entries. Use 'condatainer remove' for an overlay under a plain name.
+- Only store entries. Use ` + "`condatainer remove`" + ` for a plain-name overlay.
 - It fails while a container is using the entry.
 - A write-protected overlay is never removed.`,
 		Example: `  condatainer store remove star/2.7.11b@9f2c1ab
@@ -105,10 +105,10 @@ func newStoreGCCmd() *cobra.Command {
 		Long: `Report which store entries can be deleted and how much space that frees.
 
 - It lists what can be deleted, then asks before deleting. -y answers yes.
-- An entry can be deleted when it is older than the grace period, nothing is using it, and it still matches its identity.
-- Age is the newest of the access, modification and change times. Each row names the one that decided it.
-- If every row says "ctime", the filesystem does not record access times.
-- -l/--layer narrows the run, as in 'list'. Deleting requires it.`,
+- A deletable entry is past the grace period, unused, and matches its identity.
+- Age is the newest of the access, modification and change times.
+- Each row names the deciding time. All "ctime" means no access times are kept.
+- Deleting requires -l.`,
 		Example: `  condatainer store gc
   condatainer store gc --layer user --grace 60
   condatainer store gc --layer user -y`,

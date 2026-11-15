@@ -21,11 +21,12 @@ var hostRunCmd = &cobra.Command{
 - The command runs on the host with your full user and group identity.
 - It starts in the current directory, which must exist on the host.
 - Its output and exit code come back.
-- --on picks the node: localhost, login (the node the job was submitted from) or a node name.
-- --stdin sends standard input, up to 1 MiB. Without it the command reads nothing.
+- --on login is the node the job was submitted from.
+- Without --stdin the command reads nothing.
 
 It works in a container started from a launch listed in host_run.launch.
-The command is run directly, not through a shell. For a pipe, use host-run bash -c '...'.`,
+The command runs directly, not through a shell.
+For a pipe on the host, use ` + "`host-run bash -c 'squeue | head'`" + `.`,
 	Example: `  condatainer host-run squeue --me
   condatainer host-run --on login sbatch job.sh
   condatainer host-run --stdin sbatch < job.sh`,

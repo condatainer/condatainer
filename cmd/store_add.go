@@ -20,10 +20,9 @@ func newStoreAddCmd() *cobra.Command {
 		Short: "Install an existing overlay file into the store",
 		Long: `Copy one .sqf into the store.
 
-- It is filed under the name and identity recorded inside the file, not its filename.
-- --layer chooses which store to use.
+- It is filed under the name and identity inside the file, not its filename.
 - The source file is copied, never moved.
-- To place an overlay at a path of your choosing, use 'create -p' or 'registry pull -p'.`,
+- To choose the path, use ` + "`create -p`" + ` or ` + "`registry pull -p`" + `.`,
 		Example: `  condatainer store add ./star-2.7.11b.sqf
   condatainer store add /scratch/builds/star.sqf --layer user`,
 		Args:         cobra.ExactArgs(1),

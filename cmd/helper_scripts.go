@@ -23,7 +23,7 @@ var helperAvailCmd = &cobra.Command{
 	Short: "List the helpers the sources offer",
 	Long: `List the helpers the sources offer.
 
-- Each line shows whether the helper is added and whether a newer version is offered.
+- Each line shows if the helper is added and if a newer version is offered.
 
 ` + searchSyntaxHint,
 	Example: `  condatainer helper avail
@@ -42,7 +42,7 @@ var helperAddCmd = &cobra.Command{
 	Long: `Add helpers from the sources.
 
 - The layer they go in is printed.
-- A name already added is refused, and so is a file there that add did not install.
+- It refuses a name already added, or a file there that add did not install.
 - When several sources offer a name, the earliest wins.`,
 	Example: `  condatainer helper add code-server
   condatainer helper add code-server rstudio-server -l e
@@ -81,7 +81,8 @@ var helperUpgradeCmd = &cobra.Command{
 
 - It prints what it will replace, layer by layer, and asks before it does.
 - Without a terminal and without -y, it prints the plan and changes nothing.
-- A helper you edited, one no source offers any more, and one in a layer you cannot write are kept and reported.`,
+- Kept and reported: a helper you edited, and one no source offers any more.
+- Also kept and reported: a helper in a layer you cannot write.`,
 	Example: `  condatainer helper upgrade
   condatainer helper upgrade code-server
   condatainer helper upgrade -l extra-root -y`,
@@ -117,7 +118,7 @@ var helperListCmd = &cobra.Command{
 var helperPathCmd = &cobra.Command{
 	Use:   "path [flags] [name]",
 	Short: "Show the helper script directories",
-	Long: `Show the directories helpers are read from, nearest first.
+	Long: `Show the helper directories in read order: user > extra-root > cnt-root.
 
 - With a name, it prints the file that name resolves to.`,
 	Args:              cobra.MaximumNArgs(1),

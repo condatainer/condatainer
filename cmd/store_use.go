@@ -18,9 +18,10 @@ func newStoreUseCmd() *cobra.Command {
 		Short: "Make one build the default for its name",
 		Long: `Make one build the one that a plain name resolves to.
 
-- The build takes the plain name, and the build that held it moves into the store.
+- The build takes the plain name. The build that held it moves into the store.
 - Files are only renamed inside their directory. Every build stays reachable.
-- A build in a directory shadowed by a nearer one is refused. Promote it in the nearer directory instead.`,
+- A build in a directory shadowed by a nearer one is refused.
+- Promote it in the nearer directory instead.`,
 		Example: `  condatainer store use star/2.7.11b@9f2c1ab
   condatainer store use star/2.7.11b --identity 9f2c1ab`,
 		Args:         cobra.ExactArgs(1),

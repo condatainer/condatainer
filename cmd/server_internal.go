@@ -157,7 +157,7 @@ var (
 )
 
 var serverMessageCmd = &cobra.Command{
-	Use:   "message <text>",
+	Use:   "message [flags] <text>",
 	Short: "Append a message to the helper messages file (called from compute node)",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -315,7 +315,7 @@ var helperHoldCmd = &cobra.Command{
 var helperStateDirCmd = &cobra.Command{
 	Use:    "state-dir <id>",
 	Hidden: true,
-	Short:  "Print the NFS state directory for a helper run ID",
+	Short:  "Print the state directory of a helper run ID",
 	Args:   cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
@@ -339,7 +339,7 @@ var (
 var serverDaemonCmd = &cobra.Command{
 	Use:    "_server_daemon",
 	Hidden: true,
-	Short:  "Run the condatainer server daemon (invoked by 'server start')",
+	Short:  "Run the condatainer server daemon (started by `server start`)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 

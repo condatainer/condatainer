@@ -20,7 +20,7 @@ var (
 const overlayUnfreezeHelp = `Rebuild a writable .img from a snapshot.
 
 - The files come back at the paths they had, ready to install into again.
-- The result cannot be pinned, locked or published until 'overlay freeze' packs it again.
+- It cannot be pinned, locked or published until ` + "`overlay freeze`" + ` packs it.
 - The .sqf is left as it is.`
 
 var overlayUnfreezeCmd = &cobra.Command{

@@ -28,16 +28,16 @@ const overlayFreezeHelp = `Pack a writable overlay into an immutable snapshot.
 
 - The environment is kept exactly as it is, not rebuilt.
 - The snapshot has no recipe behind it, so back it up or push it.
-- 'overlay unfreeze' turns it back into a writable .img.
+- ` + "`overlay unfreeze`" + ` turns it back into a writable .img.
 
 Destination:
-- By default the snapshot is <name>.sqf beside the .img, and the .img is removed.
+- By default the snapshot is <name>.sqf beside the .img, which is removed.
 - --keep, or an explicit destination, keeps the .img.
 
 Per-user overlays:
-- Freezing env-<user>.img writes env.sqf, the same snapshot a shared env.img uses.
-- It replaces the existing env.sqf, and is refused while that is in use or write-protected.
-- An .img with a snapshot beside it is frozen together with it. --use-tmp is refused for it.`
+- Freezing env-<user>.img writes env.sqf, as a shared env.img does.
+- It replaces env.sqf, and is refused while that is in use or write-protected.
+- An .img with a snapshot beside it is frozen together with it.`
 
 var overlayFreezeCmd = &cobra.Command{
 	Use:   "freeze [flags] <overlay.img> [output.sqf]",

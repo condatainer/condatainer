@@ -54,7 +54,7 @@ var helperCmd = &cobra.Command{
 	Short: "Run web apps like RStudio on HPC",
 	Long: `Run web apps like RStudio inside CondaTainer on HPC.
 
-- A helper submits a job, starts the app, and opens an SSH tunnel to your browser.
+- It submits a job, starts the app, and opens an SSH tunnel to your browser.
 - With no arguments, it shows the apps you have running.
 - It cannot run inside a container or a scheduler job.`,
 	Example: `  condatainer helper                       # Show running apps
@@ -75,9 +75,10 @@ var helperRunCmd = &cobra.Command{
 	Long: `Start a helper on a compute node.
 
 - It submits a job, starts the app, and opens an SSH tunnel to your browser.
-- It returns once the job is submitted, and prints the access URL when the app is ready.
-- Each helper has its own flags, shown by 'condatainer helper run <name> -h'.
-- Scheduler options (cpu, mem, time, gpu, account, partition) can be set per run or saved as defaults.`,
+- It returns after submitting, and prints the access URL when the app is ready.
+- Each helper has its own flags, shown by ` + "`condatainer helper run <name> -h`" + `.
+- Per-run scheduler options: cpu, mem, time, gpu, account, partition.
+- They can also be saved as defaults.`,
 	Example: `  condatainer helper run code-server
   condatainer helper run code-server -h
   condatainer helper run rstudio-server --cpu 8 --mem 32G`,

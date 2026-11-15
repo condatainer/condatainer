@@ -42,6 +42,7 @@ func init() {
 	tmpl := rootCmd.UsageTemplate()
 	tmpl = strings.ReplaceAll(tmpl, ".LocalFlags.FlagUsages", "wrappedFlagUsages .LocalFlags")
 	tmpl = strings.ReplaceAll(tmpl, ".InheritedFlags.FlagUsages", "wrappedFlagUsages .InheritedFlags")
+	tmpl = strings.ReplaceAll(tmpl, "for more information about a command.", "for details.")
 	rootCmd.SetUsageTemplate(tmpl)
 }
 

@@ -53,11 +53,18 @@ A partition has a row for each type of node in it.
 A type is a group of nodes with the same CPUs and GPUs.
 
 - A * after a partition name marks the default partition.
-- AVAIL is whether the partition takes jobs. Partitions that are not up are listed last.
-- NODES, CPUS and MEM are per node type. A + marks the smallest of nodes that differ.
-- MAXTIME is the longest one job can run. inf means no limit, - means none is reported.
-- MAXNODES is the most nodes one job can use. It is left out when no partition has a limit.
-- GPUS is each GPU type of the node type, as type:count per node.`,
+- Partitions that are not up are listed last.
+
+Columns:
+- AVAIL is whether the partition takes jobs.
+- NODES, CPUS and MEM are per node type.
+- MAXTIME is the longest one job can run.
+- MAXNODES is the most nodes one job can use. Left out if none has a limit.
+- GPUS is each GPU type of the node type, as type:count per node.
+
+In a cell:
+- A + marks the smallest of nodes that differ.
+- In MAXTIME, inf means no limit and - means none is reported.`,
 	Example: `  condatainer scheduler partitions
   condatainer scheduler partitions --gpu
   condatainer scheduler partitions --cpu`,

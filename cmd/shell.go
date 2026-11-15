@@ -22,7 +22,7 @@ var (
 var shellCmd = &cobra.Command{
 	Use:          "shell",
 	Short:        "Set up condatainer in the shell",
-	Long:         "Set up condatainer in the shell: PATH, tab completion, and the mm command for Conda environments.",
+	Long:         "Set up condatainer in the shell: PATH, tab completion, and the mm command.",
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
@@ -34,7 +34,7 @@ var shellInitCmd = &cobra.Command{
 	Short: "Write condatainer's setup into the shell's rc file",
 	Long: `Write condatainer's setup into the shell's rc file.
 
-- It puts condatainer on PATH, loads tab completion, and defines mm inside a container.
+- It sets PATH, loads tab completion, and defines mm inside a container.
 - With home_override set, the rc file under the replacement home is set up too.
 - It is refused inside a container. Run it on the host.`,
 	Example: `  condatainer shell init
@@ -213,7 +213,7 @@ func newCompletionCmd(hidden bool) *cobra.Command {
 
 - Without a shell argument, the current shell is detected.
 - An alias takes effect only when the script is loaded from your shell rc file.
-- 'condatainer shell init' writes the lines that load it.`,
+- ` + "`condatainer shell init`" + ` writes the lines that load it.`,
 		Example: `  Bash:
   # Current session
   source <(condatainer shell completion bash)

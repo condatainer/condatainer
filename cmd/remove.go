@@ -28,10 +28,10 @@ var removeCmd = &cobra.Command{
 	Short:   "Remove installed overlays matching search terms",
 	Long: `Remove installed overlays by name, alias, or search terms.
 
-- A single plain term must match a name exactly, unlike 'list' and 'avail'.
+- A single plain term must match a name exactly, unlike ` + "`list`" + ` and ` + "`avail`" + `.
 - Several terms must all match (AND).
 - Wildcards (*, ?) and regex also work.
-- It asks for confirmation before removing and exit an error when cannot remove.`,
+- It asks before removing, and exits with an error if it cannot remove.`,
 	Example: `  condatainer rm cellranger/9.0.1  # One version
   condatainer rm cellranger        # Every version of cellranger
   # Several overlays

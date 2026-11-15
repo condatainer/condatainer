@@ -42,21 +42,18 @@ var configCheckCmd = &cobra.Command{
 	Use:   "check",
 	Args:  cobra.NoArgs,
 	Short: "Check the config files and environment for mistakes",
-	Long: `Check the config files and environment for mistakes a command would skip silently.
+	Long: `Check the config files and environment for mistakes commands skip silently.
 
 It reports:
 - an unknown key, with its file and line
 - a value its key does not accept, or that is not true of this machine
 - a renamed, deprecated or removed key, with what to use instead
 - a ` + settings.EnvPrefix + `* variable that matches no key
-- with -v, a value that a higher layer overrides
 
-It exits 1 on a problem. --strict also fails on a renamed or deprecated name.
+It exits 1 on a problem.
 
---fix rewrites renamed keys to their new names and keeps comments:
-- -l is required: one layer's file is rewritten per run.
-- --keep-old leaves the old name beside the new one, for older versions.
-- --dry-run shows the changes and writes nothing.
+--fix rewrites renamed keys to their new names and keeps comments.
+
 ` + configLayersHelp,
 	Run: func(cmd *cobra.Command, args []string) {
 		if checkFix && checkLayer == "" {
@@ -92,7 +89,7 @@ func init() {
 	configCheckCmd.Flags().StringVarP(&checkLayer, "layer", "l", "", "Check only this layer: "+layerChoices)
 	configCheckCmd.Flags().BoolVar(&checkStrict, "strict", false, "Also fail on a renamed or deprecated name")
 	configCheckCmd.Flags().BoolVar(&checkFix, "fix", false, "Rewrite renamed keys to their new names (needs -l)")
-	configCheckCmd.Flags().BoolVar(&checkKeepOld, "keep-old", false, "With --fix, keep the old name beside the new one")
+	configCheckCmd.Flags().BoolVar(&checkKeepOld, "keep-old", false, "With --fix, keep the old name beside the new one, for older versions")
 	configCheckCmd.Flags().BoolVar(&checkDryRun, "dry-run", false, "With --fix, show the changes and write nothing")
 	configCheckCmd.Flags().BoolVarP(&checkVerbose, "verbose", "v", false, "Also show values that a higher layer overrides")
 }

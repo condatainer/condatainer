@@ -34,7 +34,7 @@ Arguments are all job IDs, or all name filters, as for jobs.
 
 - An array ID cancels every task. A task ID (245068_4) cancels one.
 - IDs cancel at once. A name asks first.
-- An ID that is not your job in the queue is not found, and the exit status is not zero.`,
+- An ID that is not your job in the queue is not found, and exits non-zero.`,
 	Example: `  condatainer scheduler cancel 245068 245070
   condatainer scheduler cancel 245080        # Every task of the array
   condatainer scheduler cancel 245080_4      # One task

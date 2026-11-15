@@ -25,21 +25,23 @@ var schedulerJobsCmd = &cobra.Command{
 
 Arguments are all job IDs, or all name filters. Mixing them is refused.
 A name filter is part of the job name, in any case. It sees only the queue.
-An ID is a job (245068) or one task of an array (245068_4). It finds jobs that ended too.
+An ID is a job (245068) or one array task (245068_4). It finds ended jobs too.
 
 The table has a row for each job. An array is one row with its tasks counted.
+- STATE is pending, running, success, failed or cancelled.
+- CPUS, GPUS and MEM are what a job asked for, then what it holds once running.
+- TIME is HH:MM:SS: the limit while a job waits, then the time used.
+- NODE is where the job runs.
+- NOTE is why it waits, what it waits for, or why it failed.
 
-- STATE is pending, running, success, failed or cancelled. An ID can be notfound or unknown too.
-- CPUS, GPUS and MEM are what the job asked for, then what it holds once it runs.
-- TIME is HH:MM:SS: the limit while a job waits, then the time used. inf means no limit.
-- NODE is where the job runs. NOTE is why it waits, what it waits for, or why it failed.
-- NOTE starts with the layout of a job of several ranks, such as 8r x 2c or 2n x 4r x 2c.
+In a cell:
 - A - is a figure the scheduler does not report.
+- inf in TIME means no limit.
+- An ID can also have the state notfound or unknown.
 
-A layout is ranks and CPUs per rank. Nodes and ranks per node come first when the user fixed them.
-
-One ID shows the job in full instead, a line for each fact the scheduler reported.
-A finished job has its exit code, CPU time and peak memory. A failed job has why it failed.
+One ID shows the job in full: a line for each fact the scheduler reported.
+A finished job has its exit code, CPU time and peak memory.
+A failed job also has why it failed.
 An array lists its tasks by state, and the IDs of the tasks that failed.`,
 	Example: `  condatainer scheduler jobs
   condatainer scheduler jobs align   # Jobs with "align" in the name

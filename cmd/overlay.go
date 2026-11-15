@@ -260,7 +260,7 @@ var infoCmd = &cobra.Command{
 	Long: `Show details about a writable ext3 overlay.
 
 - Filesystem stats, disk and inode usage, block size, ownership.
-- For a SquashFS overlay or an installed name, use 'condatainer info'.`,
+- For a SquashFS overlay or an installed name, use ` + "`condatainer info`" + `.`,
 	Example:      `  condatainer overlay info env.img  # Usage of a writable overlay`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
@@ -308,10 +308,7 @@ var fscheckCmd = &cobra.Command{
 var chownCmd = &cobra.Command{
 	Use:   "chown [flags] <overlay.img>",
 	Short: "Change file ownership inside an overlay",
-	Long: `Change the UID/GID of files inside an overlay, without mounting it.
-
-- The default owner is the current user.
-- The default path is '/' inside the image.`,
+	Long:  `Change the UID/GID of files inside an overlay, without mounting it.`,
 	Example: `  condatainer overlay chown env.img  # Set entire image to current user
   condatainer overlay chown env.img --root
   condatainer overlay chown env.img -u 1001 -g 1001

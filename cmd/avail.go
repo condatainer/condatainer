@@ -28,7 +28,7 @@ var availCmd = &cobra.Command{
 	Long: `List available recipes (local and remote).
 
 - When duplicates exist, local recipes take precedence.
-- Install one with 'condatainer install <name>'.
+- Install one with ` + "`condatainer install <name>`" + `.
 
 ` + searchSyntaxHint,
 	Example: `  condatainer avail                    # List all

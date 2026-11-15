@@ -91,7 +91,8 @@ Three places, three jobs.
 - Commands, flags, output, what is refused and how to proceed.
 - Never a design argument or how it works inside. State the rule and its consequence.
 - Cobra `Long` replaces `Short` in `--help`, so `Long` must stand alone. No `Example` on group commands.
-- Terminal text fits a terminal of 100 columns, so every line is not greater than 100 columns.
+- Terminal text fits a terminal of 80 columns, so every line is not greater than 80 columns.
+  - A command line in `Usage` or `Example` is never wrapped, so it may be longer.
   - A longer line wraps and breaks its bullet. Never hard-wrap a sentence to fix it.
   - Write short sentences, one fact per bullet.
   - A bullet list in help has at most 6 bullets. Cut the minor ones or group related ones.
@@ -102,7 +103,6 @@ Three places, three jobs.
     - A comment trails its command when the line fits. Trailing comments in a block start in one column.
     - A comment that would make the line too long goes on the line above its command.
     - A block where most comments go above puts all of them above.
-  - Existing help that is longer is fixed when it is edited.
 
 **A package `README.md` records decisions.**
 

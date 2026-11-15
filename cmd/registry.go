@@ -64,16 +64,16 @@ func newRegistryCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "registry",
 		Short: "Publish overlays to a registry and install published ones",
-		Long: `Publish overlays to a registry such as ghcr.io, and install overlays published there.
+		Long: `Publish overlays to a registry such as ghcr.io, and install them from it.
 
 Credentials are used in this order:
-- Your login, saved by ` + "`condatainer registry login`" + `.
-- Registry tokens added with recipe sources (` + "`condatainer config source add`" + `).
-- GITHUB_TOKEN, for ghcr.io.
-- Anonymous access.
+1. Your login, saved by ` + "`condatainer registry login`" + `.
+2. Registry tokens added with recipe sources (` + "`condatainer config source add`" + `).
+3. GITHUB_TOKEN, for ghcr.io.
+4. Anonymous access.
 
 A build pulling from a source's registry tries that source's token first.
-For reads, a refused credential is skipped for the next one, with a warning naming it.`,
+For reads, a refused credential is skipped, with a warning naming it.`,
 	}
 
 	var pushJSON bool
@@ -83,13 +83,14 @@ For reads, a refused credential is skipped for the next one, with a warning nami
 		Long: `Publish a local overlay to a registry, so other machines can download it.
 
 - Give a path, or the name and version of an installed overlay.
-- Without --source or --registry, an installed overlay goes to its recipe source's registry.
-- A new build of a name becomes the one that name installs. The older build stays.
+- By default an installed overlay goes to its recipe source's registry.
+- A new build of a name becomes the one it installs. The older build stays.
 - A snapshot is never published to a source's registry.
 
-Registry audience, public (default) or restricted, says who can download from the registry.
+Audience:
 - A public registry refuses overlays that may not be redistributed.
-- A source's audience is "oci.audience" in its source.json. --audience is for --registry.
+- A source's audience is "oci.audience" in its source.json.
+- --audience is for --registry.
 - It does not change who can access the registry on the host.`,
 		Example: `  condatainer registry push star/2.7.11b
   condatainer registry push ./overlays/star.sqf --registry ghcr.io/my-lab/cnt
@@ -130,7 +131,7 @@ Registry audience, public (default) or restricted, says who can download from th
 	}
 	jsonFlag(push.Flags(), &pushJSON)
 	addEndpointFlags(push, opts)
-	push.Flags().StringVar(&opts.audience, "audience", string(registry.Public), "Who can download from the registry: public or restricted")
+	push.Flags().StringVar(&opts.audience, "audience", string(registry.Public), "Declare who can download from the registry: public or restricted")
 
 	pull := &cobra.Command{
 		Use:   "pull [flags] <name|name@identity>",
@@ -190,7 +191,7 @@ Registry audience, public (default) or restricted, says who can download from th
 
 - name: star--2.7.11b__amd64
 - identity: star--2.7.11b__9f2c1ab4d3e8__amd64 (one exact build)
-- equivalence: star--2.7.11b__eq-e90d3b7714cf__amd64 (newest build from the same recipe)`,
+- equivalence: star--2.7.11b__eq-e90d3b7714cf__amd64 (newest of one recipe)`,
 		Example: `  condatainer registry tags --source lab
   condatainer registry tags --registry ghcr.io/my-lab/cnt | grep star`,
 		Args:         cobra.NoArgs,
@@ -289,8 +290,7 @@ Registry audience, public (default) or restricted, says who can download from th
 		Short:   "List stored registry credentials",
 		Long: `List the saved registry credentials with their layer and username.
 
-- FROM is login for a saved login, or the source a registry token was added with.
-- Logins are tried before source tokens. A build from a source tries its own token first.
+- FROM is login for a saved login, or the source a token was added with.
 - Passwords and tokens are never shown.
 - GITHUB_TOKEN, when set, is used for ghcr.io when none of these matches.`,
 		Args:         cobra.NoArgs,
@@ -339,8 +339,9 @@ func newRegistryRemoveCommand(opts *registryOptions) *cobra.Command {
 		Short: "Remove published overlays from a source's registry",
 		Long: `Remove published overlays from a source's registry.
 
-- name@identity removes one build on every architecture. A name alone removes all builds.
-- If the build was the one its name installs, the name moves to the newest other build.
+- name@identity removes one build on every architecture.
+- A name alone removes all builds.
+- The name moves to the newest other build if it installed the removed one.
 - A project that pins a removed build can no longer download it.`,
 		Example: `  # One build, every architecture
   condatainer registry remove star/2.7.11b@9f2c1ab --source lab
@@ -370,7 +371,8 @@ func newRegistryGCCommand(opts *registryOptions) *cobra.Command {
 		Short: "Remove builds no name installs from a source's registry",
 		Long: `Remove builds that no name installs from a source's registry.
 
-- A build stays while its name installs it, or while it is the newest built from its recipe.
+- A build stays while its name installs it.
+- A build also stays while it is the newest built from its recipe.
 - A name limits the run to that name.
 - A project that pins a removed build can no longer download it.`,
 		Example: `  condatainer registry gc --source lab
@@ -1145,12 +1147,18 @@ func newRegistryMissingCommand(opts *registryOptions) *cobra.Command {
 		Short: "List the overlays a source's registry does not hold yet",
 		Long: `List the overlays whose recipe has no published copy in a source's registry.
 
-- A copy is published when the registry has the tag of the recipe's equivalence key, whatever its date. The copy itself is not read.
-- A name is exact, or a quoted pattern with * and ?. A pattern matches the variants of a template, such as 'ubuntu24/r/*'.
-- --type alone checks every recipe of those types. With no name, pattern or --type, this help is shown.
+- A copy is published when the registry has the tag of its equivalence key.
+- The tag counts whatever its date. The copy itself is not read.
 - A recipe that does not build on an architecture is skipped for it.
 - A missing copy prints as its name and architecture.
-- A registry that cannot be read is an error: unreachable, or refusing the read. A repository nobody has pushed to has no copies.`,
+- A repository nobody has pushed to has no copies.
+
+What it checks:
+- A name is exact, or a quoted pattern with * and ?, such as 'ubuntu24/r/*'.
+- --type alone checks every recipe of those types.
+- With no name, pattern or --type, this help is shown.
+
+An unreadable registry is an error: unreachable, or refusing the read.`,
 		Example: `  condatainer registry missing --source cnt --type os
   condatainer registry missing --source cnt --arch amd64,arm64 ubuntu24/base 'ubuntu24/r/*'
   condatainer registry missing --source lab 'tools/*' --type app`,

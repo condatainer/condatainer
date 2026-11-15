@@ -47,6 +47,7 @@ var (
 	runExcludeNodes []string
 	runDryRun       bool
 	runSubmit       bool
+	runSubmitOn     string
 	runArray        string
 	runArrayLimit   int
 	runName         string
@@ -62,14 +63,14 @@ var runJobFlagNames = map[string]bool{
 	"afterok": true, "afternotok": true, "afterany": true,
 	"cpu": true, "mem": true, "time": true, "gpu": true, "account": true, "partition": true, "exclude-nodes": true,
 	"dry-run": true, "name": true, "array": true, "array-limit": true,
-	"no-submit": true, "submit": true,
+	"no-submit": true, "submit": true, "submit-on": true,
 }
 
 // Reasons --submit is refused. It never falls back to a local run.
 var (
-	errSubmitWithNoSubmit = errors.New("--submit and --no-submit cannot be used together")
-	errSubmitInContainer  = errors.New("--submit cannot be used inside a container, which has no scheduler")
-	errSubmitNoScheduler  = errors.New("--submit needs a scheduler, and none is available (job submission is off or none was found)")
+	errSubmitWithNoSubmit  = errors.New("--submit and --no-submit cannot be used together")
+	errSubmitNoScheduler   = errors.New("--submit needs a scheduler, and none is available (job submission is off or none was found)")
+	errSubmitOnNeedsSubmit = errors.New("--submit-on needs --submit from inside a container, where it picks the node the job is submitted from")
 )
 
 // jobIDRe matches a single scheduler job ID.
@@ -138,7 +139,8 @@ func init() {
 	runCmd.Flags().StringSliceVar(&runExcludeNodes, "exclude-nodes", nil, "Override the excluded nodes (comma-separated; empty for none)")
 	runCmd.Flags().BoolVar(&runDryRun, "dry-run", false, "Show what would happen, without doing it")
 	settings.AddSwitch(runCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run locally)"))
-	runCmd.Flags().BoolVar(&runSubmit, "submit", false, "Submit a new job even when run inside a job (not in a container)")
+	runCmd.Flags().BoolVar(&runSubmit, "submit", false, "Submit a new job from a job or a container (via host-run)")
+	runCmd.Flags().StringVar(&runSubmitOn, "submit-on", "", "Node to submit from: localhost, login or a node name (default: host_run.on)")
 	runCmd.Flags().StringVarP(&runName, "name", "n", "", "Override job name (letters, digits, '.', '_' and '-')")
 	runCmd.Flags().StringVar(&runArray, "array", "", "Input file for array job (one entry per line)")
 	runCmd.Flags().IntVar(&runArrayLimit, "array-limit", 0, "Max concurrent array subjobs (0 = unlimited)")
@@ -174,6 +176,12 @@ func init() {
 }
 
 func runScript(cmd *cobra.Command, args []string) error {
+	switch {
+	case runSubmit && runInsideContainer():
+		return submitThroughHost(cmd, args)
+	case runSubmitOn != "":
+		ExitWithError("%v", errSubmitOnNeedsSubmit)
+	}
 	if err := applyProjectFlag(runProjectDir); err != nil {
 		return err
 	}
@@ -463,8 +471,6 @@ func checkSubmitFlag(noSubmitSet bool) error {
 		return nil
 	case noSubmitSet:
 		return errSubmitWithNoSubmit
-	case runInsideContainer():
-		return errSubmitInContainer
 	case !scheduler.Enabled() || scheduler.ActiveScheduler() == nil:
 		return errSubmitNoScheduler
 	}
@@ -487,6 +493,55 @@ func submitDefaultSpecs(specs *scheduler.ScriptSpecs) *scheduler.ScriptSpecs {
 	specs.Spec = &rs
 	specs.HasDirectives = true
 	return specs
+}
+
+// hostRunCall sends a call to the host through host-run. Tests replace it.
+var hostRunCall = func(ctx context.Context, call hostrun.Call) (int, error) { return call.Run(ctx) }
+
+// submitThroughHost runs this `condatainer run --submit` on the host, through host-run, and exits with its exit code.
+//   - The host runs the same command with the same flags, except --submit-on, which picks the node.
+//   - Output and the job ID come back on the streams they were written to.
+func submitThroughHost(cmd *cobra.Command, args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	argv := append([]string{"condatainer", "run"}, flagArgv(cmd.Flags(), map[string]bool{"submit-on": true})...)
+	argv = append(argv, args...)
+	code, err := hostRunCall(cmd.Context(), hostrun.Call{
+		Sock:   os.Getenv(hostrun.EnvSock),
+		Argv:   argv,
+		Cwd:    cwd,
+		On:     runSubmitOn,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if err != nil {
+		return fmt.Errorf("--submit from inside a container goes through host-run: %w", err)
+	}
+	if code != 0 {
+		os.Exit(code)
+	}
+	return nil
+}
+
+// flagArgv is the flags that were set on the command line, as arguments, except the ones in skip.
+//   - A bool or a value is --name=value, and a list is one --name=value for each element.
+func flagArgv(fs *pflag.FlagSet, skip map[string]bool) []string {
+	var argv []string
+	fs.Visit(func(fl *pflag.Flag) {
+		if skip[fl.Name] {
+			return
+		}
+		values := []string{fl.Value.String()}
+		if list, ok := fl.Value.(pflag.SliceValue); ok {
+			values = list.GetSlice()
+		}
+		for _, v := range values {
+			argv = append(argv, "--"+fl.Name+"="+v)
+		}
+	})
+	return argv
 }
 
 // willSubmitRun reports whether this run goes to a scheduler rather than running

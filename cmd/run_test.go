@@ -1,13 +1,18 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/runtime/hostrun"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
@@ -76,20 +81,18 @@ func TestCheckSubmitFlag(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		sub, noSub  bool
-		container   bool
 		noScheduler bool
 		submitOff   bool
 		want        error
 	}{
-		{name: "flag off", container: true},
+		{name: "flag off"},
 		{name: "ready", sub: true},
 		{name: "with --no-submit", sub: true, noSub: true, want: errSubmitWithNoSubmit},
-		{name: "in a container", sub: true, container: true, want: errSubmitInContainer},
 		{name: "submission off", sub: true, submitOff: true, want: errSubmitNoScheduler},
 		{name: "no scheduler", sub: true, noScheduler: true, want: errSubmitNoScheduler},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			setPlace(t, true, tc.container)
+			setPlace(t, true, false)
 			setRunSubmit(t, tc.sub)
 			useScheduler(t)
 			if tc.noScheduler {
@@ -168,5 +171,73 @@ func TestSubmitIsNotForwardedToTheJob(t *testing.T) {
 	got := forwardedFlagArgs(fs)
 	if len(got) != 1 || got[0] != "--writable='true'" {
 		t.Errorf("forwarded %q, want only --writable", got)
+	}
+}
+
+// The flags set on the command line go to the host as arguments, except the ones left out.
+func TestFlagArgv(t *testing.T) {
+	fs := pflag.NewFlagSet("run", pflag.ContinueOnError)
+	fs.Bool("submit", false, "")
+	fs.String("submit-on", "", "")
+	fs.String("afterok", "", "")
+	fs.StringSlice("bind", nil, "")
+	fs.Int("cpu", 0, "")
+	for _, kv := range [][2]string{{"submit", "true"}, {"submit-on", "login"}, {"afterok", "12:13"}, {"bind", "/a b"}, {"bind", "/c"}} {
+		if err := fs.Set(kv[0], kv[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := flagArgv(fs, map[string]bool{"submit-on": true})
+	want := []string{"--afterok=12:13", "--bind=/a b", "--bind=/c", "--submit=true"}
+	if !slices.Equal(got, want) {
+		t.Errorf("flagArgv = %q, want %q", got, want)
+	}
+}
+
+// Inside a container, run --submit sends the same command to the host, with --submit-on as the node.
+func TestSubmitThroughHostSendsTheCommand(t *testing.T) {
+	setRunSubmit(t, true)
+	old := runSubmitOn
+	runSubmitOn = "login"
+	t.Cleanup(func() { runSubmitOn = old })
+	t.Setenv(hostrun.EnvSock, "/.condatainer/host/sock")
+
+	var sent hostrun.Call
+	oldCall := hostRunCall
+	hostRunCall = func(_ context.Context, call hostrun.Call) (int, error) { sent = call; return 0, nil }
+	t.Cleanup(func() { hostRunCall = oldCall })
+
+	c := &cobra.Command{Use: "run"}
+	c.Flags().SetInterspersed(false)
+	c.Flags().Bool("submit", false, "")
+	c.Flags().String("submit-on", "", "")
+	c.Flags().String("afterok", "", "")
+	if err := c.ParseFlags([]string{"--submit", "--submit-on=login", "--afterok", "12", "step.sh", "--submit-on", "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := submitThroughHost(c, c.Flags().Args()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"condatainer", "run", "--afterok=12", "--submit=true", "step.sh", "--submit-on", "x"}
+	if !slices.Equal(sent.Argv, want) {
+		t.Errorf("sent %q, want %q", sent.Argv, want)
+	}
+	if sent.On != "login" || sent.Sock != "/.condatainer/host/sock" {
+		t.Errorf("on %q, socket %q", sent.On, sent.Sock)
+	}
+	if cwd, _ := os.Getwd(); sent.Cwd != cwd {
+		t.Errorf("working directory %q, want %q", sent.Cwd, cwd)
+	}
+}
+
+// A container with no host-run says so, naming host-run.
+func TestSubmitThroughHostWithNoRelayIsAnError(t *testing.T) {
+	oldCall := hostRunCall
+	hostRunCall = func(context.Context, hostrun.Call) (int, error) { return 0, hostrun.ErrNoRelay }
+	t.Cleanup(func() { hostRunCall = oldCall })
+
+	err := submitThroughHost(&cobra.Command{Use: "run"}, []string{"step.sh"})
+	if !errors.Is(err, hostrun.ErrNoRelay) || !strings.Contains(err.Error(), "host-run") {
+		t.Errorf("err = %v, want one that wraps ErrNoRelay and names host-run", err)
 	}
 }

@@ -47,8 +47,9 @@ condatainer config remove bind /data/extra                      # Remove a value
 - `append` and `prepend` add one value per command, and move a value that is already in the list.
 - `remove` takes one value at a time.
 - `--bind` on `exec`, `e` and `run` adds to the `bind` list for that command.
-- The lists of all layers are **combined**, in layer order: the values of `user` first, then `extra-root`, then `cnt-root`. A value that several layers list appears once, where the highest of those layers puts it.
-- `channels` is the exception: the layer with the highest priority that sets it **wins**, and the other layers' values are ignored.
+- Each list setting either **merges** its layers or **replaces**. `config help <key>` shows which, on the `Layers:` line, and so does the [Configuration Reference](../reference/config.md).
+- A merged list adds up the lists of all layers, in layer order: the values of `user` first, then `extra-root`, then `cnt-root`. A value that several layers list appears once, where the highest of those layers puts it.
+- A replaced list takes the highest layer that sets it, and the other layers' values are ignored.
 
 ## Recipe sources
 

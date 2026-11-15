@@ -24,6 +24,7 @@ import (
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/project"
 	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/runtime/hostrun"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -162,7 +163,7 @@ func checkRoot(ctx context.Context, cwd string) error {
 const stopGraceSecs = 30
 
 // buildCondatainerCmd builds the `condatainer exec` line the wrapper runs on the compute node.
-//   - Order: --stop-grace, the overlays, -w, --load-gpu, a bind of the executable, --pwd, then the script.
+//   - Order: --stop-grace, --launch-kind, the overlays, -w, --load-gpu, a bind of the executable, --pwd, then the script.
 //   - It uses `exec`, not `e`, so nothing is autoloaded.
 //   - The script runs through its own shebang.
 //   - A GPU request in spec forces --load-gpu, even with autoload_gpu off.
@@ -173,7 +174,7 @@ func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string,
 	}
 
 	var parts []string
-	parts = append(parts, shellQuote(exe), "exec", "--stop-grace", strconv.Itoa(stopGraceSecs))
+	parts = append(parts, shellQuote(exe), "exec", "--stop-grace", strconv.Itoa(stopGraceSecs), "--launch-kind", hostrun.KindHelper)
 
 	// exec otherwise follows the project at the job's directory, which could give the helper a root the launch asked to ignore.
 	if opts.NoProject {
@@ -655,9 +656,7 @@ func buildHelperScriptSpecs(name, cwd, account, partition string, excludeNodes [
 		HasDirectives: spec != nil,
 	}
 	if scheduler.ProxyPerJob(scheduler.ProxyHelper) {
-		if h, err := os.Hostname(); err == nil && h != "" {
-			ss.ProxyVia = h
-		}
+		ss.ProxyVia = scheduler.LoginNode()
 	}
 	return ss
 }

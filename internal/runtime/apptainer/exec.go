@@ -16,6 +16,7 @@ import (
 type ExecOptions struct {
 	Bin        Bin       // The apptainer to run, from Normal or Fakeroot
 	Bind       []string  // Bind mounts (format: "/host/path:/container/path")
+	DropBinds  []string  // Container paths whose binds a nested launch inherits and must not keep
 	Overlay    []string  // Overlay images to use
 	Fakeroot   bool      // Run with fakeroot
 	Env        []string  // Environment variables to set (format: "KEY=VALUE")
@@ -59,7 +60,7 @@ func Exec(ctx context.Context, imagePath string, command []string, opts *ExecOpt
 
 	logging.FromContext(ctx).Debug("executing in container", "image", imagePath, "command", strings.Join(command, " "))
 
-	setEnv, unsetEnv := nestedBindEnv(opts.Bind)
+	setEnv, unsetEnv := nestedBindEnv(slices.Concat(opts.Bind, opts.DropBinds))
 	procEnv := append(envPrefixed(opts.Bin, opts.Env), setEnv...)
 	unsetEnv = append(slices.Clone(opts.UnsetEnv), unsetEnv...)
 
@@ -70,6 +71,7 @@ func Exec(ctx context.Context, imagePath string, command []string, opts *ExecOpt
 var inheritedBindVars = []string{"APPTAINER_BIND", "SINGULARITY_BIND", "APPTAINER_BINDPATH", "SINGULARITY_BINDPATH"}
 
 // nestedBindEnv returns the bind variables of a nested launch with the entries already in binds removed.
+//   - A path in binds without a host is a path to drop: its inherited bind goes and nothing replaces it.
 //   - set holds NAME=value for a variable that keeps some entries. unset names one left with none.
 //   - An entry is a duplicate when its container path is one of binds. The launch's own bind wins.
 //   - Outside a container nothing is changed.

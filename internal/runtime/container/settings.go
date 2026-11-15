@@ -9,7 +9,7 @@ var (
 
 	keyBind = settings.List("bind",
 		settings.MergeLists(), settings.Order(8),
-		settings.Help("Paths added to every container, as host[:container[:opts]]. Every layer's list is merged."))
+		settings.Help("Paths added to every container, as host[:container[:opts]]."))
 )
 
 // AutoloadGPU reports whether GPU flags are added without being asked for.

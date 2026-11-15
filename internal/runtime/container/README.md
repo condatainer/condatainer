@@ -94,7 +94,10 @@ Root selection has already run, so ordering never decides which overlay becomes 
 - With `HOME` replaced, the container gets `--home <replacement>`, because Apptainer's default home is the passwd home and ignores `$HOME`. A `--home` the caller passes wins.
 - With `HOME` replaced, the real home is bound read-only at its own path. A nested call reads the config there through `CNT_REAL_HOME`.
   - Skipped when the replacement is inside the real home or the reverse. The config directory is then bound alone.
-- The executable is bound at `/.cnt_bin`, not under `/usr/bin`. A bind there puts a mount boundary inside the directory `dpkg` unpacks into, and `dpkg` then refuses every package.
+- The executable is bound at `/.condatainer/bin`, not under `/usr/bin`. A bind there puts a mount boundary inside the directory `dpkg` unpacks into, and `dpkg` then refuses every package.
+- Everything CondaTainer binds at the root of a container goes under the one hidden directory `/.condatainer`, so the root gains one entry.
+  - The executable is under `bin` and the host-run relay under `host`.
+  - It is not `/.cnt`, which is the image's own metadata.
 
 ## Nested running
 

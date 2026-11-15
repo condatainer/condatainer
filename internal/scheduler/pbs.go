@@ -786,6 +786,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	if specs.Spec != nil {
 		writeResourceExports(writer, specs.Spec)
 	}
+	writeLoginNodeExport(writer)
 
 	// Array job: extract input line, set ARRAY_ARGS, and redirect output
 	if jobSpec.Array != nil {

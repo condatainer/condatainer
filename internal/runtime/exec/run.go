@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/config"
@@ -11,6 +12,7 @@ import (
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/runtime/hostrun"
 	"github.com/condatainer/condatainer/internal/runtime/proxy"
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -30,6 +32,7 @@ type Plan struct {
 	Diagnostics  []Diagnostic
 	ExecOptions  *apptainer.ExecOptions
 	OverlayLocks []*image.Lock
+	HostRun      *hostrun.Relay
 }
 
 // Close releases resources acquired during Prepare.
@@ -41,6 +44,8 @@ func (p *Plan) Close() {
 		l.Close()
 	}
 	p.OverlayLocks = nil
+	p.HostRun.Close()
+	p.HostRun = nil
 }
 
 // Prepare resolves and validates container execution inputs without printing.
@@ -163,12 +168,30 @@ func Prepare(ctx context.Context, options Options) (*Plan, error) {
 		options.Command = wrapWithActivation(preamble, options.Command)
 	}
 
+	// The host-run relay is opened last, once nothing after it can fail and leave it running.
+	bind := setupResult.BindPaths
+	unsetEnv := setupResult.UnsetEnv
+	var dropBinds []string
+	relay, relayErr := hostrun.Open(options.HostRun)
+	if relayErr != nil {
+		diagnostics = append(diagnostics, Diagnostic{Level: "warn", Message: "host-run is not available in this container: " + relayErr.Error()})
+	}
+	if relay != nil {
+		bind = append(slices.Clone(bind), relay.Dir()+":"+hostrun.ContainerDir)
+		envList = append(slices.Clone(envList), hostrun.EnvSock+"="+hostrun.ContainerSock)
+	} else {
+		drop, unset := inheritedHostRun()
+		dropBinds = drop
+		unsetEnv = append(slices.Clone(unsetEnv), unset...)
+	}
+
 	opts := &apptainer.ExecOptions{
 		Bin:        bin,
-		Bind:       setupResult.BindPaths,
+		Bind:       bind,
+		DropBinds:  dropBinds,
 		Overlay:    setupResult.OverlayArgs,
 		Env:        envList,
-		UnsetEnv:   setupResult.UnsetEnv,
+		UnsetEnv:   unsetEnv,
 		Fakeroot:   fakeroot,
 		Additional: setupResult.ApptainerFlags,
 		StopGrace:  options.StopGrace,
@@ -182,6 +205,7 @@ func Prepare(ctx context.Context, options Options) (*Plan, error) {
 		Diagnostics:  diagnostics,
 		ExecOptions:  opts,
 		OverlayLocks: execLocks,
+		HostRun:      relay,
 	}, nil
 }
 

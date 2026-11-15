@@ -347,6 +347,18 @@ QUANT=$(condatainer run --array samples.txt --afterok "$ALIGN" quant.sh)
 condatainer run --afterok "$QUANT" collect.sh samples.txt
 ```
 
+### Submitting From Inside a Job
+
+A job that plans a pipeline can submit the steps after it. Inside a job, `condatainer run` runs its script in that job. `--submit` makes it submit a new job instead, even from inside the job's container:
+
+```bash
+JOB=$(condatainer run --submit step1.sh)
+condatainer run --submit --afterok "$JOB" step2.sh
+```
+
+- Inside a container, `--submit` goes through [`host-run`](host-run.md), so the job needs it. For jobs started by `condatainer run`, add `run` to the `host_run.launch` [setting](config.md).
+- `--submit-on` picks the node the job is submitted from: `localhost`, `login` or a node name.
+
 ## Container Headers
 
 Just as you use `#DEP:` to define overlays, these headers set `condatainer run` options inside the script:

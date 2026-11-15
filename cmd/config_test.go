@@ -3,6 +3,7 @@ package cmd
 import (
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/build"
@@ -70,6 +71,8 @@ func TestRegisteredKeyNames(t *testing.T) {
 		"helper.notification CNT_CONFIG_HELPER_NOTIFICATION",
 		"home_override CNT_CONFIG_HOME_OVERRIDE",
 		"host_apptainer CNT_CONFIG_HOST_APPTAINER",
+		"host_run.launch CNT_CONFIG_HOST_RUN_LAUNCH",
+		"host_run.on CNT_CONFIG_HOST_RUN_ON",
 		"metadata_cache_ttl CNT_CONFIG_METADATA_CACHE_TTL",
 		"nested_run CNT_CONFIG_NESTED_RUN",
 		"scheduler.account CNT_CONFIG_SCHEDULER_ACCOUNT",
@@ -87,5 +90,40 @@ func TestRegisteredKeyNames(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("registered keys = %v, want %v", got, want)
+	}
+}
+
+// The registry says how a list key's layers combine, so no help text states it by hand.
+func TestNoHelpStatesHowLayersCombine(t *testing.T) {
+	for _, k := range settings.Keys() {
+		help := strings.ToLower(k.Help)
+		if strings.Contains(help, "layer's list") || strings.Contains(help, "highest-priority file") {
+			t.Errorf("%s: the help states the layer rule, which the key's LayerRule prints: %q", k.Name, k.Help)
+		}
+	}
+}
+
+// The reference and the key's help print the layer rule of a list key, and nothing for another key.
+func TestReferenceAndHelpPrintTheLayerRule(t *testing.T) {
+	for _, tc := range []struct {
+		key, want string
+	}{
+		{"bind", "- **Layers:** merged"},
+		{"host_run.launch", "- **Layers:** merged"},
+		{"channels", "- **Layers:** replaced"},
+		{"build.ncpu", ""},
+	} {
+		k, ok := settings.Lookup(tc.key)
+		if !ok {
+			t.Fatalf("%s is not registered", tc.key)
+		}
+		var b strings.Builder
+		writeReferenceKey(&b, k)
+		if got := strings.Contains(b.String(), "**Layers:**"); got != (tc.want != "") {
+			t.Errorf("%s: reference has a Layers line = %v\n%s", tc.key, got, b.String())
+		}
+		if tc.want != "" && !strings.Contains(b.String(), tc.want) {
+			t.Errorf("%s: reference lacks %q\n%s", tc.key, tc.want, b.String())
+		}
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/runtime/exec"
+	"github.com/condatainer/condatainer/internal/runtime/hostrun"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +23,7 @@ var execGpuRequested bool
 var execActivation string
 var execProjectDir string
 var execStopGrace int
+var execLaunchKind string
 
 var execCmd = &execCommand{
 	Command: cobra.Command{
@@ -57,6 +59,8 @@ func init() {
 	execCmd.Flags().StringVar(&execActivation, "activation", "all", "Which activate.d scripts to source before the command: all, env, or none")
 	execCmd.Flags().IntVar(&execStopGrace, "stop-grace", 0, "Seconds the container gets to exit after this process is told to stop")
 	execCmd.Flags().MarkHidden("stop-grace") //nolint:errcheck
+	execCmd.Flags().StringVar(&execLaunchKind, "launch-kind", "", "Launch kind for host-run (set by helpers)")
+	execCmd.Flags().MarkHidden("launch-kind") //nolint:errcheck
 	RegisterProjectFlags(&execCmd.Command, &execProjectDir)
 
 	// For 'exec': use default file completion for positional args
@@ -120,6 +124,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 		GpuRequested:   execGpuRequested,
 		Activation:     activation,
 		StopGrace:      time.Duration(execStopGrace) * time.Second,
+		HostRun:        execHostRunKind(),
 	}
 
 	plan, err := exec.Prepare(cmd.Context(), options)
@@ -140,6 +145,14 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return nil
+}
+
+// execHostRunKind is the launch kind of this exec: a helper's wrapper names itself, any other is a typed exec.
+func execHostRunKind() string {
+	if execLaunchKind == hostrun.KindHelper {
+		return hostrun.KindHelper
+	}
+	return hostrun.KindExec
 }
 
 func execHelpRequested(args []string) bool {

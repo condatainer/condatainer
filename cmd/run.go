@@ -17,6 +17,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
+	"github.com/condatainer/condatainer/internal/runtime/hostrun"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -45,6 +46,8 @@ var (
 	runPartition    string
 	runExcludeNodes []string
 	runDryRun       bool
+	runSubmit       bool
+	runSubmitOn     string
 	runArray        string
 	runArrayLimit   int
 	runName         string
@@ -60,8 +63,15 @@ var runJobFlagNames = map[string]bool{
 	"afterok": true, "afternotok": true, "afterany": true,
 	"cpu": true, "mem": true, "time": true, "gpu": true, "account": true, "partition": true, "exclude-nodes": true,
 	"dry-run": true, "name": true, "array": true, "array-limit": true,
-	"no-submit": true,
+	"no-submit": true, "submit": true, "submit-on": true,
 }
+
+// Reasons --submit is refused. It never falls back to a local run.
+var (
+	errSubmitWithNoSubmit  = errors.New("--submit and --no-submit cannot be used together")
+	errSubmitNoScheduler   = errors.New("--submit needs a scheduler, and none is available (job submission is off or none was found)")
+	errSubmitOnNeedsSubmit = errors.New("--submit-on needs --submit from inside a container, where it picks the node the job is submitted from")
+)
 
 // jobIDRe matches a single scheduler job ID.
 // Slurm/LSF: pure digits. PBS: digits followed by .hostname (e.g. 12345.school.edu). HTCondor: ClusterID.ProcessID (e.g. 12345.0).
@@ -126,9 +136,11 @@ func init() {
 	runCmd.Flags().StringVarP(&runGPU, "gpu", "g", "", "Override GPUs per node (e.g. 1, a100:2, a100)")
 	runCmd.Flags().StringVarP(&runAccount, "account", "A", "", "Override billing/allocation account")
 	runCmd.Flags().StringVarP(&runPartition, "partition", "p", "", "Override partition/queue")
-	runCmd.Flags().StringSliceVar(&runExcludeNodes, "exclude-nodes", nil, "Override the nodes the job must not run on (comma-separated; empty for none)")
+	runCmd.Flags().StringSliceVar(&runExcludeNodes, "exclude-nodes", nil, "Override the excluded nodes (comma-separated; empty for none)")
 	runCmd.Flags().BoolVar(&runDryRun, "dry-run", false, "Show what would happen, without doing it")
 	settings.AddSwitch(runCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run locally)"))
+	runCmd.Flags().BoolVar(&runSubmit, "submit", false, "Submit a new job from a job or a container (via host-run)")
+	runCmd.Flags().StringVar(&runSubmitOn, "submit-on", "", "Node to submit from: localhost, login or a node name (default: host_run.on)")
 	runCmd.Flags().StringVarP(&runName, "name", "n", "", "Override job name (letters, digits, '.', '_' and '-')")
 	runCmd.Flags().StringVar(&runArray, "array", "", "Input file for array job (one entry per line)")
 	runCmd.Flags().IntVar(&runArrayLimit, "array-limit", 0, "Max concurrent array subjobs (0 = unlimited)")
@@ -164,6 +176,12 @@ func init() {
 }
 
 func runScript(cmd *cobra.Command, args []string) error {
+	switch {
+	case runSubmit && runInsideContainer():
+		return submitThroughHost(cmd, args)
+	case runSubmitOn != "":
+		ExitWithError("%v", errSubmitOnNeedsSubmit)
+	}
 	if err := applyProjectFlag(runProjectDir); err != nil {
 		return err
 	}
@@ -217,6 +235,9 @@ func runScript(cmd *cobra.Command, args []string) error {
 	contentScript, scriptSpecs := resolveScriptAndSpecs(scriptPath)
 	if err := requireInterpreterLine(contentScript); err != nil {
 		ExitWithError("%v", err)
+	}
+	if runSubmit {
+		scriptSpecs = submitDefaultSpecs(scriptSpecs)
 	}
 
 	// CLI -o/-e/-n override script directives (highest priority)
@@ -296,6 +317,10 @@ func runScript(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if err := checkSubmitFlag(cmd.Flags().Changed("no-submit")); err != nil {
+		ExitWithError("%v", err)
+	}
+
 	// A dependency the scheduler cannot express is refused here, before any
 	// overlay is built or job submitted for this run.
 	if deps := runDependencies(); len(deps) > 0 && willSubmitRun(scriptSpecs) {
@@ -340,7 +365,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 	}
 
 	// Array jobs require scheduler submission; cannot run locally
-	if arraySpec != nil && (scheduler.IsInsideJob() || config.IsInsideContainer()) {
+	if arraySpec != nil && runsInPlace() {
 		ExitWithError("--array requires scheduler submission; cannot run array jobs locally")
 	}
 	if runWritableImg && getNtasks(scriptSpecs) > 1 {
@@ -369,8 +394,8 @@ func runScript(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// 3. In-job or in-container: always run locally (no nested submission)
-	if scheduler.IsInsideJob() || config.IsInsideContainer() {
+	// 3. In a job or a container the script runs in place, unless --submit asks for a new job
+	if runsInPlace() {
 		return runLocally(cmd.Context(), contentScript, overlays, scriptSpecs, scriptArgs)
 	}
 
@@ -428,11 +453,102 @@ func runDependencies() []scheduler.Dependency {
 	return deps
 }
 
+// runInsideContainer is config.IsInsideContainer, replaceable by tests.
+var runInsideContainer = config.IsInsideContainer
+
+// runsInPlace reports whether this process runs the script itself instead of submitting it.
+//   - A container does, since it has no scheduler.
+//   - A job does, unless --submit asks for a new job.
+func runsInPlace() bool {
+	return runInsideContainer() || (scheduler.IsInsideJob() && !runSubmit)
+}
+
+// checkSubmitFlag refuses --submit where it cannot submit, so it never runs the script locally instead.
+//   - noSubmitSet is whether --no-submit was typed. A config that turns submission off is the same refusal as no scheduler.
+func checkSubmitFlag(noSubmitSet bool) error {
+	switch {
+	case !runSubmit:
+		return nil
+	case noSubmitSet:
+		return errSubmitWithNoSubmit
+	case !scheduler.Enabled() || scheduler.ActiveScheduler() == nil:
+		return errSubmitNoScheduler
+	}
+	return nil
+}
+
+// submitDefaultSpecs gives a script that declares no resources the default job settings (scheduler.ncpu, scheduler.mem and scheduler.time), so --submit submits it as it would any job.
+//   - A script that declares resources is returned as it is.
+func submitDefaultSpecs(specs *scheduler.ScriptSpecs) *scheduler.ScriptSpecs {
+	if scheduler.HasSchedulerSpecs(specs) {
+		return specs
+	}
+	if specs == nil {
+		specs = &scheduler.ScriptSpecs{}
+	}
+	rs := scheduler.GetSpecDefaults()
+	defaults := scheduler.DefaultSpec()
+	rs.Override(&defaults)
+	rs.Nodes = 1
+	specs.Spec = &rs
+	specs.HasDirectives = true
+	return specs
+}
+
+// hostRunCall sends a call to the host through host-run. Tests replace it.
+var hostRunCall = func(ctx context.Context, call hostrun.Call) (int, error) { return call.Run(ctx) }
+
+// submitThroughHost runs this `condatainer run --submit` on the host, through host-run, and exits with its exit code.
+//   - The host runs the same command with the same flags, except --submit-on, which picks the node.
+//   - Output and the job ID come back on the streams they were written to.
+func submitThroughHost(cmd *cobra.Command, args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	argv := append([]string{"condatainer", "run"}, flagArgv(cmd.Flags(), map[string]bool{"submit-on": true})...)
+	argv = append(argv, args...)
+	code, err := hostRunCall(cmd.Context(), hostrun.Call{
+		Sock:   os.Getenv(hostrun.EnvSock),
+		Argv:   argv,
+		Cwd:    cwd,
+		On:     runSubmitOn,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if err != nil {
+		return fmt.Errorf("--submit from inside a container goes through host-run: %w", err)
+	}
+	if code != 0 {
+		os.Exit(code)
+	}
+	return nil
+}
+
+// flagArgv is the flags that were set on the command line, as arguments, except the ones in skip.
+//   - A bool or a value is --name=value, and a list is one --name=value for each element.
+func flagArgv(fs *pflag.FlagSet, skip map[string]bool) []string {
+	var argv []string
+	fs.Visit(func(fl *pflag.Flag) {
+		if skip[fl.Name] {
+			return
+		}
+		values := []string{fl.Value.String()}
+		if list, ok := fl.Value.(pflag.SliceValue); ok {
+			values = list.GetSlice()
+		}
+		for _, v := range values {
+			argv = append(argv, "--"+fl.Name+"="+v)
+		}
+	})
+	return argv
+}
+
 // willSubmitRun reports whether this run goes to a scheduler rather than running
 // locally, which is when a dependency has anything to apply to.
 func willSubmitRun(specs *scheduler.ScriptSpecs) bool {
 	return scheduler.Enabled() && scheduler.HasSchedulerSpecs(specs) &&
-		!scheduler.IsInsideJob() && !config.IsInsideContainer() && scheduler.ActiveScheduler() != nil
+		!runsInPlace() && scheduler.ActiveScheduler() != nil
 }
 
 // overrideCPUs is the CPU count that -m is divided over: -c, else the script's #NCPU, else 1.
@@ -693,6 +809,7 @@ func runLocally(ctx context.Context, contentScript string, overlays []string, sp
 		BaseImage:    runBaseImage,
 		HidePrompt:   true,
 		GpuRequested: gpuRequested,
+		HostRun:      hostrun.KindRun,
 	}
 
 	if err := execpkg.Run(ctx, options, execpkg.IO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}); err != nil {
@@ -1066,9 +1183,9 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 	}
 
 	// Action
-	if scheduler.IsInsideJob() {
+	if scheduler.IsInsideJob() && !runSubmit {
 		fmt.Printf("Action: Would run locally (in job)\n")
-	} else if config.IsInsideContainer() {
+	} else if runInsideContainer() {
 		fmt.Printf("Action: Would run locally (in container)\n")
 	} else if scheduler.IsUnparsed(specs) {
 		fmt.Printf("Action: %s\n",
@@ -1300,10 +1417,9 @@ func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPa
 		return err
 	}
 
+	// The proxy tunnels through the login node, which a job submitted from a job inherits. With none known, no proxy starts.
 	if scheduler.ProxyPerJob(scheduler.ProxyRun) {
-		if h, err2 := os.Hostname(); err2 == nil && h != "" {
-			specs.ProxyVia = h
-		}
+		specs.ProxyVia = scheduler.LoginNode()
 	}
 
 	// Generate names: short name for job, timestamped name for files

@@ -51,6 +51,7 @@ var (
 	tStr    = String("test.str", Default("none"), Help("a string"))
 	_       = String("test.empty", Default("web"), AllowEmpty(), Help("may be empty"))
 	tList   = List("test.list", DefaultList("a", "b"), Help("a list"))
+	_       = List("test.merged", MergeLists(), Help("a merged list"))
 	tNormal = String("test.normal", Default("x"), Normalize(strings.ToUpper), Help("normalized"))
 	_       = Bool("test.group.one", Help("one"))
 	_       = Bool("test.group.two", Help("two"))
@@ -370,4 +371,38 @@ func TestOmitEmptyIsReported(t *testing.T) {
 	if tOmit.Get() != "" {
 		t.Error("an unset AllowEmpty string reads empty")
 	}
+}
+
+// A list key either merges its layers or replaces, and the key says which, so help never has to.
+func TestAListKeySaysHowItsLayersCombine(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		merge bool
+		rule  string
+	}{
+		{"test.merged", true, "merged"},
+		{"test.list", false, "replaced"},
+		{"test.int", false, ""},
+	} {
+		k, ok := Lookup(tc.name)
+		if !ok {
+			t.Fatalf("%s is not registered", tc.name)
+		}
+		if k.MergesLayers() != tc.merge {
+			t.Errorf("%s: MergesLayers = %v, want %v", tc.name, k.MergesLayers(), tc.merge)
+		}
+		if rule := k.LayerRule(); !strings.HasPrefix(rule, tc.rule) || (tc.rule == "") != (rule == "") {
+			t.Errorf("%s: LayerRule = %q, want one that starts %q", tc.name, rule, tc.rule)
+		}
+	}
+}
+
+// Merging layers means nothing for a key that is not a list, so the declaration is refused.
+func TestMergeListsOnAKeyThatIsNotAListPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("a merged scalar key was registered")
+		}
+	}()
+	Bool("test.merged_scalar", MergeLists(), Help("not a list"))
 }

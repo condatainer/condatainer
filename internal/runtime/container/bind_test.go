@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -102,5 +104,12 @@ func TestEnvBinds(t *testing.T) {
 	t.Setenv(EnvBind, "")
 	if got := EnvBinds(); len(got) != 0 {
 		t.Errorf("EnvBinds() = %v, want none", got)
+	}
+}
+
+// The executable is bound under the one hidden directory CondaTainer uses at the root of a container.
+func TestBoundExecutableIsUnderTheContainerRoot(t *testing.T) {
+	if !strings.HasPrefix(BoundExecPath, config.ContainerRoot+"/") || filepath.Dir(BoundExecPath) != BoundExecDir {
+		t.Errorf("executable at %s, directory %s, root %s", BoundExecPath, BoundExecDir, config.ContainerRoot)
 	}
 }

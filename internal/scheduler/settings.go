@@ -63,7 +63,7 @@ var (
 	keyExcludeNodes = settings.List("scheduler.exclude_nodes",
 		settings.Order(9), settings.MergeLists(),
 		settings.Validate(validateNodeName),
-		settings.Help("Nodes jobs must not run on, as the scheduler names them. Every layer's list is merged. PBS refuses it."))
+		settings.Help("Nodes jobs must not run on, as the scheduler names them. PBS refuses it."))
 
 	keyProxyPerJob = settings.List("scheduler.proxy_per_job",
 		settings.Order(10), settings.MergeLists(),

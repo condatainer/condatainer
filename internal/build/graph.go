@@ -458,9 +458,7 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 		specs = &scheduler.ScriptSpecs{Spec: effRS}
 	}
 	if scheduler.ProxyPerJob(scheduler.ProxyCreate) {
-		if h, err := os.Hostname(); err == nil && h != "" {
-			specs.ProxyVia = h
-		}
+		specs.ProxyVia = scheduler.LoginNode()
 	}
 
 	SetJobName(specs, obj.NameVersion())

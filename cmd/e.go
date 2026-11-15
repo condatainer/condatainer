@@ -14,6 +14,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/runtime/exec"
+	"github.com/condatainer/condatainer/internal/runtime/hostrun"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -187,6 +188,7 @@ func runE(cmd *cobra.Command, args []string) error {
 		BaseImage:      baseImageResolved,
 		HidePrompt:     hidePrompt,
 		Activation:     activation,
+		HostRun:        hostrun.KindExec,
 	}
 
 	plan, err := exec.Prepare(cmd.Context(), options)

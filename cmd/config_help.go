@@ -106,6 +106,9 @@ func printKeyHelp(k *settings.Key) {
 	fmt.Println()
 	fmt.Printf("  Takes:    %s\n", k.Accepts())
 	fmt.Printf("  Default:  %s\n", defaultShown(k))
+	if rule := k.LayerRule(); rule != "" {
+		fmt.Printf("  Layers:   %s\n", rule)
+	}
 	fmt.Printf("  Env:      %s\n", settings.EnvName(k.Name))
 	if aliases := k.Aliases(); len(aliases) > 0 {
 		olds := make([]string, len(aliases))

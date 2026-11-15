@@ -458,6 +458,7 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 	// The nested "condatainer run <bash_script>" cannot re-read HTCondor specs (they live in the
 	// .sub file, not the bash script), so the script exports them.
 	writeResourceExports(shWriter, htcRS)
+	writeLoginNodeExport(shWriter)
 
 	// Array job: extract input line, set ARRAY_ARGS, and redirect output. ProcId is 0-based.
 	if jobSpec.Array != nil {

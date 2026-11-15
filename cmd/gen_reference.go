@@ -88,6 +88,9 @@ func referencePrefixes() []string {
 func writeReferenceKey(b *strings.Builder, k *settings.Key) {
 	fmt.Fprintf(b, "### `%s`\n\n%s\n\n", k.Name, referenceText(k.Help))
 	fmt.Fprintf(b, "- **Takes:** %s\n- **Default:** %s\n- **Environment variable:** `%s`\n", k.Accepts(), referenceDefault(k), settings.EnvName(k.Name))
+	if rule := k.LayerRule(); rule != "" {
+		fmt.Fprintf(b, "- **Layers:** %s\n", rule)
+	}
 	if flags := k.FlagNames(); len(flags) > 0 {
 		quoted := make([]string, len(flags))
 		for i, name := range flags {

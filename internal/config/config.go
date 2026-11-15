@@ -56,6 +56,12 @@ func LoadDefaults(executablePath string) {
 	}
 }
 
+// ContainerRoot is the one hidden directory CondaTainer binds into at the root of a container.
+//   - The executable is under bin, and the host-run relay under host.
+//   - The root of the container gains one entry, not one per thing bound.
+//   - It is not the image's own metadata directory /.cnt, which no bind may use.
+const ContainerRoot = "/.condatainer"
+
 // IsInsideContainer checks if we're currently running inside a container
 func IsInsideContainer() bool {
 	// Check for IN_CONDATAINER environment variable (our own containers)

@@ -33,13 +33,33 @@ const projectPrefix = "CNT"
 // ---------------------------------------------------------
 
 var (
-	red     = color.New(color.FgRed).SprintFunc()
-	green   = color.New(color.FgGreen).SprintFunc()
-	yellow  = color.New(color.FgYellow).SprintFunc()
-	magenta = color.New(color.FgMagenta).SprintFunc()
-	cyan    = color.New(color.FgCyan).SprintFunc()
-	gray    = color.New(color.FgHiBlack).SprintFunc()
+	red    = color.New(color.FgRed).SprintFunc()
+	green  = color.New(color.FgGreen).SprintFunc()
+	yellow = color.New(color.FgYellow).SprintFunc()
+	cyan   = color.New(color.FgCyan).SprintFunc()
+	gray   = color.New(color.FgHiBlack).SprintFunc()
 )
+
+// Tags on stderr are colored by whether stderr is a terminal, whatever stdout is.
+var (
+	tagRed     = stderrColor(color.FgRed)
+	tagGreen   = stderrColor(color.FgGreen)
+	tagYellow  = stderrColor(color.FgYellow)
+	tagMagenta = stderrColor(color.FgMagenta)
+	tagCyan    = stderrColor(color.FgCyan)
+	tagGray    = stderrColor(color.FgHiBlack)
+)
+
+// stderrColor colors text when stderr is a terminal, unless NO_COLOR is set or TERM is dumb.
+func stderrColor(attr color.Attribute) func(a ...any) string {
+	c := color.New(attr)
+	if os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb" && term.IsTerminal(int(os.Stderr.Fd())) {
+		c.EnableColor()
+	} else {
+		c.DisableColor()
+	}
+	return c.SprintFunc()
+}
 
 // ---------------------------------------------------------
 // 2. Semantic Styles (The "Style..." API)
@@ -89,21 +109,21 @@ func PrintSuccess(format string, a ...any) {
 		return
 	}
 	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "%s %s\n", StyleSuccess("["+projectPrefix+"✓]"), msg)
+	fmt.Fprintf(os.Stderr, "%s %s\n", tagGreen("["+projectPrefix+"✓]"), msg)
 }
 
 // PrintError prints an error message with a Red prefix. → stderr
 // Output: [CNT✗] Something failed.
 func PrintError(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "%s %s\n", StyleError("["+projectPrefix+"✗]"), msg)
+	fmt.Fprintf(os.Stderr, "%s %s\n", tagRed("["+projectPrefix+"✗]"), msg)
 }
 
 // PrintWarning prints a warning with a Yellow prefix. → stderr
 // Output: [CNT!] Disk is almost full.
 func PrintWarning(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "%s %s\n", StyleWarning("["+projectPrefix+"!]"), msg)
+	fmt.Fprintf(os.Stderr, "%s %s\n", tagYellow("["+projectPrefix+"!]"), msg)
 }
 
 // PrintHint prints a helpful hint with a Cyan prefix. → stderr
@@ -113,7 +133,7 @@ func PrintHint(format string, a ...any) {
 		return
 	}
 	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "%s %s\n", cyan("["+projectPrefix+"▶]"), msg)
+	fmt.Fprintf(os.Stderr, "%s %s\n", tagCyan("["+projectPrefix+"▶]"), msg)
 }
 
 // PrintNote prints a note with a Magenta prefix. → stderr
@@ -123,7 +143,7 @@ func PrintNote(format string, a ...any) {
 		return
 	}
 	msg := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "%s %s\n", magenta("["+projectPrefix+"◇]"), msg)
+	fmt.Fprintf(os.Stderr, "%s %s\n", tagMagenta("["+projectPrefix+"◇]"), msg)
 }
 
 // PrintDebug prints a debug message with a Gray prefix (only if DebugMode is true). → stderr
@@ -131,7 +151,7 @@ func PrintNote(format string, a ...any) {
 func PrintDebug(format string, a ...any) {
 	if DebugMode {
 		msg := fmt.Sprintf(format, a...)
-		fmt.Fprintf(os.Stderr, "%s %s\n", StyleDebug("["+projectPrefix+"…]"), msg)
+		fmt.Fprintf(os.Stderr, "%s %s\n", tagGray("["+projectPrefix+"…]"), msg)
 	}
 }
 

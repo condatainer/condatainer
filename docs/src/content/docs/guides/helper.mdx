@@ -128,6 +128,17 @@ In the demo below, code-server is already added. Click **Manage** to add another
   </TabItem>
 </Tabs>
 
+## Run Scheduler Commands From a Helper
+
+A terminal inside a helper, such as the one in code-server, runs in a container, so scheduler commands like `sbatch` are not there. [`host-run`](host-run.md) runs them on the cluster instead:
+
+```bash
+condatainer host-run squeue --me     # SLURM: your jobs
+condatainer host-run sbatch job.sh   # SLURM: submit a job
+```
+
+Helpers have `host-run` by default. A person, or a tool running in that terminal, can submit and check jobs with it.
+
 ## Command Line Interface
 
 Everything you can do in the web dashboard can also be done directly from the terminal:

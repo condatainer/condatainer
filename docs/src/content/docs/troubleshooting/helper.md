@@ -1,6 +1,6 @@
 ---
 title: Helper Issues
-description: Fix a helper that cannot be reached, cannot install packages, fails on one node, or cannot start.
+description: Fix a helper that cannot be reached, cannot install packages, fails on one node, cannot run scheduler commands, or cannot start.
 ---
 
 ## The dashboard cannot reach a helper
@@ -56,6 +56,19 @@ condatainer config append scheduler.exclude_nodes <node>
 - The setting applies to every job CondaTainer submits.
 - To allow the node again: `condatainer config remove scheduler.exclude_nodes <node>`.
 - PBS does not support excluding nodes.
+
+## A helper cannot run scheduler commands
+
+```text
+this container has no host relay
+```
+
+A terminal in a helper runs in a container, so scheduler commands such as `sbatch` are not there. [`host-run`](../guides/host-run.md) runs them on the cluster, and helpers have it by default.
+
+- If you changed `host_run.launch`, check that `helper` is still in the list: `condatainer config get host_run.launch`.
+- `none` in any config layer turns it off for every container.
+- A helper reads the setting when it starts. Start a new helper to apply a change.
+- For other messages, see [If It Does Not Work](../guides/host-run.md#if-it-does-not-work).
 
 ## The scheduler does not work yet
 

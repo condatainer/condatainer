@@ -55,6 +55,7 @@ export default defineConfig({
 						{ label: 'Scheduler', slug: 'guides/scheduler' },
 						{ label: 'Proxy', slug: 'guides/proxy' },
 						{ label: 'Helper', slug: 'guides/helper' },
+						{ label: 'Host Run', slug: 'guides/host-run' },
 						{ label: 'Project', slug: 'guides/project' },
 						{ label: 'Layers and Store', slug: 'guides/layers' },
 						{ label: 'Configuration', slug: 'guides/config' },

@@ -262,7 +262,6 @@ func jobsFailure(cmd *cobra.Command, sched scheduler.Scheduler, err error) error
 }
 
 func init() {
-	schedulerCmd.AddCommand(schedulerJobsCmd)
 	schedulerJobsCmd.Flags().BoolVar(&schedulerJobsTasks, "tasks", false, "List each task of an array as a row")
 	jsonFlag(schedulerJobsCmd.Flags(), &schedulerJobsJSON)
 }

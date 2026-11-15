@@ -227,6 +227,5 @@ func cancelFailure(cmd *cobra.Command, sched scheduler.Scheduler, err error) err
 }
 
 func init() {
-	schedulerCmd.AddCommand(schedulerCancelCmd)
 	jsonFlag(schedulerCancelCmd.Flags(), &schedulerCancelJSON)
 }

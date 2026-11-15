@@ -237,7 +237,6 @@ func reportFreeze(res freeze.Result, source string, removed bool) {
 }
 
 func init() {
-	overlayCmd.AddCommand(overlayFreezeCmd)
 	f := overlayFreezeCmd.Flags()
 	f.StringVarP(&freezeDescription, "desc", "d", "", "Description recorded in the overlay")
 	settings.AddFlag(f, "build.block_size", "block-size", settings.Usage("SquashFS block size (default: build.block_size)"))

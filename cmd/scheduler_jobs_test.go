@@ -144,7 +144,8 @@ func TestJobsListsTheQueueSortedWithArraysFolded(t *testing.T) {
 	if got := rowIDs(out); strings.Join(got, " ") != "9 21 30" {
 		t.Errorf("rows = %v, want 9 21 30 in job ID order", got)
 	}
-	if !strings.Contains(out, "1 running, 2 p") {
+	// The note is cut to the 80 columns of piped output, so only its start is here. The table test has it whole.
+	if !strings.Contains(out, "1 running,") {
 		t.Errorf("the array is one row with its task counts:\n%s", out)
 	}
 	if f.calls != 1 {

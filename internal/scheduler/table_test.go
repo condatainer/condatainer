@@ -168,11 +168,11 @@ func sampleJobs() []JobInfo {
 
 func TestJobTable(t *testing.T) {
 	got := jobTableText(sampleJobs(), 100)
-	want := `JOBID   NAME          STATE    CPUS  MEM  TIME         NODE         NOTE
-245070  step04_star   running    16  72G  01:12/24:00  cpu-node-01
-245071  step04_star   pending    16  72G  24:00        -            dep failed 245069
-245073  step05_count  pending     4  16G  04:00        -            after 245070
-245080  step05_count  running     4  16G  04:00        -            3 running, 2 pending
+	want := `JOBID   NAME          STATE    CPUS  MEM  TIME               NODE         NOTE
+245070  step04_star   running    16  72G  01:12:00/24:00:00  cpu-node-01
+245071  step04_star   pending    16  72G  24:00:00           -            dep failed 245069
+245073  step05_count  pending     4  16G  04:00:00           -            after 245070
+245080  step05_count  running     4  16G  04:00:00           -            3 running, 2 pending
 `
 	if got != want {
 		t.Errorf("table:\n%s\nwant:\n%s", got, want)
@@ -248,14 +248,14 @@ func TestJobTime(t *testing.T) {
 		job  JobInfo
 		want string
 	}{
-		{"pending shows the limit", JobInfo{State: JobPending, TimeLimit: 24 * time.Hour}, "24:00"},
-		{"running shows elapsed over limit", JobInfo{State: JobRunning, Elapsed: 3*time.Hour + 10*time.Minute + 59*time.Second, TimeLimit: 12 * time.Hour}, "03:10/12:00"},
-		{"hours do not wrap", JobInfo{State: JobPending, TimeLimit: 72 * time.Hour}, "72:00"},
-		{"unlimited", JobInfo{State: JobRunning, Elapsed: time.Hour, TimeUnlimited: true}, "01:00/inf"},
+		{"pending shows the limit", JobInfo{State: JobPending, TimeLimit: 24 * time.Hour}, "24:00:00"},
+		{"running shows elapsed over limit", JobInfo{State: JobRunning, Elapsed: 3*time.Hour + 10*time.Minute + 59*time.Second, TimeLimit: 12 * time.Hour}, "03:10:59/12:00:00"},
+		{"hours do not wrap", JobInfo{State: JobPending, TimeLimit: 72 * time.Hour}, "72:00:00"},
+		{"unlimited", JobInfo{State: JobRunning, Elapsed: time.Hour, TimeUnlimited: true}, "01:00:00/inf"},
 		{"not set", JobInfo{State: JobPending}, "-"},
-		{"an ended job shows its elapsed time", JobInfo{State: JobSuccess, Elapsed: 48*time.Minute + 6*time.Second, TimeLimit: time.Hour}, "00:48"},
+		{"an ended job shows its elapsed time", JobInfo{State: JobSuccess, Elapsed: 48*time.Minute + 6*time.Second, TimeLimit: time.Hour}, "00:48:06"},
 		{"an ended job that never ran", JobInfo{State: JobCancelled, TimeLimit: time.Hour}, "-"},
-		{"an array shows its limit only", JobInfo{State: JobRunning, Elapsed: time.Hour, TimeLimit: 4 * time.Hour, Tasks: &ArrayTasks{}}, "04:00"},
+		{"an array shows its limit only", JobInfo{State: JobRunning, Elapsed: time.Hour, TimeLimit: 4 * time.Hour, Tasks: &ArrayTasks{}}, "04:00:00"},
 	}
 	for _, tt := range tests {
 		if got := jobTime(tt.job); got != tt.want {

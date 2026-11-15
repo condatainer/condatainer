@@ -34,7 +34,7 @@ The table has a row for each job. An array is one row with its tasks counted.
 
 - STATE is pending, running, success, failed or cancelled. An ID can be notfound or unknown too.
 - CPUS, GPUS and MEM are what the job asked for, then what it holds once it runs.
-- TIME is the limit while a job waits, then the time used. inf means no limit.
+- TIME is HH:MM:SS: the limit while a job waits, then the time used. inf means no limit.
 - NODE is where the job runs. NOTE is why it waits, what it waits for, or why it failed.
 - NOTE starts with the layout of a job of several ranks, such as 8r x 2c or 2n x 4r x 2c.
 - A - is a figure the scheduler does not report.

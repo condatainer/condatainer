@@ -330,22 +330,22 @@ func jobGpus(j JobInfo) string {
 }
 
 // jobTime is the limit of a job that waits, elapsed over limit for one that runs, and elapsed for one that ended.
-// An array shows its per-task limit only.
+// An array shows its per-task limit only. Every time is HH:MM:SS.
 func jobTime(j JobInfo) string {
 	limit := "-"
 	switch {
 	case j.TimeUnlimited:
 		limit = "inf"
 	case j.TimeLimit > 0:
-		limit = formatHM(j.TimeLimit)
+		limit = formatHMS(j.TimeLimit)
 	}
 	switch {
 	case j.IsArray():
 		return limit
 	case j.State == JobRunning:
-		return formatHM(j.Elapsed) + "/" + limit
+		return formatHMS(j.Elapsed) + "/" + limit
 	case ended(j.State) && j.Elapsed > 0:
-		return formatHM(j.Elapsed)
+		return formatHMS(j.Elapsed)
 	case ended(j.State):
 		return "-"
 	}

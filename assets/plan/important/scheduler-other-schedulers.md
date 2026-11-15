@@ -66,8 +66,9 @@ Every line stays under 100 columns, so a terminal shows it without wrapping.
 
 - Help lines stay under 100 columns, with short bullets and no hard-wrapped sentences.
 - Help does not repeat what the flag list says. Example comments may.
-- A table fits the terminal width. The free-text columns (`NAME`, `NOTE`) shrink, to a minimum.
-- Names, IDs, states and nodes are never cut.
+- A table fits the terminal width. `NAME`, `NODE` and `NOTE` shrink, to a minimum.
+- IDs, states and the other columns are never cut.
+- `NODE` shows one host name, or `N nodes` for a job on several.
 - Without a terminal the table is 80 columns wide.
 - The partitions table does not shrink, since everything in it is a name.
 - The rules are in `CLAUDE.md`. The scheduler README holds decisions only, not what the code does.

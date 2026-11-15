@@ -22,7 +22,7 @@ SSH tunnel and proxy for HPC compute nodes, and the transports the dashboard use
 - The dashboard then uses the scheduler's exec-into-job command to run a relay on the node.
   - The command's stdin and stdout become one bidirectional stream to the helper.
   - Only SLURM has such a command.
-- The relay is this binary's hidden `_exec_relay`, not an interpreter. A cluster cannot be assumed to provide Python.
+- The relay is this binary's hidden `_proxy_relay`, not an interpreter. A cluster cannot be assumed to provide Python.
 - Each frame ends with a newline, because `srun` holds input back until a newline or EOF.
 - Only loopback targets are allowed.
 - There is no flow control. A caller that stops reading without closing can stall the other connections on that relay.

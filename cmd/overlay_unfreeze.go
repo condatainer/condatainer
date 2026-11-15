@@ -123,7 +123,6 @@ func reportUnfreeze(res freeze.UnfreezeResult) {
 }
 
 func init() {
-	overlayCmd.AddCommand(overlayUnfreezeCmd)
 	f := overlayUnfreezeCmd.Flags()
 	f.StringVarP(&unfreezeSize, "size", "s", "", "Size of the resulting overlay (default: payload plus headroom)")
 	f.BoolVarP(&unfreezeSparse, "sparse", "S", false, "Create a sparse overlay image (no pre-allocation)")

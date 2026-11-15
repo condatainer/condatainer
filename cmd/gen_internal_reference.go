@@ -164,7 +164,8 @@ func writeCLICommand(b *strings.Builder, c *cobra.Command, level int) {
 	if description == "" {
 		description = c.Short
 	}
-	b.WriteString(cliMarkdown(description) + "\n\n")
+	b.WriteString(cliMarkdown(description))
+	b.WriteString("\n\n")
 	fmt.Fprintf(b, "```text\n%s\n```\n\n", cliUsage(c))
 	if len(c.Aliases) > 0 {
 		aliases := make([]string, len(c.Aliases))

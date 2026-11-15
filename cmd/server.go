@@ -9,11 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/scheduler"
-	"github.com/condatainer/condatainer/internal/server"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -32,6 +30,11 @@ The server runs on the login node and provides:
 - start, stop and restart cannot run inside a container or a scheduler job.`,
 }
 
+func init() {
+	rootCmd.AddCommand(serverCmd)
+	serverCmd.AddCommand(serverStartCmd, serverStopCmd, serverStatusCmd, serverRestartCmd)
+}
+
 // requireLoginNode refuses the commands that start or stop the server inside a
 // container or a scheduler job: the server belongs to the login node.
 func requireLoginNode(cmd *cobra.Command) error {
@@ -46,253 +49,6 @@ func requireLoginNode(cmd *cobra.Command) error {
 	}
 	cmd.SilenceUsage = true
 	return fmt.Errorf("server %s cannot run inside %s; run it on the login node", cmd.Name(), where)
-}
-
-var (
-	serverStartPort   int
-	serverStartDaemon bool
-)
-
-var serverStartCmd = &cobra.Command{
-	Use:   "start",
-	Args:  cobra.NoArgs,
-	Short: "Start the dashboard server in the background",
-	Long: `Start the dashboard server in the background.
-
-- By default the server exits when your SSH session ends.
-- --daemon keeps it running.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-		if err := requireLoginNode(cmd); err != nil {
-			return err
-		}
-
-		port := serverStartPort
-		if port != 0 {
-			// Explicit --port: persist it for future starts.
-			if err := config.SaveServerPort(port); err != nil {
-				utils.PrintDebug("saving server port: %v", err)
-			}
-		} else {
-			port = config.ReadSavedServerPort()
-			if port == 0 {
-				var err error
-				port, err = pickFreePort()
-				if err != nil {
-					return fmt.Errorf("finding free port: %w", err)
-				}
-			}
-		}
-
-		pidFile := config.GetServerPidFilePath()
-		if server.IsAlive(pidFile) {
-			if ss, err := server.ReadState(pidFile); err == nil {
-				utils.PrintMessage("Server already running at http://localhost:%d/", ss.Port)
-				utils.PrintMessage("Log: %s", config.GetServerLogPath())
-				return nil
-			}
-		}
-
-		return startServerDaemon(port, serverStartDaemon)
-	},
-}
-
-var serverStopNodeFlag string
-
-var serverStopCmd = &cobra.Command{
-	Use:   "stop [flags] [node]",
-	Short: "Stop the dashboard server",
-	Long: `Stop the dashboard server.
-
-- Without arguments, it stops the server on the current login node.
-- A node name (or part of one) stops the server on another login node.`,
-	Example: `  condatainer server stop         # Stop the local server
-  condatainer server stop login2  # Stop the server on the node matching login2`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-		if err := requireLoginNode(cmd); err != nil {
-			return err
-		}
-
-		nodePattern := serverStopNodeFlag
-		if nodePattern == "" && len(args) > 0 {
-			nodePattern = args[0]
-		}
-
-		currentHost, _ := os.Hostname()
-
-		// No pattern or pattern matches local host → stop local server.
-		if nodePattern == "" || matchHost(nodePattern, currentHost) {
-			pidFile := config.GetServerPidFilePath()
-			ss, err := server.ReadState(pidFile)
-			if err != nil {
-				utils.PrintMessage("Server is not running.")
-				return nil
-			}
-			p, err := os.FindProcess(ss.PID)
-			if err != nil || p.Signal(syscall.Signal(0)) != nil {
-				utils.PrintMessage("Server is not running (stale PID file).")
-				os.Remove(pidFile)
-				return nil
-			}
-			if err := p.Signal(syscall.SIGTERM); err != nil {
-				return fmt.Errorf("sending SIGTERM to PID %d: %w", ss.PID, err)
-			}
-			utils.PrintSuccess("Server (PID %d) stopped.", ss.PID)
-			return nil
-		}
-
-		// Pattern given → scan all PID files and stop on matching remote host.
-		for _, pidFile := range config.ListServerPidFiles() {
-			ss, err := server.ReadState(pidFile)
-			if err != nil {
-				continue
-			}
-			if !matchHost(nodePattern, ss.Host) {
-				continue
-			}
-			if err := stopRemoteServer(ss); err != nil {
-				return fmt.Errorf("stopping server on %s: %w", ss.Host, err)
-			}
-			utils.PrintSuccess("Server on %s (PID %d) stopped.", ss.Host, ss.PID)
-			return nil
-		}
-
-		utils.PrintMessage("No server found matching %q.", nodePattern)
-		return nil
-	},
-}
-
-// matchHost reports whether pattern partially matches hostname.
-// Exact match, or hostname starts with pattern+"." (subdomain prefix), or contains.
-func matchHost(pattern, hostname string) bool {
-	if hostname == pattern {
-		return true
-	}
-	if strings.HasPrefix(hostname, pattern+".") {
-		return true
-	}
-	return strings.Contains(hostname, pattern)
-}
-
-// stopRemoteServer sends SIGTERM to a server on a remote login node via SSH.
-func stopRemoteServer(ss *config.ServerState) error {
-	return exec.Command("ssh", ss.Host, "kill", "-TERM", strconv.Itoa(ss.PID)).Run()
-}
-
-var serverStatusCmd = &cobra.Command{
-	Use:   "status",
-	Args:  cobra.NoArgs,
-	Short: "Show dashboard server status across all login nodes",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-
-		currentHost, _ := os.Hostname()
-		pidFiles := config.ListServerPidFiles()
-
-		if len(pidFiles) == 0 {
-			utils.PrintMessage("Server is not running.")
-			return nil
-		}
-
-		found := false
-		for _, pidFile := range pidFiles {
-			ss, err := server.ReadState(pidFile)
-			if err != nil {
-				continue
-			}
-			found = true
-			if ss.Host == currentHost {
-				if server.IsAlive(pidFile) {
-					utils.PrintSuccess("Running: %s  port:%d  PID:%d", ss.Host, ss.Port, ss.PID)
-				} else {
-					utils.PrintMessage("Not running: %s (stale PID file)", ss.Host)
-				}
-			} else {
-				utils.PrintSuccess("Running: %s  port:%d  PID:%d", ss.Host, ss.Port, ss.PID)
-			}
-		}
-		if !found {
-			utils.PrintMessage("Server is not running.")
-		}
-		return nil
-	},
-}
-
-var (
-	serverRestartPort   int
-	serverRestartDaemon bool
-)
-
-var serverRestartCmd = &cobra.Command{
-	Use:   "restart",
-	Args:  cobra.NoArgs,
-	Short: "Restart the dashboard server (stop + start)",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-		if err := requireLoginNode(cmd); err != nil {
-			return err
-		}
-
-		pidFile := config.GetServerPidFilePath()
-		ss, err := server.ReadState(pidFile)
-
-		// Keep the running server's daemon mode unless --daemon was given.
-		daemon := serverRestartDaemon
-		if !cmd.Flags().Changed("daemon") && ss != nil {
-			daemon = ss.Daemon
-		}
-
-		// Determine target port: flag > saved state > saved config > free port.
-		port := serverRestartPort
-		if port != 0 {
-			if err := config.SaveServerPort(port); err != nil {
-				utils.PrintDebug("saving server port: %v", err)
-			}
-		} else if ss != nil {
-			port = ss.Port
-		} else {
-			port = config.ReadSavedServerPort()
-		}
-
-		if err != nil || ss == nil {
-			utils.PrintMessage("Server is not running, starting fresh.")
-			return startServerDaemon(port, daemon)
-		}
-
-		p, err := os.FindProcess(ss.PID)
-		if err != nil || p.Signal(syscall.Signal(0)) != nil {
-			utils.PrintMessage("Server process not found, starting fresh.")
-			return startServerDaemon(port, daemon)
-		}
-		if err := p.Signal(syscall.SIGTERM); err != nil {
-			return fmt.Errorf("sending SIGTERM to PID %d: %w", ss.PID, err)
-		}
-		utils.PrintMessage("Stopping server (PID %d)…", ss.PID)
-
-		// Wait for the process to exit (up to 10s).
-		for range 50 {
-			time.Sleep(200 * time.Millisecond)
-			if p.Signal(syscall.Signal(0)) != nil {
-				break
-			}
-		}
-
-		utils.PrintMessage("Starting server on port %d…", port)
-		return startServerDaemon(port, daemon)
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(serverCmd)
-	serverCmd.AddCommand(serverStartCmd, serverStopCmd, serverStatusCmd, serverRestartCmd)
-
-	serverStartCmd.Flags().IntVarP(&serverStartPort, "port", "p", 0, "Port to listen on (remembered for the next start)")
-	serverStartCmd.Flags().BoolVar(&serverStartDaemon, "daemon", false, "Keep running after SSH logout")
-	serverStopCmd.Flags().StringVarP(&serverStopNodeFlag, "node", "n", "", "Login node to stop (partial match, e.g. login2)")
-	serverRestartCmd.Flags().IntVarP(&serverRestartPort, "port", "p", 0, "Restart on a different port (remembered for the next start)")
-	serverRestartCmd.Flags().BoolVar(&serverRestartDaemon, "daemon", false, "Keep running after SSH logout (default: keep current mode)")
 }
 
 // startServerDaemon forks the server using the pipe-readiness protocol.

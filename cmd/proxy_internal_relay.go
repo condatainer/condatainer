@@ -8,11 +8,11 @@ import (
 )
 
 func init() {
-	rootCmd.AddCommand(execRelayCmd)
+	rootCmd.AddCommand(proxyRelayCmd)
 }
 
-var execRelayCmd = &cobra.Command{
-	Use:    "_exec_relay",
+var proxyRelayCmd = &cobra.Command{
+	Use:    "_proxy_relay",
 	Hidden: true,
 	Short:  "Relay loopback connections for the dashboard (run inside a helper's job)",
 	Args:   cobra.NoArgs,

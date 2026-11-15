@@ -17,7 +17,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 
 ## Architecture
 
-- CLI: cobra. `main.go` calls `cmd.Execute()`. One file per subcommand in `cmd/`, delegating to `internal/`.
+- CLI: cobra. `main.go` calls `cmd.Execute()`. Commands live in `cmd/` and delegate to `internal/`. See the `cmd/` layout rule under Code rules.
 - `internal/artifact/`: what an image embeds. Identity, manifests, equivalence comparison. The root holds the payload `Type`.
 - `build/`: name/version to a Conda, Script or Def build. Dependency graphs, remote scripts, the `#TYPE:` and `#TARGET:` readers, and the rules a build's `#DEP:` answers to.
 - `catalog/`: recipe sources and their index. Resolves what a person typed to a recipe.
@@ -68,6 +68,13 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - Use absolute paths and `config.Get*Dir()` for standard locations.
 - Create files and dirs with `utils.CreateFileWritable`, `MkdirAllShared`, `MakeExecutable`. Never a bare `os.Chmod(path, utils.Perm*)`.
 - Global config singleton: `config.Global`.
+- **`cmd/` layout.** Every subcommand has its own source file and test file.
+  - A top-level command is `<name>.go`. A group member is `<group>_<name>.go`. Its test sits beside it.
+  - A hidden command's file puts `internal` after the family it belongs to: `_proxy_daemon` is `proxy_internal_daemon.go`, `_proxy_relay` is `proxy_internal_relay.go`.
+  - A command file reads in this order: command var, flag vars, `init()` with this command's flags, `runXxx`, helpers.
+  - A group file holds the group var, an `init()` that adds the group to root and lists every member in one `AddCommand`, and helpers shared by several members.
+  - A member file never calls `AddCommand` on its group.
+  - A helper used by one command lives in that command's file.
 - A command that writes a job script calling condatainer back must repeat the flags that matter. `run` copies every flag that was typed except those in `runJobFlagNames`. `create`, `project restore` and `helper run` keep a rule table (`createJobRules`, `restoreJobRules`, `helper.RunFlagRoutes`), and a test fails when a flag has no rule.
 - After editing Go files, run `gofmt -l .` and fix what it lists with `gofmt -w`.
 

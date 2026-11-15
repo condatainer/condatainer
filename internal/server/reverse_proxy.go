@@ -225,7 +225,7 @@ func (r *proxyRegistry) establishExec(jobID string) (internalproxy.DialFunc, fun
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	dial, stop, done, err := internalproxy.DialViaExec(append(prefix, exe, "_exec_relay"))
+	dial, stop, done, err := internalproxy.DialViaExec(append(prefix, exe, "_proxy_relay"))
 	if err == nil {
 		r.log.Debug("server: exec relay started", "job", jobID)
 	}

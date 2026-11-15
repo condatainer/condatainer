@@ -34,6 +34,7 @@ const searchSyntaxHint = `Search terms:
 - Wildcards (*, ?) and regex also work.`
 
 // formatDescription wraps prose at word boundaries and indents every line.
+// A width of 0 keeps it on one line.
 // Long individual words are left intact rather than split.
 // layerChoices names the layers a --layer flag accepts, in the order they are read.
 const layerChoices = "u/user, e/extra-root, r/cnt-root"
@@ -45,6 +46,9 @@ func formatDescription(description string, indent, width int) string {
 	}
 
 	prefix := strings.Repeat(" ", indent)
+	if width <= 0 {
+		return prefix + strings.Join(words, " ")
+	}
 	available := max(width-indent, 1)
 	lines := make([]string, 0, 1)
 	line := words[0]

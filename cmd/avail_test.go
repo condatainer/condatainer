@@ -107,3 +107,9 @@ func TestAvailDocListsTemplatesAndVariants(t *testing.T) {
 		t.Error("filling in a variant changed the recipe's own dependencies")
 	}
 }
+
+func TestFormatDescriptionWithNoWidthStaysOnOneLine(t *testing.T) {
+	if got, want := formatDescription("one two three four", 2, 0), "  one two three four"; got != want {
+		t.Fatalf("formatDescription = %q, want %q", got, want)
+	}
+}

@@ -549,6 +549,10 @@ func printWrapped(label, content string, maxLines int) {
 	prefix := "  " + label + " "
 	indent := "    "
 	tw := terminalWidth()
+	if tw <= 0 {
+		fmt.Printf("%s%s\n", prefix, strings.Join(strings.Fields(content), "   "))
+		return
+	}
 	availFirst := max(tw-len(prefix), 20)
 	availRest := max(tw-len(indent), 20)
 

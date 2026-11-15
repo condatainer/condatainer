@@ -45,17 +45,17 @@ func init() {
 	channelsCmd := &cobra.Command{Use: "channels", Short: "Manage the environment's Conda channels"}
 	channelsCmd.AddCommand(
 		envStructuredCommand("list", "List the channels, highest priority first", cobra.NoArgs, runEnvChannelsList),
-		envStructuredCommand("append <channel>", "Add a channel with the lowest priority", cobra.ExactArgs(1), runEnvChannelsAppend),
-		envStructuredCommand("prepend <channel>", "Add a channel with the highest priority", cobra.ExactArgs(1), runEnvChannelsPrepend),
-		withRmAlias(envStructuredCommand("remove <channel>", "Remove a channel", cobra.ExactArgs(1), runEnvChannelsRemove)),
+		envStructuredCommand("append [flags] <channel>", "Add a channel with the lowest priority", cobra.ExactArgs(1), runEnvChannelsAppend),
+		envStructuredCommand("prepend [flags] <channel>", "Add a channel with the highest priority", cobra.ExactArgs(1), runEnvChannelsPrepend),
+		withRmAlias(envStructuredCommand("remove [flags] <channel>", "Remove a channel", cobra.ExactArgs(1), runEnvChannelsRemove)),
 	)
 	envCmd.AddCommand(channelsCmd)
 
 	pinCmd := &cobra.Command{Use: "pin", Short: "Keep packages at a chosen version"}
 	pinCmd.AddCommand(
 		envStructuredCommand("list", "List the pinned packages", cobra.NoArgs, runEnvPinList),
-		envStructuredCommand("add <spec>", "Pin a package; a bare name pins the installed version", cobra.ExactArgs(1), runEnvPinAdd),
-		withRmAlias(envStructuredCommand("remove <package>", "Unpin a package", cobra.ExactArgs(1), runEnvPinRemove)),
+		envStructuredCommand("add [flags] <spec>", "Pin a package; a bare name pins the installed version", cobra.ExactArgs(1), runEnvPinAdd),
+		withRmAlias(envStructuredCommand("remove [flags] <package>", "Unpin a package", cobra.ExactArgs(1), runEnvPinRemove)),
 	)
 	envCmd.AddCommand(pinCmd)
 

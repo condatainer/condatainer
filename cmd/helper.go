@@ -90,7 +90,7 @@ var helperRunCmd = &cobra.Command{
 var helperStopAll bool
 
 var helperStopCmd = &cobra.Command{
-	Use:   "stop [name]",
+	Use:   "stop [flags] [name]",
 	Short: "Stop a running helper",
 	Long: `Stop a running helper.
 
@@ -112,7 +112,7 @@ var helperStopCmd = &cobra.Command{
 }
 
 var helperConfigCmd = &cobra.Command{
-	Use:   "config <name> [path|list|get <key>|set <key> <value>]",
+	Use:   "config [flags] <name> [path|list|get <key>|set <key> <value>]",
 	Short: "List or save a helper's defaults",
 	Example: `  condatainer helper config code-server
   condatainer helper config code-server set cpu 4

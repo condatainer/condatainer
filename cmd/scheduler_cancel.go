@@ -25,7 +25,7 @@ var errSomeNotCancelled = errors.New("some jobs were not cancelled")
 
 var schedulerCancelCmd = &cobra.Command{
 	SilenceUsage: true, // Runtime errors should not show usage
-	Use:          "cancel <id>...|<name>...",
+	Use:          "cancel [flags] <id>...|<name>...",
 	Args:         cobra.MinimumNArgs(1),
 	Short:        "Cancel your jobs by ID or by name",
 	Long: `Cancel your own jobs that wait or run. Jobs of other users are never touched.

@@ -19,7 +19,7 @@ var (
 
 var schedulerJobsCmd = &cobra.Command{
 	SilenceUsage: true, // Runtime errors should not show usage
-	Use:          "jobs [<id>...|<name>...]",
+	Use:          "jobs [flags] [<id>...|<name>...]",
 	Short:        "List your jobs, or look one up by ID",
 	Long: `List your jobs that wait or run, one row each. With job IDs, look those jobs up.
 

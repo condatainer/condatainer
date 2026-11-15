@@ -214,7 +214,7 @@ var overlayCreateCmd = &cobra.Command{
 // ---------------------------------------------------------
 
 var resizeCmd = &cobra.Command{
-	Use:   "resize [flags] <overlay>",
+	Use:   "resize [flags] <overlay.img>",
 	Short: "Expand or shrink an overlay",
 	Example: `  condatainer overlay resize env.img -s 20g
   condatainer overlay resize data.img --size 512M
@@ -281,7 +281,7 @@ var infoCmd = &cobra.Command{
 // ---------------------------------------------------------
 
 var fscheckCmd = &cobra.Command{
-	Use:     "fscheck [flags] <overlay>",
+	Use:     "fscheck [flags] <overlay.img>",
 	Aliases: []string{"fsck"},
 	Short:   "Verify filesystem integrity (e2fsck)",
 	Example: `  condatainer overlay fscheck env.img     # Check and repair automatically
@@ -306,7 +306,7 @@ var fscheckCmd = &cobra.Command{
 // ---------------------------------------------------------
 
 var chownCmd = &cobra.Command{
-	Use:   "chown [flags] <overlay>",
+	Use:   "chown [flags] <overlay.img>",
 	Short: "Change file ownership inside an overlay",
 	Long: `Change the UID/GID of files inside an overlay, without mounting it.
 

@@ -115,7 +115,7 @@ var helperListCmd = &cobra.Command{
 }
 
 var helperPathCmd = &cobra.Command{
-	Use:   "path [name]",
+	Use:   "path [flags] [name]",
 	Short: "Show the helper script directories",
 	Long: `Show the directories helpers are read from, nearest first.
 

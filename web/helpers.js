@@ -113,6 +113,23 @@ function openStreamLogProgress(title) {
   };
 }
 
+// followTask follows a server task's SSE stream ({"t":"progress"|"done"}
+// events), calls onProgress(current,total) per progress event, and resolves
+// with the done message. A dropped connection resolves {ok:false}.
+function followTask(taskId, onProgress) {
+  return new Promise(resolve => {
+    const es = new EventSource('/api/tasks/' + encodeURIComponent(taskId) + '/stream');
+    es.onmessage = e => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.t === 'progress') onProgress(msg.current, msg.total);
+        else if (msg.t === 'done') { es.close(); resolve(msg); }
+      } catch {}
+    };
+    es.onerror = () => { es.close(); resolve({ ok: false, err: 'Connection lost' }); };
+  });
+}
+
 // openBarProgress opens a 'bar' pill. With taskId it follows the task's
 // SSE stream ({"t":"progress"|"done"} events) and its close button cancels
 // the task; without taskId the caller drives it via the returned
@@ -139,15 +156,10 @@ function openBarProgress(title, taskId, onDone, opts) {
   }
 
   if (taskId) {
-    const es = new EventSource('/api/tasks/' + encodeURIComponent(taskId) + '/stream');
-    es.onmessage = e => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.t === 'progress') update(msg.current, msg.total);
-        else if (msg.t === 'done') { done(msg.ok, msg.err, msg.cancelled); es.close(); if (onDone) onDone(msg); }
-      } catch {}
-    };
-    es.onerror = () => { done(false, 'Connection lost'); es.close(); if (onDone) onDone({ ok: false, err: 'Connection lost' }); };
+    followTask(taskId, update).then(msg => {
+      done(msg.ok, msg.err, msg.cancelled);
+      if (onDone) onDone(msg);
+    });
   }
 
   return { update, done, el };

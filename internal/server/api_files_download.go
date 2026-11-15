@@ -23,10 +23,16 @@ const (
 // handleFSDownload serves GET /api/fs/download?path=...
 //   - A file is served as is, following symlinks.
 //   - A directory is a streamed zip. Symlinks inside are skipped, and an oversized directory is rejected with 413.
+//   - Repeating path streams all of them as one zip, with the same limits over the total. Two paths with one base name are a 400.
 //   - inline=1 serves a file with Content-Disposition: inline instead of attachment.
 //   - gz=1 streams a file gzip-compressed as <name>.gz, and wins over inline.
 //   - check=1 only validates the download (200 or 413) and streams nothing.
 func (s *srv) handleFSDownload(w http.ResponseWriter, r *http.Request) {
+	paths := r.URL.Query()["path"]
+	if len(paths) > 1 {
+		downloadMulti(w, r, paths)
+		return
+	}
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		http.Error(w, "path is required", http.StatusBadRequest)
@@ -111,12 +117,28 @@ func downloadFileGz(w http.ResponseWriter, path string, info os.FileInfo) {
 	io.Copy(gz, f) //nolint:errcheck
 }
 
-// checkDirDownload pre-walks dirPath and returns an error if it exceeds
-// maxDownloadEntries or maxDownloadBytes (symlinks and other non-regular
-// files skipped, matching the zip walk).
-func checkDirDownload(dirPath string) error {
-	var entryCount int
-	var totalBytes int64
+// downloadBudget counts the files and bytes of a zip against
+// maxDownloadEntries and maxDownloadBytes.
+type downloadBudget struct {
+	files int
+	bytes int64
+}
+
+func (b *downloadBudget) add(size int64) error {
+	b.files++
+	if b.files > maxDownloadEntries {
+		return fmt.Errorf("too large to download as zip: more than %d files", maxDownloadEntries)
+	}
+	b.bytes += size
+	if b.bytes > maxDownloadBytes {
+		return fmt.Errorf("too large to download as zip: over %d GiB in total", maxDownloadBytes>>30)
+	}
+	return nil
+}
+
+// addTree counts the regular files under dirPath (symlinks and other
+// non-regular files skipped, matching the zip walk).
+func (b *downloadBudget) addTree(dirPath string) error {
 	return filepath.WalkDir(dirPath, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -124,20 +146,18 @@ func checkDirDownload(dirPath string) error {
 		if d.IsDir() || !d.Type().IsRegular() {
 			return nil
 		}
-		entryCount++
-		if entryCount > maxDownloadEntries {
-			return fmt.Errorf("folder is too large to download as zip: more than %d files", maxDownloadEntries)
-		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		totalBytes += info.Size()
-		if totalBytes > maxDownloadBytes {
-			return fmt.Errorf("folder is too large to download as zip: over %d GiB in total", maxDownloadBytes>>30)
-		}
-		return nil
+		return b.add(info.Size())
 	})
+}
+
+// checkDirDownload returns an error if dirPath exceeds the zip limits.
+func checkDirDownload(dirPath string) error {
+	var b downloadBudget
+	return b.addTree(dirPath)
 }
 
 // downloadDir zips dirPath and streams the archive with a Content-Disposition
@@ -155,7 +175,75 @@ func downloadDir(w http.ResponseWriter, dirPath string) {
 
 	zw := zip.NewWriter(w)
 	defer zw.Close()
+	addTreeToZip(zw, dirPath, base)
+}
 
+// downloadMulti streams paths as one zip named after their parent
+// directory. A file sits at the top of the archive and a directory
+// becomes a folder of its own name. check=1 only validates.
+func downloadMulti(w http.ResponseWriter, r *http.Request, paths []string) {
+	type item struct {
+		path string
+		base string
+		dir  bool
+	}
+	items := make([]item, 0, len(paths))
+	seen := map[string]bool{}
+	var budget downloadBudget
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			fsErrorResponse(w, p, err)
+			return
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			http.Error(w, fmt.Sprintf("%q is not a regular file", filepath.Base(p)), http.StatusBadRequest)
+			return
+		}
+		base := filepath.Base(filepath.Clean(p))
+		if seen[base] {
+			http.Error(w, fmt.Sprintf("%q appears more than once", base), http.StatusBadRequest)
+			return
+		}
+		seen[base] = true
+		items = append(items, item{p, base, info.IsDir()})
+		if info.IsDir() {
+			err = budget.addTree(p)
+		} else {
+			err = budget.add(info.Size())
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+			return
+		}
+	}
+
+	if r.URL.Query().Get("check") == "1" {
+		writeJSON(w, map[string]bool{"ok": true})
+		return
+	}
+
+	name := filepath.Base(filepath.Dir(filepath.Clean(paths[0])))
+	if name == "/" || name == "." {
+		name = "download"
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".zip"))
+	w.Header().Set("Content-Type", "application/zip")
+
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+	for _, it := range items {
+		if it.dir {
+			addTreeToZip(zw, it.path, it.base)
+		} else {
+			addFileToZip(zw, it.path, it.base)
+		}
+	}
+}
+
+// addTreeToZip adds the regular files under dirPath to zw below the folder
+// base. Unreadable entries are skipped.
+func addTreeToZip(zw *zip.Writer, dirPath, base string) {
 	filepath.WalkDir(dirPath, func(p string, d fs.DirEntry, err error) error { //nolint:errcheck
 		if err != nil || d.IsDir() || !d.Type().IsRegular() {
 			return nil
@@ -164,17 +252,22 @@ func downloadDir(w http.ResponseWriter, dirPath string) {
 		if err != nil {
 			return nil
 		}
-		zipPath := filepath.ToSlash(filepath.Join(base, rel))
-		entryWriter, err := zw.Create(zipPath)
-		if err != nil {
-			return nil
-		}
-		f, err := os.Open(p)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-		io.Copy(entryWriter, f) //nolint:errcheck
+		addFileToZip(zw, p, filepath.ToSlash(filepath.Join(base, rel)))
 		return nil
 	})
+}
+
+// addFileToZip adds the file at path to zw as zipPath, skipping it when it
+// cannot be read.
+func addFileToZip(zw *zip.Writer, path, zipPath string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	entryWriter, err := zw.Create(zipPath)
+	if err != nil {
+		return
+	}
+	io.Copy(entryWriter, f) //nolint:errcheck
 }

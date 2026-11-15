@@ -323,9 +323,25 @@ async function downloadEntry(e) {
   downloadPath(e.path);
 }
 
+// downloadEntries downloads several entries as one zip, checked against
+// the server's zip limits first like a directory.
+async function downloadEntries(entries) {
+  const q = entries.map(e => 'path=' + encodeURIComponent(e.path)).join('&');
+  const title = 'Download ' + entries.length + ' items';
+  try {
+    const r = await fetch('/api/fs/download?' + q + '&check=1');
+    if (!r.ok) { showProgressError(title, await r.text()); return; }
+  } catch (err) {
+    showProgressError(title, String(err));
+    return;
+  }
+  downloadUrl('/api/fs/download?' + q);
+}
+
 function ctxDownload() {
-  // Staggered so the browser registers each as its own download.
-  _selectedEntries().forEach((e, i) => setTimeout(() => downloadEntry(e), i * 300));
+  const sel = _selectedEntries();
+  if (sel.length === 1) downloadEntry(sel[0]);
+  else if (sel.length > 1) downloadEntries(sel);
 }
 
 function ctxRename() {
@@ -339,8 +355,7 @@ function ctxMoveTo() {
   const sel = _selectedEntries();
   if (!sel.length) return;
   openFilePickerForCallback(currentPath, 'Move ' + _selLabel(sel) + ' to…',
-    (destDir, newName) => sel.forEach(e =>
-      doMove(e.path, e.name, destDir, newName !== e.name ? newName : undefined)),
+    (destDir, newName) => moveEntries(sel, destDir, newName),
     sel.length === 1 ? { name: sel[0].name } : null);
 }
 
@@ -348,8 +363,7 @@ function ctxCopyTo() {
   const sel = _selectedEntries();
   if (!sel.length) return;
   openFilePickerForCallback(currentPath, 'Copy ' + _selLabel(sel) + ' to…',
-    (destDir, newName) => sel.forEach(e =>
-      doCopy(e.path, e.name, destDir, newName !== e.name ? newName : undefined)),
+    (destDir, newName) => copyEntries(sel, destDir, newName),
     sel.length === 1 ? { name: sel[0].name } : null);
 }
 
@@ -408,21 +422,19 @@ async function _validateClipboard() {
 function ctxPaste() {
   if (!_clipboard) return;
   const { mode, entries } = _clipboard;
-  for (const e of entries) {
-    if (mode === 'cut') {
-      if (_parentDir(e.path) === currentPath) continue; // already here
-      doMove(e.path, e.name, currentPath);
-    } else {
-      doCopy(e.path, e.name, currentPath);
-    }
+  if (mode === 'cut') {
+    moveEntries(entries.filter(e => _parentDir(e.path) !== currentPath), currentPath);
+    _clipboard = null;
+    _renderCutMarks();
+  } else {
+    copyEntries(entries, currentPath);
   }
-  if (mode === 'cut') { _clipboard = null; _renderCutMarks(); }
 }
 
 function ctxDelete() {
   const sel = _selectedEntries();
   if (!sel.length) return;
-  deletePaths(sel.map(e => e.path), sel.length === 1 ? sel[0].name : sel.length + ' items');
+  deleteEntries(sel);
 }
 
 document.addEventListener('click', e => {
@@ -674,58 +686,106 @@ async function viewPath(path, size) {
 }
 
 // downloadPath forces a save-as download via a temporary <a download>
-// click, so several downloads kicked off together don't cancel each other.
+// click.
 function downloadPath(path) {
+  downloadUrl('/api/fs/download?path=' + encodeURIComponent(path));
+}
+
+function downloadUrl(url) {
   const a = document.createElement('a');
-  a.href = '/api/fs/download?path=' + encodeURIComponent(path);
+  a.href = url;
   a.download = '';
   document.body.appendChild(a);
   a.click();
   a.remove();
 }
 
-/* ── Delete ──────────────────────────────── */
-let _deleteConfirmPaths = null;
+/* ── Grouped operations ──────────────────── */
+// _runFileGroup runs one operation over several entries as a single group:
+// one progress pill, one cancel, one refresh at the end.
+//   - Entries run one after another. A failure is recorded and the rest
+//     still run.
+//   - Cancel stops the running entry and skips the rest.
+//   - op.verb titles the pill. op.start(entry) resolves {id} for a
+//     background task or {} when it finished at once. op.after(entry)
+//     runs once the entry has succeeded.
+async function _runFileGroup(op, entries) {
+  const n = entries.length;
+  if (!n) return;
+  const one = n === 1;
+  let finished = 0, cancelled = false, taskId = null;
+  const pill = openBarProgress(op.verb + ' ' + (one ? entries[0].name : n + ' items'), null, null, {
+    formatLabel: (cur, tot) => one ? cur + ' / ' + tot + ' entries' : finished + ' / ' + n + ' items',
+    onCancel: () => { cancelled = true; if (taskId) cancelTask(taskId); },
+  });
+  // A group's bar counts entries x1000 so a running entry fills its share.
+  const onProgress = (cur, tot) => one ? pill.update(cur, tot)
+    : pill.update(finished * 1000 + (tot > 0 ? Math.round(1000 * cur / tot) : 0), n * 1000);
 
-// deletePaths asks for confirmation once (label is the single entry's name
-// or "N items"), then fires doDelete per path.
-function deletePaths(paths, label) {
-  _deleteConfirmPaths = paths;
-  gid('delete-confirm-name').textContent = label;
+  const failures = [];
+  for (const e of entries) {
+    if (cancelled) break;
+    try {
+      const r = await op.start(e);
+      if (r.id) {
+        taskId = r.id;
+        if (cancelled) cancelTask(taskId);
+        const msg = await followTask(taskId, onProgress);
+        taskId = null;
+        if (msg.cancelled) { cancelled = true; break; }
+        if (!msg.ok) throw new Error(msg.err || 'Failed');
+      }
+      if (op.after) await op.after(e);
+    } catch (err) {
+      failures.push(e.name + ': ' + ((err && err.message) || err));
+    }
+    finished++;
+    if (!one) pill.update(finished * 1000, n * 1000);
+  }
+
+  if (cancelled) pill.done(false, null, true);
+  else if (failures.length) {
+    pill.done(false, failures.length === 1 ? failures[0] : failures.length + ' of ' + n + ' failed: ' + failures[0]);
+  } else pill.done(true);
+  navigateFiles(currentPath); // entries may have changed even when it failed or was cancelled
+}
+
+// _fsRequest sends a request to the file API and resolves its JSON body.
+// A non-2xx response rejects with the server's message.
+async function _fsRequest(url, method, body) {
+  const r = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error((await r.text()).trim());
+  return r.json();
+}
+
+/* ── Delete ──────────────────────────────── */
+let _deleteConfirmEntries = null;
+
+// deleteEntries asks for confirmation once, then deletes the entries as
+// one group.
+function deleteEntries(entries) {
+  _deleteConfirmEntries = entries;
+  gid('delete-confirm-name').textContent = entries.length === 1 ? entries[0].name : entries.length + ' items';
   gid('delete-confirm-modal').classList.add('open');
 }
 
 function confirmDelete(mode) {
   gid('delete-confirm-modal').classList.remove('open');
-  const paths = _deleteConfirmPaths;
-  _deleteConfirmPaths = null;
-  if (mode !== 'yes' || !paths) return;
-  paths.forEach(p => doDelete(p));
+  const entries = _deleteConfirmEntries;
+  _deleteConfirmEntries = null;
+  if (mode !== 'yes' || !entries) return;
+  _runFileGroup({
+    verb: 'Deleting',
+    start: e => _fsRequest('/api/fs?path=' + encodeURIComponent(e.path), 'DELETE'),
+    after: e => _dropDanglingBookmark(e.path),
+  }, entries);
 }
 // Clicking the backdrop cancels, matching the "cancel" button.
 onBackdropClick(gid('delete-confirm-modal'), () => confirmDelete('cancel'));
-
-// doDelete kicks off DELETE /api/fs as a background task and watches it
-// via a bar progress pill.
-async function doDelete(path) {
-  const name = path.replace(/\/+$/, '').split('/').pop() || path;
-  try {
-    const r = await fetch('/api/fs?path=' + encodeURIComponent(path), { method: 'DELETE' });
-    if (!r.ok) { showProgressError('Delete ' + name, await r.text()); return; }
-    const { id } = await r.json();
-    openBarProgress('Deleting ' + name, id, async msg => {
-      if (!msg.ok) {
-        // the pill itself shows the error / cancelled state
-        navigateFiles(currentPath); // some entries may have been removed before it stopped
-        return;
-      }
-      await _dropDanglingBookmark(path);
-      navigateFiles(currentPath);
-    }, { formatLabel: (cur, tot) => cur + ' / ' + tot + ' entries' });
-  } catch (e) {
-    showProgressError('Delete ' + name, String(e));
-  }
-}
 
 // _dropDanglingBookmark removes bookmarks at path or inside its subtree —
 // deleting/moving a folder strands those too. Best-effort: failures are
@@ -789,63 +849,32 @@ async function doRename(path) {
 }
 
 /* ── Move ────────────────────────────────── */
-// doMove PATCHes /api/fs with dest_dir (and new_name, when given, to move
-// under a different name). A same-filesystem move responds synchronously
-// with {"path": newPath}; a cross-filesystem move runs as a background
-// task, responds with {"id": taskID}, and is watched via a bar progress
-// pill.
-async function doMove(path, name, destDir, newName) {
-  let data;
-  try {
-    const body = { dest_dir: destDir };
-    if (newName) body.new_name = newName;
-    const r = await fetch('/api/fs?path=' + encodeURIComponent(path), {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) { showProgressError('Move ' + name, await r.text()); return; }
-    data = await r.json();
-  } catch (e) {
-    showProgressError('Move ' + name, String(e));
-    return;
-  }
-
-  if (data.id) {
-    openBarProgress('Moving ' + name, data.id, async msg => {
-      if (!msg.ok) return; // the pill itself shows the error / cancelled state
-      await _dropDanglingBookmark(path);
-      navigateFiles(currentPath);
-    }, { formatLabel: (cur, tot) => cur + ' / ' + tot + ' entries' });
-    return;
-  }
-
-  await _dropDanglingBookmark(path);
-  navigateFiles(currentPath);
+// moveEntries PATCHes /api/fs per entry with dest_dir, as one group. A
+// single entry moves under newName when it differs from its name. A
+// same-filesystem move finishes at once; a cross-filesystem move answers
+// with a background task.
+function moveEntries(entries, destDir, newName) {
+  _runFileGroup({
+    verb: 'Moving',
+    start: e => _fsRequest('/api/fs?path=' + encodeURIComponent(e.path), 'PATCH', _destBody(e, destDir, newName)),
+    after: e => _dropDanglingBookmark(e.path),
+  }, entries);
 }
 
 /* ── Copy ────────────────────────────────── */
-// doCopy starts a background copy task (POST /api/fs/copy, with new_name
-// when given to copy under a different name) and watches it via a bar
-// progress pill.
-async function doCopy(path, name, destDir, newName) {
-  try {
-    const body = { dest_dir: destDir };
-    if (newName) body.new_name = newName;
-    const r = await fetch('/api/fs/copy?path=' + encodeURIComponent(path), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) { showProgressError('Copy ' + name, await r.text()); return; }
-    const { id } = await r.json();
-    openBarProgress('Copying ' + name, id, msg => {
-      if (!msg.ok) return; // the pill itself shows the error / cancelled state
-      navigateFiles(currentPath);
-    }, { formatLabel: (cur, tot) => cur + ' / ' + tot + ' entries' });
-  } catch (e) {
-    showProgressError('Copy ' + name, String(e));
-  }
+// copyEntries POSTs /api/fs/copy per entry as one group. Each copy is a
+// background task. newName applies as in moveEntries.
+function copyEntries(entries, destDir, newName) {
+  _runFileGroup({
+    verb: 'Copying',
+    start: e => _fsRequest('/api/fs/copy?path=' + encodeURIComponent(e.path), 'POST', _destBody(e, destDir, newName)),
+  }, entries);
+}
+
+function _destBody(e, destDir, newName) {
+  const body = { dest_dir: destDir };
+  if (newName && newName !== e.name) body.new_name = newName;
+  return body;
 }
 
 function renderFileTree() {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -51,5 +54,56 @@ func TestDownloadGz(t *testing.T) {
 	}
 	if !bytes.Equal(got, content) {
 		t.Fatalf("decompressed content mismatch: %d bytes, want %d", len(got), len(content))
+	}
+}
+
+// TestDownloadMulti checks that repeated path streams one zip holding each
+// file at the top and each directory as a folder, and that check=1 and a
+// duplicate base name answer without streaming.
+func TestDownloadMulti(t *testing.T) {
+	root := t.TempDir()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.MkdirAll(filepath.Join(root, "d", "sub"), 0o755))
+	must(os.WriteFile(filepath.Join(root, "a.txt"), []byte("aaa"), 0o644))
+	must(os.WriteFile(filepath.Join(root, "d", "sub", "b.txt"), []byte("bbb"), 0o644))
+
+	get := func(query string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		(&srv{}).handleFSDownload(w, httptest.NewRequest(http.MethodGet, "/api/fs/download?"+query, nil))
+		return w
+	}
+	q := "path=" + url.QueryEscape(filepath.Join(root, "a.txt")) + "&path=" + url.QueryEscape(filepath.Join(root, "d"))
+
+	w := get(q)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, `"`+filepath.Base(root)+`.zip"`) {
+		t.Fatalf("Content-Disposition = %q, want <parent>.zip", cd)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(w.Body.Bytes()), int64(w.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+	}
+	sort.Strings(names)
+	if want := []string{"a.txt", "d/sub/b.txt"}; !slices.Equal(names, want) {
+		t.Fatalf("zip entries = %v, want %v", names, want)
+	}
+
+	if w := get(q + "&check=1"); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "ok") {
+		t.Fatalf("check=1: status %d, body %s", w.Code, w.Body.String())
+	}
+	dup := "path=" + url.QueryEscape(filepath.Join(root, "a.txt")) + "&path=" + url.QueryEscape(filepath.Join(root, "a.txt"))
+	if w := get(dup); w.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate base: status = %d, want 400", w.Code)
 	}
 }

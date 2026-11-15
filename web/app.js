@@ -276,7 +276,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ── Status polling ──────────────────────── */
 async function pollStatus() {
   try {
-    const r = await fetch('/api/status', { signal: AbortSignal.timeout(2000) });
+    const r = await fetch('api/status', { signal: AbortSignal.timeout(2000) });
     const d = await r.json();
     _setStatus(true, d);
   } catch {

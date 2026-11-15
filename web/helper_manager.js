@@ -18,7 +18,7 @@ async function hmLoad() {
   gid('hm-available-list').innerHTML = '<div class="modal-empty">Loading…</div>';
   gid('hm-installed-list').innerHTML = '<div class="modal-empty">Loading…</div>';
   try {
-    const r = await fetch('/api/helpers/manager');
+    const r = await fetch('api/helpers/manager');
     if (!r.ok) throw new Error(await r.text());
     _hm = await r.json();
   } catch (e) {
@@ -123,12 +123,12 @@ function _hmLayerArg(layer) { return layer === 'unknown' ? '' : layer; }
 
 function hmAdd(i) {
   const h = _hmShownAvail[i];
-  hmPost('Adding ' + h.name, '/api/helpers/add', { names: [h.name], layer: gid('hm-layer').value });
+  hmPost('Adding ' + h.name, 'api/helpers/add', { names: [h.name], layer: gid('hm-layer').value });
 }
 
 function hmUpgrade(i) {
   const { layer, script } = _hmShownInstalled[i];
-  hmPost('Upgrading ' + script.name, '/api/helpers/upgrade', { names: [script.name], layer: _hmLayerArg(layer) });
+  hmPost('Upgrading ' + script.name, 'api/helpers/upgrade', { names: [script.name], layer: _hmLayerArg(layer) });
 }
 
 async function hmRemove(i) {
@@ -136,14 +136,14 @@ async function hmRemove(i) {
   const ok = await askConfirm('Remove helper "' + script.name + '" from the ' + layer + ' layer? A helper already running keeps its own copy.',
     { title: 'Remove helper', okLabel: 'Remove' });
   if (!ok) return;
-  hmPost('Removing ' + script.name, '/api/helpers/remove', { names: [script.name], layer: _hmLayerArg(layer) });
+  hmPost('Removing ' + script.name, 'api/helpers/remove', { names: [script.name], layer: _hmLayerArg(layer) });
 }
 
 // hmUpgradeAll shows what an upgrade of every added helper would do, and asks before it does it.
 async function hmUpgradeAll() {
   let plan;
   try {
-    const r = await fetch('/api/helpers/upgrade', {
+    const r = await fetch('api/helpers/upgrade', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dry_run: true }),
     });
     if (!r.ok) throw new Error((await r.text()) || String(r.status));
@@ -161,5 +161,5 @@ async function hmUpgradeAll() {
     msg += '\n\nKept: ' + kept.map(p => p.name + ' (' + p.action + ')').join(', ');
   }
   if (!(await askConfirm(msg, { title: 'Upgrade helpers', okLabel: 'Upgrade' }))) return;
-  hmPost('Upgrading helpers', '/api/helpers/upgrade', {});
+  hmPost('Upgrading helpers', 'api/helpers/upgrade', {});
 }

@@ -17,7 +17,7 @@ let _prevJobStatuses = null; // null = first load not yet done
 
 async function loadJobs() {
   try {
-    const r = await fetch('/api/helpers?status=active');
+    const r = await fetch('api/helpers?status=active');
     allJobs = (await r.json()) || [];
   } catch { allJobs = []; }
   _checkJobNotifications(allJobs);
@@ -134,12 +134,12 @@ async function stopJob(id, btn) {
 
     let ok = false;
     try {
-      const r = await fetch('/api/helpers/' + encodeURIComponent(id) + '/stop', { method: 'POST' });
+      const r = await fetch('api/helpers/' + encodeURIComponent(id) + '/stop', { method: 'POST' });
       ok = r.ok;
     } catch {}
 
     try {
-      const r = await fetch('/api/helpers?status=active');
+      const r = await fetch('api/helpers?status=active');
       allJobs = (await r.json()) || [];
     } catch {}
     if (detailJobId === id) closeDetail();
@@ -256,7 +256,7 @@ function openDetail(id) {
 
   gid('d-stop').style.display = isRunning ? '' : 'none';
   gid('d-rerun').disabled = isRunning;
-  gid('d-log-link').href = '/api/helpers/' + encodeURIComponent(id) + '/joblog';
+  gid('d-log-link').href = 'api/helpers/' + encodeURIComponent(id) + '/joblog';
 
   switchDetailTab(detailTabActive);
   detail.removeAttribute('inert');
@@ -273,7 +273,7 @@ function switchDetailTab(tab) {
 
   if (tab === 'messages') {
     content.innerHTML = '';
-    detailSSE = new EventSource('/api/helpers/' + encodeURIComponent(detailJobId) + '/logs');
+    detailSSE = new EventSource('api/helpers/' + encodeURIComponent(detailJobId) + '/logs');
     detailSSE.onopen = function() {
       // Clear on each (re)connect so backfill doesn't duplicate old messages
       content.innerHTML = '';
@@ -313,7 +313,7 @@ function switchDetailTab(tab) {
   } else {
     // Job log tab — request last 1000 lines to avoid freezing on large logs
     content.innerHTML = '<div class="state-muted">Loading log…</div>';
-    fetch('/api/helpers/' + encodeURIComponent(detailJobId) + '/joblog?tail=1000')
+    fetch('api/helpers/' + encodeURIComponent(detailJobId) + '/joblog?tail=1000')
       .then(r => {
         const truncated = r.headers.get('X-Log-Truncated') === 'true';
         return r.text().then(text => ({ text, truncated }));

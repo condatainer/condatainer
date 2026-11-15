@@ -6,7 +6,7 @@ if (showHiddenFiles) { const cb = gid('show-hidden-files'); if (cb) cb.checked =
 async function navigateFiles(path) {
   if (_navController) _navController.abort();
   _navController = new AbortController();
-  const url = path ? '/api/fs?path=' + encodeURIComponent(path) : '/api/fs';
+  const url = path ? 'api/fs?path=' + encodeURIComponent(path) : 'api/fs';
   // listing a big directory on a network filesystem can take a while —
   // show feedback instead of a frozen listing (only when it's actually slow)
   const slowTimer = setTimeout(() => {
@@ -313,7 +313,7 @@ async function onRowContext(ev, i) {
 async function downloadEntry(e) {
   if (e.is_dir) {
     try {
-      const r = await fetch('/api/fs/download?path=' + encodeURIComponent(e.path) + '&check=1');
+      const r = await fetch('api/fs/download?path=' + encodeURIComponent(e.path) + '&check=1');
       if (!r.ok) { showProgressError('Download ' + e.name, await r.text()); return; }
     } catch (err) {
       showProgressError('Download ' + e.name, String(err));
@@ -329,13 +329,13 @@ async function downloadEntries(entries) {
   const q = entries.map(e => 'path=' + encodeURIComponent(e.path)).join('&');
   const title = 'Download ' + entries.length + ' items';
   try {
-    const r = await fetch('/api/fs/download?' + q + '&check=1');
+    const r = await fetch('api/fs/download?' + q + '&check=1');
     if (!r.ok) { showProgressError(title, await r.text()); return; }
   } catch (err) {
     showProgressError(title, String(err));
     return;
   }
-  downloadUrl('/api/fs/download?' + q);
+  downloadUrl('api/fs/download?' + q);
 }
 
 function ctxDownload() {
@@ -682,13 +682,13 @@ async function viewPath(path, size) {
       { title: 'Open large file?', okLabel: 'Open' });
     if (!ok) return;
   }
-  window.open('/api/fs/download?path=' + encodeURIComponent(path) + '&inline=1', '_blank');
+  window.open('api/fs/download?path=' + encodeURIComponent(path) + '&inline=1', '_blank');
 }
 
 // downloadPath forces a save-as download via a temporary <a download>
 // click.
 function downloadPath(path) {
-  downloadUrl('/api/fs/download?path=' + encodeURIComponent(path));
+  downloadUrl('api/fs/download?path=' + encodeURIComponent(path));
 }
 
 function downloadUrl(url) {
@@ -780,7 +780,7 @@ function confirmDelete(mode) {
   if (mode !== 'yes' || !entries) return;
   _runFileGroup({
     verb: 'Deleting',
-    start: e => _fsRequest('/api/fs?path=' + encodeURIComponent(e.path), 'DELETE'),
+    start: e => _fsRequest('api/fs?path=' + encodeURIComponent(e.path), 'DELETE'),
     after: e => _dropDanglingBookmark(e.path),
   }, entries);
 }
@@ -795,7 +795,7 @@ async function _dropDanglingBookmark(path) {
   const stale = fileBookmarks.filter(b => b.path === path || b.path.startsWith(prefix));
   for (const b of stale) {
     try {
-      fileBookmarks = (await (await fetch('/api/fs/bookmarks?path=' + encodeURIComponent(b.path), { method: 'DELETE' })).json()) || [];
+      fileBookmarks = (await (await fetch('api/fs/bookmarks?path=' + encodeURIComponent(b.path), { method: 'DELETE' })).json()) || [];
     } catch { /* best-effort */ }
   }
 }
@@ -834,7 +834,7 @@ async function doRename(path) {
   const newName = gid('rename-input').value.trim();
   if (!newName || newName === _renameOrig) return;
   try {
-    const r = await fetch('/api/fs?path=' + encodeURIComponent(path), {
+    const r = await fetch('api/fs?path=' + encodeURIComponent(path), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ new_name: newName })
@@ -856,7 +856,7 @@ async function doRename(path) {
 function moveEntries(entries, destDir, newName) {
   _runFileGroup({
     verb: 'Moving',
-    start: e => _fsRequest('/api/fs?path=' + encodeURIComponent(e.path), 'PATCH', _destBody(e, destDir, newName)),
+    start: e => _fsRequest('api/fs?path=' + encodeURIComponent(e.path), 'PATCH', _destBody(e, destDir, newName)),
     after: e => _dropDanglingBookmark(e.path),
   }, entries);
 }
@@ -867,7 +867,7 @@ function moveEntries(entries, destDir, newName) {
 function copyEntries(entries, destDir, newName) {
   _runFileGroup({
     verb: 'Copying',
-    start: e => _fsRequest('/api/fs/copy?path=' + encodeURIComponent(e.path), 'POST', _destBody(e, destDir, newName)),
+    start: e => _fsRequest('api/fs/copy?path=' + encodeURIComponent(e.path), 'POST', _destBody(e, destDir, newName)),
   }, entries);
 }
 
@@ -905,7 +905,7 @@ async function loadFileBookmarks() {
   if (_bookmarksLoaded) return;
   _bookmarksLoaded = true;
   try {
-    fileBookmarks = (await (await fetch('/api/fs/bookmarks')).json()) || [];
+    fileBookmarks = (await (await fetch('api/fs/bookmarks')).json()) || [];
   } catch { fileBookmarks = []; }
   renderFileTree();
   updateBookmarkStarBtn();
@@ -916,8 +916,8 @@ async function toggleBookmark(path) {
   const existing = fileBookmarks.some(b => b.path === path);
   try {
     const r = existing
-      ? await fetch('/api/fs/bookmarks?path=' + encodeURIComponent(path), { method: 'DELETE' })
-      : await fetch('/api/fs/bookmarks', {
+      ? await fetch('api/fs/bookmarks?path=' + encodeURIComponent(path), { method: 'DELETE' })
+      : await fetch('api/fs/bookmarks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path })
@@ -1082,7 +1082,7 @@ _dropZone.addEventListener('drop', async e => {
 
 async function checkUploadConflicts() {
   try {
-    const r = await fetch('/api/fs/upload/check?dest=' + encodeURIComponent(currentPath), {
+    const r = await fetch('api/fs/upload/check?dest=' + encodeURIComponent(currentPath), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paths: _pendingUpload.map(p => p.relPath) })
@@ -1162,7 +1162,7 @@ function doUpload(skipSet) {
   });
 
   xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/fs/upload?dest=' + encodeURIComponent(currentPath) + '&overwrite=true');
+  xhr.open('POST', 'api/fs/upload?dest=' + encodeURIComponent(currentPath) + '&overwrite=true');
   xhr.upload.onprogress = e => {
     if (e.lengthComputable) bar.update(e.loaded, e.total);
   };
@@ -1269,7 +1269,7 @@ async function fpNavigate(path) {
   if (_fpController) _fpController.abort();
   _fpController = new AbortController();
   fpPath = path;
-  const url = path ? '/api/fs?path=' + encodeURIComponent(path) : '/api/fs';
+  const url = path ? 'api/fs?path=' + encodeURIComponent(path) : 'api/fs';
   try {
     const r = await fetch(url, { signal: _fpController.signal });
     if (!r.ok) {

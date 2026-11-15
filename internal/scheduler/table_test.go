@@ -338,3 +338,12 @@ func TestJobTableCutsALongNodeNameOnlyWhenTheTableDoesNotFit(t *testing.T) {
 		t.Errorf("a narrow terminal keeps %d columns for the node:\n%s", minNodeWidth, got)
 	}
 }
+
+func TestJobTableWithNoWidthCutsNothing(t *testing.T) {
+	job := JobInfo{ID: "1", Name: strings.Repeat("n", 90), State: JobPending, Reason: strings.Repeat("r", 90),
+		Cpus: 1, MemMB: 1024, TimeLimit: time.Hour}
+	got := jobTableText([]JobInfo{job}, 0)
+	if strings.Contains(got, "…") || !strings.Contains(got, strings.Repeat("n", 90)) || !strings.Contains(got, strings.Repeat("r", 90)) {
+		t.Errorf("a table with no width limit shows every value whole:\n%s", got)
+	}
+}

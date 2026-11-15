@@ -474,6 +474,7 @@ func cutText(s string, width int) string {
 // WriteJobTable prints jobs as one table, a row each, in the order given.
 //   - GPUS shows only when a job has a GPU.
 //   - The table fits width. NAME, NODE and NOTE share what the other columns leave, and a longer value is cut.
+//   - A width of 0 means no limit, and nothing is cut.
 //   - A failed job's state is in red.
 func WriteJobTable(w io.Writer, jobs []JobInfo, width int) {
 	cols := make([]jobColumn, 0, len(jobColumns))
@@ -522,8 +523,11 @@ func slicesAnyGpu(jobs []JobInfo) bool {
 
 // fitFlexColumns returns the width each flex column is cut to, keyed by column, so the table fits width.
 // A flex column is one with a minWidth. One that needs no more than its share keeps its width, and the others take the rest.
-// No column is cut below its minWidth, so a very narrow width is exceeded.
+// No column is cut below its minWidth, so a very narrow width is exceeded. A width of 0 cuts none.
 func fitFlexColumns(header []string, rows [][]string, cols []jobColumn, width int) map[int]int {
+	if width <= 0 {
+		return map[int]int{}
+	}
 	need := make([]int, len(cols))
 	for i := range cols {
 		need[i] = utf8.RuneCountInString(header[i])

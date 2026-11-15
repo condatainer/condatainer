@@ -95,7 +95,7 @@ Three places, three jobs.
   - A longer line wraps and breaks its bullet. Never hard-wrap a sentence to fix it.
   - Write short sentences, one fact per bullet.
   - A bullet list in help has at most 6 bullets. Cut the minor ones or group related ones.
-  - A table fits the terminal width, down to a minimum, and 80 columns when the output is piped.
+  - A table on a terminal fits its width, down to a minimum. Piped output is never cut.
   - Existing help that is longer is fixed when it is edited.
 
 **A package `README.md` records decisions.**

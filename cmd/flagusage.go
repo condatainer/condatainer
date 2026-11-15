@@ -1,12 +1,25 @@
 package cmd
 
 import (
+	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/pflag"
+	"golang.org/x/term"
 
 	"github.com/condatainer/condatainer/internal/utils"
 )
+
+// writerWidth is the width of w when it is a terminal, and 0 when it is not one.
+func writerWidth(w io.Writer) int {
+	if f, ok := w.(*os.File); ok {
+		if width, _, err := term.GetSize(int(f.Fd())); err == nil && width > 0 {
+			return width
+		}
+	}
+	return 0
+}
 
 // flagUsages renders a FlagSet's help like pflag's FlagUsages, but where no flag has
 // a shorthand it drops the 4 columns pflag reserves for "-x, ", giving a 2-space

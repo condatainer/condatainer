@@ -80,7 +80,7 @@ func runSchedulerCancel(cmd *cobra.Command, args []string) error {
 				jobs = append(jobs, p.job)
 			}
 		}
-		scheduler.WriteJobTable(out, jobs, jobTableWidth(out))
+		scheduler.WriteJobTable(out, jobs, writerWidth(out))
 	}
 	if asks {
 		switch {

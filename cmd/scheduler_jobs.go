@@ -3,8 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -12,7 +10,6 @@ import (
 	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var (
@@ -121,19 +118,6 @@ func foldArrays(jobs []scheduler.JobInfo, ids []string, complete bool) []schedul
 		}
 	}
 	return append(scheduler.GroupArrayTasks(rest, complete), alone...)
-}
-
-// defaultTableWidth is the width of a table that is not written to a terminal.
-const defaultTableWidth = 80
-
-// jobTableWidth is the width of the terminal, or defaultTableWidth when the output is not one.
-func jobTableWidth(w io.Writer) int {
-	if f, ok := w.(*os.File); ok {
-		if width, _, err := term.GetSize(int(f.Fd())); err == nil && width > 0 {
-			return width
-		}
-	}
-	return defaultTableWidth
 }
 
 // jobRecord describes a job for the JSON document.
@@ -253,7 +237,7 @@ func runSchedulerJobs(cmd *cobra.Command, args []string) error {
 	case len(ids) == 1 && len(jobs) == 1:
 		scheduler.WriteJobDetail(out, jobs[0])
 	default:
-		scheduler.WriteJobTable(out, jobs, jobTableWidth(out))
+		scheduler.WriteJobTable(out, jobs, writerWidth(out))
 	}
 	return nil
 }

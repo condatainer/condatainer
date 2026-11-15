@@ -6,9 +6,21 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/condatainer/condatainer/internal/toolpath"
 )
 
+// requireMicromamba skips when no micromamba is available, because resolving
+// an environment locates it.
+func requireMicromamba(t *testing.T) {
+	t.Helper()
+	if _, err := toolpath.Resolve("micromamba"); err != nil {
+		t.Skipf("micromamba not available: %v", err)
+	}
+}
+
 func TestResolveEnvironmentReadAndWrite(t *testing.T) {
+	requireMicromamba(t)
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "conda-meta"), 0o755); err != nil {
 		t.Fatal(err)
@@ -64,6 +76,7 @@ func TestResolveEnvironmentReportsUninitialized(t *testing.T) {
 }
 
 func TestResolveEnvironmentReportsExistingButUninitializedRoot(t *testing.T) {
+	requireMicromamba(t)
 	root := t.TempDir()
 	t.Setenv("IN_CONDATAINER", "1")
 	t.Setenv("CNT_CONDA_ROOT", root)
@@ -75,6 +88,7 @@ func TestResolveEnvironmentReportsExistingButUninitializedRoot(t *testing.T) {
 }
 
 func TestResolveInstallEnvironmentCreatesRoot(t *testing.T) {
+	requireMicromamba(t)
 	root := filepath.Join(t.TempDir(), "env")
 	t.Setenv("IN_CONDATAINER", "1")
 	t.Setenv("CNT_CONDA_ROOT", root)

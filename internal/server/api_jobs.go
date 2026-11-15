@@ -108,8 +108,9 @@ func (s *srv) handleHelperLogs(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	const maxBackfill = 200
 	msgs, _, _ := helper.ReadMessages(id, 0)

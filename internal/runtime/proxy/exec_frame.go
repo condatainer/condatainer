@@ -26,13 +26,17 @@ func writeFrame(w io.Writer, f frame) error {
 	var b bytes.Buffer
 	b.WriteString(f.op)
 	if f.id != "" {
-		b.WriteString(" " + f.id)
+		b.WriteByte(' ')
+		b.WriteString(f.id)
 	}
 	if f.op == "D" {
-		b.WriteString(" " + strconv.Itoa(len(f.data)) + "\n")
+		b.WriteByte(' ')
+		b.WriteString(strconv.Itoa(len(f.data)))
+		b.WriteByte('\n')
 		b.Write(f.data)
 	} else if f.arg != "" {
-		b.WriteString(" " + f.arg)
+		b.WriteByte(' ')
+		b.WriteString(f.arg)
 	}
 	b.WriteByte('\n')
 	_, err := w.Write(b.Bytes())

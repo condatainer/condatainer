@@ -365,7 +365,8 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 // the job correct under a scheduler that resolves the directory differently.
 func restoreCommand(root string, step Step, opts Options) string {
 	var cmd strings.Builder
-	cmd.WriteString(utils.SelfCommand() + " project restore --project ")
+	cmd.WriteString(utils.SelfCommand())
+	cmd.WriteString(" project restore --project ")
 	cmd.WriteString(shellQuote(root))
 	cmd.WriteString(" --only ")
 	cmd.WriteString(shellQuote(step.Artifact))

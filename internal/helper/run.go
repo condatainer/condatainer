@@ -748,7 +748,9 @@ func shellQuoteVars(s string) string {
 	start := 0
 	flush := func(end int) {
 		if end > start {
-			sb.WriteString("'" + strings.ReplaceAll(s[start:end], "'", "'\\''") + "'")
+			sb.WriteByte('\'')
+			sb.WriteString(strings.ReplaceAll(s[start:end], "'", "'\\''"))
+			sb.WriteByte('\'')
 		}
 	}
 	for i := 0; i < len(s); i++ {
@@ -760,7 +762,9 @@ func shellQuoteVars(s string) string {
 			continue
 		}
 		flush(i)
-		sb.WriteString(`"${` + name + `}"`)
+		sb.WriteString(`"${`)
+		sb.WriteString(name)
+		sb.WriteString(`}"`)
 		start, i = end, end-1
 	}
 	flush(len(s))

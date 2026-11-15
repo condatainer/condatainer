@@ -24,11 +24,11 @@ func hostTool(t *testing.T, name string) string {
 	return path
 }
 
-// requireTools skips when the ext3 toolchain is absent, which is the case on a
-// machine that could not run a freeze either.
+// requireTools skips when the ext3 toolchain or fuse2fs is absent, which is the
+// case on a machine that could not run a freeze either.
 func requireTools(t *testing.T) {
 	t.Helper()
-	for _, bin := range []string{"debugfs", "mke2fs", "dd"} {
+	for _, bin := range []string{"debugfs", "mke2fs", "dd", "fuse2fs"} {
 		hostTool(t, bin)
 	}
 }

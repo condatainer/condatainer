@@ -272,7 +272,7 @@ func init() {
 			fmt.Fprintf(cmd.OutOrStderr(), "\nCompression Flags:\n%s", flagUsages(compress))
 		}
 		if cmd.HasAvailableInheritedFlags() {
-			fmt.Fprintf(cmd.OutOrStderr(), "\nGlobal Flags:\n%s", cmd.InheritedFlags().FlagUsages())
+			fmt.Fprintf(cmd.OutOrStderr(), "\nGlobal Flags:\n%s", wrappedFlagUsages(cmd.InheritedFlags()))
 		}
 		return nil
 	})

@@ -163,13 +163,13 @@ func init() {
 			}
 		})
 		if container.HasFlags() {
-			fmt.Fprintf(cmd.OutOrStderr(), "\nContainer Flags:\n%s", container.FlagUsages())
+			fmt.Fprintf(cmd.OutOrStderr(), "\nContainer Flags:\n%s", wrappedFlagUsages(container))
 		}
 		if job.HasFlags() {
-			fmt.Fprintf(cmd.OutOrStderr(), "\nJob Flags:\n%s", job.FlagUsages())
+			fmt.Fprintf(cmd.OutOrStderr(), "\nJob Flags:\n%s", wrappedFlagUsages(job))
 		}
 		if cmd.HasAvailableInheritedFlags() {
-			fmt.Fprintf(cmd.OutOrStderr(), "\nGlobal Flags:\n%s", cmd.InheritedFlags().FlagUsages())
+			fmt.Fprintf(cmd.OutOrStderr(), "\nGlobal Flags:\n%s", wrappedFlagUsages(cmd.InheritedFlags()))
 		}
 		return nil
 	})

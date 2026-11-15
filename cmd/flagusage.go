@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"golang.org/x/term"
 
@@ -21,6 +22,29 @@ func writerWidth(w io.Writer) int {
 	return 0
 }
 
+// helpWidth is the width help text wraps to: that of stdout when it is a terminal, else of stderr,
+// else 0 for no wrapping. Help written to a pipe or a file is never wrapped.
+var helpWidth = func() int {
+	if width := writerWidth(os.Stdout); width > 0 {
+		return width
+	}
+	return writerWidth(os.Stderr)
+}
+
+// wrappedFlagUsages is the help of a FlagSet, with a long description wrapped under its own column.
+func wrappedFlagUsages(fs *pflag.FlagSet) string {
+	return fs.FlagUsagesWrapped(helpWidth())
+}
+
+// The usage template every command without its own usage function shares prints its flags wrapped.
+func init() {
+	cobra.AddTemplateFunc("wrappedFlagUsages", wrappedFlagUsages)
+	tmpl := rootCmd.UsageTemplate()
+	tmpl = strings.ReplaceAll(tmpl, ".LocalFlags.FlagUsages", "wrappedFlagUsages .LocalFlags")
+	tmpl = strings.ReplaceAll(tmpl, ".InheritedFlags.FlagUsages", "wrappedFlagUsages .InheritedFlags")
+	rootCmd.SetUsageTemplate(tmpl)
+}
+
 // flagUsages renders a FlagSet's help like pflag's FlagUsages, but where no flag has
 // a shorthand it drops the 4 columns pflag reserves for "-x, ", giving a 2-space
 // indent. Sections with shorthands are returned unchanged, so "-n, --name" alignment holds.
@@ -32,7 +56,7 @@ func flagUsages(fs *pflag.FlagSet) string {
 		}
 	})
 
-	usage := fs.FlagUsages()
+	usage := wrappedFlagUsages(fs)
 	if hasShorthand {
 		return usage
 	}

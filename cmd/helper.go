@@ -144,10 +144,10 @@ func init() {
 		if cmd.HasExample() {
 			fmt.Fprintf(out, "\nExamples:\n%s\n", cmd.Example)
 		}
-		fmt.Fprintf(out, "\nFlags:\n%s\n", cmd.LocalFlags().FlagUsages())
+		fmt.Fprintf(out, "\nFlags:\n%s\n", wrappedFlagUsages(cmd.LocalFlags()))
 		helper.PrintRunFlags(out, nil)
 		if cmd.HasAvailableInheritedFlags() {
-			fmt.Fprintf(out, "\nGlobal Flags:\n%s", cmd.InheritedFlags().FlagUsages())
+			fmt.Fprintf(out, "\nGlobal Flags:\n%s", wrappedFlagUsages(cmd.InheritedFlags()))
 		}
 		return nil
 	})

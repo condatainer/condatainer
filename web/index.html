@@ -535,7 +535,7 @@
       <div class="modal-body" id="hm-installed-list"></div>
     </div>
     <div class="modal-ftr oc-ftr">
-      <label class="hm-layer" id="hm-layer-wrap" hidden>Add to <select id="hm-layer"></select></label>
+      <label class="hm-layer" id="hm-layer-wrap" hidden>Add to <select id="hm-layer" onchange="hmRender()"></select></label>
       <div class="btn-row">
         <button class="btn btn-sm" id="hm-upgrade-all" onclick="hmUpgradeAll()" hidden>Upgrade all</button>
         <button class="btn btn-sm" onclick="closeModal('hm-modal')">Close</button>

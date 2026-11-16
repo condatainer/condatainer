@@ -14,7 +14,7 @@ async function loadOverlays() {
     const r = await fetch('api/overlays');
     allOverlays = (await r.json()) || [];
   } catch { allOverlays = []; }
-  renderOverlays();
+  renderOverlays(gid('ov-search').value);
 }
 
 // renderOverlays renders the .sqf overlay table, keeping only entries whose

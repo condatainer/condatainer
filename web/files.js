@@ -306,35 +306,62 @@ async function onRowContext(ev, i) {
 }
 
 /* ── Context-menu actions (operate on the selection) ── */
-// downloadEntry triggers a download for an entry. Directories are checked
-// against the server's zip size limits first (check=1), so a too-large
-// folder surfaces as an error pill — the <a download> click of the real
-// download gives no error feedback.
+// _checkDownload scans a download on the server (check=1) and resolves its
+// answer, or null when the scan failed (an error pill says why) or was
+// cancelled. A scan slower than a moment shows a "Scanning" pill whose
+// cancel button stops the scan. name titles the pill.
+async function _checkDownload(query, name) {
+  const ctl = new AbortController();
+  let pill = null;
+  const timer = setTimeout(() => {
+    pill = openBarProgress('Scanning ' + name, null, null, { onCancel: () => ctl.abort() });
+    pill.el.querySelector('.prog-pill-label').textContent = 'Scanning…';
+  }, 400);
+  try {
+    const r = await fetch('api/fs/download?' + query + '&check=1', { signal: ctl.signal });
+    if (!r.ok) { showProgressError('Download ' + name, await r.text()); return null; }
+    return await r.json();
+  } catch (err) {
+    if (err.name !== 'AbortError') showProgressError('Download ' + name, String(err));
+    return null;
+  } finally {
+    clearTimeout(timer);
+    if (pill) pill.el.remove();
+  }
+}
+
+// downloadEntry triggers a download for an entry. A directory is scanned
+// first because the <a download> click of the real download gives no
+// feedback:
+//   - An empty folder is not downloaded; a note says so.
+//   - A zip past the server's warning limits asks for confirmation.
 async function downloadEntry(e) {
   if (e.is_dir) {
-    try {
-      const r = await fetch('api/fs/download?path=' + encodeURIComponent(e.path) + '&check=1');
-      if (!r.ok) { showProgressError('Download ' + e.name, await r.text()); return; }
-    } catch (err) {
-      showProgressError('Download ' + e.name, String(err));
+    const chk = await _checkDownload('path=' + encodeURIComponent(e.path), e.name);
+    if (!chk) return;
+    if (chk.empty) {
+      showProgressNote('Download ' + e.name, 'The folder is empty, so there is nothing to download.');
       return;
     }
+    if (!(await _confirmLargeDownload(chk.warn, '"' + e.name + '"'))) return;
   }
   downloadPath(e.path);
 }
 
-// downloadEntries downloads several entries as one zip, checked against
-// the server's zip limits first like a directory.
+// _confirmLargeDownload asks before a download the server warned about
+// (warn reads "more than 5GB" or "more than 10000 files"). It resolves true
+// when there is no warning or the user agrees.
+async function _confirmLargeDownload(warn, what) {
+  if (!warn) return true;
+  return askConfirm(what + ' holds ' + warn + '. Download anyway?',
+    { title: 'Large download', okLabel: 'Download' });
+}
+
+// downloadEntries downloads several entries as one zip, after the same scan.
 async function downloadEntries(entries) {
   const q = entries.map(e => 'path=' + encodeURIComponent(e.path)).join('&');
-  const title = 'Download ' + entries.length + ' items';
-  try {
-    const r = await fetch('api/fs/download?' + q + '&check=1');
-    if (!r.ok) { showProgressError(title, await r.text()); return; }
-  } catch (err) {
-    showProgressError(title, String(err));
-    return;
-  }
+  const chk = await _checkDownload(q, entries.length + ' items');
+  if (!chk || !(await _confirmLargeDownload(chk.warn, 'The selection'))) return;
   downloadUrl('api/fs/download?' + q);
 }
 

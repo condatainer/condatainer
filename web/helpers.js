@@ -165,6 +165,19 @@ function openBarProgress(title, taskId, onDone, opts) {
   return { update, done, el };
 }
 
+// showProgressNote opens an informational pill that closes itself after a
+// few seconds, for a result that is neither success nor failure.
+function showProgressNote(title, msg) {
+  const el = _createPill(title, 'log');
+  new TermView(el.querySelector('.prog-pill-log')).write(msg);
+  el.classList.add('finished');
+  el.querySelector('.prog-pill-status').innerHTML = iconSvg('info');
+  const closeBtn = el.querySelector('.prog-pill-close');
+  closeBtn.disabled = false;
+  closeBtn.title = 'Close';
+  setTimeout(() => el.remove(), 6000);
+}
+
 // showProgressError opens an already-failed 'log' pill, for errors that
 // happen before a server-side task exists.
 function showProgressError(title, msg) {

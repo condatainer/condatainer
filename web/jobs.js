@@ -15,14 +15,13 @@ function appendMsgText(text, container) {
 /* ── Jobs section ────────────────────────── */
 let _prevJobStatuses = null; // null = first load not yet done
 
-async function loadJobs() {
-  try {
-    const r = await fetch('api/helpers?status=active');
-    allJobs = (await r.json()) || [];
-  } catch { allJobs = []; }
+function loadJobs() { return refreshJobs(); }
+
+document.addEventListener('jobs:changed', () => {
   _checkJobNotifications(allJobs);
   if (!document.querySelector('#job-list-wrap [data-confirm="1"]')) renderJobs();
-}
+  refreshDetail();
+});
 
 function _checkJobNotifications(jobs) {
   if (_prevJobStatuses === null) {
@@ -52,7 +51,7 @@ function _fireJobNotification(job) {
 function renderJobs() {
   const wrap = gid('job-list-wrap');
   if (!allJobs.length) {
-    wrap.innerHTML = '<div class="empty"><div>No running jobs.</div>' +
+    wrap.innerHTML = '<div class="empty"><div>No active jobs.</div>' +
       '<div class="empty-link"><a href="#" onclick="navigate(\'start\');return false;">Start a helper →</a></div></div>';
     return;
   }
@@ -138,12 +137,8 @@ async function stopJob(id, btn) {
       ok = r.ok;
     } catch {}
 
-    try {
-      const r = await fetch('api/helpers?status=active');
-      allJobs = (await r.json()) || [];
-    } catch {}
+    await refreshJobs();
     if (detailJobId === id) closeDetail();
-    renderJobs();
 
     if (!ok) {
       const card = gid('jcard-' + id);
@@ -197,6 +192,30 @@ function openDetail(id) {
   const activeSec = document.querySelector('.section.active');
   const secId = activeSec ? activeSec.id.slice(4) : '';
   if (secId === 'jobs' || secId === 'history') setHash('#' + secId + '/' + id, false);
+
+  renderDetail(job);
+  switchDetailTab(detailTabActive);
+  detail.removeAttribute('inert');
+  detail.setAttribute('aria-hidden', 'false');
+  detail.classList.add('open');
+}
+
+// refreshDetail redraws the open detail panel from the latest lists, and
+// closes it when its job is gone. The messages and log tab are left alone.
+// A job that left the active list is looked up in a fresh history.
+function refreshDetail() {
+  if (!detailJobId) return;
+  const active = allJobs.find(j => j.id === detailJobId);
+  if (!active && _historyStale) { loadHistory(); return; }
+  const job = active || allHistory.find(j => j.id === detailJobId);
+  if (job) renderDetail(job);
+  else closeDetail();
+}
+
+// renderDetail fills the detail panel's header, meta, resources, parameters and
+// buttons from job, and marks its card or row as selected.
+function renderDetail(job) {
+  const id = job.id;
   const isRunning = job.status === 'running' || job.status === 'pending' || job.status === 'starting';
 
   document.querySelectorAll('.job-card,.data-table tbody tr').forEach(e => e.classList.remove('selected'));
@@ -257,11 +276,6 @@ function openDetail(id) {
   gid('d-stop').style.display = isRunning ? '' : 'none';
   gid('d-rerun').disabled = isRunning;
   gid('d-log-link').href = 'api/helpers/' + encodeURIComponent(id) + '/joblog';
-
-  switchDetailTab(detailTabActive);
-  detail.removeAttribute('inert');
-  detail.setAttribute('aria-hidden', 'false');
-  detail.classList.add('open');
 }
 
 function switchDetailTab(tab) {

@@ -1,11 +1,9 @@
 /* ── History section ─────────────────────── */
-async function loadHistory() {
-  try {
-    const r = await fetch('api/helpers?limit=100');
-    allHistory = (await r.json()) || [];
-  } catch { allHistory = []; }
-  if (!document.querySelector('#hist-tbody [data-confirm="1"]')) renderHistory();
-}
+function loadHistory() { return refreshJobs(true); }
+
+document.addEventListener('jobs:changed', () => {
+  if (_historyVisible() && !document.querySelector('#hist-tbody [data-confirm="1"]')) renderHistory(gid('hist-search').value);
+});
 
 // renderHistory renders the history table, keeping only entries that match
 // every whitespace-separated term of filter (across name/label/status/node/cwd).

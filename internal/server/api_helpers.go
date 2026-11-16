@@ -535,6 +535,7 @@ func (s *srv) handleHelperStart(w http.ResponseWriter, r *http.Request, name str
 		flush()
 		return
 	}
+	notifyJobsChanged()
 	fmt.Fprintf(w, "Submitted: %s\n", id)
 }
 

@@ -18,7 +18,7 @@
   </div>
   <ul class="nav">
     <li class="nav-item active" data-section="jobs">
-      <svg class="icon nav-icon"><use href="#i-play_circle"></use></svg><span class="nav-label">Jobs</span>
+      <svg class="icon nav-icon"><use href="#i-play_circle"></use></svg><span class="nav-label">Jobs</span><span class="nav-count" id="jobs-count" hidden></span>
     </li>
     <li class="nav-item" data-section="start">
       <svg class="icon nav-icon"><use href="#i-add_2"></use></svg><span class="nav-label">Start</span>
@@ -58,8 +58,8 @@
     <section class="section active" id="sec-jobs">
       <div class="s-header">
         <div>
-          <div class="s-title">Running Jobs</div>
-          <div class="s-sub">Active helpers on compute nodes</div>
+          <div class="s-title">Active Jobs</div>
+          <div class="s-sub">Queued and running helpers on compute nodes</div>
         </div>
         <button class="btn btn-sm" onclick="loadJobs()"><svg class="icon"><use href="#i-refresh"></use></svg>Refresh</button>
       </div>
@@ -633,6 +633,7 @@
 <!-- ── Scripts (order matters) ───────────── -->
 <script src="static/icons.js"></script>
 <script src="static/app.js"></script>
+<script src="static/jobstore.js"></script>
 <script src="static/jobs.js"></script>
 <script src="static/helpers.js"></script>
 <script src="static/helper_manager.js"></script>
@@ -643,8 +644,7 @@
   /* init — runs after all modules are loaded */
   pollStatus();
   setInterval(pollStatus, 10000);
-  loadJobs();
-  setInterval(loadJobs, 5000);
+  startJobStore();
   loadOverlays();
 </script>
 

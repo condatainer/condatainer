@@ -110,6 +110,9 @@ input,button,select{font-family:inherit;font-size:inherit;}
 .nav-icon{width:20px;text-align:center;flex-shrink:0;}
 .nav-label{transition:opacity 150ms;overflow:hidden;}
 #sidebar.collapsed .nav-label{opacity:0;pointer-events:none;}
+.nav-count{margin-left:auto;padding:0 7px;border-radius:9px;background:color-mix(in srgb,var(--success) 15%,transparent);color:var(--success);font-size:11px;font-weight:600;font-family:var(--mono);line-height:18px;transition:opacity 150ms;}
+.nav-count[hidden]{display:none;}
+#sidebar.collapsed .nav-count{opacity:0;pointer-events:none;}
 .sb-bottom{border-top:1px solid var(--border);padding:4px 0;flex-shrink:0;}
 .sb-btn{
   display:flex;align-items:center;gap:9px;padding:8px 13px;width:100%;

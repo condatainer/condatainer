@@ -10,8 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/condatainer/condatainer/internal/artifact"
-	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
@@ -288,7 +286,7 @@ func RegisterCommonFlags(cmd *cobra.Command, flags *CommonFlags) {
 	cmd.Flags().BoolVarP(&flags.Fakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
 
 	// Register completions
-	cmd.RegisterFlagCompletionFunc("overlay", overlayFlagCompletion(true, true))
+	cmd.RegisterFlagCompletionFunc("overlay", overlayFlagCompletion(true))
 
 	// Stop flag parsing after the first positional argument
 	cmd.Flags().SetInterspersed(false)
@@ -464,9 +462,9 @@ func PrepareCommandAndHidePrompt(commands []string) ([]string, bool) {
 // ============================================================================
 
 // overlayFlagCompletion returns completion function for -o/--overlay flag
-func overlayFlagCompletion(includeData bool, includeImg bool) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+func overlayFlagCompletion(includeImg bool) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 	return func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return overlaySuggestions(includeData, includeImg, toComplete)
+		return overlaySuggestions(includeImg, toComplete)
 	}
 }
 
@@ -477,39 +475,43 @@ func completeOverlayArg(cmd *cobra.Command, args []string, toComplete string) ([
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	return overlaySuggestions(true, true, toComplete)
+	return overlaySuggestions(true, toComplete)
 }
 
 // overlaySuggestions completes installed overlays, with the default distro's
-// short forms of OS overlays, and local overlay files when includeImg.
-func overlaySuggestions(includeData bool, includeImg bool, toComplete string) ([]string, cobra.ShellCompDirective) {
-	return overlayChoices(includeData, includeImg, true, toComplete)
+// short forms, and local overlay files when includeImg.
+func overlaySuggestions(includeImg bool, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return overlayChoices(includeImg, true, toComplete)
 }
 
-// overlayChoices is overlaySuggestions, with the short forms only when aliases.
-//
-// Scans unaliased, unlike container.InstalledOverlays: that map's bare-name
-// keys are tied to the ambient config default_distro, which is wrong to
-// suggest while standing in a project that selected a different one.
-// addDistroAliasChoices adds the project-aware aliases instead.
-func overlayChoices(includeData, includeImg, aliases bool, toComplete string) ([]string, cobra.ShellCompDirective) {
+// overlayChoices is overlaySuggestions, with the short forms and the standing project's pinned names only when aliases.
+//   - Names come from the directory listing and the project's lock. No image is opened.
+//   - It scans unaliased: container.InstalledOverlays keys bare names by the configured default_distro, which is wrong to suggest in a project that selected another one. addDistroAliasChoices adds the project-aware aliases instead.
+//   - A pinned name is offered even when nothing installed answers to it, since a project resolves it through its pin.
+func overlayChoices(includeImg, aliases bool, toComplete string) ([]string, cobra.ShellCompDirective) {
 	scan, err := image.ScanOverlays(image.ScanOptions{})
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
-	installed := image.FirstPaths(scan)
+	installed := image.Names(scan)
+	distro := ""
+	if aliases {
+		var pinned []string
+		distro, pinned = completionProject()
+		for _, name := range pinned {
+			installed[name] = true
+		}
+	}
 
 	choices := map[string]struct{}{}
-	for name, path := range installed {
-		if includeData || isAppOverlay(path) {
-			if toComplete == "" || strings.HasPrefix(name, toComplete) {
-				choices[name] = struct{}{}
-			}
+	for name := range installed {
+		if toComplete == "" || strings.HasPrefix(name, toComplete) {
+			choices[name] = struct{}{}
 		}
 	}
 
 	if aliases {
-		addDistroAliasChoices(installed, choices, toComplete)
+		addDistroAliasChoices(distro, installed, choices, toComplete)
 	}
 
 	for _, candidate := range localOverlaySuggestions(toComplete, includeImg) {
@@ -597,20 +599,15 @@ func localOverlaySuggestions(toComplete string, includeImg bool) []string {
 	})
 }
 
-// addDistroAliasChoices adds shorthand aliases for OS overlays matching
-// projectDefaultDistro — the project's selected root when standing in one,
-// else the configured default — so a suggestion never names a bare form for
-// the wrong distro's tools.
-// For each installed OS overlay named "<distro>/<name>", also suggests "<name>".
-func addDistroAliasChoices(installed map[string]string, choices map[string]struct{}, toComplete string) {
-	distro := projectDefaultDistro()
+// addDistroAliasChoices adds "<name>" for each name of the form "<distro>/<name>", where distro is the project's selected root when standing in one, else the configured default.
+//   - The name decides, not the image's type. An image under the prefix that is not an OS layer gets one too.
+//   - Only full names are offered, never one without its version. exec accepts shorter ones than completion suggests.
+//   - A suggestion is a hint. exec resolves the name again, and its installed-name fallback uses the configured default distro, so the two can differ there.
+func addDistroAliasChoices(distro string, installed map[string]bool, choices map[string]struct{}, toComplete string) {
 	if distro == "" {
 		return
 	}
-	for name, path := range installed {
-		if !isOSOverlay(path) {
-			continue
-		}
+	for name := range installed {
 		alias := catalog.ShortForm(distro, name)
 		if alias == name {
 			continue
@@ -619,48 +616,4 @@ func addDistroAliasChoices(installed map[string]string, choices map[string]struc
 			choices[alias] = struct{}{}
 		}
 	}
-}
-
-// isOSOverlay reports whether an image is an OS layer, from its recorded type.
-//
-// An image with no readable metadata is not an OS layer: it degrades to app, so
-// it stays listed and mountable rather than being misfiled under a category it
-// never claimed.
-func isOSOverlay(overlayPath string) bool {
-	rt, err := meta.ReadRuntime(overlayPath)
-	return err == nil && rt.Type == artifact.TypeOS
-}
-
-// isAppOverlay checks if an overlay path is considered an "app" overlay
-func isAppOverlay(path string) bool {
-	// OS overlays (Apptainer-built SquashFS containing .singularity.d) are
-	// considered "app" overlays regardless of their location
-	if isOSOverlay(path) {
-		return true
-	}
-
-	// Check if path is in any of the image search directories
-	// Regular overlays (created via mksquashfs) are only considered "app" if
-	// they're in the images directory
-	for _, imagesDir := range config.GetImageSearchPaths() {
-		if pathWithinDir(path, imagesDir) {
-			return true
-		}
-	}
-	return false
-}
-
-// pathWithinDir checks if a path is within a directory
-func pathWithinDir(path, dir string) bool {
-	if dir == "" {
-		return false
-	}
-	rel, err := filepath.Rel(dir, path)
-	if err != nil {
-		return false
-	}
-	if rel == "." {
-		return true
-	}
-	return !(rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }

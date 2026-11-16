@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	artifactcache "github.com/condatainer/condatainer/internal/artifact/cache"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/store"
@@ -148,8 +149,11 @@ func shortDigest(ref meta.KeyRef) string {
 // entry that could not be trusted is a problem.
 func storeListDoc(scanned store.Report) *report.Overlays[report.Stored] {
 	doc := &report.Overlays[report.Stored]{Overlays: report.List[report.Stored]{}}
+	records := artifactcache.Default().NewBatch()
+	defer records.Flush()
+	read := func(path string) (meta.Runtime, error) { return meta.ReadRuntimeWithCache(path, records) }
 	for _, candidate := range scanned.Candidates {
-		doc.Overlays = append(doc.Overlays, storedRecord(candidate))
+		doc.Overlays = append(doc.Overlays, storedRecordWith(candidate, read))
 	}
 	for _, issue := range scanned.Issues {
 		doc.Problems = append(doc.Problems, report.Problem{Name: issue.Path, Message: issue.Error})

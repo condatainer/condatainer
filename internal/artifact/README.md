@@ -33,9 +33,14 @@ What CondaTainer embeds in an image: what it says it is, what loading it does to
   - It mounts, contributes nothing, and reports the same as an image with no metadata.
   - A fallback would add a second archive read and two code paths that must agree on what a runtime is.
 - A missing or unreadable runtime never blocks a mount.
-- Reads are cached across processes, keyed by path and validated by size and mtime.
-  - `list`, `avail`, PATH construction and shell completion would otherwise spawn one `unsquashfs` per image each time.
-  - Negative verdicts are cached too, or an old image is re-probed on every listing.
+- A launch reads each image's `runtime.json` from the archive, once per process.
+  - Nothing an earlier run left is trusted. A wrong answer would give the wrong root or environment, silently.
+  - A missing document is remembered for the process too.
+  - Resolving a pin reads the keys of each candidate of that name from its image the same way, never from the cache.
+- A command that inspects many images reads through the disk cache in `cache/`, in one batch: `list`, `store list` and the dashboard's overlay list.
+  - Each would otherwise spawn one `unsquashfs` per image every time.
+  - Negative verdicts are cached, or an old image is re-probed on every listing.
+- Shell completion opens no image. Names come from folder listings and the project's lock.
 
 ### manifest.json
 

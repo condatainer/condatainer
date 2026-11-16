@@ -49,7 +49,7 @@ func promote(name string, q IdentityQuery, dirs []string, read artifactReader) (
 		dirs = config.GetImageSearchPaths()
 	}
 	report := scan(ScanOptions{Dirs: dirs, Name: name}, read, nil)
-	candidate, err := resolveReport(name, q, report)
+	candidate, err := ResolveIdentityIn(name, q, report)
 	if err != nil {
 		return Promotion{}, err
 	}

@@ -6,6 +6,8 @@ import (
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/project"
+	"github.com/condatainer/condatainer/internal/project/lock"
+	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // standingProject reports the project the caller is standing in, or nil when
@@ -47,6 +49,30 @@ func projectDefaultDistro() string {
 		return distro
 	}
 	return config.ResolvedDefaultDistro()
+}
+
+// completionProject reads the standing project's lock once, for completion: the distro bare names expand under, and the names the project pins.
+//   - Outside a project, or when its lock does not load, the distro is the configured default and nothing is pinned.
+//   - `--no-project` leaves the pins out. The distro stays the project's, as in projectDefaultDistro.
+//   - Only `name/version` keys are pinned names. The root (`base:`), a path pin and a version constraint are not, and neither is a key with no version.
+func completionProject() (distro string, pinned []string) {
+	standing, err := standingProjectHere()
+	if err != nil || standing == nil {
+		return config.ResolvedDefaultDistro(), nil
+	}
+	distro = standing.DefaultDistro()
+	if noProjectRequested {
+		return distro, nil
+	}
+	for key := range standing.Lock.Pins {
+		if key == lock.BaseKey || strings.HasPrefix(key, lock.PathPrefix) {
+			continue
+		}
+		if dep, err := utils.ParseDep(key); err == nil && dep.Op == "" && dep.Version != "" {
+			pinned = append(pinned, key)
+		}
+	}
+	return distro, pinned
 }
 
 // projectSelectedDistro reports the distro named by the standing project's

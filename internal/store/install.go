@@ -86,7 +86,7 @@ func begin(name string, identity meta.KeyRef, opts BeginOptions, read artifactRe
 	}
 	tx := &Transaction{Name: name, Identity: identity, Equiv: opts.Equiv, read: read}
 	report := scan(ScanOptions{Dirs: dirs, Name: name}, read, nil)
-	if candidate, err := resolveReport(name, IdentityQuery{Scheme: identity.Scheme, SHA256: identity.SHA256}, report); err == nil {
+	if candidate, err := ResolveIdentityIn(name, IdentityQuery{Scheme: identity.Scheme, SHA256: identity.SHA256}, report); err == nil {
 		if !opts.Equiv.Empty() && candidate.Equiv != opts.Equiv {
 			return nil, fmt.Errorf("existing exact identity has equivalence %s, expected %s", FormatKeyRef(candidate.Equiv), FormatKeyRef(opts.Equiv))
 		}
@@ -292,7 +292,7 @@ func (tx *Transaction) Commit() (Candidate, error) {
 	if err != nil {
 		return Candidate{}, err
 	}
-	cacheArtifact(tx.TargetPath, tx.Root, tx.Layout, artifact, installed)
+	cacheArtifact(tx.TargetPath, artifact, installed)
 	return candidateFromArtifact(tx.TargetPath, tx.Root, tx.Layout, installed.Size(), artifact), nil
 }
 
@@ -371,11 +371,10 @@ func candidateFromArtifact(path, root string, layout Layout, size int64, artifac
 		Identity: keyRef(artifact.IdentityScheme, artifact.Identity), Equiv: keyRef(artifact.EquivScheme, artifact.Equiv)}
 }
 
-func cacheArtifact(path, root string, layout Layout, artifact compare.Artifact, info os.FileInfo) {
+func cacheArtifact(path string, artifact compare.Artifact, info os.FileInfo) {
 	identity, equiv := keyRef(artifact.IdentityScheme, artifact.Identity), keyRef(artifact.EquivScheme, artifact.Equiv)
 	artifactcache.Default().Merge(path, info, func(record *artifactcache.Record) {
 		record.Name, record.Identity, record.Equiv, record.KeysVerified = artifact.Name,
 			artifactcache.Key{Scheme: identity.Scheme, SHA256: identity.SHA256}, artifactcache.Key{Scheme: equiv.Scheme, SHA256: equiv.SHA256}, true
-		record.Layout, record.Root, record.Size = string(layout), root, info.Size()
 	})
 }

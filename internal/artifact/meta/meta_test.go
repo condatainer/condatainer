@@ -35,14 +35,13 @@ func validManifest() Manifest {
 	}
 }
 
-// withTempCache points the runtime cache at a scratch file so a test never reads
-// or writes the user's real cache, and never sees another test's entries.
-func withTempCache(t *testing.T) {
+// withFreshMemo gives a test its own runtime memo, so it never sees another
+// test's entries.
+func withFreshMemo(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
-	prev := runtimeCache
-	runtimeCache = artifactcache.New(func() string { return filepath.Join(dir, artifactcache.FileName) })
-	t.Cleanup(func() { runtimeCache = prev })
+	prev := runtimeMemo
+	runtimeMemo = artifactcache.New(func() string { return "" })
+	t.Cleanup(func() { runtimeMemo = prev })
 }
 
 // requireSquashfsTools skips when the host cannot build or read a .sqf.

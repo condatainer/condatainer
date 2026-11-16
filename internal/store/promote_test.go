@@ -101,7 +101,7 @@ func TestPromoteSwapsInsideOneRoot(t *testing.T) {
 func resolveWith(t *testing.T, f *fixture, root, identity string) (Candidate, Report, error) {
 	t.Helper()
 	report := scan(ScanOptions{Dirs: []string{root}, Name: "star/2.7"}, f.read, nil)
-	candidate, err := resolveReport("star/2.7", query(identity), report)
+	candidate, err := ResolveIdentityIn("star/2.7", query(identity), report)
 	return candidate, report, err
 }
 

@@ -6,26 +6,28 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
 const (
-	FileName      = "cnt-images-v1.json.gz"
-	schemaVersion = 1
+	FileName      = "cnt-images-v2.json.gz"
+	schemaVersion = 2
 )
 
 // Fingerprint identifies one inode generation. Cache hits require every field
-// available from lstat to agree.
+// available from lstat to agree. The device number is not part of it: a
+// network filesystem reports a different one for each mount.
 type Fingerprint struct {
-	Device uint64 `json:"device,omitempty"`
-	Inode  uint64 `json:"inode,omitempty"`
-	Size   int64  `json:"size"`
-	MTime  int64  `json:"mtime"`
-	CTime  int64  `json:"ctime,omitempty"`
+	Inode uint64 `json:"inode,omitempty"`
+	Size  int64  `json:"size"`
+	MTime int64  `json:"mtime"`
+	CTime int64  `json:"ctime,omitempty"`
 }
 
 // Key is a neutral serialization of a complete artifact key.
@@ -44,9 +46,6 @@ type Record struct {
 	Identity     Key             `json:"identity,omitempty"`
 	Equiv        Key             `json:"equiv,omitempty"`
 	KeysVerified bool            `json:"keys_verified,omitempty"`
-	Layout       string          `json:"layout,omitempty"`
-	Root         string          `json:"root,omitempty"`
-	Size         int64           `json:"artifact_size,omitempty"`
 }
 
 type diskCache struct {
@@ -56,13 +55,19 @@ type diskCache struct {
 
 // Cache is safe for concurrent goroutines. Writers also take a sibling flock,
 // reload, merge, and atomically publish so separate processes do not erase one
-// another's fields.
+// another's fields. A writer that cannot get the lock in time keeps its update in
+// memory and does not persist it.
 type Cache struct {
 	mu      sync.Mutex
 	pathFn  func() string
 	path    string
 	loaded  bool
 	records map[string]Record
+	// busy is set when the file lock could not be had in time. The process then
+	// stops trying, so a stuck lock costs one wait, not one per write.
+	busy bool
+	// accept says which paths may be recorded. Nil accepts every path.
+	accept func(path string) bool
 }
 
 // Access is the cache surface used by metadata consumers. Both Cache and Batch
@@ -88,7 +93,29 @@ type Batch struct {
 	forget  []string
 }
 
-var defaultCache = New(defaultPath)
+var defaultCache = newDefault()
+
+// newDefault is the process-wide cache. It records only files a scan reads: those directly in an image root or in its store directory.
+func newDefault() *Cache {
+	c := New(defaultPath)
+	c.accept = func(path string) bool { return underRoots(config.GetImageSearchPaths(), path) }
+	return c
+}
+
+// storeDirName is the overflow directory below an image root. It matches store.DirName, which this package cannot import.
+const storeDirName = "store"
+
+// underRoots reports whether path sits directly in one of roots, or directly in a root's store directory.
+func underRoots(roots []string, path string) bool {
+	dir := filepath.Dir(cleanAbsolute(path))
+	for _, root := range roots {
+		root = cleanAbsolute(root)
+		if dir == root || dir == filepath.Join(root, storeDirName) {
+			return true
+		}
+	}
+	return false
+}
 
 // New constructs a cache whose path is resolved on first use. An empty path
 // disables persistence while retaining a process-local cache.
@@ -148,17 +175,27 @@ func (c *Cache) commit(updates []preparedUpdate, forget []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.load()
-	if c.path == "" {
+	updates = c.accepted(updates)
+	if c.path == "" || c.busy {
 		c.apply(updates)
 		c.remove(forget)
 		return
 	}
-	c.withDiskLock(func(latest map[string]Record) {
+	persisted := c.withDiskLock(func(latest map[string]Record) {
 		c.records = latest
+		changed := c.apply(updates)
+		if c.remove(forget) {
+			changed = true
+		}
+		if changed {
+			c.save()
+		}
+	})
+	if !persisted {
+		c.busy = true
 		c.apply(updates)
 		c.remove(forget)
-		c.save()
-	})
+	}
 }
 
 // Forget eagerly removes path. A later inode replacement would also miss by
@@ -193,18 +230,45 @@ func prepare(updates []Update) []preparedUpdate {
 	return prepared
 }
 
-func (c *Cache) apply(updates []preparedUpdate) {
-	for _, update := range updates {
-		record := c.current(update.path, update.fp)
-		update.apply(&record)
-		c.records[update.path] = record
+// accepted drops the updates for paths the cache does not record.
+func (c *Cache) accepted(updates []preparedUpdate) []preparedUpdate {
+	if c.accept == nil {
+		return updates
 	}
+	kept := updates[:0:0]
+	for _, update := range updates {
+		if c.accept(update.path) {
+			kept = append(kept, update)
+		}
+	}
+	return kept
 }
 
-func (c *Cache) remove(paths []string) {
-	for _, path := range paths {
-		delete(c.records, path)
+// apply merges the updates into the records and reports whether any record changed.
+func (c *Cache) apply(updates []preparedUpdate) bool {
+	changed := false
+	for _, update := range updates {
+		before, existed := c.records[update.path]
+		record := c.current(update.path, update.fp)
+		update.apply(&record)
+		if !existed || !reflect.DeepEqual(before, record) {
+			changed = true
+		}
+		c.records[update.path] = record
 	}
+	return changed
+}
+
+// remove drops the records of paths and reports whether it dropped any.
+func (c *Cache) remove(paths []string) bool {
+	removed := false
+	for _, path := range paths {
+		if _, ok := c.records[path]; ok {
+			delete(c.records, path)
+			removed = true
+		}
+	}
+	return removed
 }
 
 // PruneMissing opportunistically removes records whose path is absent or no
@@ -310,17 +374,34 @@ func (c *Cache) save() {
 	}
 }
 
-func (c *Cache) withDiskLock(fn func(map[string]Record)) {
+// lockWait is how long a writer waits for the file lock before giving up on persisting.
+var lockWait = time.Second
+
+// lockPoll is how often a waiting writer retries the lock.
+const lockPoll = 5 * time.Millisecond
+
+// withDiskLock runs fn on the latest records under the file lock, and reports whether it ran.
+//   - A writer that cannot get the lock within lockWait skips the write: every record can be regenerated, so a held lock never stalls a command.
+func (c *Cache) withDiskLock(fn func(map[string]Record)) bool {
 	lock, err := os.OpenFile(c.path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return
+		return false
 	}
 	defer lock.Close() //nolint:errcheck
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		return
+	deadline := time.Now().Add(lockWait)
+	for {
+		err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if err != syscall.EWOULDBLOCK || !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(lockPoll)
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) //nolint:errcheck
 	fn(readRecords(c.path))
+	return true
 }
 
 func readRecords(path string) map[string]Record {
@@ -337,7 +418,6 @@ func fingerprint(info os.FileInfo) (Fingerprint, bool) {
 	}
 	fp := Fingerprint{Size: info.Size(), MTime: info.ModTime().UnixNano()}
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		fp.Device = uint64(stat.Dev)
 		fp.Inode = stat.Ino
 		fp.CTime = stat.Ctim.Sec*1e9 + stat.Ctim.Nsec
 	}

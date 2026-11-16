@@ -80,6 +80,7 @@ func (s *Standing) DefaultDistro() string {
 // ResolveNames resolves each of names — parsed with the same grammar a `#DEP:` uses — the way `exec -o` does: a pinned name through its pin, any other name live against what is installed.
 //   - It returns one Mount per name, in order; a name nothing installed answers has an empty Path, for the caller to acquire.
 //   - A pinned artifact absent here, and an unpinned path, refuse naming `project restore`.
+//   - Candidate keys are read from the images, never from the disk cache.
 func (s *Standing) ResolveNames(ctx context.Context, names []string) ([]Mount, error) {
 	if len(names) == 0 {
 		return nil, nil
@@ -92,7 +93,7 @@ func (s *Standing) ResolveNames(ctx context.Context, names []string) ([]Mount, e
 		}
 		requests[i] = request
 	}
-	resolution, err := Resolve(ctx, s.Root, s.Lock, requests, ResolveOptions{LiveResolve: true, Distro: s.DefaultDistro()})
+	resolution, err := Resolve(ctx, s.Root, s.Lock, requests, ResolveOptions{LiveResolve: true, Distro: s.DefaultDistro(), Uncached: true})
 	if err != nil {
 		return nil, err
 	}
@@ -131,12 +132,13 @@ func unresolvedFor(resolution *Resolution, key string) Unresolved {
 // Base resolves the standing project's reserved root pin (lock.BaseKey) to a local path.
 //   - It returns "" and no error when there is no base pin, so a caller falls through to its own default.
 //   - It is strict, unlike ResolveNames: an unresolved pin refuses naming `project restore`, never falling back to the machine's default_distro.
+//   - Candidate keys are read from the images, never from the disk cache.
 func (s *Standing) Base(ctx context.Context) (string, error) {
 	if _, ok := s.Lock.Pins[lock.BaseKey]; !ok {
 		return "", nil
 	}
 	resolution, err := s.ResolveComplete(ctx,
-		[]lock.Request{{Key: lock.BaseKey, Kind: lock.KindName}}, ResolveOptions{})
+		[]lock.Request{{Key: lock.BaseKey, Kind: lock.KindName}}, ResolveOptions{Uncached: true})
 	if err != nil {
 		return "", err
 	}

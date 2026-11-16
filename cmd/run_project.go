@@ -51,7 +51,7 @@ func projectRunContext(ctx context.Context, contentScript string, list bool) (*p
 		return nil, err
 	}
 	resolution, err := standing.ResolveComplete(ctx, scanned.Requests,
-		project.ResolveOptions{LiveResolve: true, Distro: projectDefaultDistro()})
+		project.ResolveOptions{LiveResolve: true, Distro: projectDefaultDistro(), Uncached: true})
 	if err != nil {
 		return nil, err
 	}

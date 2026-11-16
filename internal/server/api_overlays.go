@@ -15,6 +15,7 @@ import (
 	"log/slog"
 
 	"github.com/condatainer/condatainer/internal/artifact"
+	artifactcache "github.com/condatainer/condatainer/internal/artifact/cache"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/image/ext3"
@@ -191,6 +192,8 @@ func (s *srv) handleOverlaysList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	installed := image.FirstPaths(scan)
+	records := artifactcache.Default().NewBatch()
+	defer records.Flush()
 	// Type is what the payload is, Format is the file's container format. These
 	// were one field holding the extension, which conflated the two.
 	type overlayEntry struct {
@@ -219,7 +222,7 @@ func (s *srv) handleOverlaysList(w http.ResponseWriter, r *http.Request) {
 			Type:   string(artifact.TypeApp),
 			Format: strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
 		}
-		if rt, err := meta.ReadRuntime(path); err == nil {
+		if rt, err := meta.ReadRuntimeWithCache(path, records); err == nil {
 			entry.Type = string(rt.Type)
 			entry.Description = rt.Description
 		}

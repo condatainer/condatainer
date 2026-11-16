@@ -100,7 +100,7 @@ func registryPushCompletion(cmd *cobra.Command, args []string, toComplete string
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	return overlayChoices(true, false, false, toComplete)
+	return overlayChoices(false, false, toComplete)
 }
 
 // refuseFrozenForSource refuses a frozen environment bound for a source's registry.

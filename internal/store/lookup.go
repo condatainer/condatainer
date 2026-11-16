@@ -209,9 +209,6 @@ func (r *Report) verify(path, root string, layout Layout, addressedName, prefix 
 			record.Identity = artifactcache.Key{Scheme: identity.Scheme, SHA256: identity.SHA256}
 			record.Equiv = artifactcache.Key{Scheme: equiv.Scheme, SHA256: equiv.SHA256}
 			record.KeysVerified = true
-			record.Layout = string(layout)
-			record.Root = root
-			record.Size = info.Size()
 		})
 	}
 }
@@ -241,11 +238,12 @@ func keyRef(scheme, digest string) meta.KeyRef {
 // paths carrying the same complete identity are copies, not ambiguity.
 func ResolveIdentity(name string, q IdentityQuery, dirs []string) (Candidate, Report, error) {
 	report := Scan(ScanOptions{Dirs: dirs, Name: name})
-	candidate, err := resolveReport(name, q, report)
+	candidate, err := ResolveIdentityIn(name, q, report)
 	return candidate, report, err
 }
 
-func resolveReport(name string, q IdentityQuery, report Report) (Candidate, error) {
+// ResolveIdentityIn is ResolveIdentity over a report already scanned.
+func ResolveIdentityIn(name string, q IdentityQuery, report Report) (Candidate, error) {
 	var matches []Candidate
 	identities := make(map[meta.KeyRef]struct{})
 	for _, candidate := range report.Candidates {
@@ -265,7 +263,11 @@ func resolveReport(name string, q IdentityQuery, report Report) (Candidate, erro
 
 // Equivalent returns verified candidates with the requested equivalence key.
 func Equivalent(name string, q IdentityQuery, dirs []string) (Report, error) {
-	report := Scan(ScanOptions{Dirs: dirs, Name: name})
+	return EquivalentIn(name, q, Scan(ScanOptions{Dirs: dirs, Name: name}))
+}
+
+// EquivalentIn is Equivalent over a report already scanned. It filters the report's candidates in place.
+func EquivalentIn(name string, q IdentityQuery, report Report) (Report, error) {
 	filtered := report.Candidates[:0]
 	for _, candidate := range report.Candidates {
 		if q.Matches(candidate.Equiv) {

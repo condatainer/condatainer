@@ -1,8 +1,7 @@
 name: Deploy Docs
 
+# The release workflow dispatches this on main after a stable tag.
 on:
-  push:
-    tags: ['v[0-9]+.[0-9]+.[0-9]+']
   workflow_dispatch:
 
 permissions:

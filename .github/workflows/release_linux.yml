@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   build:
@@ -45,3 +46,10 @@ jobs:
             bin/condatainer_linux_arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pages only deploys from main, so the docs run is dispatched there. A pre-release tag has a '-'.
+      - name: Deploy docs from main
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: gh workflow run docs.yml --ref main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

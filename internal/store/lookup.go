@@ -209,9 +209,6 @@ func (r *Report) verify(path, root string, layout Layout, addressedName, prefix 
 			record.Identity = artifactcache.Key{Scheme: identity.Scheme, SHA256: identity.SHA256}
 			record.Equiv = artifactcache.Key{Scheme: equiv.Scheme, SHA256: equiv.SHA256}
 			record.KeysVerified = true
-			record.Layout = string(layout)
-			record.Root = root
-			record.Size = info.Size()
 		})
 	}
 }

@@ -11,10 +11,10 @@ function ensureOverlaysLoaded() {
 
 async function loadOverlays() {
   try {
-    const r = await fetch('/api/overlays');
+    const r = await fetch('api/overlays');
     allOverlays = (await r.json()) || [];
   } catch { allOverlays = []; }
-  renderOverlays();
+  renderOverlays(gid('ov-search').value);
 }
 
 // renderOverlays renders the .sqf overlay table, keeping only entries whose
@@ -54,7 +54,7 @@ async function deleteOverlay(path, name) {
   if (!ok) return;
   let r;
   try {
-    r = await fetch('/api/remove', {
+    r = await fetch('api/remove', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
@@ -99,7 +99,7 @@ async function loadProjectPins() {
   list.innerHTML = '<div class="modal-empty">Loading…</div>';
   let pins = [];
   try {
-    pins = (await fetch('/api/project/pins?cwd=' + encodeURIComponent(gid('cfg-cwd')?.value || '')).then(r => r.json())) || [];
+    pins = (await fetch('api/project/pins?cwd=' + encodeURIComponent(gid('cfg-cwd')?.value || '')).then(r => r.json())) || [];
   } catch { /* shown as empty */ }
   list.innerHTML = pins.length
     ? pins.map(p =>
@@ -140,7 +140,7 @@ function filterAppOverlays(q) {
 async function opFileNavigate(path) {
   if (_opFileController) _opFileController.abort();
   _opFileController = new AbortController();
-  const url = path ? '/api/fs?path=' + encodeURIComponent(path) : '/api/fs';
+  const url = path ? 'api/fs?path=' + encodeURIComponent(path) : 'api/fs';
   try {
     const r       = await fetch(url, { signal: _opFileController.signal });
     const entries = (await r.json()) || [];
@@ -203,7 +203,7 @@ async function openOverlayCreate() {
   gid('oc-list').innerHTML = '<div class="modal-empty">Loading…</div>';
   try {
     const cwd = gid('cfg-cwd')?.value.trim();
-    const r = await fetch('/api/avail' + (cwd ? '?cwd=' + encodeURIComponent(cwd) : ''));
+    const r = await fetch('api/avail' + (cwd ? '?cwd=' + encodeURIComponent(cwd) : ''));
     _ocAvail = (await r.json()) || [];
   } catch { _ocAvail = []; }
   ocFilter(gid('oc-search').value);
@@ -266,7 +266,7 @@ function _ocNameOwnedByScript(name) {
 
 async function _ocCondaSearch(q) {
   try {
-    const r = await fetch('/api/search?q=' + encodeURIComponent(q));
+    const r = await fetch('api/search?q=' + encodeURIComponent(q));
     const data = r.ok ? await r.json() : null;
     _ocConda = (data && data.results) || [];
   } catch { _ocConda = []; }
@@ -460,7 +460,7 @@ function _ocScheduleInspect() {
   _ocInspectTimer = setTimeout(async () => {
     let info = null;
     try {
-      const r = await fetch('/api/avail/inspect?name=' + encodeURIComponent(name));
+      const r = await fetch('api/avail/inspect?name=' + encodeURIComponent(name));
       if (r.ok) info = await r.json();
     } catch {}
     if (_ocConcreteName() !== name) return; // selection changed while fetching
@@ -535,7 +535,7 @@ async function ocCreate() {
   btn.disabled = true;
   let r;
   try {
-    r = await fetch('/api/create', {
+    r = await fetch('api/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, answers }),

@@ -1,11 +1,9 @@
 /* ── History section ─────────────────────── */
-async function loadHistory() {
-  try {
-    const r = await fetch('/api/helpers?limit=100');
-    allHistory = (await r.json()) || [];
-  } catch { allHistory = []; }
-  if (!document.querySelector('#hist-tbody [data-confirm="1"]')) renderHistory();
-}
+function loadHistory() { return refreshJobs(true); }
+
+document.addEventListener('jobs:changed', () => {
+  if (_historyVisible() && !document.querySelector('#hist-tbody [data-confirm="1"]')) renderHistory(gid('hist-search').value);
+});
 
 // renderHistory renders the history table, keeping only entries that match
 // every whitespace-separated term of filter (across name/label/status/node/cwd).
@@ -69,7 +67,7 @@ async function clearFinishedHistory() {
     { title: 'Clear finished history', okLabel: 'Clear' });
   if (!ok) return;
   try {
-    const r = await fetch('/api/helpers/finished', { method: 'DELETE' });
+    const r = await fetch('api/helpers/finished', { method: 'DELETE' });
     if (!r.ok) { alert('Could not clear history: ' + await r.text()); return; }
   } catch (e) {
     alert('Could not clear history: ' + e);
@@ -106,7 +104,7 @@ async function removeHistoryEntry(ev, id, btn) {
   btn.dataset.confirm = '';
   btn.disabled = true;
   try {
-    const r = await fetch('/api/helpers/' + id + '/delete', { method: 'DELETE' });
+    const r = await fetch('api/helpers/' + id + '/delete', { method: 'DELETE' });
     if (!r.ok) {
       const msg = await r.text();
       btn.disabled = false;

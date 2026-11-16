@@ -276,18 +276,38 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ── Status polling ──────────────────────── */
 async function pollStatus() {
   try {
-    const r = await fetch('/api/status', { signal: AbortSignal.timeout(2000) });
+    const r = await fetch('api/status', { signal: AbortSignal.timeout(2000) });
     const d = await r.json();
     _setStatus(true, d);
   } catch {
     _setStatus(false, null);
   }
 }
+let srvDebug = false;
+let _serverAlive = true;
+
+// _renderJobCounts shows the number of active jobs in the sidebar status line
+// and, with --debug, the number running next to the Jobs tab.
+function _renderJobCounts() {
+  const text = gid('status-text');
+  if (text && _serverAlive) text.textContent = allJobs.length + ' active';
+  const running = allJobs.filter(j => j.status === 'running').length;
+  const el = gid('jobs-count');
+  if (!el) return;
+  el.hidden = !srvDebug;
+  el.textContent = running;
+  el.title = running + ' running';
+}
+document.addEventListener('jobs:changed', _renderJobCounts);
+
 function _setStatus(alive, d) {
   const dot  = gid('status-dot');
   const text = gid('status-text');
   if (dot)  dot.classList.toggle('dead', !alive);
-  if (text) text.textContent = alive ? (d.running || 0) + ' running' : 'unreachable';
+  _serverAlive = alive;
+  if (d) srvDebug = !!d.debug;
+  if (text && !alive) text.textContent = 'unreachable';
+  _renderJobCounts();
   if (d) {
     if (d.hostname) document.title = d.hostname + ' - CondaTainer';
     _setText('srv-port',    d.port);

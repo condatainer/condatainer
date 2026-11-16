@@ -86,6 +86,8 @@ func TestRegisteredKeyNames(t *testing.T) {
 		"scheduler.submit_job CNT_CONFIG_SCHEDULER_SUBMIT_JOB",
 		"scheduler.time CNT_CONFIG_SCHEDULER_TIME",
 		"scheduler.timeout CNT_CONFIG_SCHEDULER_TIMEOUT",
+		"server.download_warn_files CNT_CONFIG_SERVER_DOWNLOAD_WARN_FILES",
+		"server.download_warn_size CNT_CONFIG_SERVER_DOWNLOAD_WARN_SIZE",
 		"store_gc_grace CNT_CONFIG_STORE_GC_GRACE",
 	}
 	if !slices.Equal(got, want) {

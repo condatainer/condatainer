@@ -37,15 +37,33 @@ function _createPill(title, kind, onCancel) {
     if (onCancel) { closeBtn.disabled = true; onCancel(); }
   };
 
-  if (kind === 'log') {
-    el.classList.add('expanded'); // show the log by default while actively running
-    el.querySelector('.prog-pill-hdr').addEventListener('click', e => {
-      if (e.target.closest('.prog-pill-close')) return;
-      const expanded = el.classList.toggle('expanded');
-      el.querySelector('.prog-pill-chevron').innerHTML = iconSvg(expanded ? 'expand_circle_down' : 'expand_circle_up');
-    });
-  }
+  if (kind === 'log') _makeExpandable(el); // shows the log by default while actively running
   return el;
+}
+
+// _makeExpandable lets a click on the pill header toggle its .prog-pill-log.
+// The pill starts expanded.
+function _makeExpandable(el) {
+  el.classList.add('expandable', 'expanded');
+  el.querySelector('.prog-pill-hdr').addEventListener('click', e => {
+    if (e.target.closest('.prog-pill-close')) return;
+    const expanded = el.classList.toggle('expanded');
+    el.querySelector('.prog-pill-chevron').innerHTML = iconSvg(expanded ? 'expand_circle_down' : 'expand_circle_up');
+  });
+}
+
+// pillDetail adds an expandable text area under a bar pill, for details
+// that do not fit its one-line label.
+function pillDetail(el, text) {
+  const log = document.createElement('div');
+  log.className = 'prog-pill-log';
+  el.appendChild(log);
+  new TermView(log).write(text);
+  const chevron = document.createElement('span');
+  chevron.className = 'prog-pill-chevron';
+  chevron.innerHTML = iconSvg('expand_circle_down');
+  el.querySelector('.prog-pill-hdr').insertBefore(chevron, el.querySelector('.prog-pill-close'));
+  _makeExpandable(el);
 }
 
 // _pillFinish sets a pill's terminal visual state. Successful pills
@@ -62,7 +80,7 @@ function _pillFinish(el, ok) {
 
 // cancelTask POSTs /api/tasks/{id}/cancel.
 function cancelTask(taskId) {
-  fetch('/api/tasks/' + encodeURIComponent(taskId) + '/cancel', { method: 'POST' }); //nolint
+  fetch('api/tasks/' + encodeURIComponent(taskId) + '/cancel', { method: 'POST' }); //nolint
 }
 
 // openLogProgress opens a 'log' pill driven by a server task's SSE stream
@@ -71,7 +89,7 @@ function openLogProgress(title, taskId, onDone) {
   const el = _createPill(title, 'log', () => cancelTask(taskId));
   const tv = new TermView(el.querySelector('.prog-pill-log'));
 
-  const es = new EventSource('/api/tasks/' + encodeURIComponent(taskId) + '/stream');
+  const es = new EventSource('api/tasks/' + encodeURIComponent(taskId) + '/stream');
   es.onmessage = e => {
     try {
       const msg = JSON.parse(e.data);
@@ -113,6 +131,23 @@ function openStreamLogProgress(title) {
   };
 }
 
+// followTask follows a server task's SSE stream ({"t":"progress"|"done"}
+// events), calls onProgress(current,total) per progress event, and resolves
+// with the done message. A dropped connection resolves {ok:false}.
+function followTask(taskId, onProgress) {
+  return new Promise(resolve => {
+    const es = new EventSource('api/tasks/' + encodeURIComponent(taskId) + '/stream');
+    es.onmessage = e => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.t === 'progress') onProgress(msg.current, msg.total);
+        else if (msg.t === 'done') { es.close(); resolve(msg); }
+      } catch {}
+    };
+    es.onerror = () => { es.close(); resolve({ ok: false, err: 'Connection lost' }); };
+  });
+}
+
 // openBarProgress opens a 'bar' pill. With taskId it follows the task's
 // SSE stream ({"t":"progress"|"done"} events) and its close button cancels
 // the task; without taskId the caller drives it via the returned
@@ -139,18 +174,26 @@ function openBarProgress(title, taskId, onDone, opts) {
   }
 
   if (taskId) {
-    const es = new EventSource('/api/tasks/' + encodeURIComponent(taskId) + '/stream');
-    es.onmessage = e => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.t === 'progress') update(msg.current, msg.total);
-        else if (msg.t === 'done') { done(msg.ok, msg.err, msg.cancelled); es.close(); if (onDone) onDone(msg); }
-      } catch {}
-    };
-    es.onerror = () => { done(false, 'Connection lost'); es.close(); if (onDone) onDone({ ok: false, err: 'Connection lost' }); };
+    followTask(taskId, update).then(msg => {
+      done(msg.ok, msg.err, msg.cancelled);
+      if (onDone) onDone(msg);
+    });
   }
 
   return { update, done, el };
+}
+
+// showProgressNote opens an informational pill that closes itself after a
+// few seconds, for a result that is neither success nor failure.
+function showProgressNote(title, msg) {
+  const el = _createPill(title, 'log');
+  new TermView(el.querySelector('.prog-pill-log')).write(msg);
+  el.classList.add('finished');
+  el.querySelector('.prog-pill-status').innerHTML = iconSvg('info');
+  const closeBtn = el.querySelector('.prog-pill-close');
+  closeBtn.disabled = false;
+  closeBtn.title = 'Close';
+  setTimeout(() => el.remove(), 6000);
 }
 
 // showProgressError opens an already-failed 'log' pill, for errors that
@@ -206,7 +249,7 @@ async function loadGpuOptions(force) {
   if (!force && (_gpuOptionsLoaded || _gpuOptionsLoading)) return _gpuOptionsLoading;
   _gpuOptionsLoading = (async () => {
     try {
-      const opts = await fetch('/api/gpu-options').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+      const opts = await fetch('api/gpu-options').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
       if (Array.isArray(opts) && opts.length) {
         _gpuOptions = opts;
         initCombobox('cfg-gpu', opts, true, null);
@@ -228,7 +271,7 @@ async function loadPartitionOptions(force) {
   if (!force && _partitionOptionsLoaded) return;
   _partitionOptionsLoading = (async () => {
     try {
-      const opts = await fetch('/api/partitions').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+      const opts = await fetch('api/partitions').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
       if (Array.isArray(opts) && opts.length) {
         _partitionOptions = opts;
         initCombobox('cfg-partition', opts, true, null);
@@ -266,7 +309,7 @@ async function loadHelpers(force) {
 
   _helpersLoading = (async () => {
     try {
-      const r = await fetch('/api/helpers/installed' + (force ? '?refresh=1' : ''));
+      const r = await fetch('api/helpers/installed' + (force ? '?refresh=1' : ''));
       allHelpers = (await r.json()) || [];
       _helpersLoaded = true;
     } catch { allHelpers = []; }
@@ -495,7 +538,7 @@ async function saveHelperConfigModal() {
     data[p.key.toLowerCase()] = (el.dataset.value !== undefined ? el.dataset.value : el.value).trim();
   });
   try {
-    const r = await fetch('/api/helpers/' + encodeURIComponent(selectedHelper.name) + '/config', {
+    const r = await fetch('api/helpers/' + encodeURIComponent(selectedHelper.name) + '/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -563,7 +606,7 @@ async function loadHelperBookmarks() {
   if (_helperBookmarksLoaded) return;
   _helperBookmarksLoaded = true;
   try {
-    const list = (await (await fetch('/api/helpers/bookmarks')).json()) || [];
+    const list = (await (await fetch('api/helpers/bookmarks')).json()) || [];
     helperBookmarks = new Set(list);
   } catch { helperBookmarks = new Set(); }
   renderHelperList(gid('h-search')?.value);
@@ -574,8 +617,8 @@ async function toggleHelperBookmark(name, e) {
   const isBookmarked = helperBookmarks.has(name);
   try {
     const r = isBookmarked
-      ? await fetch('/api/helpers/bookmarks?name=' + encodeURIComponent(name), { method: 'DELETE' })
-      : await fetch('/api/helpers/bookmarks', {
+      ? await fetch('api/helpers/bookmarks?name=' + encodeURIComponent(name), { method: 'DELETE' })
+      : await fetch('api/helpers/bookmarks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name })
@@ -711,7 +754,7 @@ function selectHelper(name, overrides) {
   }
 
   // Load resource defaults from script headers (#NCPU:/#MEM:/#TIME:)
-  fetch('/api/helpers/' + encodeURIComponent(name) + '/resources')
+  fetch('api/helpers/' + encodeURIComponent(name) + '/resources')
     .then(r => r.json())
     .then(d => {
       if (!selectedHelper || selectedHelper.name !== name) return;
@@ -730,7 +773,7 @@ function selectHelper(name, overrides) {
   // Load saved config; apply resource + param values and render the gear button.
   _helperSavedConfig = {};
   _renderHelperConfigWrap();
-  fetch('/api/helpers/' + encodeURIComponent(name) + '/config')
+  fetch('api/helpers/' + encodeURIComponent(name) + '/config')
     .then(r => r.json())
     .then(cfg => {
       if (!selectedHelper || selectedHelper.name !== name) return;
@@ -777,7 +820,7 @@ async function refreshEnvOverlayFromCWD() {
   if (gid('cfg-overlay').value) return; // don't overwrite a manually-set or rerun overlay
   const helperName = selectedHelper.name;
   const cwd = gid('cfg-cwd').value || '';
-  const url = '/api/helpers/' + encodeURIComponent(helperName) +
+  const url = 'api/helpers/' + encodeURIComponent(helperName) +
     '/find-env?cwd=' + encodeURIComponent(cwd);
   // The overlay may get set (e.g. by a rerun) or the cwd may change while the
   // fetch is in flight — a stale result must not overwrite the newer state.
@@ -855,7 +898,7 @@ async function checkProjectReuse() {
     (gid('cfg-cwd').value || '') !== cwd;
   let combos = [];
   try {
-    combos = await fetch('/api/helpers/' + encodeURIComponent(helperName) +
+    combos = await fetch('api/helpers/' + encodeURIComponent(helperName) +
       '/reuse?cwd=' + encodeURIComponent(cwd)).then(r => r.json()) || [];
   } catch {}
   if (!stale()) _setReuseCombos(combos);
@@ -942,7 +985,7 @@ async function _checkOverlayState(path) {
     return;
   }
   try {
-    const r = await fetch('/api/env/check?path=' + encodeURIComponent(path));
+    const r = await fetch('api/env/check?path=' + encodeURIComponent(path));
     if (!r.ok) return;
     const st = await r.json();
     _ovExists   = !!st.exists;
@@ -1000,7 +1043,7 @@ async function useSnapshotOverlay(path) {
   _opRunning = true;
   _applyStartLock();
   try {
-    const r = await fetch('/api/overlay/create', {
+    const r = await fetch('api/overlay/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1053,7 +1096,7 @@ async function _loadOverlayInfo() {
   const path = gid('cfg-overlay').value.trim();
   if (!path) return;
   try {
-    const r = await fetch('/api/env/info?path=' + encodeURIComponent(path));
+    const r = await fetch('api/env/info?path=' + encodeURIComponent(path));
     if (!r.ok) return;
     const info = await r.json();
     const curSize = gid('ov-edit-cur-size');
@@ -1087,7 +1130,7 @@ async function editOverlay() {
   _opRunning = true;
   _applyStartLock();
   try {
-    const r = await fetch('/api/overlay/edit', {
+    const r = await fetch('api/overlay/edit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, size, add_packages: addPkgs, remove_packages: removePkgs }),
@@ -1398,7 +1441,7 @@ async function createOverlay() {
   const createTitle = 'Creating ' + name;
   _setBusy(true);
   try {
-    const r = await fetch('/api/overlay/create', {
+    const r = await fetch('api/overlay/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1464,7 +1507,7 @@ async function startHelper() {
   _setStartBusy(true, iconSvg('play_arrow') + ' Starting…');
 
   try {
-    const r = await fetch('/api/helpers/' + encodeURIComponent(selectedHelper.name) + '/start', {
+    const r = await fetch('api/helpers/' + encodeURIComponent(selectedHelper.name) + '/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1556,7 +1599,7 @@ async function loadProjectInfo(cwd, names) {
   if (cwd) {
     const qs = new URLSearchParams({ cwd });
     names.forEach(n => qs.append('name', n));
-    try { info = await fetch('/api/project?' + qs).then(r => r.ok ? r.json() : null); } catch { info = null; }
+    try { info = await fetch('api/project?' + qs).then(r => r.ok ? r.json() : null); } catch { info = null; }
   }
   if (req !== _projectReq) return;
   _projectInfo = info;
@@ -1579,7 +1622,7 @@ function _renderProjectLine() {
 
 async function createProject() {
   const cwd = gid('cfg-cwd')?.value || '';
-  const r = await fetch('/api/project', {
+  const r = await fetch('api/project', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cwd }),

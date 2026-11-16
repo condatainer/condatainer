@@ -79,6 +79,43 @@ func addFileBookmark(path, label string) ([]fileBookmark, error) {
 	})
 }
 
+// orderBookmarks returns list in the order of paths.
+//   - A path not in list, or repeated, is ignored.
+//   - A bookmark not named in paths follows the named ones in its current order, so a bookmark added meanwhile is kept.
+func orderBookmarks(list []fileBookmark, paths []string) []fileBookmark {
+	byPath := make(map[string]fileBookmark, len(list))
+	for _, b := range list {
+		byPath[b.Path] = b
+	}
+	out := make([]fileBookmark, 0, len(list))
+	placed := make(map[string]bool, len(list))
+	for _, p := range paths {
+		if b, ok := byPath[p]; ok && !placed[p] {
+			out = append(out, b)
+			placed[p] = true
+		}
+	}
+	for _, b := range list {
+		if !placed[b.Path] {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// reorderFileBookmarks stores the bookmarks in the order of paths and
+// returns the full updated list.
+func reorderFileBookmarks(paths []string) ([]fileBookmark, error) {
+	store, err := fileBookmarksStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.Update(func(list *[]fileBookmark) error {
+		*list = orderBookmarks(*list, paths)
+		return nil
+	})
+}
+
 // removeFileBookmark unstars path (a no-op if it was not bookmarked).
 // Returns the full updated list.
 func removeFileBookmark(path string) ([]fileBookmark, error) {

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/condatainer/condatainer/internal/config"
@@ -82,7 +81,6 @@ type watcher struct {
 	lastOpenAttempt map[string]time.Time  // last proxies.Open() attempt time per helper
 	info            map[string]helperInfo // cached status+timing for active helpers
 	lastMsg         sync.Map              // string → string; last log message per helper (read by HTTP handlers)
-	runningCount    atomic.Int32          // count of non-terminal helpers; safe to read from HTTP handlers
 }
 
 func newWatcher(s *srv) *watcher {
@@ -98,12 +96,6 @@ func newWatcher(s *srv) *watcher {
 		lastOpenAttempt: make(map[string]time.Time),
 		info:            make(map[string]helperInfo),
 	}
-}
-
-// RunningCount returns the number of helpers not yet in a terminal state.
-// Safe to call from HTTP handler goroutines.
-func (w *watcher) RunningCount() int {
-	return int(w.runningCount.Load())
 }
 
 // LastMsg returns the cached last log message for a helper, or "".
@@ -138,7 +130,6 @@ func (w *watcher) prePopulateDone() {
 				node:      connectNode(r.ID, r.Node),
 				connect:   r.Connect,
 			}
-			w.runningCount.Add(1)
 			// A start event written while the server was down is applied now.
 			if r.Node == "" {
 				if st, _ := helper.ReadStartEvent(r.ID); st != nil {
@@ -267,7 +258,7 @@ func (w *watcher) pollHelper(id string) {
 			node:      connectNode(id, run.Node),
 			connect:   run.Connect,
 		}
-		w.runningCount.Add(1)
+		notifyJobsChanged() // a run another process recorded
 	}
 
 	r := helper.PollOnce(id, w.offsets[id])
@@ -276,6 +267,9 @@ func (w *watcher) pollHelper(id string) {
 	for _, m := range r.NewMessages {
 		w.s.brokers.publish(id, m.Level, m.Text)
 		w.lastMsg.Store(id, m.Text)
+	}
+	if len(r.NewMessages) > 0 {
+		notifyJobsChanged() // the job card shows the last message
 	}
 
 	// Before done, so a job that ends within one window still records its node.
@@ -479,9 +473,6 @@ func (w *watcher) closeDone(id string, exitCode int, endedAt time.Time) {
 	}
 	_ = helper.UpdateHistoryStatus(id, status, endedAt)
 	invalidateHistoryCache()
-	if _, wasActive := w.info[id]; wasActive {
-		w.runningCount.Add(-1)
-	}
 	w.done[id] = struct{}{}
 	delete(w.offsets, id)
 	delete(w.lastSchedPoll, id)

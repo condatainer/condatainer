@@ -5,9 +5,10 @@ import (
 	"net/http"
 )
 
-// handleFSBookmarks serves GET/POST/DELETE /api/fs/bookmarks — the dashboard's server-persisted file-browser bookmark list.
+// handleFSBookmarks serves GET/POST/PUT/DELETE /api/fs/bookmarks — the dashboard's server-persisted file-browser bookmark list.
 //   - GET lists all bookmarks.
 //   - POST {path, label?} stars a path.
+//   - PUT {paths: [...]} stores the bookmarks in that order. A bookmark left out keeps its place after the listed ones.
 //   - DELETE ?path=... unstars a path.
 //   - All three return the full updated list as JSON, so the client can simply replace its local bookmarks array and re-render.
 func (s *srv) handleFSBookmarks(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +37,21 @@ func (s *srv) handleFSBookmarks(w http.ResponseWriter, r *http.Request) {
 		list, err := addFileBookmark(req.Path, req.Label)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, list)
+
+	case http.MethodPut:
+		var req struct {
+			Paths []string `json:"paths"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		list, err := reorderFileBookmarks(req.Paths)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, list)

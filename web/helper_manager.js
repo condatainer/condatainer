@@ -14,11 +14,16 @@ function openHelperManager() {
   hmLoad();
 }
 
-async function hmLoad() {
-  gid('hm-available-list').innerHTML = '<div class="modal-empty">Loading…</div>';
-  gid('hm-installed-list').innerHTML = '<div class="modal-empty">Loading…</div>';
+// hmLoad fetches the manager lists and draws them. A quiet load keeps the
+// current lists on screen until the new ones arrive, so a change does not blank
+// the modal; on failure it shows the error as a load does.
+async function hmLoad(quiet) {
+  if (!quiet || !_hm) {
+    gid('hm-available-list').innerHTML = '<div class="modal-empty">Loading…</div>';
+    gid('hm-installed-list').innerHTML = '<div class="modal-empty">Loading…</div>';
+  }
   try {
-    const r = await fetch('/api/helpers/manager');
+    const r = await fetch('api/helpers/manager');
     if (!r.ok) throw new Error(await r.text());
     _hm = await r.json();
   } catch (e) {
@@ -45,6 +50,21 @@ function _hmBadge(state) {
   return '';
 }
 
+// _hmOfferState is the state of an offered helper in the layer an Add would go
+// to: the selected layer, else the default one. It is "added" or "newer" when
+// that layer already holds the helper, and "" when it does not. With no
+// known layer it is the state across every layer.
+function _hmOfferState(offer) {
+  const layer = gid('hm-layer').value || _hm.default_layer || '';
+  if (!layer) return offer.state;
+  for (const g of _hm.installed) {
+    if (g.layer !== layer) continue;
+    const s = g.scripts.find(x => x.name === offer.name && x.added);
+    if (s) return s.newer ? 'newer' : 'added';
+  }
+  return '';
+}
+
 function hmRender() {
   if (!_hm) return;
   const terms = searchTerms(gid('hm-search').value);
@@ -58,13 +78,15 @@ function hmRender() {
   } else if (!_hmShownAvail.length) {
     html += '<div class="modal-empty">' + (terms.length ? 'No matches.' : 'No helpers offered.') + '</div>';
   }
-  html += _hmShownAvail.map((h, i) =>
-    '<div class="modal-row">' +
+  html += _hmShownAvail.map((h, i) => {
+    const state = _hmOfferState(h);
+    return '<div class="modal-row">' +
       '<span class="modal-row-name"><span class="oc-row-name">' + escHtml(h.name) + '</span>' +
         (h.description ? '<span class="oc-description">' + escHtml(h.description) + '</span>' : '') + '</span>' +
-      '<span class="modal-row-size">' + _hmBadge(h.state) + '</span>' +
-      (h.state ? '' : '<button class="btn btn-sm btn-primary" onclick="hmAdd(' + i + ')">Add</button>') +
-    '</div>').join('');
+      '<span class="modal-row-size">' + _hmBadge(state) + '</span>' +
+      (state ? '' : '<button class="btn btn-sm btn-primary" onclick="hmAdd(' + i + ')">Add</button>') +
+    '</div>';
+  }).join('');
   gid('hm-available-list').innerHTML = html;
 
   // Installed
@@ -73,7 +95,7 @@ function hmRender() {
   for (const g of _hm.installed) {
     const rows = g.scripts.filter(match);
     if (!rows.length) continue;
-    html += '<div class="oc-group-hdr">' + escHtml(g.layer) + ' · ' + escHtml(g.dir) + '</div>';
+    html += '<div class="oc-group-hdr">' + escHtml(g.layer) + '</div>';
     for (const s of rows) {
       const i = _hmShownInstalled.push({ layer: g.layer, script: s }) - 1;
       const state = s.newer ? 'newer' : (s.added ? 'added' : '');
@@ -103,7 +125,10 @@ function hmRender() {
   gid('hm-layer-wrap').hidden = layers.length < 2 || _hmTab !== 'available';
 }
 
-// hmPost posts a change and follows its task, then reloads the manager and the Start page list.
+// hmPost posts a change and follows its task, then quietly reloads the manager
+// lists and the Start page's helper list. The server has already dropped its
+// cached helper list, so neither reload is forced, and the scheduler options
+// on the Start page are left alone.
 async function hmPost(title, url, body) {
   let r;
   try {
@@ -112,9 +137,9 @@ async function hmPost(title, url, body) {
   if (!r.ok) { showProgressError(title, (await r.text()) || String(r.status)); return; }
   const { id } = await r.json();
   openLogProgress(title, id, async () => {
-    await hmLoad();
+    await hmLoad(true);
     _helpersLoaded = false;
-    await loadHelpers(true);
+    await loadHelpers();
   });
 }
 
@@ -123,12 +148,12 @@ function _hmLayerArg(layer) { return layer === 'unknown' ? '' : layer; }
 
 function hmAdd(i) {
   const h = _hmShownAvail[i];
-  hmPost('Adding ' + h.name, '/api/helpers/add', { names: [h.name], layer: gid('hm-layer').value });
+  hmPost('Adding ' + h.name, 'api/helpers/add', { names: [h.name], layer: gid('hm-layer').value });
 }
 
 function hmUpgrade(i) {
   const { layer, script } = _hmShownInstalled[i];
-  hmPost('Upgrading ' + script.name, '/api/helpers/upgrade', { names: [script.name], layer: _hmLayerArg(layer) });
+  hmPost('Upgrading ' + script.name, 'api/helpers/upgrade', { names: [script.name], layer: _hmLayerArg(layer) });
 }
 
 async function hmRemove(i) {
@@ -136,14 +161,14 @@ async function hmRemove(i) {
   const ok = await askConfirm('Remove helper "' + script.name + '" from the ' + layer + ' layer? A helper already running keeps its own copy.',
     { title: 'Remove helper', okLabel: 'Remove' });
   if (!ok) return;
-  hmPost('Removing ' + script.name, '/api/helpers/remove', { names: [script.name], layer: _hmLayerArg(layer) });
+  hmPost('Removing ' + script.name, 'api/helpers/remove', { names: [script.name], layer: _hmLayerArg(layer) });
 }
 
 // hmUpgradeAll shows what an upgrade of every added helper would do, and asks before it does it.
 async function hmUpgradeAll() {
   let plan;
   try {
-    const r = await fetch('/api/helpers/upgrade', {
+    const r = await fetch('api/helpers/upgrade', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dry_run: true }),
     });
     if (!r.ok) throw new Error((await r.text()) || String(r.status));
@@ -161,5 +186,5 @@ async function hmUpgradeAll() {
     msg += '\n\nKept: ' + kept.map(p => p.name + ' (' + p.action + ')').join(', ');
   }
   if (!(await askConfirm(msg, { title: 'Upgrade helpers', okLabel: 'Upgrade' }))) return;
-  hmPost('Upgrading helpers', '/api/helpers/upgrade', {});
+  hmPost('Upgrading helpers', 'api/helpers/upgrade', {});
 }

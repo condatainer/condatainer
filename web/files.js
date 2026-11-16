@@ -6,7 +6,7 @@ if (showHiddenFiles) { const cb = gid('show-hidden-files'); if (cb) cb.checked =
 async function navigateFiles(path) {
   if (_navController) _navController.abort();
   _navController = new AbortController();
-  const url = path ? '/api/fs?path=' + encodeURIComponent(path) : '/api/fs';
+  const url = path ? 'api/fs?path=' + encodeURIComponent(path) : 'api/fs';
   // listing a big directory on a network filesystem can take a while —
   // show feedback instead of a frozen listing (only when it's actually slow)
   const slowTimer = setTimeout(() => {
@@ -223,6 +223,22 @@ function closeRowMenu() {
   if (_rowMenuEl) { _rowMenuEl.remove(); _rowMenuEl = null; }
 }
 
+// toggleUploadMenu opens the Upload dropdown under the caret button: File
+// or Folder. The Upload button itself picks files.
+function toggleUploadMenu(ev) {
+  ev.stopPropagation();
+  const reopening = _rowMenuEl && _rowMenuEl.dataset.path === 'upload';
+  closeRowMenu();
+  if (reopening) return;
+  const rect = ev.currentTarget.getBoundingClientRect();
+  const mi = (icon, label, input) =>
+    '<div class="row-menu-item" onclick="closeRowMenu();gid(\'' + input + '\').click()">' +
+      iconSvg(icon) + ' ' + label + '</div>';
+  _openMenuAt({ top: rect.bottom + 4, right: window.innerWidth - rect.right },
+    mi('draft', 'Upload files…', 'upload-file-input') +
+    mi('folder', 'Upload folder…', 'upload-dir-input'), 'upload');
+}
+
 // _menuHtml builds the dropdown items: the full per-item menu for a single
 // selection, bulk actions only for a multi-selection.
 function _menuHtml(sel) {
@@ -306,26 +322,69 @@ async function onRowContext(ev, i) {
 }
 
 /* ── Context-menu actions (operate on the selection) ── */
-// downloadEntry triggers a download for an entry. Directories are checked
-// against the server's zip size limits first (check=1), so a too-large
-// folder surfaces as an error pill — the <a download> click of the real
-// download gives no error feedback.
+// _checkDownload scans a download on the server (check=1) and resolves its
+// answer, or null when the scan failed (an error pill says why) or was
+// cancelled. A scan slower than a moment shows a "Scanning" pill whose
+// cancel button stops the scan. name titles the pill.
+async function _checkDownload(query, name) {
+  const ctl = new AbortController();
+  let pill = null;
+  const timer = setTimeout(() => {
+    pill = openBarProgress('Scanning ' + name, null, null, { onCancel: () => ctl.abort() });
+    pill.el.querySelector('.prog-pill-label').textContent = 'Scanning…';
+  }, 400);
+  try {
+    const r = await fetch('api/fs/download?' + query + '&check=1', { signal: ctl.signal });
+    if (!r.ok) { showProgressError('Download ' + name, await r.text()); return null; }
+    return await r.json();
+  } catch (err) {
+    if (err.name !== 'AbortError') showProgressError('Download ' + name, String(err));
+    return null;
+  } finally {
+    clearTimeout(timer);
+    if (pill) pill.el.remove();
+  }
+}
+
+// downloadEntry triggers a download for an entry. A directory is scanned
+// first because the <a download> click of the real download gives no
+// feedback:
+//   - An empty folder is not downloaded; a note says so.
+//   - A zip past the server's warning limits asks for confirmation.
 async function downloadEntry(e) {
   if (e.is_dir) {
-    try {
-      const r = await fetch('/api/fs/download?path=' + encodeURIComponent(e.path) + '&check=1');
-      if (!r.ok) { showProgressError('Download ' + e.name, await r.text()); return; }
-    } catch (err) {
-      showProgressError('Download ' + e.name, String(err));
+    const chk = await _checkDownload('path=' + encodeURIComponent(e.path), e.name);
+    if (!chk) return;
+    if (chk.empty) {
+      showProgressNote('Download ' + e.name, 'The folder is empty, so there is nothing to download.');
       return;
     }
+    if (!(await _confirmLargeDownload(chk.warn, '"' + e.name + '"'))) return;
   }
   downloadPath(e.path);
 }
 
+// _confirmLargeDownload asks before a download the server warned about
+// (warn reads "more than 5GB" or "more than 10000 files"). It resolves true
+// when there is no warning or the user agrees.
+async function _confirmLargeDownload(warn, what) {
+  if (!warn) return true;
+  return askConfirm(what + ' holds ' + warn + '. Download anyway?',
+    { title: 'Large download', okLabel: 'Download' });
+}
+
+// downloadEntries downloads several entries as one zip, after the same scan.
+async function downloadEntries(entries) {
+  const q = entries.map(e => 'path=' + encodeURIComponent(e.path)).join('&');
+  const chk = await _checkDownload(q, entries.length + ' items');
+  if (!chk || !(await _confirmLargeDownload(chk.warn, 'The selection'))) return;
+  downloadUrl('api/fs/download?' + q);
+}
+
 function ctxDownload() {
-  // Staggered so the browser registers each as its own download.
-  _selectedEntries().forEach((e, i) => setTimeout(() => downloadEntry(e), i * 300));
+  const sel = _selectedEntries();
+  if (sel.length === 1) downloadEntry(sel[0]);
+  else if (sel.length > 1) downloadEntries(sel);
 }
 
 function ctxRename() {
@@ -339,8 +398,7 @@ function ctxMoveTo() {
   const sel = _selectedEntries();
   if (!sel.length) return;
   openFilePickerForCallback(currentPath, 'Move ' + _selLabel(sel) + ' to…',
-    (destDir, newName) => sel.forEach(e =>
-      doMove(e.path, e.name, destDir, newName !== e.name ? newName : undefined)),
+    (destDir, newName) => moveEntries(sel, destDir, newName),
     sel.length === 1 ? { name: sel[0].name } : null);
 }
 
@@ -348,8 +406,7 @@ function ctxCopyTo() {
   const sel = _selectedEntries();
   if (!sel.length) return;
   openFilePickerForCallback(currentPath, 'Copy ' + _selLabel(sel) + ' to…',
-    (destDir, newName) => sel.forEach(e =>
-      doCopy(e.path, e.name, destDir, newName !== e.name ? newName : undefined)),
+    (destDir, newName) => copyEntries(sel, destDir, newName),
     sel.length === 1 ? { name: sel[0].name } : null);
 }
 
@@ -359,13 +416,27 @@ function ctxCopyTo() {
 // and survives multiple pastes.
 let _clipboard = null; // { mode: 'cut'|'copy', entries: [{path, name}] }
 
-function _renderCutMarks() {
+// _renderClipboard dims the cut rows and shows the status strip under the
+// listing ("3 items cut" / "3 items copied") while the clipboard holds
+// entries.
+function _renderClipboard() {
   const cutSet = _clipboard && _clipboard.mode === 'cut'
     ? new Set(_clipboard.entries.map(e => e.path)) : null;
   document.querySelectorAll('#file-tbody tr[data-idx]').forEach(tr => {
     const e = _visEntries[+tr.dataset.idx];
     tr.classList.toggle('cut', !!(cutSet && e && cutSet.has(e.path)));
   });
+  gid('clip-bar').hidden = !_clipboard;
+  if (_clipboard) {
+    const n = _clipboard.entries.length;
+    gid('clip-bar-text').textContent =
+      (n === 1 ? '1 item ' : n + ' items ') + (_clipboard.mode === 'cut' ? 'cut' : 'copied');
+  }
+}
+
+function clearClipboard() {
+  _clipboard = null;
+  _renderClipboard();
 }
 
 function ctxCut()  { _setClipboard('cut'); }
@@ -385,7 +456,7 @@ function _setClipboard(mode) {
       .then(() => { if (_clipboard) _clipboard.osText = text; })
       .catch(() => { /* keep internal-only behavior */ });
   }
-  _renderCutMarks();
+  _renderClipboard();
 }
 
 // _validateClipboard drops a stale internal clipboard before a menu shows
@@ -398,31 +469,39 @@ async function _validateClipboard() {
   if (!(navigator.clipboard && navigator.clipboard.readText)) return;
   try {
     const txt = await navigator.clipboard.readText();
-    if (txt !== _clipboard.osText) { _clipboard = null; _renderCutMarks(); }
+    if (txt !== _clipboard.osText) clearClipboard();
   } catch { /* permission denied — keep internal-only behavior */ }
 }
 
 // ctxPaste moves (cut) or copies (copy) the clipboard entries into the
-// current directory. Cut entries already in this directory are skipped;
-// a cut clipboard is one-shot, a copy clipboard can be pasted again.
-function ctxPaste() {
-  if (!_clipboard) return;
-  const { mode, entries } = _clipboard;
-  for (const e of entries) {
-    if (mode === 'cut') {
-      if (_parentDir(e.path) === currentPath) continue; // already here
-      doMove(e.path, e.name, currentPath);
-    } else {
-      doCopy(e.path, e.name, currentPath);
-    }
+// current directory.
+//   - Cut entries already in this directory are skipped and dropped.
+//   - A cut clipboard keeps only the entries that did not move, so a failed
+//     or cancelled move can be pasted again.
+//   - A copy clipboard can be pasted again.
+let _pasting = false;
+async function ctxPaste() {
+  const clip = _clipboard;
+  if (!clip) return;
+  if (clip.mode === 'copy') { copyEntries(clip.entries, currentPath); return; }
+  if (_pasting) return;
+  const dest = _normPath(currentPath);
+  const move = clip.entries.filter(e => _parentDir(e.path) !== dest);
+  _pasting = true;
+  try {
+    const { succeeded } = await moveEntries(move, currentPath);
+    if (_clipboard !== clip) return; // replaced while moving
+    clip.entries = move.filter(e => !succeeded.includes(e));
+    if (clip.entries.length) _renderClipboard(); else clearClipboard();
+  } finally {
+    _pasting = false;
   }
-  if (mode === 'cut') { _clipboard = null; _renderCutMarks(); }
 }
 
 function ctxDelete() {
   const sel = _selectedEntries();
   if (!sel.length) return;
-  deletePaths(sel.map(e => e.path), sel.length === 1 ? sel[0].name : sel.length + ' items');
+  deleteEntries(sel);
 }
 
 document.addEventListener('click', e => {
@@ -432,7 +511,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeRowMenu();
     clearFileSelection();
-    if (_clipboard) { _clipboard = null; _renderCutMarks(); }
+    clearClipboard();
   }
 });
 gid('file-list-wrap').addEventListener('scroll', closeRowMenu);
@@ -509,8 +588,7 @@ document.addEventListener('paste', e => {
   if (_clipboard.osText != null) {
     const txt = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
     if (txt !== _clipboard.osText) {
-      _clipboard = null;
-      _renderCutMarks();
+      clearClipboard();
       return;
     }
   }
@@ -545,6 +623,9 @@ gid('file-list-wrap').addEventListener('mousedown', e => {
   });
   document.addEventListener('mousemove', _mqMove);
   document.addEventListener('mouseup', _mqUp);
+  // preventDefault below also stops the press from moving focus, so release it
+  // by hand: the path box and the filter field lose focus on a click in the list.
+  if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
   e.preventDefault(); // no native text/element drag while marqueeing (the click still fires)
 });
 
@@ -654,7 +735,7 @@ function renderFileListing(entries, truncated) {
       '<td class="file-actions-cell">' + dlBtn + moreBtn + '</td>' +
       '</tr>';
   }).join('');
-  _renderCutMarks();
+  _renderClipboard();
 }
 
 // viewLargeFileWarnBytes is the size above which viewPath asks for
@@ -670,62 +751,116 @@ async function viewPath(path, size) {
       { title: 'Open large file?', okLabel: 'Open' });
     if (!ok) return;
   }
-  window.open('/api/fs/download?path=' + encodeURIComponent(path) + '&inline=1', '_blank');
+  window.open('api/fs/download?path=' + encodeURIComponent(path) + '&inline=1', '_blank');
 }
 
 // downloadPath forces a save-as download via a temporary <a download>
-// click, so several downloads kicked off together don't cancel each other.
+// click.
 function downloadPath(path) {
+  downloadUrl('api/fs/download?path=' + encodeURIComponent(path));
+}
+
+function downloadUrl(url) {
   const a = document.createElement('a');
-  a.href = '/api/fs/download?path=' + encodeURIComponent(path);
+  a.href = url;
   a.download = '';
   document.body.appendChild(a);
   a.click();
   a.remove();
 }
 
-/* ── Delete ──────────────────────────────── */
-let _deleteConfirmPaths = null;
+/* ── Grouped operations ──────────────────── */
+// _runFileGroup runs one operation over several entries as a single group:
+// one progress pill, one cancel, one refresh at the end.
+//   - Entries run one after another. A failure is recorded and the rest
+//     still run.
+//   - Cancel stops the running entry and skips the rest.
+//   - It resolves {succeeded}, the entries that completed.
+//   - A failed group lists every failure in an expandable area of the pill.
+//   - op.verb titles the pill. op.start(entry) resolves {id} for a
+//     background task or {} when it finished at once. op.after(entry)
+//     runs once the entry has succeeded.
+async function _runFileGroup(op, entries) {
+  const n = entries.length;
+  const succeeded = [];
+  if (!n) return { succeeded };
+  const one = n === 1;
+  let finished = 0, cancelled = false, taskId = null;
+  const pill = openBarProgress(op.verb + ' ' + (one ? entries[0].name : n + ' items'), null, null, {
+    formatLabel: (cur, tot) => one ? cur + ' / ' + tot + ' entries' : finished + ' / ' + n + ' items',
+    onCancel: () => { cancelled = true; if (taskId) cancelTask(taskId); },
+  });
+  // A group's bar counts entries x1000 so a running entry fills its share.
+  const onProgress = (cur, tot) => one ? pill.update(cur, tot)
+    : pill.update(finished * 1000 + (tot > 0 ? Math.round(1000 * cur / tot) : 0), n * 1000);
 
-// deletePaths asks for confirmation once (label is the single entry's name
-// or "N items"), then fires doDelete per path.
-function deletePaths(paths, label) {
-  _deleteConfirmPaths = paths;
-  gid('delete-confirm-name').textContent = label;
+  const failures = [];
+  for (const e of entries) {
+    if (cancelled) break;
+    try {
+      const r = await op.start(e);
+      if (r.id) {
+        taskId = r.id;
+        if (cancelled) cancelTask(taskId);
+        const msg = await followTask(taskId, onProgress);
+        taskId = null;
+        if (msg.cancelled) { cancelled = true; break; }
+        if (!msg.ok) throw new Error(msg.err || 'Failed');
+      }
+      if (op.after) await op.after(e);
+      succeeded.push(e);
+    } catch (err) {
+      failures.push(e.name + ': ' + ((err && err.message) || err));
+    }
+    finished++;
+    if (!one) pill.update(finished * 1000, n * 1000);
+  }
+
+  if (cancelled) pill.done(false, null, true);
+  else if (failures.length) {
+    pill.done(false, one ? failures[0] : failures.length + ' of ' + n + ' failed');
+    if (!one) pillDetail(pill.el, failures.join('\n'));
+  } else pill.done(true);
+  navigateFiles(currentPath); // entries may have changed even when it failed or was cancelled
+  return { succeeded };
+}
+
+// _fsRequest sends a request to the file API and resolves its JSON body.
+// A non-2xx response rejects with the server's message.
+async function _fsRequest(url, method, body) {
+  const r = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error((await r.text()).trim());
+  return r.json();
+}
+
+/* ── Delete ──────────────────────────────── */
+let _deleteConfirmEntries = null;
+
+// deleteEntries asks for confirmation once, then deletes the entries as
+// one group.
+function deleteEntries(entries) {
+  _deleteConfirmEntries = entries;
+  gid('delete-confirm-name').textContent = entries.length === 1 ? entries[0].name : entries.length + ' items';
   gid('delete-confirm-modal').classList.add('open');
 }
 
 function confirmDelete(mode) {
   gid('delete-confirm-modal').classList.remove('open');
-  const paths = _deleteConfirmPaths;
-  _deleteConfirmPaths = null;
-  if (mode !== 'yes' || !paths) return;
-  paths.forEach(p => doDelete(p));
+  const entries = _deleteConfirmEntries;
+  _deleteConfirmEntries = null;
+  if (mode !== 'yes' || !entries) return;
+  _runFileGroup({
+    verb: 'Deleting',
+    start: e => _fsRequest('api/fs?path=' + encodeURIComponent(e.path), 'DELETE'),
+    after: e => _dropDanglingBookmark(e.path),
+  }, entries);
 }
 // Clicking the backdrop cancels, matching the "cancel" button.
 onBackdropClick(gid('delete-confirm-modal'), () => confirmDelete('cancel'));
-
-// doDelete kicks off DELETE /api/fs as a background task and watches it
-// via a bar progress pill.
-async function doDelete(path) {
-  const name = path.replace(/\/+$/, '').split('/').pop() || path;
-  try {
-    const r = await fetch('/api/fs?path=' + encodeURIComponent(path), { method: 'DELETE' });
-    if (!r.ok) { showProgressError('Delete ' + name, await r.text()); return; }
-    const { id } = await r.json();
-    openBarProgress('Deleting ' + name, id, async msg => {
-      if (!msg.ok) {
-        // the pill itself shows the error / cancelled state
-        navigateFiles(currentPath); // some entries may have been removed before it stopped
-        return;
-      }
-      await _dropDanglingBookmark(path);
-      navigateFiles(currentPath);
-    }, { formatLabel: (cur, tot) => cur + ' / ' + tot + ' entries' });
-  } catch (e) {
-    showProgressError('Delete ' + name, String(e));
-  }
-}
 
 // _dropDanglingBookmark removes bookmarks at path or inside its subtree —
 // deleting/moving a folder strands those too. Best-effort: failures are
@@ -735,7 +870,7 @@ async function _dropDanglingBookmark(path) {
   const stale = fileBookmarks.filter(b => b.path === path || b.path.startsWith(prefix));
   for (const b of stale) {
     try {
-      fileBookmarks = (await (await fetch('/api/fs/bookmarks?path=' + encodeURIComponent(b.path), { method: 'DELETE' })).json()) || [];
+      fileBookmarks = (await (await fetch('api/fs/bookmarks?path=' + encodeURIComponent(b.path), { method: 'DELETE' })).json()) || [];
     } catch { /* best-effort */ }
   }
 }
@@ -774,7 +909,7 @@ async function doRename(path) {
   const newName = gid('rename-input').value.trim();
   if (!newName || newName === _renameOrig) return;
   try {
-    const r = await fetch('/api/fs?path=' + encodeURIComponent(path), {
+    const r = await fetch('api/fs?path=' + encodeURIComponent(path), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ new_name: newName })
@@ -789,63 +924,32 @@ async function doRename(path) {
 }
 
 /* ── Move ────────────────────────────────── */
-// doMove PATCHes /api/fs with dest_dir (and new_name, when given, to move
-// under a different name). A same-filesystem move responds synchronously
-// with {"path": newPath}; a cross-filesystem move runs as a background
-// task, responds with {"id": taskID}, and is watched via a bar progress
-// pill.
-async function doMove(path, name, destDir, newName) {
-  let data;
-  try {
-    const body = { dest_dir: destDir };
-    if (newName) body.new_name = newName;
-    const r = await fetch('/api/fs?path=' + encodeURIComponent(path), {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) { showProgressError('Move ' + name, await r.text()); return; }
-    data = await r.json();
-  } catch (e) {
-    showProgressError('Move ' + name, String(e));
-    return;
-  }
-
-  if (data.id) {
-    openBarProgress('Moving ' + name, data.id, async msg => {
-      if (!msg.ok) return; // the pill itself shows the error / cancelled state
-      await _dropDanglingBookmark(path);
-      navigateFiles(currentPath);
-    }, { formatLabel: (cur, tot) => cur + ' / ' + tot + ' entries' });
-    return;
-  }
-
-  await _dropDanglingBookmark(path);
-  navigateFiles(currentPath);
+// moveEntries PATCHes /api/fs per entry with dest_dir, as one group. A
+// single entry moves under newName when it differs from its name. A
+// same-filesystem move finishes at once; a cross-filesystem move answers
+// with a background task.
+function moveEntries(entries, destDir, newName) {
+  return _runFileGroup({
+    verb: 'Moving',
+    start: e => _fsRequest('api/fs?path=' + encodeURIComponent(e.path), 'PATCH', _destBody(e, destDir, newName)),
+    after: e => _dropDanglingBookmark(e.path),
+  }, entries);
 }
 
 /* ── Copy ────────────────────────────────── */
-// doCopy starts a background copy task (POST /api/fs/copy, with new_name
-// when given to copy under a different name) and watches it via a bar
-// progress pill.
-async function doCopy(path, name, destDir, newName) {
-  try {
-    const body = { dest_dir: destDir };
-    if (newName) body.new_name = newName;
-    const r = await fetch('/api/fs/copy?path=' + encodeURIComponent(path), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) { showProgressError('Copy ' + name, await r.text()); return; }
-    const { id } = await r.json();
-    openBarProgress('Copying ' + name, id, msg => {
-      if (!msg.ok) return; // the pill itself shows the error / cancelled state
-      navigateFiles(currentPath);
-    }, { formatLabel: (cur, tot) => cur + ' / ' + tot + ' entries' });
-  } catch (e) {
-    showProgressError('Copy ' + name, String(e));
-  }
+// copyEntries POSTs /api/fs/copy per entry as one group. Each copy is a
+// background task. newName applies as in moveEntries.
+function copyEntries(entries, destDir, newName) {
+  return _runFileGroup({
+    verb: 'Copying',
+    start: e => _fsRequest('api/fs/copy?path=' + encodeURIComponent(e.path), 'POST', _destBody(e, destDir, newName)),
+  }, entries);
+}
+
+function _destBody(e, destDir, newName) {
+  const body = { dest_dir: destDir };
+  if (newName && newName !== e.name) body.new_name = newName;
+  return body;
 }
 
 function renderFileTree() {
@@ -859,6 +963,7 @@ function renderFileTree() {
   if (fileBookmarks.length) {
     html += '<div class="tree-sep"></div>' + fileBookmarks.map(b =>
       '<div class="tree-item tree-item-bm ' + (b.path === currentPath ? 'active' : '') + '"' +
+        ' draggable="true" data-path="' + escHtml(b.path) + '"' +
         ' onclick="navigateFiles(\'' + escHtml(b.path) + '\')" title="' + escHtml(b.path) + '">' +
         '<span class="tree-item-label">' + escHtml(b.label || b.path) + '</span>' +
         '<button class="btn btn-ghost btn-sm tree-item-remove" onclick="event.stopPropagation();toggleBookmark(\'' + escHtml(b.path) + '\')" title="Remove bookmark">' + iconSvg('close') + '</button>' +
@@ -872,11 +977,89 @@ function renderFileTree() {
 let fileBookmarks   = [];
 let _bookmarksLoaded = false;
 
+/* ── Reorder bookmarks by dragging ───────── */
+// A bookmark row drags within the tree; a line shows whether it lands
+// before or after the row under the pointer. The new order is applied at
+// once and saved with PUT api/fs/bookmarks.
+let _bmDragPath = null;
+const _bmType = 'application/x-cnt-bookmark';
+
+function _bmClearMarks() {
+  document.querySelectorAll('#file-tree .drop-before,#file-tree .drop-after,#file-tree .dragging')
+    .forEach(el => el.classList.remove('drop-before', 'drop-after', 'dragging'));
+}
+
+// _bmDropTarget returns the bookmark row under the pointer and whether the
+// drop lands after it (pointer in its lower half).
+function _bmDropTarget(e) {
+  const row = e.target.closest('.tree-item-bm');
+  if (!row || row.dataset.path === _bmDragPath) return null;
+  const r = row.getBoundingClientRect();
+  return { row, after: e.clientY > r.top + r.height / 2 };
+}
+
+gid('file-tree').addEventListener('dragstart', e => {
+  const row = e.target.closest('.tree-item-bm');
+  if (!row) return;
+  _bmDragPath = row.dataset.path;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData(_bmType, _bmDragPath);
+  row.classList.add('dragging');
+});
+
+gid('file-tree').addEventListener('dragover', e => {
+  if (!_bmDragPath) return;
+  const t = _bmDropTarget(e);
+  document.querySelectorAll('#file-tree .drop-before,#file-tree .drop-after')
+    .forEach(el => el.classList.remove('drop-before', 'drop-after'));
+  if (!t) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  t.row.classList.add(t.after ? 'drop-after' : 'drop-before');
+});
+
+gid('file-tree').addEventListener('drop', async e => {
+  if (!_bmDragPath) return;
+  const t = _bmDropTarget(e);
+  const moved = fileBookmarks.find(b => b.path === _bmDragPath);
+  _bmClearMarks();
+  _bmDragPath = null;
+  if (!t || !moved) return;
+  e.preventDefault();
+  const rest = fileBookmarks.filter(b => b !== moved);
+  let at = rest.findIndex(b => b.path === t.row.dataset.path);
+  if (t.after) at++;
+  const next = [...rest.slice(0, at), moved, ...rest.slice(at)];
+  if (next.every((b, i) => b === fileBookmarks[i])) return;
+  fileBookmarks = next;
+  renderFileTree();
+  try {
+    const r = await fetch('api/fs/bookmarks', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: next.map(b => b.path) })
+    });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    fileBookmarks = (await r.json()) || [];
+  } catch (err) {
+    showProgressError('Reorder bookmarks', String(err.message || err));
+    _bookmarksLoaded = false;
+    await loadFileBookmarks(); // back to the saved order
+    return;
+  }
+  renderFileTree();
+});
+
+gid('file-tree').addEventListener('dragend', () => {
+  _bmClearMarks();
+  _bmDragPath = null;
+});
+
 async function loadFileBookmarks() {
   if (_bookmarksLoaded) return;
   _bookmarksLoaded = true;
   try {
-    fileBookmarks = (await (await fetch('/api/fs/bookmarks')).json()) || [];
+    fileBookmarks = (await (await fetch('api/fs/bookmarks')).json()) || [];
   } catch { fileBookmarks = []; }
   renderFileTree();
   updateBookmarkStarBtn();
@@ -887,8 +1070,8 @@ async function toggleBookmark(path) {
   const existing = fileBookmarks.some(b => b.path === path);
   try {
     const r = existing
-      ? await fetch('/api/fs/bookmarks?path=' + encodeURIComponent(path), { method: 'DELETE' })
-      : await fetch('/api/fs/bookmarks', {
+      ? await fetch('api/fs/bookmarks?path=' + encodeURIComponent(path), { method: 'DELETE' })
+      : await fetch('api/fs/bookmarks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path })
@@ -1053,7 +1236,7 @@ _dropZone.addEventListener('drop', async e => {
 
 async function checkUploadConflicts() {
   try {
-    const r = await fetch('/api/fs/upload/check?dest=' + encodeURIComponent(currentPath), {
+    const r = await fetch('api/fs/upload/check?dest=' + encodeURIComponent(currentPath), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paths: _pendingUpload.map(p => p.relPath) })
@@ -1133,7 +1316,7 @@ function doUpload(skipSet) {
   });
 
   xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/fs/upload?dest=' + encodeURIComponent(currentPath) + '&overwrite=true');
+  xhr.open('POST', 'api/fs/upload?dest=' + encodeURIComponent(currentPath) + '&overwrite=true');
   xhr.upload.onprogress = e => {
     if (e.lengthComputable) bar.update(e.loaded, e.total);
   };
@@ -1152,9 +1335,14 @@ function doUpload(skipSet) {
 }
 
 /* ── File Picker Modal ───────────────────── */
+// _normPath strips trailing slashes, keeping "/" for the root.
+function _normPath(path) {
+  return (path || '').replace(/\/+$/, '') || '/';
+}
+
 function _parentDir(path) {
-  const trimmed = (path || '').replace(/\/+$/, '');
-  if (!trimmed || trimmed === '/') return '/';
+  const trimmed = _normPath(path);
+  if (trimmed === '/') return '/';
   const parent = trimmed.replace(/\/[^/]+$/, '');
   return parent || '/';
 }
@@ -1240,7 +1428,7 @@ async function fpNavigate(path) {
   if (_fpController) _fpController.abort();
   _fpController = new AbortController();
   fpPath = path;
-  const url = path ? '/api/fs?path=' + encodeURIComponent(path) : '/api/fs';
+  const url = path ? 'api/fs?path=' + encodeURIComponent(path) : 'api/fs';
   try {
     const r = await fetch(url, { signal: _fpController.signal });
     if (!r.ok) {

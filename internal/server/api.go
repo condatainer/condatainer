@@ -65,8 +65,7 @@ func isActiveRunStatus(status string) bool {
 	return status == "pending" || status == "starting" || status == "running"
 }
 
-// handleStatus serves GET /api/status — server health and running count.
-// Uses the watcher's in-memory counter to avoid re-reading history.jsonl on every tick.
+// handleStatus serves GET /api/status — server health.
 func (s *srv) handleStatus(w http.ResponseWriter, r *http.Request) {
 	home, _ := utils.RealHome()
 	scratch := os.Getenv("SCRATCH")
@@ -79,7 +78,6 @@ func (s *srv) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"port":         s.port,
 		"hostname":     hostname,
 		"pid":          os.Getpid(),
-		"running":      s.watcher.RunningCount(),
 		"uptime":       fmtUptime(s.startTime),
 		"version":      config.Global.Version,
 		"home":         home,

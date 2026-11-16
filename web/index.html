@@ -4,21 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CondaTainer</title>
-<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" type="image/svg+xml" href="static/favicon.svg">
+<link rel="stylesheet" href="static/style.css">
 </head>
 <body>
 <!-- ── Sidebar ───────────────────────────── -->
 <div id="sidebar-wrap">
 <aside id="sidebar">
   <div class="sb-logo">
-    <img class="sb-logo-icon" src="/static/favicon.svg" alt="CondaTainer">
+    <img class="sb-logo-icon" src="static/favicon.svg" alt="CondaTainer">
     <span class="sb-logo-text"><span class="sb-logo-conda">onda</span><span class="sb-logo-tainer">Tainer</span></span>
     <button id="collapse-tab" title="Toggle sidebar"></button>
   </div>
   <ul class="nav">
     <li class="nav-item active" data-section="jobs">
-      <svg class="icon nav-icon"><use href="#i-play_circle"></use></svg><span class="nav-label">Jobs</span>
+      <svg class="icon nav-icon"><use href="#i-play_circle"></use></svg><span class="nav-label">Jobs</span><span class="nav-count" id="jobs-count" hidden></span>
     </li>
     <li class="nav-item" data-section="start">
       <svg class="icon nav-icon"><use href="#i-add_2"></use></svg><span class="nav-label">Start</span>
@@ -58,8 +58,8 @@
     <section class="section active" id="sec-jobs">
       <div class="s-header">
         <div>
-          <div class="s-title">Running Jobs</div>
-          <div class="s-sub">Active helpers on compute nodes</div>
+          <div class="s-title">Active Jobs</div>
+          <div class="s-sub">Queued and running helpers on compute nodes</div>
         </div>
         <button class="btn btn-sm" onclick="loadJobs()"><svg class="icon"><use href="#i-refresh"></use></svg>Refresh</button>
       </div>
@@ -276,11 +276,14 @@
               <input class="path-box-input" id="path-input"
                      placeholder="Type a path and press Enter" spellcheck="false" hidden>
             </div>
+            <button class="btn btn-sm btn-ghost btn-icon" id="refresh-files-btn" onclick="navigateFiles(currentPath)" title="Refresh"><svg class="icon"><use href="#i-refresh"></use></svg></button>
             <button class="btn btn-sm btn-ghost btn-icon" id="bookmark-star-btn" onclick="toggleBookmark(currentPath)" title="Bookmark this folder"></button>
             <input type="file" id="upload-file-input" multiple hidden onchange="handleUploadInputChange(this,false)">
             <input type="file" id="upload-dir-input" webkitdirectory multiple hidden onchange="handleUploadInputChange(this,true)">
-            <button class="btn btn-sm" id="upload-file-btn" onclick="gid('upload-file-input').click()"><svg class="icon"><use href="#i-upload"></use></svg>file</button>
-            <button class="btn btn-sm" id="upload-dir-btn" onclick="gid('upload-dir-input').click()"><svg class="icon"><use href="#i-upload"></use></svg>folder</button>
+            <span class="btn-split">
+              <button class="btn btn-sm" id="upload-file-btn" onclick="gid('upload-file-input').click()" title="Upload files"><svg class="icon"><use href="#i-upload"></use></svg>Upload</button>
+              <button class="btn btn-sm btn-icon" id="upload-menu-btn" onclick="toggleUploadMenu(event)" title="Upload a file or folder"><svg class="icon"><use href="#i-expand_more"></use></svg></button>
+            </span>
           </div>
           <div class="file-list-wrap" id="file-list-wrap">
             <table class="data-table">
@@ -292,6 +295,10 @@
               </tr></thead>
               <tbody id="file-tbody"></tbody>
             </table>
+          </div>
+          <div class="clip-bar" id="clip-bar" hidden>
+            <span id="clip-bar-text"></span>
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="clearClipboard()" title="Clear (Esc)"><svg class="icon"><use href="#i-close"></use></svg></button>
           </div>
         </div>
       </div>
@@ -528,7 +535,7 @@
       <div class="modal-body" id="hm-installed-list"></div>
     </div>
     <div class="modal-ftr oc-ftr">
-      <label class="hm-layer" id="hm-layer-wrap" hidden>Add to <select id="hm-layer"></select></label>
+      <label class="hm-layer" id="hm-layer-wrap" hidden>Add to <select id="hm-layer" onchange="hmRender()"></select></label>
       <div class="btn-row">
         <button class="btn btn-sm" id="hm-upgrade-all" onclick="hmUpgradeAll()" hidden>Upgrade all</button>
         <button class="btn btn-sm" onclick="closeModal('hm-modal')">Close</button>
@@ -624,20 +631,20 @@
 </div>
 
 <!-- ── Scripts (order matters) ───────────── -->
-<script src="/static/icons.js"></script>
-<script src="/static/app.js"></script>
-<script src="/static/jobs.js"></script>
-<script src="/static/helpers.js"></script>
-<script src="/static/helper_manager.js"></script>
-<script src="/static/overlays.js"></script>
-<script src="/static/history.js"></script>
-<script src="/static/files.js"></script>
+<script src="static/icons.js"></script>
+<script src="static/app.js"></script>
+<script src="static/jobstore.js"></script>
+<script src="static/jobs.js"></script>
+<script src="static/helpers.js"></script>
+<script src="static/helper_manager.js"></script>
+<script src="static/overlays.js"></script>
+<script src="static/history.js"></script>
+<script src="static/files.js"></script>
 <script>
   /* init — runs after all modules are loaded */
   pollStatus();
   setInterval(pollStatus, 10000);
-  loadJobs();
-  setInterval(loadJobs, 5000);
+  startJobStore();
   loadOverlays();
 </script>
 

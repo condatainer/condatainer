@@ -41,7 +41,8 @@ type managerResp struct {
 	OfferedError string         `json:"offered_error,omitempty"`
 	Notes        string         `json:"notes,omitempty"`
 	Installed    []managerDir   `json:"installed"`
-	Layers       []string       `json:"layers"` // layers a helper can be added to
+	Layers       []string       `json:"layers"`                  // layers a helper can be added to
+	DefaultLayer string         `json:"default_layer,omitempty"` // the layer an add without a layer goes to
 }
 
 // handleHelperManager serves GET /api/helpers/manager: what the sources offer and what is installed, by directory.
@@ -101,6 +102,9 @@ func (s *srv) handleHelperManager(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, layer := range config.WritableHelperLayers() {
 		resp.Layers = append(resp.Layers, string(layer))
+	}
+	if dir := config.PeekWritableHelperScriptsDir(); dir != "" {
+		resp.DefaultLayer = string(config.ClassifyDataDir(dir))
 	}
 	writeJSON(w, resp)
 }

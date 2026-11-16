@@ -52,6 +52,7 @@ func invalidateHistoryCache() {
 	historyCacheMu.Lock()
 	historyCacheRuns = nil
 	historyCacheMu.Unlock()
+	notifyJobsChanged()
 }
 
 // handleHelpersList serves GET /api/helpers?q=&limit=&status=
@@ -108,8 +109,9 @@ func (s *srv) handleHelperLogs(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	const maxBackfill = 200
 	msgs, _, _ := helper.ReadMessages(id, 0)
@@ -234,9 +236,9 @@ func (s *srv) handleHelperStop(w http.ResponseWriter, r *http.Request, id string
 	} else if err != nil {
 		log.Warn("server: stop failed", "id", id, "jobID", run.JobID, "err", err)
 	}
-	// closeDone cleans up the proxy, updates history, decrements runningCount, and
-	// moves the ID to the done-map so the watcher skips it on future ticks.
-	// This ensures the count is correct immediately even if the trap never fires
+	// closeDone cleans up the proxy, updates history, and moves the ID to the
+	// done-map so the watcher skips it on future ticks.
+	// This ensures the job counts are correct immediately even if the trap never fires
 	// (e.g. SIGKILL, node crash, NFS issue).
 	s.watcher.closeDone(id, 130, time.Now()) // the exit code the wrapper records for a stop
 	w.WriteHeader(http.StatusOK)

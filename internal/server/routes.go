@@ -6,9 +6,19 @@ import (
 	"github.com/condatainer/condatainer/web"
 )
 
+// noCache makes a browser refetch the dashboard files on every load. They are
+// embedded in the binary and carry no version, so a cached copy would outlive
+// an upgrade.
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func registerRoutes(mux *http.ServeMux, s *srv) {
 	// Static assets
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(web.Files))))
+	mux.Handle("/static/", noCache(http.StripPrefix("/static/", http.FileServer(http.FS(web.Files)))))
 
 	// Dashboard root
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -22,6 +32,7 @@ func registerRoutes(mux *http.ServeMux, s *srv) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
 		w.Write(data) //nolint:errcheck
 	})
 
@@ -30,6 +41,7 @@ func registerRoutes(mux *http.ServeMux, s *srv) {
 	mux.HandleFunc("/api/env/check", s.handleEnvCheck)
 	mux.HandleFunc("/api/project", s.handleProject)
 	mux.HandleFunc("/api/project/pins", s.handleProjectPins)
+	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/helpers/installed", s.handleHelpersInstalled)
 	mux.HandleFunc("/api/helpers/manager", s.handleHelperManager)
 	mux.HandleFunc("/api/helpers/add", s.handleHelperAdd)

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,10 +18,11 @@ type SSEBroker struct {
 	clients  map[chan []byte]struct{}
 	finished bool
 	finalMsg []byte
+	doneCh   chan struct{} // closed when the final message is published
 }
 
 func newSSEBroker() *SSEBroker {
-	return &SSEBroker{clients: make(map[chan []byte]struct{})}
+	return &SSEBroker{clients: make(map[chan []byte]struct{}), doneCh: make(chan struct{})}
 }
 
 // subscribe registers ch and, atomically with that registration, reports
@@ -55,6 +57,9 @@ func (b *SSEBroker) publish(data []byte) {
 func (b *SSEBroker) publishFinal(data []byte) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if !b.finished {
+		close(b.doneCh)
+	}
 	b.finished = true
 	b.finalMsg = data
 	for ch := range b.clients {
@@ -65,9 +70,11 @@ func (b *SSEBroker) publishFinal(data []byte) {
 	}
 }
 
-// ServeSSE writes SSE events to the client until r.Context() is done, or
-// immediately writes the cached final event and returns if the task had
-// already finished before this client connected.
+// ServeSSE writes SSE events to the client until r.Context() is done or the
+// task's final event has been sent, so the response ends there and a proxy
+// that waits for the end of a response passes the result on. It writes the
+// cached final event and returns at once if the task had already finished
+// before this client connected.
 func (b *SSEBroker) ServeSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -75,7 +82,7 @@ func (b *SSEBroker) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
@@ -88,16 +95,45 @@ func (b *SSEBroker) ServeSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	send := func(data []byte) {
+		fmt.Fprintf(w, "data: %s\n\n", data) //nolint:errcheck
+		flusher.Flush()
+	}
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case data := <-ch:
-			fmt.Fprintf(w, "data: %s\n\n", data) //nolint:errcheck
-			flusher.Flush()
+			send(data)
+			if bytes.Contains(data, doneEventMarker) {
+				return
+			}
+		case <-b.doneCh:
+			// A slow client's full channel drops what is published to it,
+			// the final event included. Send what is queued, then the final.
+			for {
+				select {
+				case data := <-ch:
+					send(data)
+					if bytes.Contains(data, doneEventMarker) {
+						return
+					}
+					continue
+				default:
+				}
+				break
+			}
+			b.mu.Lock()
+			final := b.finalMsg
+			b.mu.Unlock()
+			send(final)
+			return
 		}
 	}
 }
+
+// doneEventMarker is in the terminal event broadcastDone and broadcastCancelled send.
+var doneEventMarker = []byte(`"t":"done"`)
 
 // brokerRegistry holds one SSEBroker per helper ID.
 type brokerRegistry struct {

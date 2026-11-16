@@ -77,7 +77,7 @@ func init() {
 			return nil, cobra.ShellCompDirectiveDefault
 		}
 		// Before --, complete overlays
-		return overlaySuggestions(true, true, toComplete)
+		return overlaySuggestions(true, toComplete)
 	}
 }
 

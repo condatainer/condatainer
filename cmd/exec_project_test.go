@@ -274,3 +274,46 @@ func TestEOwnFlagsAreNotPassedToApptainer(t *testing.T) {
 		t.Errorf("apptainer flags = %v, want only %v", apptainerFlags, want)
 	}
 }
+
+// A project's pinned names are what completion offers from its lock: the
+// plain name/version keys, not the root, a path or a constraint.
+func TestCompletionProjectReadsThePinnedNames(t *testing.T) {
+	settingstest.Override(t, "default_distro", "ubuntu24")
+	root := newProject(t)
+	l := lock.New()
+	l.Pins["fastp/1.1.0"] = pinOf(vendorArtifact(t, root, "fastp/1.1.0", "echo fastp\n"))
+	l.Pins["ubuntu24/r/4.6.1"] = pinOf(vendorArtifact(t, root, "ubuntu24/r/4.6.1", "echo r\n"))
+	l.Pins["samtools/1.24>=1.20"] = pinOf(vendorArtifact(t, root, "samtools/1.24", "echo samtools\n"))
+	l.Pins["star"] = pinOf(vendorArtifact(t, root, "star/2.7.11b", "echo star\n"))
+	l.Pins[lock.BaseKey] = pinOf(vendorArtifact(t, root, "rocky9/base", "echo base\n"))
+	l.Pins[lock.PathPrefix+"overlays/tool.sqf"] = pinOf(vendorArtifact(t, root, "tool/1", "echo tool\n"))
+	if err := lock.Publish(root, l); err != nil {
+		t.Fatal(err)
+	}
+
+	distro, pinned := completionProject()
+	slices.Sort(pinned)
+	if want := []string{"fastp/1.1.0", "ubuntu24/r/4.6.1"}; !slices.Equal(pinned, want) {
+		t.Errorf("pinned = %v, want %v", pinned, want)
+	}
+	if distro != "rocky9" {
+		t.Errorf("distro = %q, want the project's rocky9", distro)
+	}
+
+	noProjectRequested = true
+	t.Cleanup(func() { noProjectRequested = false })
+	if _, pinned := completionProject(); len(pinned) != 0 {
+		t.Errorf("--no-project still offered %v", pinned)
+	}
+}
+
+// Outside a project nothing is pinned, and the distro is the configured one.
+func TestCompletionProjectOutsideAProject(t *testing.T) {
+	settingstest.Override(t, "default_distro", "ubuntu24")
+	t.Chdir(t.TempDir())
+
+	distro, pinned := completionProject()
+	if distro != "ubuntu24" || len(pinned) != 0 {
+		t.Errorf("completionProject = %q, %v; want ubuntu24 and no pins", distro, pinned)
+	}
+}

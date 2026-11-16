@@ -13,7 +13,7 @@ OUT="$(dirname "$0")/icons.js"
 # Outline (fill=0) icons — fetched from materialsymbolsoutlined
 ICONS=(
   # navigation
-  chevron_left chevron_right close expand_circle_down expand_circle_up
+  chevron_left chevron_right close expand_circle_down expand_circle_up expand_more
   # actions
   add_2 content_copy content_cut content_paste delete download edit more_vert upload link_2 play_arrow play_circle refresh replay star
   # status / feedback

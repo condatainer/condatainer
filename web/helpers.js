@@ -37,15 +37,33 @@ function _createPill(title, kind, onCancel) {
     if (onCancel) { closeBtn.disabled = true; onCancel(); }
   };
 
-  if (kind === 'log') {
-    el.classList.add('expanded'); // show the log by default while actively running
-    el.querySelector('.prog-pill-hdr').addEventListener('click', e => {
-      if (e.target.closest('.prog-pill-close')) return;
-      const expanded = el.classList.toggle('expanded');
-      el.querySelector('.prog-pill-chevron').innerHTML = iconSvg(expanded ? 'expand_circle_down' : 'expand_circle_up');
-    });
-  }
+  if (kind === 'log') _makeExpandable(el); // shows the log by default while actively running
   return el;
+}
+
+// _makeExpandable lets a click on the pill header toggle its .prog-pill-log.
+// The pill starts expanded.
+function _makeExpandable(el) {
+  el.classList.add('expandable', 'expanded');
+  el.querySelector('.prog-pill-hdr').addEventListener('click', e => {
+    if (e.target.closest('.prog-pill-close')) return;
+    const expanded = el.classList.toggle('expanded');
+    el.querySelector('.prog-pill-chevron').innerHTML = iconSvg(expanded ? 'expand_circle_down' : 'expand_circle_up');
+  });
+}
+
+// pillDetail adds an expandable text area under a bar pill, for details
+// that do not fit its one-line label.
+function pillDetail(el, text) {
+  const log = document.createElement('div');
+  log.className = 'prog-pill-log';
+  el.appendChild(log);
+  new TermView(log).write(text);
+  const chevron = document.createElement('span');
+  chevron.className = 'prog-pill-chevron';
+  chevron.innerHTML = iconSvg('expand_circle_down');
+  el.querySelector('.prog-pill-hdr').insertBefore(chevron, el.querySelector('.prog-pill-close'));
+  _makeExpandable(el);
 }
 
 // _pillFinish sets a pill's terminal visual state. Successful pills

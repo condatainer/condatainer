@@ -276,11 +276,14 @@
               <input class="path-box-input" id="path-input"
                      placeholder="Type a path and press Enter" spellcheck="false" hidden>
             </div>
+            <button class="btn btn-sm btn-ghost btn-icon" id="refresh-files-btn" onclick="navigateFiles(currentPath)" title="Refresh"><svg class="icon"><use href="#i-refresh"></use></svg></button>
             <button class="btn btn-sm btn-ghost btn-icon" id="bookmark-star-btn" onclick="toggleBookmark(currentPath)" title="Bookmark this folder"></button>
             <input type="file" id="upload-file-input" multiple hidden onchange="handleUploadInputChange(this,false)">
             <input type="file" id="upload-dir-input" webkitdirectory multiple hidden onchange="handleUploadInputChange(this,true)">
-            <button class="btn btn-sm" id="upload-file-btn" onclick="gid('upload-file-input').click()"><svg class="icon"><use href="#i-upload"></use></svg>file</button>
-            <button class="btn btn-sm" id="upload-dir-btn" onclick="gid('upload-dir-input').click()"><svg class="icon"><use href="#i-upload"></use></svg>folder</button>
+            <span class="btn-split">
+              <button class="btn btn-sm" id="upload-file-btn" onclick="gid('upload-file-input').click()" title="Upload files"><svg class="icon"><use href="#i-upload"></use></svg>Upload</button>
+              <button class="btn btn-sm btn-icon" id="upload-menu-btn" onclick="toggleUploadMenu(event)" title="Upload a file or folder"><svg class="icon"><use href="#i-expand_more"></use></svg></button>
+            </span>
           </div>
           <div class="file-list-wrap" id="file-list-wrap">
             <table class="data-table">
@@ -292,6 +295,10 @@
               </tr></thead>
               <tbody id="file-tbody"></tbody>
             </table>
+          </div>
+          <div class="clip-bar" id="clip-bar" hidden>
+            <span id="clip-bar-text"></span>
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="clearClipboard()" title="Clear (Esc)"><svg class="icon"><use href="#i-close"></use></svg></button>
           </div>
         </div>
       </div>

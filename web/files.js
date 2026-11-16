@@ -223,6 +223,22 @@ function closeRowMenu() {
   if (_rowMenuEl) { _rowMenuEl.remove(); _rowMenuEl = null; }
 }
 
+// toggleUploadMenu opens the Upload dropdown under the caret button: File
+// or Folder. The Upload button itself picks files.
+function toggleUploadMenu(ev) {
+  ev.stopPropagation();
+  const reopening = _rowMenuEl && _rowMenuEl.dataset.path === 'upload';
+  closeRowMenu();
+  if (reopening) return;
+  const rect = ev.currentTarget.getBoundingClientRect();
+  const mi = (icon, label, input) =>
+    '<div class="row-menu-item" onclick="closeRowMenu();gid(\'' + input + '\').click()">' +
+      iconSvg(icon) + ' ' + label + '</div>';
+  _openMenuAt({ top: rect.bottom + 4, right: window.innerWidth - rect.right },
+    mi('draft', 'Upload files…', 'upload-file-input') +
+    mi('folder', 'Upload folder…', 'upload-dir-input'), 'upload');
+}
+
 // _menuHtml builds the dropdown items: the full per-item menu for a single
 // selection, bulk actions only for a multi-selection.
 function _menuHtml(sel) {
@@ -400,13 +416,27 @@ function ctxCopyTo() {
 // and survives multiple pastes.
 let _clipboard = null; // { mode: 'cut'|'copy', entries: [{path, name}] }
 
-function _renderCutMarks() {
+// _renderClipboard dims the cut rows and shows the status strip under the
+// listing ("3 items cut" / "3 items copied") while the clipboard holds
+// entries.
+function _renderClipboard() {
   const cutSet = _clipboard && _clipboard.mode === 'cut'
     ? new Set(_clipboard.entries.map(e => e.path)) : null;
   document.querySelectorAll('#file-tbody tr[data-idx]').forEach(tr => {
     const e = _visEntries[+tr.dataset.idx];
     tr.classList.toggle('cut', !!(cutSet && e && cutSet.has(e.path)));
   });
+  gid('clip-bar').hidden = !_clipboard;
+  if (_clipboard) {
+    const n = _clipboard.entries.length;
+    gid('clip-bar-text').textContent =
+      (n === 1 ? '1 item ' : n + ' items ') + (_clipboard.mode === 'cut' ? 'cut' : 'copied');
+  }
+}
+
+function clearClipboard() {
+  _clipboard = null;
+  _renderClipboard();
 }
 
 function ctxCut()  { _setClipboard('cut'); }
@@ -426,7 +456,7 @@ function _setClipboard(mode) {
       .then(() => { if (_clipboard) _clipboard.osText = text; })
       .catch(() => { /* keep internal-only behavior */ });
   }
-  _renderCutMarks();
+  _renderClipboard();
 }
 
 // _validateClipboard drops a stale internal clipboard before a menu shows
@@ -439,22 +469,32 @@ async function _validateClipboard() {
   if (!(navigator.clipboard && navigator.clipboard.readText)) return;
   try {
     const txt = await navigator.clipboard.readText();
-    if (txt !== _clipboard.osText) { _clipboard = null; _renderCutMarks(); }
+    if (txt !== _clipboard.osText) clearClipboard();
   } catch { /* permission denied — keep internal-only behavior */ }
 }
 
 // ctxPaste moves (cut) or copies (copy) the clipboard entries into the
-// current directory. Cut entries already in this directory are skipped;
-// a cut clipboard is one-shot, a copy clipboard can be pasted again.
-function ctxPaste() {
-  if (!_clipboard) return;
-  const { mode, entries } = _clipboard;
-  if (mode === 'cut') {
-    moveEntries(entries.filter(e => _parentDir(e.path) !== currentPath), currentPath);
-    _clipboard = null;
-    _renderCutMarks();
-  } else {
-    copyEntries(entries, currentPath);
+// current directory.
+//   - Cut entries already in this directory are skipped and dropped.
+//   - A cut clipboard keeps only the entries that did not move, so a failed
+//     or cancelled move can be pasted again.
+//   - A copy clipboard can be pasted again.
+let _pasting = false;
+async function ctxPaste() {
+  const clip = _clipboard;
+  if (!clip) return;
+  if (clip.mode === 'copy') { copyEntries(clip.entries, currentPath); return; }
+  if (_pasting) return;
+  const dest = _normPath(currentPath);
+  const move = clip.entries.filter(e => _parentDir(e.path) !== dest);
+  _pasting = true;
+  try {
+    const { succeeded } = await moveEntries(move, currentPath);
+    if (_clipboard !== clip) return; // replaced while moving
+    clip.entries = move.filter(e => !succeeded.includes(e));
+    if (clip.entries.length) _renderClipboard(); else clearClipboard();
+  } finally {
+    _pasting = false;
   }
 }
 
@@ -471,7 +511,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeRowMenu();
     clearFileSelection();
-    if (_clipboard) { _clipboard = null; _renderCutMarks(); }
+    clearClipboard();
   }
 });
 gid('file-list-wrap').addEventListener('scroll', closeRowMenu);
@@ -548,8 +588,7 @@ document.addEventListener('paste', e => {
   if (_clipboard.osText != null) {
     const txt = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
     if (txt !== _clipboard.osText) {
-      _clipboard = null;
-      _renderCutMarks();
+      clearClipboard();
       return;
     }
   }
@@ -584,6 +623,9 @@ gid('file-list-wrap').addEventListener('mousedown', e => {
   });
   document.addEventListener('mousemove', _mqMove);
   document.addEventListener('mouseup', _mqUp);
+  // preventDefault below also stops the press from moving focus, so release it
+  // by hand: the path box and the filter field lose focus on a click in the list.
+  if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
   e.preventDefault(); // no native text/element drag while marqueeing (the click still fires)
 });
 
@@ -693,7 +735,7 @@ function renderFileListing(entries, truncated) {
       '<td class="file-actions-cell">' + dlBtn + moreBtn + '</td>' +
       '</tr>';
   }).join('');
-  _renderCutMarks();
+  _renderClipboard();
 }
 
 // viewLargeFileWarnBytes is the size above which viewPath asks for
@@ -733,12 +775,15 @@ function downloadUrl(url) {
 //   - Entries run one after another. A failure is recorded and the rest
 //     still run.
 //   - Cancel stops the running entry and skips the rest.
+//   - It resolves {succeeded}, the entries that completed.
+//   - A failed group lists every failure in an expandable area of the pill.
 //   - op.verb titles the pill. op.start(entry) resolves {id} for a
 //     background task or {} when it finished at once. op.after(entry)
 //     runs once the entry has succeeded.
 async function _runFileGroup(op, entries) {
   const n = entries.length;
-  if (!n) return;
+  const succeeded = [];
+  if (!n) return { succeeded };
   const one = n === 1;
   let finished = 0, cancelled = false, taskId = null;
   const pill = openBarProgress(op.verb + ' ' + (one ? entries[0].name : n + ' items'), null, null, {
@@ -763,6 +808,7 @@ async function _runFileGroup(op, entries) {
         if (!msg.ok) throw new Error(msg.err || 'Failed');
       }
       if (op.after) await op.after(e);
+      succeeded.push(e);
     } catch (err) {
       failures.push(e.name + ': ' + ((err && err.message) || err));
     }
@@ -772,9 +818,11 @@ async function _runFileGroup(op, entries) {
 
   if (cancelled) pill.done(false, null, true);
   else if (failures.length) {
-    pill.done(false, failures.length === 1 ? failures[0] : failures.length + ' of ' + n + ' failed: ' + failures[0]);
+    pill.done(false, one ? failures[0] : failures.length + ' of ' + n + ' failed');
+    if (!one) pillDetail(pill.el, failures.join('\n'));
   } else pill.done(true);
   navigateFiles(currentPath); // entries may have changed even when it failed or was cancelled
+  return { succeeded };
 }
 
 // _fsRequest sends a request to the file API and resolves its JSON body.
@@ -881,7 +929,7 @@ async function doRename(path) {
 // same-filesystem move finishes at once; a cross-filesystem move answers
 // with a background task.
 function moveEntries(entries, destDir, newName) {
-  _runFileGroup({
+  return _runFileGroup({
     verb: 'Moving',
     start: e => _fsRequest('api/fs?path=' + encodeURIComponent(e.path), 'PATCH', _destBody(e, destDir, newName)),
     after: e => _dropDanglingBookmark(e.path),
@@ -892,7 +940,7 @@ function moveEntries(entries, destDir, newName) {
 // copyEntries POSTs /api/fs/copy per entry as one group. Each copy is a
 // background task. newName applies as in moveEntries.
 function copyEntries(entries, destDir, newName) {
-  _runFileGroup({
+  return _runFileGroup({
     verb: 'Copying',
     start: e => _fsRequest('api/fs/copy?path=' + encodeURIComponent(e.path), 'POST', _destBody(e, destDir, newName)),
   }, entries);
@@ -1208,9 +1256,14 @@ function doUpload(skipSet) {
 }
 
 /* ── File Picker Modal ───────────────────── */
+// _normPath strips trailing slashes, keeping "/" for the root.
+function _normPath(path) {
+  return (path || '').replace(/\/+$/, '') || '/';
+}
+
 function _parentDir(path) {
-  const trimmed = (path || '').replace(/\/+$/, '');
-  if (!trimmed || trimmed === '/') return '/';
+  const trimmed = _normPath(path);
+  if (trimmed === '/') return '/';
   const parent = trimmed.replace(/\/[^/]+$/, '');
   return parent || '/';
 }

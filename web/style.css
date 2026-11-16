@@ -400,6 +400,9 @@ input,button,select{font-family:inherit;font-size:inherit;}
 .tree-item-remove{display:none;padding:2px;flex-shrink:0;}
 .tree-item-remove .icon{width:14px;height:14px;}
 .tree-item-bm:hover .tree-item-remove{display:inline-flex;}
+.tree-item-bm.dragging{opacity:.5;}
+.tree-item-bm.drop-before{box-shadow:0 -2px 0 var(--accent);}
+.tree-item-bm.drop-after{box-shadow:0 2px 0 var(--accent);}
 .file-actions-cell{white-space:nowrap;text-align:right;}
 /* Fixed layout so narrow windows truncate the name with an ellipsis
    instead of wrapping rows onto multiple lines. */

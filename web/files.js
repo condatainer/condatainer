@@ -963,6 +963,7 @@ function renderFileTree() {
   if (fileBookmarks.length) {
     html += '<div class="tree-sep"></div>' + fileBookmarks.map(b =>
       '<div class="tree-item tree-item-bm ' + (b.path === currentPath ? 'active' : '') + '"' +
+        ' draggable="true" data-path="' + escHtml(b.path) + '"' +
         ' onclick="navigateFiles(\'' + escHtml(b.path) + '\')" title="' + escHtml(b.path) + '">' +
         '<span class="tree-item-label">' + escHtml(b.label || b.path) + '</span>' +
         '<button class="btn btn-ghost btn-sm tree-item-remove" onclick="event.stopPropagation();toggleBookmark(\'' + escHtml(b.path) + '\')" title="Remove bookmark">' + iconSvg('close') + '</button>' +
@@ -975,6 +976,84 @@ function renderFileTree() {
 /* ── Bookmarks (server-persisted, not localStorage) ─── */
 let fileBookmarks   = [];
 let _bookmarksLoaded = false;
+
+/* ── Reorder bookmarks by dragging ───────── */
+// A bookmark row drags within the tree; a line shows whether it lands
+// before or after the row under the pointer. The new order is applied at
+// once and saved with PUT api/fs/bookmarks.
+let _bmDragPath = null;
+const _bmType = 'application/x-cnt-bookmark';
+
+function _bmClearMarks() {
+  document.querySelectorAll('#file-tree .drop-before,#file-tree .drop-after,#file-tree .dragging')
+    .forEach(el => el.classList.remove('drop-before', 'drop-after', 'dragging'));
+}
+
+// _bmDropTarget returns the bookmark row under the pointer and whether the
+// drop lands after it (pointer in its lower half).
+function _bmDropTarget(e) {
+  const row = e.target.closest('.tree-item-bm');
+  if (!row || row.dataset.path === _bmDragPath) return null;
+  const r = row.getBoundingClientRect();
+  return { row, after: e.clientY > r.top + r.height / 2 };
+}
+
+gid('file-tree').addEventListener('dragstart', e => {
+  const row = e.target.closest('.tree-item-bm');
+  if (!row) return;
+  _bmDragPath = row.dataset.path;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData(_bmType, _bmDragPath);
+  row.classList.add('dragging');
+});
+
+gid('file-tree').addEventListener('dragover', e => {
+  if (!_bmDragPath) return;
+  const t = _bmDropTarget(e);
+  document.querySelectorAll('#file-tree .drop-before,#file-tree .drop-after')
+    .forEach(el => el.classList.remove('drop-before', 'drop-after'));
+  if (!t) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  t.row.classList.add(t.after ? 'drop-after' : 'drop-before');
+});
+
+gid('file-tree').addEventListener('drop', async e => {
+  if (!_bmDragPath) return;
+  const t = _bmDropTarget(e);
+  const moved = fileBookmarks.find(b => b.path === _bmDragPath);
+  _bmClearMarks();
+  _bmDragPath = null;
+  if (!t || !moved) return;
+  e.preventDefault();
+  const rest = fileBookmarks.filter(b => b !== moved);
+  let at = rest.findIndex(b => b.path === t.row.dataset.path);
+  if (t.after) at++;
+  const next = [...rest.slice(0, at), moved, ...rest.slice(at)];
+  if (next.every((b, i) => b === fileBookmarks[i])) return;
+  fileBookmarks = next;
+  renderFileTree();
+  try {
+    const r = await fetch('api/fs/bookmarks', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: next.map(b => b.path) })
+    });
+    if (!r.ok) throw new Error((await r.text()).trim());
+    fileBookmarks = (await r.json()) || [];
+  } catch (err) {
+    showProgressError('Reorder bookmarks', String(err.message || err));
+    _bookmarksLoaded = false;
+    await loadFileBookmarks(); // back to the saved order
+    return;
+  }
+  renderFileTree();
+});
+
+gid('file-tree').addEventListener('dragend', () => {
+  _bmClearMarks();
+  _bmDragPath = null;
+});
 
 async function loadFileBookmarks() {
   if (_bookmarksLoaded) return;

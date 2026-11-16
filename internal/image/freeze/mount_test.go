@@ -10,6 +10,7 @@ import (
 	"time"
 
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
+	"github.com/condatainer/condatainer/internal/testenv"
 )
 
 // testHarnessPath is the compiled testdata/mountharness binary, built once
@@ -28,7 +29,10 @@ func TestMain(m *testing.M) {
 			executablePath = func() (string, error) { return bin, nil }
 		}
 	}
-	os.Exit(m.Run())
+	cleanup := testenv.Isolate()
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 func buildMountHarness() (string, error) {

@@ -193,7 +193,7 @@ func TestManifestCarriesNoRuntime(t *testing.T) {
 
 func TestReadManifestRoundTrip(t *testing.T) {
 	requireSquashfsTools(t)
-	withTempCache(t)
+	withFreshMemo(t)
 
 	want := validManifest()
 	want.Description = "SAMtools alignment toolkit"
@@ -212,7 +212,7 @@ func TestReadManifestRoundTrip(t *testing.T) {
 // from a missing runtime document.
 func TestReadManifestWithoutManifest(t *testing.T) {
 	requireSquashfsTools(t)
-	withTempCache(t)
+	withFreshMemo(t)
 
 	root := t.TempDir()
 	if err := StageRuntime(filepath.Join(root, DirName), validRuntime()); err != nil {

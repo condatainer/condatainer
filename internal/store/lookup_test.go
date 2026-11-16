@@ -54,11 +54,11 @@ func TestScanVerifiesAddressAndResolveDetectsAmbiguity(t *testing.T) {
 		t.Fatalf("flat candidate did not retain priority: %#v", report.Candidates[0])
 	}
 
-	candidate, err := resolveReport("star/2.7", IdentityQuery{SHA256: strings.Repeat("a", 64)}, report)
+	candidate, err := ResolveIdentityIn("star/2.7", IdentityQuery{SHA256: strings.Repeat("a", 64)}, report)
 	if err != nil || candidate.Path != flat {
 		t.Fatalf("exact duplicate resolution = %#v, %v", candidate, err)
 	}
-	if _, err := resolveReport("star/2.7", IdentityQuery{SHA256: "aaaaaaaaaaaa"}, report); !errors.Is(err, ErrAmbiguous) {
+	if _, err := ResolveIdentityIn("star/2.7", IdentityQuery{SHA256: "aaaaaaaaaaaa"}, report); !errors.Is(err, ErrAmbiguous) {
 		t.Fatalf("prefix resolution error = %v", err)
 	}
 }

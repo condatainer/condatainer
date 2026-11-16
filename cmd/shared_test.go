@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
+	artifactcache "github.com/condatainer/condatainer/internal/artifact/cache"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/project/lock"
 )
@@ -117,11 +120,32 @@ func TestOverlayChoicesOffersProjectPins(t *testing.T) {
 	}
 	writeInstalledImages(t, "fastp--1.1.0.sqf", "ubuntu24--base.sqf")
 
+	cacheBefore := cacheFileState(t)
 	got, _ := overlayChoices(false, true, "")
 	want := []string{"fastp/1.1.0", "r/4.6.1", "rocky9/r/4.6.1", "ubuntu24/base"}
 	if !slices.Equal(got, want) {
 		t.Errorf("overlayChoices = %v, want %v", got, want)
 	}
+	if cacheAfter := cacheFileState(t); cacheAfter != cacheBefore {
+		t.Errorf("completion changed the cache file: %q before, %q after", cacheBefore, cacheAfter)
+	}
+}
+
+// cacheFileState describes the user cache file as it stands: absent, or its size and mtime.
+func cacheFileState(t *testing.T) string {
+	t.Helper()
+	dir, err := config.GetWritableCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, artifactcache.FileName))
+	if os.IsNotExist(err) {
+		return "absent"
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%d bytes, %s", info.Size(), info.ModTime().Format(time.RFC3339Nano))
 }
 
 // Pins belong to launching: a push completes what is installed.

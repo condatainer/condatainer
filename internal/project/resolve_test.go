@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -462,5 +463,49 @@ func TestResolveUsesTheLocksMatchMode(t *testing.T) {
 	}
 	if seen != MatchEquivalence {
 		t.Errorf("an explicit mode did not win: %q", seen)
+	}
+}
+
+// One scan answers both questions of a lookup: the exact identity first, then
+// under MatchEquivalence the sorted first build that can stand in for it.
+func TestLookupInPicksTheExactIdentityThenAnEquivalentBuild(t *testing.T) {
+	key := func(scheme, digest string) meta.KeyRef { return meta.KeyRef{Scheme: scheme, SHA256: digest} }
+	identity := func(d string) meta.KeyRef { return key("script-identity-v1", strings.Repeat(d, 64)) }
+	equiv := func(d string) meta.KeyRef { return key("script-equiv-v1", strings.Repeat(d, 64)) }
+	report := store.Report{Candidates: []store.Candidate{
+		{Name: "star/2.7", Path: "/images/store/star--2.7@bbbbbbbbbbbb.sqf", Identity: identity("b"), Equiv: equiv("e")},
+		{Name: "star/2.7", Path: "/images/star--2.7.sqf", Identity: identity("a"), Equiv: equiv("e")},
+		{Name: "star/2.7", Path: "/images/store/star--2.7@cccccccccccc.sqf", Identity: identity("c"), Equiv: equiv("f")},
+	}}
+	locked := func(i, e meta.KeyRef) meta.Keys { return meta.Keys{Identity: i, Equiv: e} }
+
+	exact, ok := lookupIn(report, "star/2.7", locked(identity("c"), equiv("f")), MatchEquivalence)
+	if !ok || exact.Identity != identity("c") {
+		t.Errorf("exact identity = %#v, %v", exact, ok)
+	}
+	substitute, ok := lookupIn(report, "star/2.7", locked(identity("z"), equiv("e")), MatchEquivalence)
+	if !ok || substitute.Path != "/images/star--2.7.sqf" {
+		t.Errorf("equivalent build = %#v, %v; want the sorted first", substitute, ok)
+	}
+	if _, ok := lookupIn(report, "star/2.7", locked(identity("z"), equiv("e")), MatchIdentity); ok {
+		t.Error("an equivalent build was accepted under MatchIdentity")
+	}
+	if _, ok := lookupIn(report, "star/2.7", locked(identity("z"), equiv("x")), MatchEquivalence); ok {
+		t.Error("a build with another equivalence key was accepted")
+	}
+}
+
+// A launch resolves through the uncached lookup, a scan through the cached one,
+// and an injected lookup wins over both.
+func TestResolverFollowsTheUncachedOption(t *testing.T) {
+	same := func(a, b LookupFunc) bool { return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer() }
+	if !same(ResolveOptions{}.resolver(), LookupLocal) {
+		t.Error("the default resolver is not LookupLocal")
+	}
+	if !same(ResolveOptions{Uncached: true}.resolver(), LookupLocalUncached) {
+		t.Error("Uncached did not select LookupLocalUncached")
+	}
+	if !same(ResolveOptions{Uncached: true, lookup: absent}.resolver(), absent) {
+		t.Error("an injected lookup did not win")
 	}
 }

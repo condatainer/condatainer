@@ -34,21 +34,32 @@ type LookupAtFunc func(path, name string, keys meta.Keys, match Match) (store.Ca
 // LookupLocal finds the locked artifact, or under MatchEquivalence something that can stand in for it.
 //   - The exact identity is tried first in both modes, so a caller can report which it got.
 //   - Equivalent candidates are interchangeable, so the sorted first is taken for a stable answer.
+//   - Candidate keys are read through the disk cache.
 func LookupLocal(name string, keys meta.Keys, match Match, dirs []string) (store.Candidate, bool) {
+	return lookupIn(store.Scan(store.ScanOptions{Dirs: dirs, Name: name}), name, keys, match)
+}
+
+// LookupLocalUncached is LookupLocal reading each candidate's keys from its image, never from the disk cache. A launch uses it.
+func LookupLocalUncached(name string, keys meta.Keys, match Match, dirs []string) (store.Candidate, bool) {
+	return lookupIn(store.Scan(store.ScanOptions{Dirs: dirs, Name: name, Uncached: true}), name, keys, match)
+}
+
+// lookupIn picks from one scan of name: the exact identity, then under MatchEquivalence an equivalent build.
+func lookupIn(report store.Report, name string, keys meta.Keys, match Match) (store.Candidate, bool) {
 	exact := store.IdentityQuery{Scheme: keys.Identity.Scheme, SHA256: keys.Identity.SHA256}
-	if candidate, _, err := store.ResolveIdentity(name, exact, dirs); err == nil {
+	if candidate, err := store.ResolveIdentityIn(name, exact, report); err == nil {
 		return candidate, true
 	}
 	if match.Normalize() == MatchIdentity {
 		return store.Candidate{}, false
 	}
-	report, err := store.Equivalent(name,
-		store.IdentityQuery{Scheme: keys.Equiv.Scheme, SHA256: keys.Equiv.SHA256}, dirs)
-	if err != nil || len(report.Candidates) == 0 {
+	equivalent, err := store.EquivalentIn(name,
+		store.IdentityQuery{Scheme: keys.Equiv.Scheme, SHA256: keys.Equiv.SHA256}, report)
+	if err != nil || len(equivalent.Candidates) == 0 {
 		return store.Candidate{}, false
 	}
-	store.SortReport(&report)
-	return report.Candidates[0], true
+	store.SortReport(&equivalent)
+	return equivalent.Candidates[0], true
 }
 
 // LookupInput finds a local artifact that may satisfy one dependency edge of a rebuild.
@@ -213,6 +224,9 @@ type ResolveOptions struct {
 	// default. Supplied rather than derived, matching SolveName's own rule
 	// that have and distro are always given, never looked up internally.
 	Distro string
+	// Uncached makes a name resolve by reading each candidate's keys from its image,
+	// never from the disk cache. A launch sets it. A scan leaves it off.
+	Uncached bool
 	// lookup and lookupAt are injected for tests.
 	lookup   LookupFunc
 	lookupAt LookupAtFunc
@@ -221,6 +235,9 @@ type ResolveOptions struct {
 func (o ResolveOptions) resolver() LookupFunc {
 	if o.lookup != nil {
 		return o.lookup
+	}
+	if o.Uncached {
+		return LookupLocalUncached
 	}
 	return LookupLocal
 }

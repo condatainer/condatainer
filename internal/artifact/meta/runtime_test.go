@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/condatainer/condatainer/internal/artifact"
+	artifactcache "github.com/condatainer/condatainer/internal/artifact/cache"
+	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image/tool"
 	"github.com/condatainer/condatainer/internal/toolpath"
 )
@@ -138,7 +140,7 @@ func TestStageRuntimeWritesAtomically(t *testing.T) {
 
 func TestReadRuntimeRoundTrip(t *testing.T) {
 	requireSquashfsTools(t)
-	withTempCache(t)
+	withFreshMemo(t)
 
 	want := validRuntime()
 	want.Description = "SAMtools alignment toolkit"
@@ -171,7 +173,7 @@ func TestReadRuntimeRoundTrip(t *testing.T) {
 // and nothing falls back to the manifest for it.
 func TestReadRuntimeWithoutDocument(t *testing.T) {
 	requireSquashfsTools(t)
-	withTempCache(t)
+	withFreshMemo(t)
 
 	root := t.TempDir()
 	payload := filepath.Join(root, "cnt", "legacy", "1.0")
@@ -196,7 +198,7 @@ func TestReadRuntimeWithoutDocument(t *testing.T) {
 // the manifest.
 func TestReadRuntimeDoesNotFallBackToManifest(t *testing.T) {
 	requireSquashfsTools(t)
-	withTempCache(t)
+	withFreshMemo(t)
 
 	root := t.TempDir()
 	dir := filepath.Join(root, DirName)
@@ -254,7 +256,7 @@ func TestReadRuntimeRejectsUnknownType(t *testing.T) {
 }
 
 func TestReadRuntimeRejectsNonImage(t *testing.T) {
-	withTempCache(t)
+	withFreshMemo(t)
 
 	img := filepath.Join(t.TempDir(), "env.img")
 	if err := os.WriteFile(img, []byte("not an archive"), 0o644); err != nil {
@@ -271,9 +273,9 @@ func TestReadRuntimeRejectsNonImage(t *testing.T) {
 	}
 }
 
-func TestCacheHitAvoidsReread(t *testing.T) {
+func TestMemoHitAvoidsReread(t *testing.T) {
 	requireSquashfsTools(t)
-	withTempCache(t)
+	withFreshMemo(t)
 
 	image := stagedImage(t, validRuntime(), validManifest())
 	if _, err := ReadRuntime(image); err != nil {
@@ -298,9 +300,9 @@ func TestCacheHitAvoidsReread(t *testing.T) {
 	}
 }
 
-func TestCacheInvalidatedByMtime(t *testing.T) {
+func TestMemoInvalidatedByMtime(t *testing.T) {
 	requireSquashfsTools(t)
-	withTempCache(t)
+	withFreshMemo(t)
 
 	first := validRuntime()
 	first.Description = "first"
@@ -339,9 +341,9 @@ func TestCacheInvalidatedByMtime(t *testing.T) {
 
 // The negative verdict is cached too, or an image predating the format would be
 // re-probed on every listing — the cost this cache exists to avoid.
-func TestCacheRemembersMissingRuntime(t *testing.T) {
+func TestMemoRemembersMissingRuntime(t *testing.T) {
 	requireSquashfsTools(t)
-	withTempCache(t)
+	withFreshMemo(t)
 
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "cnt"), 0o755); err != nil {
@@ -364,7 +366,7 @@ func TestCacheRemembersMissingRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	record, found := runtimeCache.Lookup(abs, fi)
+	record, found := runtimeMemo.Lookup(abs, fi)
 	if !found {
 		t.Fatal("the missing-runtime verdict was not cached")
 	}
@@ -377,8 +379,26 @@ func TestCacheRemembersMissingRuntime(t *testing.T) {
 		t.Errorf("second ReadRuntime: %v", err)
 	}
 
-	runtimeCache.Forget(image)
-	if _, found := runtimeCache.Lookup(abs, fi); found {
+	runtimeMemo.Forget(image)
+	if _, found := runtimeMemo.Lookup(abs, fi); found {
 		t.Error("Forget left the entry behind")
+	}
+}
+
+// A launch's read leaves nothing on disk: no cache file appears.
+func TestReadRuntimeWritesNoCacheFile(t *testing.T) {
+	requireSquashfsTools(t)
+
+	image := stagedImage(t, validRuntime(), validManifest())
+	if _, err := ReadRuntime(image); err != nil {
+		t.Fatalf("ReadRuntime: %v", err)
+	}
+
+	dir, err := config.GetWritableCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, artifactcache.FileName)); !os.IsNotExist(err) {
+		t.Fatalf("ReadRuntime left a cache file: %v", err)
 	}
 }

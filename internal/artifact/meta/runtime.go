@@ -13,7 +13,10 @@ import (
 	"github.com/condatainer/condatainer/internal/image/tool"
 )
 
-var runtimeCache = artifactcache.Default()
+// runtimeMemo remembers each image's runtime verdict for the life of the process.
+// It has no file behind it: a launch reads the archive itself and trusts nothing a
+// previous run left.
+var runtimeMemo = artifactcache.New(func() string { return "" })
 
 // RuntimePath is where the runtime document lives inside every image.
 const RuntimePath = "/" + DirName + "/" + RuntimeFileName
@@ -106,13 +109,14 @@ func StageRuntime(dir string, r Runtime) error {
 
 // ReadRuntime returns the runtime document embedded in an image.
 //   - Only a genuinely absent one is ErrNoRuntime; a host failure keeps its own cause.
-//   - Cached by path, size and mtime, negative verdicts included.
+//   - Each image is read once per process, negative verdicts included. A replaced file reads again.
+//   - Nothing is written to disk. A caller that inspects many images uses ReadRuntimeWithCache.
 func ReadRuntime(imagePath string) (Runtime, error) {
-	return ReadRuntimeWithCache(imagePath, runtimeCache)
+	return ReadRuntimeWithCache(imagePath, runtimeMemo)
 }
 
-// ReadRuntimeWithCache is ReadRuntime using records. A batch lets callers that
-// inspect many images persist all misses once at the end of their scan.
+// ReadRuntimeWithCache is ReadRuntime using records. A batch over the default cache
+// lets a caller that inspects many images persist all misses once at the end of its scan.
 func ReadRuntimeWithCache(imagePath string, records artifactcache.Access) (Runtime, error) {
 	abs, err := filepath.Abs(imagePath)
 	if err != nil {

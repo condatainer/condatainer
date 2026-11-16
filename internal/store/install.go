@@ -86,7 +86,7 @@ func begin(name string, identity meta.KeyRef, opts BeginOptions, read artifactRe
 	}
 	tx := &Transaction{Name: name, Identity: identity, Equiv: opts.Equiv, read: read}
 	report := scan(ScanOptions{Dirs: dirs, Name: name}, read, nil)
-	if candidate, err := resolveReport(name, IdentityQuery{Scheme: identity.Scheme, SHA256: identity.SHA256}, report); err == nil {
+	if candidate, err := ResolveIdentityIn(name, IdentityQuery{Scheme: identity.Scheme, SHA256: identity.SHA256}, report); err == nil {
 		if !opts.Equiv.Empty() && candidate.Equiv != opts.Equiv {
 			return nil, fmt.Errorf("existing exact identity has equivalence %s, expected %s", FormatKeyRef(candidate.Equiv), FormatKeyRef(opts.Equiv))
 		}

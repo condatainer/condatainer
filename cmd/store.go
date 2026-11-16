@@ -54,13 +54,19 @@ func splitStoreAddress(arg, flag string) (string, store.IdentityQuery, error) {
 // are the ones regenerated from the sources it embeds; its type and
 // architecture come from its runtime document.
 func storedRecord(c store.Candidate) report.Stored {
+	return storedRecordWith(c, meta.ReadRuntime)
+}
+
+// storedRecordWith is storedRecord reading the runtime document through read,
+// so a listing of many entries can read through a cache batch.
+func storedRecordWith(c store.Candidate, read func(string) (meta.Runtime, error)) report.Stored {
 	rec := report.Stored{
 		Overlay:  report.Overlay{Name: c.Name},
 		Location: plannedLocation(c.Path, true),
 		Keys:     &meta.Keys{Identity: c.Identity, Equiv: c.Equiv},
 	}
 	rec.Layout, rec.Size = c.Layout, c.Size
-	if rt, err := meta.ReadRuntime(c.Path); err == nil {
+	if rt, err := read(c.Path); err == nil {
 		rec.Type, rec.Arch, rec.Runtime = rt.Type, rt.Platform.Arch, &rt
 	}
 	return rec

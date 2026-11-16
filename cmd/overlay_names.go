@@ -43,7 +43,7 @@ func resolveOverlayValues(ctx context.Context, values []string, standing *projec
 		return out, nil
 	}
 
-	opts := project.ResolveOptions{LiveResolve: true, Distro: projectDefaultDistro()}
+	opts := project.ResolveOptions{LiveResolve: true, Distro: projectDefaultDistro(), Uncached: true}
 	var mounts []project.Mount
 	if standing != nil {
 		resolution, err := standing.ResolveComplete(ctx, requests, opts)

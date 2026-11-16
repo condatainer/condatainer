@@ -53,6 +53,7 @@ Root selection has already run, so ordering never decides which overlay becomes 
 ## Environment
 
 - Each image's environment comes from its embedded `runtime.json` only.
+  - It is read from the archive once per process, never from the disk cache, so a stale cache cannot change what a container gets.
   - The manifest is never opened here, so provenance can grow without slowing every mount.
   - There is no fallback to the manifest for an older image.
 - Host variables naming host paths or installs are removed before launch (`hostenv.go`).

@@ -178,7 +178,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			}
 			if listDescription {
 				for i, name := range names {
-					printListDescription(utils.StyleName(name)+strings.TrimPrefix(styled[i], name), readOverlayDescription(d.Paths[name+"/(system app)"]))
+					printListDescription(utils.StyleName(name)+strings.TrimPrefix(styled[i], name), d.description(d.Paths[name+"/(system app)"]))
 				}
 			} else {
 				printColumns(plain, styled, 0, listTermWidth())
@@ -204,7 +204,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			}
 			if listDescription {
 				for i := range plain {
-					printListDescription(utils.StyleName(plain[i]), readOverlayDescription(d.Paths[keys[i]]))
+					printListDescription(utils.StyleName(plain[i]), d.description(d.Paths[keys[i]]))
 				}
 			} else {
 				printColumns(plain, styled, 0, listTermWidth())
@@ -215,7 +215,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			fmt.Println(utils.StyleTitle("Available data overlays:"))
 			if listDescription {
 				for _, data := range d.DataList {
-					printListDescription(utils.StyleName(data), readOverlayDescription(d.Paths[data]))
+					printListDescription(utils.StyleName(data), d.description(d.Paths[data]))
 				}
 			} else {
 				printColumns(d.DataList, d.DataList, 0, listTermWidth())
@@ -465,15 +465,16 @@ func printColumns(plain, styled []string, indent, termWidth int) {
 	}
 }
 
-// readOverlayDescription returns an image's recorded description, or empty when
-// it has no readable metadata. Listing must not fail on such an image, so the
-// read error is dropped: the row still appears, just without a description.
-func readOverlayDescription(overlayPath string) string {
-	rt, err := meta.ReadRuntime(overlayPath)
-	if err != nil {
-		return ""
+// description returns the recorded description of the listed image at path, or
+// empty when it has no readable metadata. Listing must not fail on such an
+// image, so the row still appears, just without a description.
+func (d DirOverlays) description(path string) string {
+	for _, file := range d.Files {
+		if file.Path == path && file.RuntimeErr == nil {
+			return file.Runtime.Description
+		}
 	}
-	return rt.Description
+	return ""
 }
 
 // listDoc is the overlays document for a scan: one record per image, nearest

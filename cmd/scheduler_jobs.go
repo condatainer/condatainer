@@ -48,7 +48,8 @@ An array lists its tasks by state, and the IDs of the tasks that failed.`,
   condatainer scheduler jobs 245068  # One job in full, even after it ended
   # Several jobs as rows
   condatainer scheduler jobs 245068 245070
-  condatainer scheduler jobs --tasks 245080`,
+  condatainer scheduler jobs --tasks 245080
+  condatainer scheduler jobs --host  # From inside a container`,
 	RunE: runSchedulerJobs,
 }
 
@@ -59,7 +60,7 @@ func lookupJobLister() (scheduler.Scheduler, scheduler.JobLister, error) {
 	if sched == nil {
 		var err error
 		if sched, err = scheduler.DetectSchedulerWithBinary(scheduler.Bin()); err != nil {
-			return nil, nil, errNoScheduler
+			return nil, nil, noScheduler()
 		}
 	}
 	lister, ok := sched.(scheduler.JobLister)
@@ -205,6 +206,9 @@ func jobsSchedulerRecord(sched scheduler.Scheduler) *report.Scheduler {
 }
 
 func runSchedulerJobs(cmd *cobra.Command, args []string) error {
+	if done, err := runOnHostIfAsked(cmd, args); done {
+		return err
+	}
 	sched, lister, err := lookupJobLister()
 	if err != nil {
 		return jobsFailure(cmd, nil, err)
@@ -264,4 +268,5 @@ func jobsFailure(cmd *cobra.Command, sched scheduler.Scheduler, err error) error
 func init() {
 	schedulerJobsCmd.Flags().BoolVar(&schedulerJobsTasks, "tasks", false, "List each task of an array as a row")
 	jsonFlag(schedulerJobsCmd.Flags(), &schedulerJobsJSON)
+	addHostFlags(schedulerJobsCmd.Flags())
 }

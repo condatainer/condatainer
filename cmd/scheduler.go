@@ -3,17 +3,23 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/report"
+	"github.com/condatainer/condatainer/internal/runtime/hostrun"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
 	schedulerInfoJSON       bool
 	schedulerPartitionsJSON bool
+	schedulerHost           bool
+	schedulerHostOn         string
 )
 
 var schedulerCmd = &cobra.Command{
@@ -29,9 +35,48 @@ var schedulerCmd = &cobra.Command{
 
 var errNoScheduler = errors.New("no job scheduler detected on this system")
 
+var errHostOnNeedsHost = errors.New("--host-on needs --host from inside a container, where it picks the node the command runs on")
+
 func init() {
 	rootCmd.AddCommand(schedulerCmd)
 	schedulerCmd.AddCommand(schedulerInfoCmd, schedulerPartitionsCmd, schedulerJobsCmd, schedulerCancelCmd)
+}
+
+// addHostFlags adds --host and --host-on to a member of the group.
+func addHostFlags(fs *pflag.FlagSet) {
+	fs.BoolVar(&schedulerHost, "host", false, "Run on the host through host-run (from inside a container)")
+	fs.StringVar(&schedulerHostOn, "host-on", "", "Node to run on: localhost, login or a node name (default: host_run.on)")
+}
+
+// runOnHostIfAsked sends the command to the host when --host is given inside a container. done reports that
+// the host ran it, so the caller returns.
+//   - The host runs the same command with the same flags, except --host and --host-on.
+//   - --host on the host changes nothing. --host-on without --host inside a container is refused.
+func runOnHostIfAsked(cmd *cobra.Command, args []string) (done bool, err error) {
+	switch {
+	case schedulerHost && runInsideContainer():
+		argv := append([]string{"condatainer", "scheduler", cmd.Name()}, flagArgv(cmd.Flags(), map[string]bool{"host": true, "host-on": true})...)
+		if len(args) > 0 {
+			argv = append(append(argv, "--"), args...)
+		}
+		return true, runOnHost(cmd.Context(), argv, schedulerHostOn, "--host")
+	case schedulerHostOn != "":
+		return true, errHostOnNeedsHost
+	}
+	return false, nil
+}
+
+// hasHostRelay reports whether this is a container with a relay to the host, so --host can work.
+func hasHostRelay() bool {
+	return runInsideContainer() && os.Getenv(hostrun.EnvSock) != ""
+}
+
+// noScheduler is errNoScheduler. A container with a relay to the host is told to add --host.
+func noScheduler() error {
+	if hasHostRelay() {
+		return fmt.Errorf("%w: add --host to ask the host", errNoScheduler)
+	}
+	return errNoScheduler
 }
 
 // lookupScheduler finds the scheduler to report on. Inside a scheduled job it looks for none and
@@ -46,7 +91,7 @@ func lookupScheduler() (sched scheduler.Scheduler, insideJob bool, err error) {
 	}
 	sched, err = scheduler.DetectSchedulerWithBinary(scheduler.Bin())
 	if err != nil {
-		return nil, false, errNoScheduler
+		return nil, false, noScheduler()
 	}
 	return sched, false, nil
 }
@@ -74,4 +119,7 @@ func printInsideJob() {
 
 func printNoScheduler() {
 	utils.PrintMessage("Scheduler Status: %s", utils.StyleError("Not Found"))
+	if hasHostRelay() {
+		utils.PrintMessage("Add --host to ask the host.")
+	}
 }

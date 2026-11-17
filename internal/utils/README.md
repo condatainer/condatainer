@@ -27,6 +27,11 @@
 - Scheduler directives are not annotations. `#SBATCH --time=01:00:00` has colons in its value, so they are matched by prefix and handed to the scheduler packages verbatim.
 - `StripComments` is what the keys hash. It removes whole-line comments only, since a trailing `#` may belong to shell (`echo "a # b"`, `${v#pre}`). It never touches what is stored or what runs.
 - A flag header is on when its line is present. `Flag` accepts no value or `true`, so `false` cannot read as on.
+- `SplitOptions` reads the `name=value` options after a header's value: `#DEP: star optional=true`.
+  - Only a header listed in `headerOptions` takes options. `=` is common in other values (`#ENV: NAME=x`, `#PARAM: KEY=default`, a URL query), so every other header is read as written.
+  - The first word is always the value. Options start at the first later word shaped `name=...`, and every word after that must be an option.
+  - A boolean is written `name=true`. Quotes are not special, and a `##` ends the value even inside quotes.
+  - The recipe scripts read no options, so this is the only parser of them.
 - `ParseValueList` reads a `#PH:` or `#VALUE:` list. A comma sorts newest first, a pipe keeps the order written, `*` is always last, and `values[0]` is the default offered.
 
 ## Ignore patterns

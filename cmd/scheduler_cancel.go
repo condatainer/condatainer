@@ -39,7 +39,8 @@ Arguments are all job IDs, or all name filters, as for jobs.
   condatainer scheduler cancel 245080        # Every task of the array
   condatainer scheduler cancel 245080_4      # One task
   condatainer scheduler cancel align         # Asks first
-  condatainer scheduler cancel align -y`,
+  condatainer scheduler cancel align -y
+  condatainer scheduler cancel 245068 --host # From inside a container`,
 	RunE: runSchedulerCancel,
 }
 
@@ -52,6 +53,9 @@ type cancelPick struct {
 }
 
 func runSchedulerCancel(cmd *cobra.Command, args []string) error {
+	if done, err := runOnHostIfAsked(cmd, args); done {
+		return err
+	}
 	sched, lister, err := lookupJobLister()
 	if err != nil {
 		return cancelFailure(cmd, nil, err)
@@ -228,4 +232,5 @@ func cancelFailure(cmd *cobra.Command, sched scheduler.Scheduler, err error) err
 
 func init() {
 	jsonFlag(schedulerCancelCmd.Flags(), &schedulerCancelJSON)
+	addHostFlags(schedulerCancelCmd.Flags())
 }

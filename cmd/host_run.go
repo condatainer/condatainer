@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -61,6 +62,34 @@ func runHostRun(cmd *cobra.Command, args []string) error {
 	code, err := call.Run(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("host-run: %w", err)
+	}
+	if code != 0 {
+		os.Exit(code)
+	}
+	return nil
+}
+
+// hostRunCall sends a call to the host through host-run. Tests replace it.
+var hostRunCall = func(ctx context.Context, call hostrun.Call) (int, error) { return call.Run(ctx) }
+
+// runOnHost runs argv on the host through host-run, from the current directory, and exits with its exit code.
+//   - Output comes back on the streams it was written to.
+//   - flag names the option that asked for it, in the error.
+func runOnHost(ctx context.Context, argv []string, on, flag string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	code, err := hostRunCall(ctx, hostrun.Call{
+		Sock:   os.Getenv(hostrun.EnvSock),
+		Argv:   argv,
+		Cwd:    cwd,
+		On:     on,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
+	if err != nil {
+		return fmt.Errorf("%s from inside a container goes through host-run: %w", flag, err)
 	}
 	if code != 0 {
 		os.Exit(code)

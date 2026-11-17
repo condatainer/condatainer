@@ -495,34 +495,12 @@ func submitDefaultSpecs(specs *scheduler.ScriptSpecs) *scheduler.ScriptSpecs {
 	return specs
 }
 
-// hostRunCall sends a call to the host through host-run. Tests replace it.
-var hostRunCall = func(ctx context.Context, call hostrun.Call) (int, error) { return call.Run(ctx) }
-
 // submitThroughHost runs this `condatainer run --submit` on the host, through host-run, and exits with its exit code.
 //   - The host runs the same command with the same flags, except --submit-on, which picks the node.
 //   - Output and the job ID come back on the streams they were written to.
 func submitThroughHost(cmd *cobra.Command, args []string) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
 	argv := append([]string{"condatainer", "run"}, flagArgv(cmd.Flags(), map[string]bool{"submit-on": true})...)
-	argv = append(argv, args...)
-	code, err := hostRunCall(cmd.Context(), hostrun.Call{
-		Sock:   os.Getenv(hostrun.EnvSock),
-		Argv:   argv,
-		Cwd:    cwd,
-		On:     runSubmitOn,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	})
-	if err != nil {
-		return fmt.Errorf("--submit from inside a container goes through host-run: %w", err)
-	}
-	if code != 0 {
-		os.Exit(code)
-	}
-	return nil
+	return runOnHost(cmd.Context(), append(argv, args...), runSubmitOn, "--submit")
 }
 
 // flagArgv is the flags that were set on the command line, as arguments, except the ones in skip.

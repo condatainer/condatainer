@@ -35,7 +35,8 @@ In a cell:
 - In MAXTIME, inf means no limit and - means none is reported.`,
 	Example: `  condatainer scheduler partitions
   condatainer scheduler partitions --gpu
-  condatainer scheduler partitions --cpu`,
+  condatainer scheduler partitions --cpu
+  condatainer scheduler partitions --host`,
 	RunE: runSchedulerPartitions,
 }
 
@@ -44,6 +45,7 @@ func init() {
 	schedulerPartitionsCmd.Flags().Bool("cpu", false, "Show only CPU-only partitions (no GPUs)")
 	schedulerPartitionsCmd.Flags().Bool("gpu", false, "Show only GPU partitions")
 	schedulerPartitionsCmd.MarkFlagsMutuallyExclusive("cpu", "gpu")
+	addHostFlags(schedulerPartitionsCmd.Flags())
 }
 
 // selectPartitions applies --cpu and --gpu and puts the partitions that are not up last,
@@ -96,6 +98,9 @@ func partitionRecord(l scheduler.ResourceLimits, fallbackGpus []scheduler.GpuInf
 }
 
 func runSchedulerPartitions(cmd *cobra.Command, args []string) error {
+	if done, err := runOnHostIfAsked(cmd, args); done {
+		return err
+	}
 	cpuOnly, _ := cmd.Flags().GetBool("cpu")
 	gpuOnly, _ := cmd.Flags().GetBool("gpu")
 

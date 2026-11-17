@@ -35,6 +35,13 @@ The relay that lets a program in a container run a command on the host.
 - A command run on the node `login` names gets `CNT_LOGIN_NODE` set, so a job it submits carries the record.
 - A leading `condatainer` is the host's own executable, so the version that started the job runs.
 
+## What forwards
+
+- A command forwards only when the user types its flag: `run --submit` and `scheduler <command> --host`.
+- The host runs the same command with the same flags, less the flags that forward it.
+- `--submit-on` and `--host-on` are `--on` for that call.
+- Nothing forwards by itself. A container reaches the host only through an explicit call.
+
 ## Safety
 
 - The socket is in a `0700` directory under the node-local temp directory. The server checks the peer uid.

@@ -16,15 +16,20 @@ var schedulerInfoCmd = &cobra.Command{
 	Long: `Show the detected job scheduler: type, binary path, version, and availability.
 
 Inside a scheduled job it reports the scheduler as unavailable.`,
-	Example: `  condatainer scheduler info`,
-	RunE:    runSchedulerInfo,
+	Example: `  condatainer scheduler info
+  condatainer scheduler info --host`,
+	RunE: runSchedulerInfo,
 }
 
 func init() {
 	jsonFlag(schedulerInfoCmd.Flags(), &schedulerInfoJSON)
+	addHostFlags(schedulerInfoCmd.Flags())
 }
 
 func runSchedulerInfo(cmd *cobra.Command, args []string) error {
+	if done, err := runOnHostIfAsked(cmd, args); done {
+		return err
+	}
 	sched, insideJob, err := lookupScheduler()
 
 	if schedulerInfoJSON {

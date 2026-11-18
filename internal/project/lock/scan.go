@@ -245,10 +245,16 @@ func scanScript(path, rel string, merged map[string]*Request, result *ScanResult
 
 	utils.WarnStray(rel, utils.StrayAnnotations(text, "#DEP"))
 	for _, a := range utils.SelectAnnotations(utils.ScanAnnotations(text), "#DEP") {
-		if a.Value == "" {
+		name, _, err := utils.SplitOptions(a)
+		if err != nil {
+			result.Findings = append(result.Findings, Finding{
+				Script: rel, Line: a.Line, Text: a.Value, Reason: err.Error()})
 			continue
 		}
-		request, reason := ParseDeclaration(a.Value)
+		if name == "" {
+			continue
+		}
+		request, reason := ParseDeclaration(name)
 		if reason != "" {
 			result.Findings = append(result.Findings, Finding{
 				Script: rel, Line: a.Line, Text: a.Value, Reason: reason})

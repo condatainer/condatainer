@@ -34,6 +34,9 @@ func TestProjectCreateThenInfo(t *testing.T) {
 	if info := get(); info.Root != "" {
 		t.Fatalf("root before create = %q, want none", info.Root)
 	}
+	if info := get(); info.Required == nil || info.Optional == nil {
+		t.Fatalf("required = %v, optional = %v, want empty lists, not null", info.Required, info.Optional)
+	}
 
 	body := strings.NewReader(`{"cwd":"` + dir + `"}`)
 	rec := httptest.NewRecorder()
@@ -76,5 +79,31 @@ func TestResolveRequiredInAProjectUsesInstalled(t *testing.T) {
 	}
 	if got := resolveRequired(req, standing, "ubuntu24", "not-installed"); got.Resolved != "" {
 		t.Errorf("an overlay nothing answers resolved to %+v", got)
+	}
+}
+
+// An optional name resolves like a required one, and a name nothing answers comes back unresolved.
+func TestProjectInfoResolvesOptionalNames(t *testing.T) {
+	imagesDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(imagesDir, "opencode--1.19.6.sqf"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prevPaths := config.GlobalDataPaths
+	config.GlobalDataPaths.ImagesDirs = []string{imagesDir}
+	settingstest.Override(t, "default_distro", "ubuntu24")
+	t.Cleanup(func() { config.GlobalDataPaths = prevPaths })
+
+	q := url.Values{"cwd": {t.TempDir()}, "optional": {"opencode", "codex"}}
+	rec := httptest.NewRecorder()
+	(&srv{}).handleProject(rec, httptest.NewRequest(http.MethodGet, "/api/project?"+q.Encode(), nil))
+	var info projectInfo
+	if err := json.Unmarshal(rec.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Optional) != 2 || info.Optional[0].Resolved != "opencode/1.19.6" || info.Optional[1].Resolved != "" {
+		t.Errorf("optional = %+v, want opencode resolved and codex not", info.Optional)
+	}
+	if len(info.Required) != 0 {
+		t.Errorf("required = %+v, want none", info.Required)
 	}
 }

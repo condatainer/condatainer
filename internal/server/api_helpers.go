@@ -42,6 +42,12 @@ func (fw flushWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// depLine is one #DEP: line of a helper, in the order written.
+type depLine struct {
+	Name     string `json:"name"`
+	Optional bool   `json:"optional,omitempty"`
+}
+
 type helperInstalledEntry struct {
 	Name           string               `json:"name"`
 	Description    string               `json:"description,omitempty"`
@@ -49,6 +55,8 @@ type helperInstalledEntry struct {
 	EnvPackages    string               `json:"env_packages,omitempty"`
 	EnvPostInstall string               `json:"env_post_install,omitempty"`
 	Deps           []string             `json:"deps,omitempty"`
+	OptionalDeps   []string             `json:"optional_deps,omitempty"`
+	DepLines       []depLine            `json:"dep_lines,omitempty"`
 	Singleton      bool                 `json:"singleton,omitempty"`
 	Params         []helper.HelperParam `json:"params,omitempty"`
 	ParamValues    map[string][]string  `json:"param_values,omitempty"`
@@ -105,6 +113,12 @@ func cachedInstalledHelpers() []helperInstalledEntry {
 			}
 			if len(meta.Deps) > 0 {
 				ent.Deps = meta.Deps
+			}
+			if len(meta.OptionalDeps) > 0 {
+				ent.OptionalDeps = meta.OptionalDeps
+			}
+			for _, l := range meta.DepLines {
+				ent.DepLines = append(ent.DepLines, depLine{Name: l.Name, Optional: l.Optional})
 			}
 			scripts = append(scripts, ent)
 		}

@@ -646,6 +646,13 @@ func PrintLaunchSpec(plan *helper.RunPlan) {
 	if len(userOverlays) > 0 {
 		utils.PrintMessage("  Overlay:  %s", strings.Join(userOverlays, ", "))
 	}
+	for _, o := range plan.Optional {
+		state := "mounted"
+		if o.Path == "" {
+			state = "not installed, skipped"
+		}
+		utils.PrintMessage("  Optional: %s (%s)", o.Name, state)
+	}
 	if len(params) > 0 {
 		keys := make([]string, 0, len(params))
 		for k := range params {

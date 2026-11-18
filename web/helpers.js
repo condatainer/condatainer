@@ -1585,20 +1585,36 @@ function _requiredChip(name) {
   return '<div class="module-chip required"><span class="module-chip-name">' + text + '</span></div>';
 }
 
-function _syncProjectInfo(names) {
-  const cwd = gid('cfg-cwd')?.value || '';
-  const key = cwd + '\n' + names.join('\n');
-  if (key === _projectKey) return;
-  _projectKey = key;
-  loadProjectInfo(cwd, names);
+// An optional overlay is mounted when installed and skipped otherwise, so a name
+// nothing answers reads "not installed", not an error.
+function _optionalChip(name) {
+  const r = (_projectInfo?.optional || []).find(x => x.name === name);
+  const tag = '<span class="module-chip-label">optional</span>';
+  if (r && !r.resolved) {
+    return '<div class="module-chip optional skipped"><span class="module-chip-name">' + escHtml(name) + '</span>' +
+      '<span class="module-chip-label">not installed</span>' + tag + '</div>';
+  }
+  const to = r ? r.resolved + (r.ident ? '@' + r.ident : '') : name;
+  const text = to === name ? escHtml(name)
+    : escHtml(name) + ' <span class="module-chip-label">→</span> ' + escHtml(to);
+  return '<div class="module-chip optional"><span class="module-chip-name">' + text + '</span>' + tag + '</div>';
 }
 
-async function loadProjectInfo(cwd, names) {
+function _syncProjectInfo(names, optional) {
+  const cwd = gid('cfg-cwd')?.value || '';
+  const key = cwd + '\n' + names.join('\n') + '\n--\n' + optional.join('\n');
+  if (key === _projectKey) return;
+  _projectKey = key;
+  loadProjectInfo(cwd, names, optional);
+}
+
+async function loadProjectInfo(cwd, names, optional) {
   const req = ++_projectReq;
   let info = null;
   if (cwd) {
     const qs = new URLSearchParams({ cwd });
     names.forEach(n => qs.append('name', n));
+    optional.forEach(n => qs.append('optional', n));
     try { info = await fetch('api/project?' + qs).then(r => r.ok ? r.json() : null); } catch { info = null; }
   }
   if (req !== _projectReq) return;
@@ -1642,7 +1658,7 @@ function renderModuleChips() {
   const list = gid('cfg-modules-list');
   if (!list) return;
 
-  // Required overlays from the helper script — greyed out, not removable.
+  // Required and optional overlays from the helper script — greyed out, not removable.
   // Resolve {KEY} tokens using current param values (or defaults).
   const params = _collectParams();
   const pv     = selectedHelper?.param_values || {};
@@ -1652,14 +1668,17 @@ function renderModuleChips() {
       params[p.key] = _helperSavedConfig[p.key.toLowerCase()] || p.default || (vals[0] || '');
     }
   });
-  const requiredNames = (selectedHelper?.deps || []);
-  const requiredResolved = requiredNames.map(name => {
+  const fill = name => {
     let resolved = name;
     Object.entries(params).forEach(([k, v]) => { resolved = resolved.replaceAll('{' + k + '}', v); });
     return resolved;
-  });
-  _syncProjectInfo(requiredResolved);
-  const requiredChips = requiredResolved.map(_requiredChip).join('');
+  };
+  // The #DEP: lines in the order written, required and optional together.
+  const depLines = (selectedHelper?.dep_lines || []).map(l => ({ name: fill(l.name), optional: !!l.optional }));
+  const requiredResolved = depLines.filter(l => !l.optional).map(l => l.name);
+  const optionalResolved = depLines.filter(l => l.optional).map(l => l.name);
+  _syncProjectInfo(requiredResolved, optionalResolved);
+  const requiredChips = depLines.map(l => l.optional ? _optionalChip(l.name) : _requiredChip(l.name)).join('');
 
   const userChips = selectedModules.map((m, i) =>
     '<div class="module-chip">' +

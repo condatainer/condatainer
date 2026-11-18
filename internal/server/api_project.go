@@ -18,7 +18,7 @@ import (
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
-// requiredResolution is how one required-overlay name resolves for a launch.
+// requiredResolution is how one overlay name, required or optional, resolves for a launch.
 // Resolved is empty when nothing answers it; Ident is set only when the
 // project pins it.
 type requiredResolution struct {
@@ -32,10 +32,12 @@ type projectInfo struct {
 	CWD      string               `json:"cwd"`
 	Distro   string               `json:"distro"`
 	Required []requiredResolution `json:"required"`
+	// Optional resolves the optional names the same way. An empty Resolved means the launch skips it.
+	Optional []requiredResolution `json:"optional"`
 }
 
-// handleProject serves GET /api/project?cwd=&name=...
-//   - (root, distro and how each required-overlay name resolves) and POST /api/project (create cnt-lock/ at cwd).
+// handleProject serves GET /api/project?cwd=&name=...&optional=...
+//   - (root, distro and how each required and optional overlay name resolves) and POST /api/project (create cnt-lock/ at cwd).
 //   - Reading resolves only what is already on disk.
 func (s *srv) handleProject(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -52,7 +54,7 @@ func (s *srv) handleProjectInfo(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	cwd := q.Get("cwd")
 	if cwd == "" {
-		writeJSON(w, projectInfo{Required: []requiredResolution{}})
+		writeJSON(w, projectInfo{Required: []requiredResolution{}, Optional: []requiredResolution{}})
 		return
 	}
 	cwd, err := filepath.Abs(cwd)
@@ -65,7 +67,7 @@ func (s *srv) handleProjectInfo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	info := projectInfo{CWD: cwd, Distro: config.ResolvedDefaultDistro(), Required: []requiredResolution{}}
+	info := projectInfo{CWD: cwd, Distro: config.ResolvedDefaultDistro(), Required: []requiredResolution{}, Optional: []requiredResolution{}}
 	if standing != nil {
 		info.Root = standing.Root
 		if d := standing.SelectedDistro(); d != "" {
@@ -74,6 +76,9 @@ func (s *srv) handleProjectInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, name := range q["name"] {
 		info.Required = append(info.Required, resolveRequired(r, standing, info.Distro, name))
+	}
+	for _, name := range q["optional"] {
+		info.Optional = append(info.Optional, resolveRequired(r, standing, info.Distro, name))
 	}
 	writeJSON(w, info)
 }

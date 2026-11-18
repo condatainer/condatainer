@@ -134,3 +134,38 @@ func TestHelperMetaReadsDepsAndEnvHeaders(t *testing.T) {
 		t.Errorf("fillDeps = %v", got)
 	}
 }
+
+func TestHelperMetaSplitsOptionalDeps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "svc")
+	text := "#!/bin/bash\n#DEP: cloudcli\n#DEP: opencode optional=true\n#DEP: codex optional=true\n#DEP: claude-code\n"
+	if err := os.WriteFile(path, []byte(text), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := ParseHelperScriptMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(meta.Deps, []string{"cloudcli", "claude-code"}) {
+		t.Errorf("Deps = %v, want the required lines only", meta.Deps)
+	}
+	if !slices.Equal(meta.OptionalDeps, []string{"opencode", "codex"}) {
+		t.Errorf("OptionalDeps = %v, want the optional lines in order", meta.OptionalDeps)
+	}
+	var order []string
+	for _, l := range meta.DepLines {
+		order = append(order, l.Name)
+	}
+	if !slices.Equal(order, []string{"cloudcli", "opencode", "codex", "claude-code"}) || !meta.DepLines[1].Optional || meta.DepLines[3].Optional {
+		t.Errorf("DepLines = %+v, want every line in the order written, with its optional flag", meta.DepLines)
+	}
+}
+
+func TestHelperMetaRefusesABadDepOption(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "svc")
+	if err := os.WriteFile(path, []byte("#!/bin/bash\n#DEP: opencode optional=maybe\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseHelperScriptMeta(path); err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("err = %v, want it to name line 2", err)
+	}
+}

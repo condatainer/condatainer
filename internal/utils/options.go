@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -17,10 +18,13 @@ const (
 	optBool
 )
 
-// headerOptions declares the options each header takes. A header that is absent takes none, and its value is read as written.
+// OptionOptional makes a #DEP: line optional. Only a reader that names it accepts it.
+const OptionOptional = "optional"
+
+// headerOptions declares the options a header can carry, and their kinds. A header that is absent takes none, and its value is read as written.
 //   - `=` is common in values (`#ENV: NAME=x`, `#PARAM: KEY=default`, a URL query), so only a header listed here reads options.
 var headerOptions = map[string]map[string]optionKind{
-	"#DEP": {"optional": optBool},
+	"#DEP": {OptionOptional: optBool},
 }
 
 // Options holds the options written after a header's value.
@@ -29,14 +33,15 @@ type Options map[string]string
 // Bool reports whether a boolean option is set to true.
 func (o Options) Bool(name string) bool { return o[name] == "true" }
 
-// SplitOptions separates the value of an annotation from its options.
+// SplitOptions separates the value of an annotation from its options. The reader names the options it accepts.
 //   - The first word is always the value. Options start at the first later word shaped `name=...`, a name being lower-case letters, digits and underscores.
 //   - A word before the options that is not an option stays in the value, so `star >= 2.7` is one value.
 //   - Every word after the first option must be an option, so a stray word never turns an option into part of the value.
-//   - A boolean is `true` or `false`. Quotes are not special.
+//   - A boolean is `true` or `false`, and an option name with no value is refused. Quotes are not special.
 //   - A header with no declared options returns its value unchanged.
-//   - An undeclared option, a repeated one, an empty or non-boolean value and a word after an option are refused, naming the key and the line.
-func SplitOptions(a Annotation) (string, Options, error) {
+//   - An option the reader does not accept is unknown, even when another reader accepts it.
+//   - An unknown option, a repeated one, an empty or non-boolean value and a word after an option are refused, naming the key and the line.
+func SplitOptions(a Annotation, accepts ...string) (string, Options, error) {
 	declared, ok := headerOptions[a.Key]
 	if !ok {
 		return a.Value, nil, nil
@@ -44,6 +49,10 @@ func SplitOptions(a Annotation) (string, Options, error) {
 	words := optionWords(a.Value)
 	first := 1
 	for first < len(words) && !isOptionWord(words[first].text) {
+		if slices.Contains(accepts, words[first].text) {
+			return "", nil, fmt.Errorf("%w: %s on line %d: write %s=true; an option has a value",
+				ErrHeaderOption, a.Key, a.Line, words[first].text)
+		}
 		first++
 	}
 	if first >= len(words) {
@@ -57,11 +66,11 @@ func SplitOptions(a Annotation) (string, Options, error) {
 				ErrHeaderOption, a.Key, a.Line, w.text)
 		}
 		name, value, _ := strings.Cut(w.text, "=")
-		kind, known := declared[name]
-		if !known {
-			return "", nil, fmt.Errorf("%w: %s on line %d: %q is not an option; valid options are %s",
-				ErrHeaderOption, a.Key, a.Line, name, optionNames(declared))
+		if !slices.Contains(accepts, name) {
+			return "", nil, fmt.Errorf("%w: %s on line %d: %q is not an option; %s",
+				ErrHeaderOption, a.Key, a.Line, name, validOptions(accepts))
 		}
+		kind := declared[name]
 		if _, dup := opts[name]; dup {
 			return "", nil, fmt.Errorf("%w: %s on line %d: %q is written twice", ErrHeaderOption, a.Key, a.Line, name)
 		}
@@ -113,11 +122,11 @@ func isOptionWord(w string) bool {
 	return true
 }
 
-func optionNames(declared map[string]optionKind) string {
-	names := make([]string, 0, len(declared))
-	for n := range declared {
-		names = append(names, n)
+func validOptions(accepts []string) string {
+	if len(accepts) == 0 {
+		return "this reader takes no options"
 	}
+	names := append([]string(nil), accepts...)
 	sort.Strings(names)
-	return strings.Join(names, ", ")
+	return "valid options are " + strings.Join(names, ", ")
 }

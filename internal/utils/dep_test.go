@@ -1,9 +1,12 @@
 package utils
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -242,5 +245,45 @@ func TestIsPathDepCoversEveryOverlayExtension(t *testing.T) {
 		if IsPathDep(value) {
 			t.Errorf("IsPathDep(%q) = true, want false", value)
 		}
+	}
+}
+
+func TestDependencyLines(t *testing.T) {
+	text := "#!/bin/bash\n#DEP: base\n#DEP: opencode/1 optional=true ## agent\n#DEP: base optional=true\n" +
+		"#DEP: codex optional=true\n#DEP: codex\n#DEP: star=2.7.11b optional=false\n"
+	lines, err := DependencyLines(ScanAnnotations([]byte(text)), OptionOptional)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := RequiredNames(lines), []string{"base", "codex", "star/2.7.11b"}; !slices.Equal(got, want) {
+		t.Errorf("required = %v, want %v: a name is required when any of its lines is", got, want)
+	}
+	if got, want := OptionalNames(lines), []string{"opencode/1"}; !slices.Equal(got, want) {
+		t.Errorf("optional = %v, want %v", got, want)
+	}
+	if lines[1].Line != 3 {
+		t.Errorf("line = %d, want 3", lines[1].Line)
+	}
+}
+
+func TestDependencyLinesReportsABadOptionAndKeepsTheRest(t *testing.T) {
+	lines, err := DependencyLines(ScanAnnotations([]byte("#DEP: base\n#DEP: star colour=red\n")), OptionOptional)
+	if !errors.Is(err, ErrHeaderOption) {
+		t.Fatalf("err = %v, want ErrHeaderOption", err)
+	}
+	if got := RequiredNames(lines); !slices.Equal(got, []string{"base"}) {
+		t.Errorf("required = %v, want [base]", got)
+	}
+}
+
+func TestScriptDependenciesTreatsOptionalAsUnknown(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/bash\n#DEP: base\n#DEP: opencode optional=true\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ScriptDependencies(path)
+	if !errors.Is(err, ErrHeaderOption) || !strings.Contains(err.Error(), "line 3") ||
+		!strings.Contains(err.Error(), `"optional" is not an option`) {
+		t.Fatalf("err = %v, want line 3 refused as an unknown option", err)
 	}
 }

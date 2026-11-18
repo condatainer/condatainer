@@ -33,9 +33,13 @@ type HelperScriptMeta struct {
 	// pre-submission package verification. {KEY} tokens are substituted from
 	// resolved #PARAM: values before use. Empty when #ENV_PACKAGES: has no value.
 	EnvPackages string
-	// Deps are the overlays to load before the helper runs, one per #DEP: line, in the order written.
+	// Deps are the overlays to load before the helper runs, one per required #DEP: line, in the order written.
 	// {KEY} tokens are substituted from resolved #PARAM: values (e.g. "r/{POSIT_R}").
 	Deps []string
+	// DepLines are every #DEP: line, required and optional, in the order written. Deps and OptionalDeps split it.
+	DepLines []utils.DepLine
+	// OptionalDeps are the #DEP: lines marked optional=true, in the order written. Each is mounted when an installed overlay satisfies it.
+	OptionalDeps []string
 	// EnvPostInstall is run inside the container after micromamba installs EnvPackages.
 	EnvPostInstall string
 	// Singleton is true when at most one running instance of this helper is allowed.
@@ -213,14 +217,17 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 	annotations := utils.ScanAnnotations(data)
 	utils.WarnStray(scriptPath, utils.StrayAnnotations(data, helperKeys...))
 	resources, problem := scheduler.ParseResourceHeaders(annotations)
-	problems := []error{problem}
+	depLines, depProblem := utils.DependencyLines(annotations, utils.OptionOptional)
+	problems := []error{problem, depProblem}
 	meta := HelperScriptMeta{
-		ParamValues: make(map[string][]string),
-		Deps:        utils.Dependencies(annotations),
-		NCPU:        resources.CpusPerTask,
-		MemMB:       resources.MemPerNodeMB,
-		Walltime:    resources.Time,
-		GPU:         resources.Gpu,
+		ParamValues:  make(map[string][]string),
+		DepLines:     depLines,
+		Deps:         utils.RequiredNames(depLines),
+		OptionalDeps: utils.OptionalNames(depLines),
+		NCPU:         resources.CpusPerTask,
+		MemMB:        resources.MemPerNodeMB,
+		Walltime:     resources.Time,
+		GPU:          resources.Gpu,
 	}
 	if meta.Singleton, err = utils.Flag(annotations, "#SINGLETON"); err != nil {
 		problems = append(problems, err)

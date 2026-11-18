@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
+	"github.com/condatainer/condatainer/internal/project"
+	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -62,6 +65,98 @@ func TestCheckAndInstallNamedOverlaysReusesInstalled(t *testing.T) {
 	want := filepath.Join(imagesDir, installedName)
 	if len(paths) != 1 || paths[0] != want {
 		t.Errorf("paths = %v, want [%s] — should reuse the installed overlay with no build", paths, want)
+	}
+}
+
+// installOverlays makes the named empty overlay files the installed set and returns their folder.
+func installOverlays(t *testing.T, files ...string) string {
+	t.Helper()
+	imagesDir := t.TempDir()
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(imagesDir, f), []byte{}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prevPaths := config.GlobalDataPaths
+	config.GlobalDataPaths.ImagesDirs = []string{imagesDir}
+	settingstest.Override(t, "default_distro", "ubuntu24")
+	config.ResetCatalog()
+	t.Cleanup(func() {
+		config.GlobalDataPaths = prevPaths
+		config.ResetCatalog()
+	})
+	return imagesDir
+}
+
+// An optional #DEP: mounts what an installed overlay satisfies and skips the rest. It never builds.
+func TestResolveOptionalOverlaysSkipsWhatIsNotInstalled(t *testing.T) {
+	installed := filepath.Join(installOverlays(t, "opencode--1.19.6.sqf"), "opencode--1.19.6.sqf")
+
+	got, err := ResolveOptionalOverlays(context.Background(), t.TempDir(),
+		[]string{"opencode/1", "codex", "{AGENT}"}, map[string]string{"AGENT": "opencode"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []OptionalMount{{"opencode/1", installed}, {"codex", ""}, {"opencode", installed}}
+	if !slices.Equal(got, want) {
+		t.Errorf("mounts = %v, want %v", got, want)
+	}
+}
+
+// Standing in a project, an optional name that no pin answers resolves by installed name, and one nothing answers is skipped.
+func TestResolveOptionalOverlaysInAProject(t *testing.T) {
+	installed := filepath.Join(installOverlays(t, "opencode--1.19.6.sqf"), "opencode--1.19.6.sqf")
+	root := t.TempDir()
+	if err := lock.Publish(root, lock.New()); err != nil {
+		t.Fatal(err)
+	}
+	if standing, err := project.StandingAt(root); err != nil || standing == nil {
+		t.Fatalf("StandingAt: standing = %v, err = %v; the test must stand in a project", standing, err)
+	}
+
+	got, err := ResolveOptionalOverlays(context.Background(), root, []string{"opencode", "codex"}, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []OptionalMount{{"opencode", installed}, {"codex", ""}}
+	if !slices.Equal(got, want) {
+		t.Errorf("mounts = %v, want %v", got, want)
+	}
+}
+
+// An optional line that names an overlay file is mounted when the file exists.
+func TestResolveOptionalOverlaysReadsPaths(t *testing.T) {
+	dir := installOverlays(t)
+	present := filepath.Join(dir, "extra.sqf")
+	if err := os.WriteFile(present, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "gone.sqf")
+
+	got, err := ResolveOptionalOverlays(context.Background(), t.TempDir(), []string{present, missing}, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []OptionalMount{{present, present}, {missing, ""}}
+	if !slices.Equal(got, want) {
+		t.Errorf("mounts = %v, want %v", got, want)
+	}
+}
+
+// The #DEP: lines mount in the order written, required and optional together, and a skipped optional line leaves no gap.
+func TestDepOverlaysFollowTheWrittenOrder(t *testing.T) {
+	lines := []utils.DepLine{
+		{Name: "a"}, {Name: "b", Optional: true}, {Name: "c"}, {Name: "d", Optional: true}, {Name: "e", Optional: true},
+	}
+	required := []string{"/img/a", "/img/c"}
+	optional := []OptionalMount{{"b", "/img/b"}, {"d", ""}, {"e", "/img/e"}}
+
+	got := depOverlays(lines, required, optional)
+	if want := []string{"/img/a", "/img/b", "/img/c", "/img/e"}; !slices.Equal(got, want) {
+		t.Errorf("overlays = %v, want %v", got, want)
+	}
+	if got := depOverlays(nil, nil, nil); len(got) != 0 {
+		t.Errorf("no lines = %v, want nothing", got)
 	}
 }
 

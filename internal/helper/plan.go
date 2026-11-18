@@ -26,8 +26,10 @@ type RunPlan struct {
 	Scheduler     scheduler.Scheduler
 	UserOverlays  []string
 	NamedOverlays []string
-	Params        map[string]string
-	ContainerCmd  string
+	// Optional lists each optional #DEP: line, in the order written, with the overlay it resolved to.
+	Optional     []OptionalMount
+	Params       map[string]string
+	ContainerCmd string
 }
 
 // ErrMissingParam is returned by PlanRun when one or more required #PARAM:
@@ -178,8 +180,20 @@ func PlanRun(ctx context.Context, opts RunOptions) (*RunPlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(namedOverlays) > 0 {
-		opts.Overlays = append(append([]string(nil), namedOverlays...), opts.Overlays...)
+	optional, err := ResolveOptionalOverlays(ctx, cwd, meta.OptionalDeps, params, opts.NoProject)
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range optional {
+		if o.Path == "" {
+			logger.Info("Optional overlay not installed, skipped", "overlay", o.Name)
+			continue
+		}
+		logger.Info("Optional overlay mounted", "overlay", o.Name, "path", o.Path)
+	}
+	mounted := depOverlays(meta.DepLines, namedOverlays, optional)
+	if len(mounted) > 0 {
+		opts.Overlays = append(mounted, opts.Overlays...)
 	}
 
 	// #ENV_PACKAGES: needs a writable form, not just installed packages — a
@@ -217,6 +231,7 @@ func PlanRun(ctx context.Context, opts RunOptions) (*RunPlan, error) {
 		Scheduler:     sched,
 		UserOverlays:  userOverlays,
 		NamedOverlays: namedOverlays,
+		Optional:      optional,
 		Params:        params,
 		ContainerCmd:  containerCmd,
 	}, nil

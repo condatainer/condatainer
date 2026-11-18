@@ -199,8 +199,12 @@ func ParseRecipe(path string, r io.Reader) (*Recipe, error) {
 		case "#TARGET":
 			rec.TargetTemplate = firstOf(rec.TargetTemplate, value)
 		case "#DEP":
-			if value != "" {
-				rec.Deps = append(rec.Deps, utils.NormalizeModule(value))
+			name, _, err := utils.SplitOptions(a)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %s: %w", ErrInvalidRecipe, path, err)
+			}
+			if name != "" {
+				rec.Deps = append(rec.Deps, utils.NormalizeModule(name))
 			}
 		case "#ENV":
 			if env, ok := parseEnv(value, note); ok {

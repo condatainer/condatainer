@@ -229,3 +229,12 @@ func TestRedistributionHeadersLeaveTheDigestAlone(t *testing.T) {
 }
 
 func boolp(b bool) *bool { return &b }
+
+func TestParseRecipeRefusesDepOptions(t *testing.T) {
+	for _, text := range []string{"#DEP: star optional=true\n", "#DEP: star colour=red\n"} {
+		_, err := ParseRecipe("recipes/x/1.0", strings.NewReader("#!/bin/bash\n"+text))
+		if !errors.Is(err, ErrInvalidRecipe) {
+			t.Errorf("%q: err = %v, want ErrInvalidRecipe", text, err)
+		}
+	}
+}

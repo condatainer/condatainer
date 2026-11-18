@@ -117,10 +117,68 @@ func IsPathDep(value string) bool {
 	return IsOverlay(value) || IsSif(value)
 }
 
+// DepLine is one #DEP: line.
+type DepLine struct {
+	// Name is the module name, normalized, or an overlay path as written. A {KEY} token survives.
+	Name string
+	// Optional is set by `optional=true`.
+	Optional bool
+	// Line is the 1-based line the declaration was written on.
+	Line int
+}
+
+// DependencyLines returns the #DEP: lines in the order written, deduplicated by name. The reader names the options it accepts.
+//   - A name is normalized, and a path is kept as written. A {KEY} token survives, for a reader that fills it.
+//   - A name written twice keeps its first place, and is required when any of its lines is.
+//   - A line whose options are refused is left out, and its error is returned with the lines that did read.
+func DependencyLines(annotations []Annotation, accepts ...string) ([]DepLine, error) {
+	var lines []DepLine
+	var problems []error
+	index := map[string]int{}
+	for _, a := range SelectAnnotations(annotations, "#DEP") {
+		name, opts, err := SplitOptions(a, accepts...)
+		if err != nil {
+			problems = append(problems, err)
+			continue
+		}
+		if name == "" {
+			continue
+		}
+		if !IsPathDep(name) {
+			name = NormalizeModule(name)
+		}
+		optional := opts.Bool(OptionOptional)
+		if i, seen := index[name]; seen {
+			lines[i].Optional = lines[i].Optional && optional
+			continue
+		}
+		index[name] = len(lines)
+		lines = append(lines, DepLine{Name: name, Optional: optional, Line: a.Line})
+	}
+	return lines, errors.Join(problems...)
+}
+
+// RequiredNames returns the names of the lines that are not optional, in order.
+func RequiredNames(lines []DepLine) []string { return namesWhere(lines, false) }
+
+// OptionalNames returns the names of the optional lines, in order.
+func OptionalNames(lines []DepLine) []string { return namesWhere(lines, true) }
+
+func namesWhere(lines []DepLine, optional bool) []string {
+	names := []string{}
+	for _, l := range lines {
+		if l.Optional == optional {
+			names = append(names, l.Name)
+		}
+	}
+	return names
+}
+
 // ScriptDependencies returns the dependencies a script's #DEP: annotations declare, deduplicated.
 //   - A name is normalized, and a path is kept as written.
 //   - Only the header block is read. A #DEP: after the first command is ignored and warned about.
 //   - Only #DEP: counts. A `module load` line names the site's module tree, not an artifact.
+//   - An option on a #DEP: line is refused, since a script takes none.
 func ScriptDependencies(scriptPath string) ([]string, error) {
 	text, err := os.ReadFile(scriptPath)
 	if err != nil {
@@ -131,26 +189,9 @@ func ScriptDependencies(scriptPath string) ([]string, error) {
 	}
 
 	WarnStray(scriptPath, StrayAnnotations(text, "#DEP"))
-	return Dependencies(ScanAnnotations(text)), nil
-}
-
-// Dependencies returns the values of the #DEP: annotations, one name per annotation, deduplicated in the order written.
-//   - A name is normalized, and a path is kept as written. A {KEY} token survives, for a reader that fills it.
-func Dependencies(annotations []Annotation) []string {
-	dependencies := []string{}
-	seen := make(map[string]bool)
-	for _, a := range SelectAnnotations(annotations, "#DEP") {
-		if a.Value == "" {
-			continue
-		}
-		key := a.Value
-		if !IsPathDep(key) {
-			key = NormalizeModule(key)
-		}
-		if !seen[key] {
-			dependencies = append(dependencies, key)
-			seen[key] = true
-		}
+	lines, err := DependencyLines(ScanAnnotations(text))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", scriptPath, err)
 	}
-	return dependencies
+	return RequiredNames(lines), nil
 }

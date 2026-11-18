@@ -47,6 +47,7 @@ func TestSplitOptions(t *testing.T) {
 		{key: "#DEP", text: `star optional="true"`, refused: true},
 		{key: "#DEP", text: "star optional=true colour=red", refused: true},
 		{key: "#DEP", text: "star optional=true extra", refused: true},
+		{key: "#DEP", text: "star optional", refused: true},
 		{key: "#DEP", text: "star optional=true ' ## ' ## note", refused: true},
 	}
 	for _, tt := range tests {
@@ -54,7 +55,7 @@ func TestSplitOptions(t *testing.T) {
 		if len(a) != 1 {
 			t.Fatalf("%s %q is not one annotation", tt.key, tt.text)
 		}
-		head, opts, err := SplitOptions(a[0])
+		head, opts, err := SplitOptions(a[0], OptionOptional)
 		if tt.refused {
 			if !errors.Is(err, ErrHeaderOption) {
 				t.Errorf("%s %q: err = %v, want ErrHeaderOption", tt.key, tt.text, err)
@@ -83,9 +84,22 @@ func joinOptions(o Options) string {
 	return strings.Join(pairs, ";")
 }
 
+// A reader that accepts no options treats optional like any unknown option.
+func TestSplitOptionsAcceptingNone(t *testing.T) {
+	a := ScanAnnotations([]byte("#DEP: star optional=true"))[0]
+	_, _, err := SplitOptions(a)
+	if !errors.Is(err, ErrHeaderOption) || !strings.Contains(err.Error(), `"optional" is not an option`) ||
+		!strings.Contains(err.Error(), "this reader takes no options") {
+		t.Fatalf("err = %v, want optional refused as an unknown option", err)
+	}
+	if head, _, err := SplitOptions(ScanAnnotations([]byte("#DEP: star >= 2.7"))[0]); err != nil || head != "star >= 2.7" {
+		t.Errorf("a plain value = %q, %v, want it unchanged", head, err)
+	}
+}
+
 func TestSplitOptionsErrorNamesValidOptions(t *testing.T) {
 	a := ScanAnnotations([]byte("#DEP: star colour=red"))[0]
-	_, _, err := SplitOptions(a)
+	_, _, err := SplitOptions(a, OptionOptional)
 	if err == nil || !strings.Contains(err.Error(), "valid options are optional") ||
 		!strings.Contains(err.Error(), "line 1") {
 		t.Fatalf("err = %v, want it to name the line and the valid options", err)

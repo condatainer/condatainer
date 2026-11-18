@@ -160,8 +160,10 @@ input,button,select{font-family:inherit;font-size:inherit;}
 .btn-primary{background:var(--accent);color:#fff;border-color:var(--accent);}
 .btn-primary:hover{background:color-mix(in srgb,var(--accent) 86%,#000);border-color:color-mix(in srgb,var(--accent) 86%,#000);}
 /* The dark-mode accent is a bright blue — tone the filled primary down as a fill. */
-[data-theme="dark"] .btn-primary{background:color-mix(in srgb,var(--accent) 82%,#000);border-color:color-mix(in srgb,var(--accent) 82%,#000);}
-[data-theme="dark"] .btn-primary:hover{background:color-mix(in srgb,var(--accent) 70%,#000);border-color:color-mix(in srgb,var(--accent) 70%,#000);}
+[data-theme="dark"] .btn-primary{background:color-mix(in srgb,var(--accent) 72%,#000);border-color:color-mix(in srgb,var(--accent) 72%,#000);}
+[data-theme="dark"] .btn-primary:hover{background:color-mix(in srgb,var(--accent) 62%,#000);border-color:color-mix(in srgb,var(--accent) 62%,#000);}
+/* The darker fill needs less fading when disabled, or the button vanishes into the panel. */
+[data-theme="dark"] .btn-primary[disabled]{opacity:.5;}
 .btn-danger{background:var(--danger);color:#fff;border-color:var(--danger);}
 .btn-danger:hover{background:color-mix(in srgb,var(--danger) 86%,#000);border-color:color-mix(in srgb,var(--danger) 86%,#000);}
 .btn-ghost{background:transparent;border-color:transparent;color:var(--muted);padding:4px 8px;}
@@ -278,7 +280,7 @@ input,button,select{font-family:inherit;font-size:inherit;}
 .combo-item{padding:5px 10px;font-family:var(--mono);font-size:13px;cursor:pointer;}
 .combo-item:hover{background:var(--hover);}
 .combo-empty{color:var(--muted);cursor:default;}
-.combo-input.combo-invalid,.field-input.combo-invalid{border-color:var(--danger);}
+.combo-input.combo-invalid,.field-input.combo-invalid{border-color:color-mix(in srgb,var(--term-err) 50%,transparent);}
 
 /* ── Progress stack ──────────────────────── */
 /* Anchored bottom-LEFT of the content area (inside #app): the app's
@@ -504,9 +506,12 @@ th.file-actions-cell{width:112px;} /* fits the 3 buttons of a folder row (star, 
 
 /* ── Module chips ────────────────────────── */
 .module-chip{display:flex;align-items:center;gap:6px;padding:4px 8px;min-height:32px;box-sizing:border-box;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);}
-.module-chip.required{opacity:.5;}
-.module-chip.unresolved{border-color:color-mix(in srgb,var(--danger) 40%,transparent);}
-.module-chip.unresolved .module-chip-label{color:var(--danger);}
+.module-chip.required,.module-chip.optional{opacity:.5;}
+.module-chip.skipped{opacity:1;border-color:color-mix(in srgb,var(--term-warn) 50%,transparent);}
+.module-chip.skipped .module-chip-name{opacity:.5;}
+.module-chip.skipped .module-chip-name + .module-chip-label{color:var(--term-warn);}
+.module-chip.unresolved{border-color:color-mix(in srgb,var(--term-err) 50%,transparent);}
+.module-chip.unresolved .module-chip-label{color:var(--term-err);}
 .project-line{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;}
 .project-label{color:var(--muted);min-width:52px;}
 .project-path{flex:1;word-break:break-all;}

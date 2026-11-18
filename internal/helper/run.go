@@ -260,6 +260,37 @@ func fillDeps(deps []string, params map[string]string) []string {
 	return out
 }
 
+// installedOverlays resolves each name against what is installed and builds nothing.
+//   - It returns one path per name, in order. A name no installed overlay satisfies has an empty path.
+//   - A path is used as written when the file exists.
+func installedOverlays(ctx context.Context, names []string, distro string) ([]string, error) {
+	installed, err := image.ScanOverlays(image.ScanOptions{})
+	if err != nil {
+		return nil, err
+	}
+	logger := logging.FromContext(ctx)
+	paths := make([]string, len(names))
+	for i, name := range names {
+		if utils.IsPathDep(name) {
+			if abs, err := filepath.Abs(name); err == nil && utils.FileExists(abs) {
+				paths[i] = abs
+			}
+			continue
+		}
+		resolved, path, ok, err := catalog.SolveInstalled(ctx, installed, distro, name)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			paths[i] = path
+			if resolved != utils.NormalizeModule(name) {
+				logger.Info(fmt.Sprintf("%s -> %s", name, resolved), "kind", "note")
+			}
+		}
+	}
+	return paths, nil
+}
+
 // checkAndInstallNamedOverlays makes sure each named overlay exists and returns the resolved absolute paths.
 //   - A name is first resolved against what is installed, with no network call.
 //   - Only a name nothing installed satisfies is built, by `condatainer create` with the name as declared.

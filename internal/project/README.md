@@ -75,6 +75,7 @@
 - Some artifacts are named by no `#DEP:`:
   - A helper's `#DEP:`. A helper lives in the data directories, not the project, so the scanner never reads it, and a helper never pins. Those overlays are the user's to pin later, if they want reproducibility.
   - A helper kept in a project as a `.sh` file is read like any script. Its `{placeholder}` names are reported and never pinned.
+  - Its `optional=true` line is a finding, as an unknown option.
   - A frozen environment. It is what analysis runs in, not something a script consumes.
 - The manual flag is derived once, at pin time, then recorded. Deriving it on every run would turn the sweep into a no-op.
 - A scan that cannot run answers "declared". The pin stays sweepable, so a later `project lock` can still correct it.

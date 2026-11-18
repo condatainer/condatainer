@@ -575,3 +575,18 @@ func TestScanSkipsBuildRecipes(t *testing.T) {
 		t.Errorf("scripts = %v, want run.sh alone", result.Scripts)
 	}
 }
+
+// A script takes no #DEP: options, so optional is an unknown option and a finding.
+func TestScanReportsAnOptionalDeclaration(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "svc.sh", "#!/bin/bash\n#DEP: cloudcli\n#DEP: opencode optional=true\nrun\n")
+
+	result := scan(t, root)
+	if got := keys(result); len(got) != 1 || got[0] != "cloudcli" {
+		t.Fatalf("requests = %v, want only the plain line", got)
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Line != 3 ||
+		!strings.Contains(result.Findings[0].Reason, `"optional" is not an option`) {
+		t.Errorf("findings = %+v, want line 3 refused as an unknown option", result.Findings)
+	}
+}

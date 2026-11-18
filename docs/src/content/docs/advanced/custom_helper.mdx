@@ -47,6 +47,7 @@ wait $PID
 Headers are written one per line as `#KEY: value`, in the comment lines at the top of the script, before its first command. The value ends at the first `##`, and the text after `##` is a comment. A single `#` belongs to the value.
 
 - A header below the first command is ignored, and CondaTainer prints a warning with the line.
+- A header that takes options reads them as `name=value` words after its value. `#DEP:` is the only one, and its only option is `optional`.
 
 ### Resources
 
@@ -75,8 +76,25 @@ A helper's software usually comes from [module overlays](../guides/overlays.md),
 ```
 
 - The last `#DEP:` line is topmost in the mount stack.
-- Missing overlays are built before the job is submitted.
+- Missing overlays are built before the job is submitted, except [optional overlays](#optional-overlays).
 - `{IGV}` is replaced by the value of a [parameter](#parameters), so users can pick the version.
+
+#### Optional Overlays
+
+Write `optional=true` after the name to mount an overlay only when it is installed:
+
+```bash
+#DEP: cloudcli
+#DEP: opencode optional=true
+#DEP: codex optional=true
+```
+
+- An installed overlay is mounted. An optional line never builds or downloads anything.
+- When no installed overlay matches, the line is skipped and the helper still starts. The launch log names each optional overlay as mounted or skipped.
+- Optional overlays are mounted in the order the `#DEP:` lines are written, together with the required ones.
+- A site chooses which tools a helper offers by installing them.
+- The helper dashboard lists each optional overlay beside the required ones, tagged `optional`. One that is not installed shows `not installed` and is skipped at launch.
+- The option goes at the end of the line, as `optional=true` or `optional=false`. A bare `optional` is refused.
 
 #### Naming Module Overlays
 

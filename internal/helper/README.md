@@ -52,11 +52,14 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 
 ## Overlays
 
-- The `#DEP:` lines are the overlays to load, one per line, and their order is the overlay order. The last name is topmost and wins file conflicts.
+- The `#DEP:` lines are the overlays to load, one per line, in the order written. Required and optional lines are mixed as written, and the last name is topmost and wins file conflicts.
 - Standing in a project, a name resolves as `exec -o` does, and a helper never adds a pin.
 - A name nothing installed answers is built as it is outside a project.
 - A pinned artifact absent on this machine is refused with a pointer to `project restore`.
 - A named overlay is a fixed requirement. It is built without a prompt.
+- An `optional=true` line is mounted when an installed overlay satisfies it, and skipped otherwise.
+  - It never builds or pulls, so a site decides what a helper offers by what it installs.
+  - It resolves like a required name, including through a project's pins.
 - Names resolve against what is installed before anything is built, so a satisfied name costs no network call.
 - `#ENV_PACKAGES:` is two requirements: the packages are installed, and a writable form exists to install into.
   - A bare `.sqf` snapshot can satisfy the first. It cannot satisfy the second, so the plan refuses it and guided creation runs.

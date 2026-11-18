@@ -161,6 +161,73 @@ func CheckRequiredOverlays(ctx context.Context, cwd string, deps []string, param
 	return out, nil
 }
 
+// OptionalMount is one optional #DEP: line and what it resolved to.
+type OptionalMount struct {
+	Name string
+	// Path is the overlay to mount. Empty when no installed overlay satisfies the name.
+	Path string
+}
+
+// ResolveOptionalOverlays expands {tokens} in the optional #DEP: names from params and resolves each against what is installed.
+//   - It never builds or pulls anything, and a name nothing installed answers is skipped, with an empty Path.
+//   - In a project a name resolves as `exec -o` does, and a pinned artifact absent here names `project restore`.
+//   - It returns one entry per name, in order.
+func ResolveOptionalOverlays(ctx context.Context, cwd string, names []string, params map[string]string, noProject bool) ([]OptionalMount, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	filled := fillDeps(names, params)
+	var standing *project.Standing
+	if !noProject {
+		var err error
+		if standing, err = project.StandingAt(cwd); err != nil {
+			return nil, err
+		}
+	}
+	var paths []string
+	if standing == nil {
+		var err error
+		if paths, err = installedOverlays(ctx, filled, config.ResolvedDefaultDistro()); err != nil {
+			return nil, err
+		}
+	} else {
+		mounts, err := standing.ResolveNames(ctx, filled)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range mounts {
+			paths = append(paths, m.Path)
+		}
+	}
+	out := make([]OptionalMount, len(filled))
+	for i, name := range filled {
+		out[i] = OptionalMount{Name: name, Path: paths[i]}
+	}
+	return out, nil
+}
+
+// depOverlays lists the overlay files of the #DEP: lines in the order the lines are written.
+//   - required holds one path per required line, and optional one entry per optional line, each in the order written.
+//   - An optional line that no installed overlay answers leaves nothing in its place.
+func depOverlays(lines []utils.DepLine, required []string, optional []OptionalMount) []string {
+	var out []string
+	r, o := 0, 0
+	for _, l := range lines {
+		if l.Optional {
+			if o < len(optional) && optional[o].Path != "" {
+				out = append(out, optional[o].Path)
+			}
+			o++
+			continue
+		}
+		if r < len(required) {
+			out = append(out, required[r])
+		}
+		r++
+	}
+	return out
+}
+
 // CheckHelperPackages verifies that every package in meta.EnvPackages is
 // installed in the conda environment inside envImg. {KEY} tokens in EnvPackages
 // are substituted from params before checking.

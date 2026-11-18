@@ -91,7 +91,8 @@ type Declaration struct {
 // ProjectPin is one pin of a lock. Overlay, Identity and Equiv come from the
 // vendored record, and are absent when it cannot be read. Artifacts maps each
 // architecture the pin covers to its vendored directory. Manual is a pin no
-// script declares.
+// script declares. SlotOnly is a pin only a #SLOT: names, which a run mounts only
+// when the slot is bound to it.
 type ProjectPin struct {
 	Overlay
 	Request   string            `json:"request"`
@@ -99,6 +100,7 @@ type ProjectPin struct {
 	Equiv     meta.KeyRef       `json:"equiv,omitzero"`
 	Artifacts map[string]string `json:"artifacts"`
 	Manual    bool              `json:"manual"`
+	SlotOnly  bool              `json:"slot_only,omitempty"`
 }
 
 // ProjectPins is the document of a command that lists a project's pins.

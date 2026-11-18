@@ -416,6 +416,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 		}
 		return slotErr
 	}
+	noteUnpinnedSlots(slots)
 	overlays = append(overlays, slots.Paths()...)
 	containerFlags = append(containerFlags, slots.Flags()...)
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -564,5 +565,26 @@ func TestResolveByNameExplainsAPartialVersion(t *testing.T) {
 	}
 	if _, _, err := resolveByName("star/2.7.11b", opts); err != nil {
 		t.Errorf("full version: %v", err)
+	}
+}
+
+// A pin no script declares is stale. The base pin and a manual pin never are.
+func TestStalePins(t *testing.T) {
+	l := New()
+	l.Pins["samtools/1.24"] = PinEntry{Artifacts: map[string]string{"amd64": "x"}}
+	l.Pins["star/2.7.11b"] = PinEntry{Artifacts: map[string]string{"amd64": "y"}}
+	l.Pins["build-essential"] = PinEntry{Artifacts: map[string]string{"amd64": "z"}, Manual: true}
+	l.Pins[BaseKey] = PinEntry{Artifacts: map[string]string{"amd64": "b"}}
+	result := &ScanResult{Requests: []Request{{Key: "samtools/1.24", Kind: KindName}}}
+
+	if got := StalePins(l, result); !reflect.DeepEqual(got, []string{"star/2.7.11b"}) {
+		t.Fatalf("StalePins = %v, want only the pin no script declares", got)
+	}
+	Reconcile(t.TempDir(), l, result)
+	if _, still := l.Pins["star/2.7.11b"]; still {
+		t.Error("Reconcile kept a stale pin")
+	}
+	if _, kept := l.Pins["build-essential"]; !kept {
+		t.Error("Reconcile dropped a manual pin")
 	}
 }

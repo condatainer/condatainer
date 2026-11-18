@@ -21,6 +21,7 @@ func newProjectValidateCmd() *cobra.Command {
 		Long: `Check that the lock is complete and consistent with the scripts.
 
 - Every declaration in the scripts has a pin.
+- Every pin is declared by a script, or is manual.
 - Every pin points at a recorded overlay.
 - Every pin has an overlay for each locked architecture that its recipe builds.
 - Every recorded overlay still matches its keys.
@@ -54,7 +55,7 @@ func newProjectValidateCmd() *cobra.Command {
 				notInstalled = installedProblems(cmd.Context(), root, current, payload)
 			}
 
-			total := len(problems) + len(scanned.Findings) + len(needPin) + len(notInstalled)
+			total := len(problems) + len(scanned.Findings) + len(needPin) + len(notInstalled) + len(lock.StalePins(current, scanned))
 			if missingBaseProblem(current) != "" {
 				total++
 			}
@@ -143,6 +144,9 @@ func validationDoc(root string, l *lock.Lock, problems []lock.Problem, needPin [
 		doc.Problems = append(doc.Problems, report.Problem{Message: reason})
 	}
 	doc.Problems = append(doc.Problems, problemList(notInstalled)...)
+	for _, key := range lock.StalePins(l, scanned) {
+		doc.Problems = append(doc.Problems, report.Problem{Name: key, Message: stalePinProblem(key)})
+	}
 	for _, request := range needPin {
 		doc.Unpinned = append(doc.Unpinned, declaration(request, "", true))
 	}

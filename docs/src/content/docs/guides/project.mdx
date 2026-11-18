@@ -207,9 +207,10 @@ condatainer project validate
 ```
 
 - `lock` scans and records `#DEP:` overlays, creating `cnt-lock/` if missing. A `#DEP:` needs a full version, such as `salmon/2.7.0`. A shorter one, such as `salmon/2`, fails and lists the installed versions.
+- `lock` also records the `default=` and every `choices=` overlay of a `#SLOT:`, so `restore` fetches each overlay the script lists. An overlay the script does not list is not recorded. A run mounts only the overlay the slot is bound to. A `strict=false` slot can be bound to an overlay the script does not list. It mounts the installed overlay, and a note says it is not pinned.
 - Use `pin` to record overlays that are not declared via `#DEP:`, such as `env.sqf`.
 - The `cnt-lock/` folder contains only text-based lockfiles and recipes that are safe to commit to Git.
-- `condatainer project validate` confirms that all dependencies are accounted for and match your scripts.
+- `condatainer project validate` confirms that all dependencies are accounted for and match your scripts, and that no pin is left that no script declares.
 
 #### Choose Which Scripts Are Locked
 

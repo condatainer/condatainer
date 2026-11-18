@@ -23,6 +23,7 @@ func newProjectListCmd() *cobra.Command {
 - Works in a fresh clone that has restored nothing.
 - To check that the overlays are available, use ` + "`project restore --dry-run`" + `.
 - A 'manual' pin is one no script declares.
+- A 'slot' pin is one only a #SLOT: names.
 - ` + "`project lock`" + ` keeps it, and ` + "`project unpin`" + ` removes it.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
@@ -40,6 +41,7 @@ func newProjectListCmd() *cobra.Command {
 			// listed with the key that addresses it.
 			verified, _ := lock.Verify(root, l)
 			pins := pinReports(l, verified)
+			markSlotOnly(root, pins)
 
 			if jsonOutput {
 				return writePins(cmd, root, pins)
@@ -55,7 +57,7 @@ func newProjectListCmd() *cobra.Command {
 			for _, pin := range pins {
 				width = max(width, len(pinLabel(pin)))
 			}
-			var manual int
+			var manual, slotOnly int
 			for _, pin := range pins {
 				label := pinLabel(pin)
 				// Padded from the unstyled label: styling adds escape bytes that
@@ -67,6 +69,9 @@ func newProjectListCmd() *cobra.Command {
 				case pin.Manual:
 					manual++
 					row += "  " + identityPrefix(pin.Identity) + "  " + archList(pin) + "  " + utils.StyleWarning("manual")
+				case pin.SlotOnly:
+					slotOnly++
+					row += "  " + identityPrefix(pin.Identity) + "  " + archList(pin) + "  " + utils.StyleDim("slot")
 				default:
 					row += "  " + identityPrefix(pin.Identity) + "  " + archList(pin)
 				}
@@ -75,16 +80,39 @@ func newProjectListCmd() *cobra.Command {
 					utils.PrintWarning("  %s", pin.Problem)
 				}
 			}
+			summary := fmt.Sprintf("%d pin(s)", len(pins))
 			if manual > 0 {
-				utils.PrintMessage("%d pin(s), %d manual", len(pins), manual)
-				return nil
+				summary += fmt.Sprintf(", %d manual", manual)
 			}
-			utils.PrintMessage("%d pin(s)", len(pins))
+			if slotOnly > 0 {
+				summary += fmt.Sprintf(", %d slot", slotOnly)
+			}
+			utils.PrintMessage("%s", summary)
 			return nil
 		},
 	}
 	jsonFlag(cmd.Flags(), &jsonOutput)
 	return cmd
+}
+
+// markSlotOnly marks the pins that only a #SLOT: names, which the lock does not record.
+//   - It reads the scripts, so a clone with no scripts, or a scan that fails, marks nothing.
+func markSlotOnly(root string, pins []pinReport) {
+	scanned, err := lock.Scan(root, lock.ScanOptions{})
+	if err != nil {
+		return
+	}
+	slotOnly := map[string]bool{}
+	for _, request := range scanned.Requests {
+		if request.SlotOnly {
+			for _, key := range request.PathCandidates() {
+				slotOnly[key] = true
+			}
+		}
+	}
+	for i := range pins {
+		pins[i].SlotOnly = slotOnly[pins[i].Request] && !pins[i].Manual
+	}
 }
 
 // archList names the architectures a pin has an artifact for.
@@ -118,7 +146,7 @@ func pinsDoc(root string, pins []pinReport) *report.ProjectPins {
 	doc := &report.ProjectPins{Root: root, Pins: report.List[report.ProjectPin]{}, Problems: report.List[report.Problem]{}}
 	for _, pin := range pins {
 		record := report.ProjectPin{Overlay: report.Overlay{Name: pin.Name}, Request: pin.Request,
-			Artifacts: pin.Artifacts, Manual: pin.Manual}
+			Artifacts: pin.Artifacts, Manual: pin.Manual, SlotOnly: pin.SlotOnly}
 		if pin.Entry != nil {
 			record.Type, record.Identity, record.Equiv = pin.Entry.Manifest.Type, pin.Entry.Identity, pin.Entry.Equiv
 		}

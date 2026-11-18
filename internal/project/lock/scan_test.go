@@ -590,3 +590,65 @@ func TestScanReportsAnOptionalDeclaration(t *testing.T) {
 		t.Errorf("findings = %+v, want line 3 refused as an unknown option", result.Findings)
 	}
 }
+
+// A slot pins its default and every choice, whatever strict says, and a run mounts none of them unless a #DEP: names it.
+func TestScanPinsSlotDefaultsAndChoices(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "quant.sh", "#!/bin/bash\n#DEP: salmon/1.10.0\n"+
+		"#SLOT: genome default=grch38/genome/gencode/49 choices=grch38/genome/gencode/49,grcm39/genome/gencode/37\n"+
+		"#SLOT: ann default=grch38/gtf/gencode/49 choices=grch38/gtf/gencode/49,grcm39/gtf/gencode/37 strict=false\n"+
+		"#SLOT: index\n"+
+		"#SLOT: extra choices=x/y/1\n"+
+		"quant\n")
+	write(t, root, "other.sh", "#!/bin/bash\n#DEP: grcm39/genome/gencode/37\nrun\n")
+
+	result := scan(t, root)
+	want := []string{"grch38/genome/gencode/49", "grch38/gtf/gencode/49", "grcm39/genome/gencode/37", "grcm39/gtf/gencode/37", "salmon/1.10.0", "x/y/1"}
+	if got := keys(result); !reflect.DeepEqual(got, want) {
+		t.Fatalf("requests = %v, want %v (a slot with no default and no choices pins nothing)", got, want)
+	}
+	if !find(t, result, "grcm39/gtf/gencode/37").SlotOnly || !find(t, result, "x/y/1").SlotOnly {
+		t.Error("a slot-only request should be marked")
+	}
+	if find(t, result, "grcm39/genome/gencode/37").SlotOnly {
+		t.Error("a #DEP: elsewhere makes the request a mounted one")
+	}
+	var mounted []string
+	for _, r := range result.Mounted() {
+		mounted = append(mounted, r.Key)
+	}
+	if want := []string{"grcm39/genome/gencode/37", "salmon/1.10.0"}; !reflect.DeepEqual(mounted, want) {
+		t.Errorf("mounted = %v, want %v", mounted, want)
+	}
+}
+
+func TestScanScriptMountsNoSlotOnlyRequest(t *testing.T) {
+	root := t.TempDir()
+	script := write(t, root, "quant.sh", "#!/bin/bash\n#SLOT: genome default=grch38/genome/gencode/49\n#DEP: grch38/genome/gencode/49\n#DEP: salmon/1.10.0\n")
+	result, err := ScanScript(root, script)
+	if err != nil || len(result.Mounted()) != 2 {
+		t.Fatalf("mounted = %v, err = %v: a #DEP: before or after the slot keeps the request mounted", result.Mounted(), err)
+	}
+}
+
+func TestScanReportsABadSlot(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "quant.sh", "#!/bin/bash\n#SLOT: genome default=a/b>=1\nquant\n")
+	result := scan(t, root)
+	if len(result.Findings) != 1 || !strings.Contains(result.Findings[0].Reason, "version constraint") {
+		t.Fatalf("findings = %+v", result.Findings)
+	}
+}
+
+// optional=true is for helpers. A script that carries it in a slot is a finding, and its other slots still pin.
+func TestScanReportsAnOptionalSlot(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "svc.sh", "#!/bin/bash\n#SLOT: genome default=a/g/1\n#SLOT: extra optional=true\nrun\n")
+	result := scan(t, root)
+	if len(result.Findings) != 1 || !strings.Contains(result.Findings[0].Reason, `"optional" is not an option`) {
+		t.Fatalf("findings = %+v", result.Findings)
+	}
+	if got := keys(result); !reflect.DeepEqual(got, []string{"a/g/1"}) {
+		t.Errorf("requests = %v, want the other slot's default still pinned", got)
+	}
+}

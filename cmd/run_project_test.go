@@ -203,3 +203,21 @@ func TestProjectRunContextFollowsASymlinkedScript(t *testing.T) {
 		}
 	}
 }
+
+// A slot's default and choices are pinned by the project, and a run mounts none of them unless the slot binds one.
+func TestProjectRunContextMountsNoSlotOverlay(t *testing.T) {
+	root := newProject(t)
+	writeScript(t, root, "run.sh", "#SLOT: genome default=a/genome/1 choices=a/genome/1,c/genome/2\n#DEP: env.img\nrun\n")
+	if err := lock.Publish(root, lock.New()); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	got, err := projectRunContext(context.Background(), filepath.Join(root, "run.sh"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(root, "env.img"); got == nil || len(got.Overlays) != 1 || got.Overlays[0] != want {
+		t.Fatalf("overlays = %v, want only %q", got, want)
+	}
+}

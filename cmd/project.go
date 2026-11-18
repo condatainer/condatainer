@@ -47,6 +47,8 @@ type pinReport struct {
 	// Entry is the vendored record, nil when it did not verify.
 	Entry  *lock.Entry
 	Manual bool
+	// SlotOnly is set for a pin only a #SLOT: names.
+	SlotOnly bool
 	// Problem is why the artifact could not be read, empty when it verified.
 	Problem string
 }
@@ -212,7 +214,15 @@ func projectProblems(l *lock.Lock, scanned *lock.ScanResult, problems []lock.Pro
 		out = append(out, fmt.Sprintf("%s is declared but not pinned (%s)",
 			request.Key, strings.Join(request.Scripts, ", ")))
 	}
+	for _, key := range lock.StalePins(l, scanned) {
+		out = append(out, stalePinProblem(key))
+	}
 	return out
+}
+
+// stalePinProblem is the line for a pin no script declares any more.
+func stalePinProblem(key string) string {
+	return key + " is pinned but no script declares it; run `condatainer project lock` to drop it, or `condatainer project pin` to keep it as a manual pin"
 }
 
 // missingBaseProblem is the one line `project validate`/`push` add when no

@@ -540,30 +540,32 @@ func MatchPin(l *Lock, request Request) (key string, entry PinEntry, ok bool) {
 	return bestKey, bestEntry, true
 }
 
-// Reconcile rescans a project and drops pins nothing requests any more,
-// reporting what remains needPin. It never invents a pin: choosing an
-// artifact is an explicit act.
-func Reconcile(root string, l *Lock, result *ScanResult) (needPin []Request) {
+// StalePins lists the pins no script declares any more, sorted.
+//   - The reserved base pin and a manual pin are never stale, since a scan cannot speak to whether they belong.
+func StalePins(l *Lock, result *ScanResult) []string {
 	requested := make(map[string]bool, len(result.Requests))
 	for _, request := range result.Requests {
 		for _, key := range request.PathCandidates() {
 			requested[key] = true
 		}
 	}
+	var stale []string
 	for _, key := range l.Requests() {
-		// The reserved base pin is never a #DEP: scan result — DeriveBase writes
-		// it on every `project lock`, unconditionally — so it is never swept here.
-		if key == BaseKey {
+		if key == BaseKey || l.Pins[key].Manual || requested[key] {
 			continue
 		}
-		// A manual pin is recorded by the project, not derived from its scripts,
-		// so a scan cannot speak to whether it belongs.
-		if l.Pins[key].Manual {
-			continue
-		}
-		if !requested[key] {
-			delete(l.Pins, key)
-		}
+		stale = append(stale, key)
+	}
+	sort.Strings(stale)
+	return stale
+}
+
+// Reconcile rescans a project and drops pins nothing requests any more,
+// reporting what remains needPin. It never invents a pin: choosing an
+// artifact is an explicit act.
+func Reconcile(root string, l *Lock, result *ScanResult) (needPin []Request) {
+	for _, key := range StalePins(l, result) {
+		delete(l.Pins, key)
 	}
 
 	verified, _ := Verify(root, l)

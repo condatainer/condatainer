@@ -62,7 +62,7 @@ func projectCheck(ctx context.Context, scriptPaths []string, metaDeps []string) 
 	if err != nil {
 		return true, err
 	}
-	resolution, err := project.Resolve(ctx, root, standing.Lock, scanned.Requests,
+	resolution, err := project.Resolve(ctx, root, standing.Lock, scanned.Mounted(),
 		project.ResolveOptions{LiveResolve: true, Distro: projectDefaultDistro()})
 	if err != nil {
 		return true, err

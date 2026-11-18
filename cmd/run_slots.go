@@ -19,6 +19,8 @@ type slotMount struct {
 	// Name is the exact overlay name, repeated by the job so it mounts what was resolved here.
 	Name string
 	Path string
+	// NotPinned is set in a project when no pin answers the overlay, so it was resolved from what is installed.
+	NotPinned bool
 }
 
 // slotPlan is a script's slots, bound to installed overlays and checked.
@@ -109,7 +111,7 @@ func planSlots(ctx context.Context, script string, values []string, inProject bo
 		return plan, nil
 	}
 
-	mounts, err := resolveSlotMounts(ctx, requests, inProject)
+	mounts, inLock, err := resolveSlotMounts(ctx, requests, inProject)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +138,7 @@ func planSlots(ctx context.Context, script string, values []string, inProject bo
 		if err := bound[i].CheckResolved(name); err != nil {
 			return nil, err
 		}
-		plan.Mounts = append(plan.Mounts, slotMount{Binding: bound[i], Name: name, Path: r.Path})
+		plan.Mounts = append(plan.Mounts, slotMount{Binding: bound[i], Name: name, Path: r.Path, NotPinned: inLock && mounts[i].Live})
 	}
 	if err := slot.Collisions(resolved); err != nil {
 		return nil, err
@@ -146,12 +148,13 @@ func planSlots(ctx context.Context, script string, values []string, inProject bo
 
 // resolveSlotMounts resolves overlay names as `#DEP:` does, with nothing printed.
 //   - A constraint or a {placeholder} is refused, by the same grammar.
-func resolveSlotMounts(ctx context.Context, requests []string, inProject bool) ([]project.Mount, error) {
+//   - The second result is true when the project's lock was consulted.
+func resolveSlotMounts(ctx context.Context, requests []string, inProject bool) ([]project.Mount, bool, error) {
 	parsed := make([]lock.Request, len(requests))
 	for i, value := range requests {
 		request, reason := lock.ParseDeclaration(value)
 		if reason != "" {
-			return nil, fmt.Errorf("%s: %s", value, reason)
+			return nil, false, fmt.Errorf("%s: %s", value, reason)
 		}
 		parsed[i] = request
 	}
@@ -159,17 +162,30 @@ func resolveSlotMounts(ctx context.Context, requests []string, inProject bool) (
 	if inProject {
 		standing, err := standingProjectHere()
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if standing != nil {
 			resolution, err := standing.ResolveComplete(ctx, parsed, opts)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
-			return resolution.Mounts, nil
+			return resolution.Mounts, true, nil
 		}
 	}
-	return project.ResolveUnlocked(ctx, parsed, opts)
+	mounts, err := project.ResolveUnlocked(ctx, parsed, opts)
+	return mounts, false, err
+}
+
+// noteUnpinnedSlots says which slot overlays no pin of the project answers. They mount from what is installed and are not recorded.
+func noteUnpinnedSlots(plan *slotPlan) {
+	if plan == nil {
+		return
+	}
+	for _, m := range plan.Mounts {
+		if m.NotPinned {
+			utils.PrintNote("slot %s: %s is not pinned in the project, so the installed overlay is mounted", m.Binding.Name, m.Name)
+		}
+	}
 }
 
 // reportSlotError prints why the slots of a script cannot be used, with what to do, and reports whether it did.
@@ -211,7 +227,11 @@ func printDryRunSlots(ctx context.Context, script string, inProject bool) {
 			}
 		}
 		for _, m := range plan.Mounts {
-			fmt.Printf("  %-12s %s  (%s)\n", m.Binding.Name, m.Name, m.Binding.Source)
+			note := string(m.Binding.Source)
+			if m.NotPinned {
+				note += ", not pinned"
+			}
+			fmt.Printf("  %-12s %s  (%s)\n", m.Binding.Name, m.Name, note)
 		}
 	default:
 		fmt.Printf("  %s %v\n", utils.StyleError("✗"), err)

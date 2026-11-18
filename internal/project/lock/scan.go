@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/slot"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -48,6 +49,9 @@ type Request struct {
 	Path string
 	// Fallback is the root-relative pin key a path declaration also answers to when nothing is pinned under Key. Empty when Key is the only reading.
 	Fallback string
+	// SlotOnly is true when only a #SLOT: names this, as its default or one of its choices.
+	// A run mounts it only when the slot binds it, so a run mounts the other requests alone.
+	SlotOnly bool
 	// Scripts are the project-relative scripts that declared this, sorted.
 	// Displayed, never serialized: rescanning finds them again.
 	Scripts []string
@@ -106,6 +110,17 @@ type Finding struct {
 	Line   int
 	Text   string
 	Reason string
+}
+
+// Mounted is the requests a run of the scanned scripts mounts: every request a #DEP: names.
+func (r *ScanResult) Mounted() []Request {
+	var out []Request
+	for _, request := range r.Requests {
+		if !request.SlotOnly {
+			out = append(out, request)
+		}
+	}
+	return out
 }
 
 // ScanResult is what a project declares.
@@ -243,34 +258,51 @@ func scanScript(path, rel string, merged map[string]*Request, result *ScanResult
 		return false, nil
 	}
 
-	utils.WarnStray(rel, utils.StrayAnnotations(text, "#DEP"))
-	for _, a := range utils.SelectAnnotations(utils.ScanAnnotations(text), "#DEP") {
+	utils.WarnStray(rel, utils.StrayAnnotations(text, "#DEP", "#SLOT"))
+	annotations := utils.ScanAnnotations(text)
+	declare := func(value string, line int, slotOnly bool) {
+		request, reason := ParseDeclaration(value)
+		if reason != "" {
+			result.Findings = append(result.Findings, Finding{
+				Script: rel, Line: line, Text: value, Reason: reason})
+			return
+		}
+		request = anchorToScript(request, rel)
+		request.SlotOnly = slotOnly
+		mergeKey := request.Key + "\x00" + request.Fallback
+		have, ok := merged[mergeKey]
+		if !ok {
+			request.Scripts = []string{rel}
+			request.first = Finding{Script: rel, Line: line, Text: value}
+			merged[mergeKey] = &request
+			return
+		}
+		have.SlotOnly = have.SlotOnly && slotOnly
+		if have.Scripts[len(have.Scripts)-1] != rel {
+			have.Scripts = append(have.Scripts, rel)
+		}
+	}
+	for _, a := range utils.SelectAnnotations(annotations, "#DEP") {
 		name, _, err := utils.SplitOptions(a)
 		if err != nil {
 			result.Findings = append(result.Findings, Finding{
 				Script: rel, Line: a.Line, Text: a.Value, Reason: err.Error()})
 			continue
 		}
-		if name == "" {
-			continue
+		if name != "" {
+			declare(name, a.Line, false)
 		}
-		request, reason := ParseDeclaration(name)
-		if reason != "" {
-			result.Findings = append(result.Findings, Finding{
-				Script: rel, Line: a.Line, Text: a.Value, Reason: reason})
-			continue
-		}
-		request = anchorToScript(request, rel)
-		mergeKey := request.Key + "\x00" + request.Fallback
-		have, ok := merged[mergeKey]
-		if !ok {
-			request.Scripts = []string{rel}
-			request.first = Finding{Script: rel, Line: a.Line, Text: a.Value}
-			merged[mergeKey] = &request
-			continue
-		}
-		if have.Scripts[len(have.Scripts)-1] != rel {
-			have.Scripts = append(have.Scripts, rel)
+	}
+	// A slot pins its default and every overlay it lists in choices=: listing one says the project uses it.
+	decls, err := slot.Parse(annotations)
+	if err != nil {
+		result.Findings = append(result.Findings, Finding{Script: rel, Text: "#SLOT:", Reason: err.Error()})
+	}
+	for _, d := range decls {
+		for _, name := range append([]string{d.Default}, d.Choices...) {
+			if name != "" {
+				declare(name, d.Line, true)
+			}
 		}
 	}
 	return true, nil

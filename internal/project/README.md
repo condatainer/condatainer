@@ -67,6 +67,10 @@
   - It walks up to the project from a subdirectory, because a path is naturally typed there.
   - It rewrites the file sorted, so the diff is the lines that changed.
 - A script that is not a member is read as a script outside the project: its `#DEP:` are resolved, and nothing is pinned.
+- A `#SLOT:` pins its default and every `choices=` entry, whatever `strict=` says. Listing an overlay says the project uses it, so a restored project must have it. An overlay the author does not list is not recorded.
+  - A request only a slot names is `SlotOnly`. A run mounts the other requests alone, since the slot binds one of its overlays.
+  - A slot with no default and no choices pins nothing.
+  - A slot follows its script in a project. An overlay no pin covers, such as one a `strict=false` slot is bound to or one the lock was not rebuilt for, resolves from what is installed, is not recorded, and `run` says it is not pinned.
 
 ## Manual pins
 
@@ -82,6 +86,8 @@
 - Re-pinning never clears the flag. What changed is which artifact answers, not why the pin is there.
 - `project unpin` is the only way out. A scan-produced pin is refused there, since the next Reconcile would pin it again.
 - No scan shows a manual pin, so `project list` reads the lock and marks them.
+  - It also scans the scripts, only to mark a pin that a `#SLOT:` alone names. The lock does not record why a pin exists, because a build rejects a lock field it does not know.
+  - A failed scan marks nothing, and the listing still works.
 - Overlays a helper used but the project does not pin are reported apart from `#DEP:` findings. They are never written as pins.
 - No recorded helper usage is reported as a fact. It is never a suggestion to unpin: a helper that has not run since recording began looks the same as one that no longer needs the pin.
 
@@ -109,6 +115,7 @@
 
 ## Publishing
 
+- A pin no script declares is a problem of `project validate`, and so of push and gc. The base pin and a manual pin are exempt. `project lock` drops it.
 - Push gates on the lock checks of `project validate`, not on `Verify` alone. Verify cannot see a declaration nothing can pin, so a lock can be valid and still unrestorable elsewhere.
 - A dry run reports those problems and still plans.
 - Push never builds. An artifact missing at its locked identity is a refusal naming the restore.

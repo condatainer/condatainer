@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -212,5 +213,34 @@ func TestPrintSymlinksWarnsForScriptsAndNotesFolders(t *testing.T) {
 	}
 	if out, _ := stderrOf(t, func() error { printSymlinks(nil, nil); return nil }); out != "" {
 		t.Errorf("nothing skipped printed %q", out)
+	}
+}
+
+// A pin no script declares is a problem of `project validate`, with the way out named.
+func TestProjectProblemsNamesAStalePin(t *testing.T) {
+	l := lock.New()
+	l.Pins["star/2.7.11b"] = lock.PinEntry{Artifacts: map[string]string{"amd64": "x"}}
+	l.Pins[lock.BaseKey] = lock.PinEntry{Artifacts: map[string]string{"amd64": "b"}}
+	got := projectProblems(l, &lock.ScanResult{}, nil)
+	if len(got) != 1 || !strings.Contains(got[0], "star/2.7.11b is pinned but no script declares it") ||
+		!strings.Contains(got[0], "project lock") {
+		t.Errorf("problems = %v", got)
+	}
+}
+
+// A pin only a #SLOT: names is marked in the listing, and a pin a #DEP: also names is not.
+func TestMarkSlotOnlyPins(t *testing.T) {
+	root := newProject(t)
+	writeScript(t, root, "run.sh", "#SLOT: genome default=a/genome/1 choices=a/genome/1,c/genome/2\n#DEP: samtools/1.24\nrun\n")
+	pins := []pinReport{{Request: "a/genome/1"}, {Request: "c/genome/2"}, {Request: "samtools/1.24"}, {Request: "build-essential", Manual: true}}
+
+	markSlotOnly(root, pins)
+	got := []bool{pins[0].SlotOnly, pins[1].SlotOnly, pins[2].SlotOnly, pins[3].SlotOnly}
+	if want := []bool{true, true, false, false}; !slices.Equal(got, want) {
+		t.Errorf("slot-only marks = %v, want %v", got, want)
+	}
+	doc := pinsDoc(root, pins)
+	if !doc.Pins[0].SlotOnly || doc.Pins[2].SlotOnly {
+		t.Errorf("the pins document lost the mark: %+v", doc.Pins)
 	}
 }

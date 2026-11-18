@@ -226,8 +226,8 @@ func stalePinProblem(key string) string {
 }
 
 // missingBaseProblem is the one line `project validate`/`push` add when no
-// root is pinned, or "" when one is. `project lock` pins one unconditionally,
-// so the only way to reach this is a hand-edited lock.
+// root is pinned, or "" when one is. `project lock` pins one when there is
+// none, so the only way to reach this is a hand-edited lock.
 func missingBaseProblem(l *lock.Lock) string {
 	if _, ok := l.Pins[lock.BaseKey]; ok {
 		return ""

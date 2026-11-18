@@ -237,13 +237,16 @@ type ClusterInfo struct {
 
 // ScriptSpecs holds the full result of parsing a scheduler script.
 type ScriptSpecs struct {
-	ScriptPath     string        // Absolute path of the parsed script (for HTCondor .sub: the executable)
-	Spec           *ResourceSpec // Compute geometry (nil = resource parse failed)
-	Control        RuntimeConfig // Job control settings
-	HasDirectives  bool          // True if any scheduler directive (#SBATCH, #PBS, etc.) was found
-	RawFlags       []string      // ALL original directives — immutable audit log
-	RemainingFlags []string      // Directives not absorbed by Spec or Control
-	ScriptType     SchedulerType // Scheduler type detected from script directives
+	ScriptPath    string        // Absolute path of the parsed script (for HTCondor .sub: the executable)
+	Spec          *ResourceSpec // Compute geometry (nil = resource parse failed)
+	Control       RuntimeConfig // Job control settings
+	HasDirectives bool          // True if any scheduler directive (#SBATCH, #PBS, etc.) was found
+	// NativeResources is true when a native directive set a resource, or the resource directives did not parse.
+	// A script whose directives set none takes its resources from the #KEY: headers.
+	NativeResources bool
+	RawFlags        []string      // ALL original directives — immutable audit log
+	RemainingFlags  []string      // Directives not absorbed by Spec or Control
+	ScriptType      SchedulerType // Scheduler type detected from script directives
 	// ProxyVia, when non-empty, causes writeJobHeader to emit
 	// "condatainer proxy start --via <host>" at the top of the job body.
 	// Set by callers when scheduler.proxy_per_job names their job kind.
@@ -661,12 +664,16 @@ func IsInsideJob() bool {
 type ParsedScript struct {
 	Specs       *ScriptSpecs  // Normalized scheduler specifications
 	ScriptType  SchedulerType // Detected scheduler type from script directives
-	FromHeaders bool          // The specs came from #KEY: headers, not native directives
+	FromHeaders bool          // The resources came from #KEY: headers
+	Native      bool          // Native directives were read
 }
 
-// ParseScriptAny reads the resources a script asks for from one source.
-//   - The first source the script has wins whole: the current scheduler's directives, then the #KEY: resource headers, then another scheduler's directives.
-//   - Sources are never merged field by field. A source passed over prints one note.
+// ParseScriptAny reads the resources a script asks for from one source, and its job control from both.
+//   - The resources come from the first source that sets one: the current scheduler's directives, then the #KEY: resource headers, then another scheduler's directives.
+//   - A native directive that sets no resource, such as --nodelist, does not hide the headers. It passes through to the job.
+//   - Job control (name, output, error, partition, account) is read from the directives and the headers. A field named in both is an error.
+//   - A resource header beside a native directive that sets a resource is ignored with a warning.
+//   - A source passed over prints one note.
 //   - A script written for one scheduler can run on another.
 func ParseScriptAny(scriptPath string) (*ParsedScript, error) {
 	// Determine current scheduler type — use active scheduler if already initialized.
@@ -679,6 +686,7 @@ func ParseScriptAny(scriptPath string) (*ParsedScript, error) {
 
 	if currentType != SchedulerUnknown {
 		if parsed, err := parseNativeScript(scriptPath, currentType); err != nil || parsed != nil {
+			parsed, err = withHeaders(scriptPath, parsed, err)
 			return noteIgnoredSources(scriptPath, parsed, err)
 		}
 	}
@@ -690,6 +698,7 @@ func ParseScriptAny(scriptPath string) (*ParsedScript, error) {
 			continue
 		}
 		if parsed, err := parseNativeScript(scriptPath, schedType); err != nil || parsed != nil {
+			parsed, err = withHeaders(scriptPath, parsed, err)
 			return noteIgnoredSources(scriptPath, parsed, err)
 		}
 	}
@@ -721,7 +730,7 @@ func parseNativeScript(scriptPath string, schedType SchedulerType) (*ParsedScrip
 		return nil, err
 	}
 	if specs != nil && HasSchedulerSpecs(specs) {
-		return &ParsedScript{Specs: specs, ScriptType: schedType}, nil
+		return &ParsedScript{Specs: specs, ScriptType: schedType, Native: true}, nil
 	}
 	return nil, nil
 }

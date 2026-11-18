@@ -100,9 +100,14 @@ The script can contain these comment tags in its header:
   - #OUTPUT: #ERROR:      Log files (stdout, stderr)
   - #PARTITION: #ACCOUNT: Partition and account
 
-A script with any resource is submitted as a job and gets current shell's env.
-It can carry scheduler directives (e.g. #SBATCH), but only ONE set is read:
+A script with any resource or job tag is submitted as a job.
+A job gets the current shell's env.
+It can carry scheduler directives (e.g. #SBATCH).
+Resources come from the first source that sets one:
   Current scheduler | TAG: | another scheduler.
+A directive that sets no resource, such as --qos, passes through to the job.
+Name, log, partition and account tags are read with the directives.
+Setting the same one in both is refused.
 
 --dry-run shows what would happen, and exits 1 when the run would not start.`,
 	Example: `  condatainer run script.sh            # Check dependencies, then run

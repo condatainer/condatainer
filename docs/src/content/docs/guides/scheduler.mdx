@@ -55,7 +55,7 @@ Here is an example of a script requesting 4 CPUs, 8 GB of memory, and 1 hour:
 When you execute `condatainer run`, CondaTainer parses these directives and headers.
 
 - If a scheduler is detected, it submits the script as a job and prints the resulting job ID.
-- If no scheduler is found (or if the script asks for no resources), it executes the script immediately on the current machine.
+- If no scheduler is found, or the script has no scheduler directive and no resource or job header, it executes the script immediately on the current machine.
 
 **NOTE:** This page assumes single-task jobs. If you are looking for MPI, check the [MPI](../advanced/mpi.mdx) page.
 
@@ -130,18 +130,21 @@ Each scheduler uses different directive syntax, but `condatainer run` standardiz
     - A bare `#MEM:` number is in GB, and a bare `#TIME:` number is in hours. `#TIME:` also reads `01:30:00`.
     - `#GPU:` takes a count (`2`), a type (`a100`) or both (`a100:2`). PBS ignores the type.
     - A relative `#OUTPUT:` or `#ERROR:` path starts from the directory you submit from.
-    - Write the headers in the comment lines at the top of the script. If the script also has this cluster's scheduler directives, only those are read.
+    - Write the headers in the comment lines at the top of the script. If this cluster's scheduler directives in the same script set resources, the `#NCPU:`, `#MEM:`, `#TIME:` and `#GPU:` headers are ignored, and a warning names their lines.
   </TabItem>
 </Tabs>
 
 :::note
 CondaTainer translates another scheduler's directives to this cluster's scheduler, such as `#SBATCH` lines on a PBS cluster. The partition and account are not translated.
 
-Only one set of directives in a script is read, in this order:
+The resources of a script come from the first of these that sets one:
 
 1. This cluster's scheduler directives.
 2. The CondaTainer headers, such as `#NCPU:`.
 3. Another scheduler's directives.
+
+- A directive that sets no resource, such as `#SBATCH --qos=high` or `#SBATCH --nodelist=node1`, is passed to the job as written. The headers still give the resources.
+- The job name, the output and error paths, the partition and the account are read from both the directives and the headers. Setting the same one in both is refused, and the message names both lines.
 :::
 
 ### Standardized Environment Variables

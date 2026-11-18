@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -85,8 +86,8 @@ func readHeaderScript(t *testing.T, text string) (*ScriptSpecs, error) {
 	return ReadScriptSpecsFromPath(path)
 }
 
-// A script is read from one source: the current scheduler's directives, else the
-// #KEY: headers, else another scheduler's directives. Sources are not merged.
+// The resources come from the current scheduler's directives when one sets a resource, else the
+// #KEY: headers, else another scheduler's directives. Job control is read from both.
 func TestScriptSourceOrder(t *testing.T) {
 	const both = "#!/bin/bash\n#SBATCH --cpus-per-task=2\n#NCPU: 8\n#PARTITION: gpu\n"
 	for name, tc := range map[string]struct {
@@ -96,11 +97,11 @@ func TestScriptSourceOrder(t *testing.T) {
 		part  string
 		isJob bool
 	}{
-		"headers alone, no scheduler":  {nil, "#NCPU: 8\n#MEM: 4G\n#PARTITION: gpu\n", 8, "gpu", true},
-		"current directives beat them": {[]string{"sbatch"}, both, 2, "", true},
-		"headers beat foreign ones":    {[]string{"qsub"}, both, 8, "gpu", true},
-		"a name alone is no job":       {nil, "#NAME: job\n", 1, "", false},
-		"directives alone still work":  {[]string{"sbatch"}, "#SBATCH --cpus-per-task=2\n", 2, "", true},
+		"headers alone, no scheduler":                           {nil, "#NCPU: 8\n#MEM: 4G\n#PARTITION: gpu\n", 8, "gpu", true},
+		"directives give resources, headers name the partition": {[]string{"sbatch"}, both, 2, "gpu", true},
+		"headers beat foreign ones":                             {[]string{"qsub"}, both, 8, "gpu", true},
+		"a name alone is a job":                                 {nil, "#NAME: job\n", 1, "", true},
+		"directives alone still work":                           {[]string{"sbatch"}, "#SBATCH --cpus-per-task=2\n", 2, "", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			withHost(t, tc.host...)
@@ -133,5 +134,109 @@ func TestHeaderScriptSpecs(t *testing.T) {
 	_, err = readHeaderScript(t, "#NCPU: many\n")
 	if !errors.Is(err, ErrInvalidHeader) || !strings.Contains(err.Error(), "#NCPU on line 1") {
 		t.Errorf("a bad value: %v", err)
+	}
+}
+
+// A directive that sets no resource passes through and does not hide the headers.
+func TestHeadersGiveResourcesBesideANonResourceDirective(t *testing.T) {
+	for name, tc := range map[string]struct {
+		host, directive, remaining string
+	}{
+		"slurm": {"sbatch", "#SBATCH --nodelist=node1", "--nodelist=node1"},
+		"pbs":   {"qsub", "#PBS -V", "-V"},
+		"lsf":   {"bsub", "#BSUB -G labgroup", "-G labgroup"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			withHost(t, tc.host)
+			specs, err := readHeaderScript(t, "#!/bin/bash\n"+tc.directive+"\n#NCPU: 8\n#MEM: 4G\n")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !specs.HasDirectives || specs.Spec == nil || specs.Spec.CpusPerTask != 8 || specs.Spec.MemPerNodeMB != 4096 {
+				t.Errorf("directives=%v spec=%+v, want the headers' 8 CPUs and 4G", specs.HasDirectives, specs.Spec)
+			}
+			if !slices.Contains(specs.RemainingFlags, tc.remaining) {
+				t.Errorf("remaining = %v, want %q to pass through", specs.RemainingFlags, tc.remaining)
+			}
+		})
+	}
+}
+
+// With no headers, a lone directive that sets no resource leaves the scheduler defaults.
+func TestNonResourceDirectiveAloneKeepsDefaults(t *testing.T) {
+	withHost(t, "sbatch")
+	specs, err := readHeaderScript(t, "#!/bin/bash\n#SBATCH --nodelist=node1\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !specs.HasDirectives || specs.Spec == nil || specs.Spec.CpusPerTask != GetSpecDefaults().CpusPerTask {
+		t.Errorf("directives=%v spec=%+v, want the defaults", specs.HasDirectives, specs.Spec)
+	}
+}
+
+// A job control directive is not a resource, so the headers still give the resources.
+func TestJobControlDirectiveDoesNotHideHeaders(t *testing.T) {
+	withHost(t, "sbatch")
+	specs, err := readHeaderScript(t, "#!/bin/bash\n#SBATCH --job-name=align\n#SBATCH --mail-user=a@b.org\n#NCPU: 4\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if specs.Spec.CpusPerTask != 4 || specs.Control.JobName != "align" || specs.Control.MailUser != "a@b.org" {
+		t.Errorf("cpus=%d control=%+v, want 4 CPUs and the directives' name and mail", specs.Spec.CpusPerTask, specs.Control)
+	}
+}
+
+// A directive that sets a resource wins, and a resource header beside it is ignored.
+func TestResourceDirectiveBeatsResourceHeaders(t *testing.T) {
+	withHost(t, "sbatch")
+	specs, err := readHeaderScript(t, "#!/bin/bash\n#SBATCH --cpus-per-task=2\n#NCPU: 8\n#MEM: lots\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if specs.Spec.CpusPerTask != 2 {
+		t.Errorf("cpus = %d, want the directive's 2", specs.Spec.CpusPerTask)
+	}
+}
+
+// Job control from the headers joins the directives', field by field.
+func TestJobControlComesFromBothSources(t *testing.T) {
+	withHost(t, "sbatch")
+	specs, err := readHeaderScript(t, "#!/bin/bash\n#SBATCH --cpus-per-task=2\n#SBATCH --partition=short\n#NAME: align\n#ACCOUNT: lab\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := specs.Control; c.Partition != "short" || c.JobName != "align" || c.Account != "lab" {
+		t.Errorf("control = %+v, want the directive's partition and the headers' name and account", c)
+	}
+}
+
+// A field named in both a directive and a header is refused, naming both.
+func TestJobControlNamedTwiceIsRefused(t *testing.T) {
+	withHost(t, "sbatch")
+	_, err := readHeaderScript(t, "#!/bin/bash\n#SBATCH --partition=short\n#NCPU: 4\n#PARTITION: long\n")
+	if !errors.Is(err, ErrInvalidHeader) || !strings.Contains(err.Error(), "#PARTITION on line 4") ||
+		!strings.Contains(err.Error(), "#SBATCH --partition=short") {
+		t.Fatalf("err = %v, want both lines named", err)
+	}
+}
+
+// A malformed job control header is an error even beside directives that set resources.
+func TestBadJobControlHeaderIsRefusedBesideDirectives(t *testing.T) {
+	withHost(t, "sbatch")
+	_, err := readHeaderScript(t, "#!/bin/bash\n#SBATCH --cpus-per-task=2\n#NAME: not a name!\n")
+	if !errors.Is(err, ErrInvalidHeader) || !strings.Contains(err.Error(), "#NAME on line 3") {
+		t.Fatalf("err = %v, want #NAME on line 3 refused", err)
+	}
+}
+
+// Directives whose resources do not parse stay unparsed, with or without headers.
+func TestUnparsedDirectivesStayUnparsedWithHeaders(t *testing.T) {
+	withHost(t, "sbatch")
+	specs, err := readHeaderScript(t, "#!/bin/bash\n#SBATCH --nodelist=n01,n02\n#NCPU: 8\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsUnparsed(specs) {
+		t.Errorf("spec = %+v, want the directives left unparsed", specs.Spec)
 	}
 }

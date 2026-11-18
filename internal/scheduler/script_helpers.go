@@ -61,6 +61,7 @@ func headerLines(path string, lines []string, extract func([]string) []string) [
 //   - Stage 1, ParseRuntimeConfig (job control), is critical. An error stops it, and its fields never reach RemainingFlags.
 //   - Stage 2, parseResourceSpec (geometry), is best effort. A failure returns nil, and the script is left unparsed with a warning.
 //   - Unconsumed directives go to RemainingFlags. RawFlags keeps every directive.
+//   - NativeResources is true when a directive set a resource, or the resource directives did not parse.
 func parseScript(
 	scriptPath string,
 	lines []string,
@@ -82,12 +83,13 @@ func parseScript(
 	}
 
 	return &ScriptSpecs{
-		ScriptPath:     scriptPath,
-		Spec:           rs,
-		Control:        rc,
-		HasDirectives:  len(directives) > 0,
-		RawFlags:       directives,
-		RemainingFlags: remaining,
+		ScriptPath:      scriptPath,
+		Spec:            rs,
+		Control:         rc,
+		HasDirectives:   len(directives) > 0,
+		NativeResources: rs == nil || len(remaining) < len(unconsumed),
+		RawFlags:        directives,
+		RemainingFlags:  remaining,
 	}, nil
 }
 

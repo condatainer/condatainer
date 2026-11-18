@@ -37,13 +37,14 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 
 ## Which source a script is read from
 
-- A script may carry the current scheduler's directives, `#KEY:` resource headers and another scheduler's directives.
-- The first it has is read whole, in that order. Nothing is merged field by field.
-  - Merging would let one script mean different jobs depending on which lines were read last.
-  - A skipped source prints one note naming its first line.
-- A header is written for no scheduler, so its result carries the host's type. Nothing is translated, and a partition or account in a header is used as written.
-- Directives of another scheduler lose their partition and account on translation, because those names belong to one cluster.
-- A resource, partition or account header makes the script a job. A name or a log path alone does not.
+- The resources come whole from the first source that sets one: the current scheduler's directives, the `#KEY:` headers, another scheduler's directives.
+  - They are never merged field by field, since one script would mean different jobs depending on which lines were read last.
+  - A directive sets a resource when the resource parser records it. A flag neither parser records, such as `--qos`, passes through and does not hide the headers.
+  - Directives whose resources do not parse stay unparsed. The headers do not replace them.
+- Job control is read from both the directives and the headers: name, output, error, partition and account.
+  - A field named in both is refused, since one script would name two values.
+- A header is written for no scheduler, so nothing in it is translated. Another scheduler's directives lose their partition and account on translation, because those names belong to one cluster.
+- Any resource or job header makes the script a job, as any directive does.
 - A submit description file keeps its own rules and reads no header.
 
 ## Script directives

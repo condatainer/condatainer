@@ -15,6 +15,7 @@ import (
 	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
+	"github.com/condatainer/condatainer/internal/slot"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -24,6 +25,7 @@ var (
 	checkProjectDir    string
 	checkInstallDryRun bool
 	checkJSON          bool
+	checkSlots         []string
 )
 
 var scriptCheckCmd = &cobra.Command{
@@ -32,6 +34,7 @@ var scriptCheckCmd = &cobra.Command{
 	Long: `Check the dependencies declared with #DEP: in scripts.
 
 - Dependencies from all scripts are checked together.
+- A #SLOT: is checked for the overlay it binds, from --slot or its default.
 - Exits with code 3 if creation jobs were submitted to a scheduler.`,
 	Example: `  condatainer check script.sh              # Check one script
   condatainer check samtools/1.22          # Check a recipe by name
@@ -46,6 +49,7 @@ var scriptCheckCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(scriptCheckCmd)
 	scriptCheckCmd.Flags().BoolVarP(&checkAutoInstall, "auto-install", "a", false, "Automatically install missing dependencies")
+	scriptCheckCmd.Flags().StringArrayVar(&checkSlots, "slot", nil, "Bind a #SLOT: to an overlay, SLOT=OVERLAY, once per slot")
 	scriptCheckCmd.Flags().BoolVar(&checkInstallDryRun, "dry-run", false, "With -a, show what would be installed without installing")
 	jsonFlag(scriptCheckCmd.Flags(), &checkJSON)
 	settings.AddSwitch(scriptCheckCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))
@@ -88,6 +92,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	// Collect and deduplicate deps across all scripts
 	deps, err := collectDeps(scriptPaths, metaDeps)
 	if err != nil {
+		return err
+	}
+	if deps, err = addSlotDeps(deps, scriptPaths, checkSlots); err != nil {
 		return err
 	}
 	if len(deps) == 0 {
@@ -191,6 +198,70 @@ func collectDeps(scriptPaths []string, preSeededDeps []string) ([]string, error)
 		}
 	}
 	return deps, nil
+}
+
+// slotDeps returns the overlays the script's bound slots name, and the slot names among values that the script declares.
+//   - A slot with no default and no value is noted and left out.
+func slotDeps(path string, values []string) (names, declared []string, err error) {
+	decls, err := slot.ParseScript(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	var mine []string
+	for _, v := range values {
+		name, _, _ := strings.Cut(v, "=")
+		name = strings.TrimSpace(name)
+		if slices.ContainsFunc(decls, func(d slot.Decl) bool { return d.Name == name }) {
+			mine = append(mine, v)
+			declared = append(declared, name)
+		}
+	}
+	bound, err := slot.Bind(decls, mine)
+	var unbound *slot.UnboundError
+	if err != nil && !errors.As(err, &unbound) {
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if unbound != nil {
+		for _, d := range unbound.Slots {
+			utils.PrintNote("%s: slot %s has no overlay to check; bind it with --slot", path, d.Name)
+		}
+	}
+	for _, b := range bound {
+		if b.Bound() {
+			names = append(names, b.Requested)
+		}
+	}
+	return names, declared, nil
+}
+
+// unusedSlotValue refuses a --slot value that no checked script declares a slot for.
+func unusedSlotValue(values []string, used map[string]bool) error {
+	for _, v := range values {
+		if name, _, _ := strings.Cut(v, "="); !used[strings.TrimSpace(name)] {
+			return fmt.Errorf("--slot %q: no script declares slot %q", v, strings.TrimSpace(name))
+		}
+	}
+	return nil
+}
+
+// addSlotDeps adds the overlay each bound #SLOT: names to deps, so a missing one is reported and built like a dependency.
+func addSlotDeps(deps, scriptPaths, values []string) ([]string, error) {
+	used := map[string]bool{}
+	for _, path := range scriptPaths {
+		names, declared, err := slotDeps(path, values)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range declared {
+			used[d] = true
+		}
+		for _, n := range names {
+			if !slices.Contains(deps, n) {
+				deps = append(deps, n)
+			}
+		}
+	}
+	return deps, unusedSlotValue(values, used)
 }
 
 // checkDeps prints the status of each dependency grouped by type and returns the missing ones. solved is deps with every installed name replaced by its overlay path (solveOverlayNames), so an entry left unchanged is not installed.
@@ -530,6 +601,7 @@ func runCheckJSON(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	var scripts []checkedScript
 	var allPaths, allMeta []string
+	usedSlots := map[string]bool{}
 	for _, arg := range args {
 		paths, remotes, metaDeps, err := resolveAllScriptPaths(ctx, []string{arg})
 		for _, rp := range remotes {
@@ -548,12 +620,27 @@ func runCheckJSON(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
+			names, declared, err := slotDeps(p, checkSlots)
+			if err != nil {
+				return err
+			}
+			for _, d := range declared {
+				usedSlots[d] = true
+			}
+			for _, n := range names {
+				if !slices.Contains(deps, n) {
+					deps = append(deps, n)
+				}
+			}
 			label := p
 			if len(remotes) > 0 && p == remotes[0] {
 				label = arg
 			}
 			scripts = append(scripts, checkedScript{label: label, deps: deps})
 		}
+	}
+	if err := unusedSlotValue(checkSlots, usedSlots); err != nil {
+		return err
 	}
 	if handled, err := projectCheck(ctx, allPaths, allMeta); handled {
 		return err

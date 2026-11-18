@@ -23,8 +23,14 @@ const OptionOptional = "optional"
 
 // headerOptions declares the options a header can carry, and their kinds. A header that is absent takes none, and its value is read as written.
 //   - `=` is common in values (`#ENV: NAME=x`, `#PARAM: KEY=default`, a URL query), so only a header listed here reads options.
+//   - #NCPU:, #MEM:, #TIME: and #GPU: take the names of slots as options, which only the reader knows, so none is listed.
 var headerOptions = map[string]map[string]optionKind{
-	"#DEP": {OptionOptional: optBool},
+	"#DEP":  {OptionOptional: optBool},
+	"#SLOT": {"default": optText, "choices": optText, "strict": optBool, "env": optText, "bin": optText, OptionOptional: optBool},
+	"#NCPU": {},
+	"#MEM":  {},
+	"#TIME": {},
+	"#GPU":  {},
 }
 
 // Options holds the options written after a header's value.
@@ -84,6 +90,23 @@ func SplitOptions(a Annotation, accepts ...string) (string, Options, error) {
 		opts[name] = value
 	}
 	return head, opts, nil
+}
+
+// OptionNames lists the names written as options after a header's value, whether or not a reader accepts them.
+//   - A header that takes no options has none.
+func OptionNames(a Annotation) []string {
+	if _, ok := headerOptions[a.Key]; !ok {
+		return nil
+	}
+	words := optionWords(a.Value)
+	var names []string
+	for i, w := range words {
+		if i > 0 && isOptionWord(w.text) {
+			name, _, _ := strings.Cut(w.text, "=")
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 type optionWord struct {

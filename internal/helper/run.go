@@ -38,6 +38,7 @@ type RunOptions struct {
 	// Container options
 	EnvImg   string   // writable overlay (.img)
 	Overlays []string // additional read-only overlays
+	Slots    []string // #SLOT: bindings, written SLOT=OVERLAY
 	CWD      string   // working directory inside job
 	// NoProject skips resolving CWD's required overlays through a project's
 	// lock even when CWD stands inside one, falling back to the ordinary

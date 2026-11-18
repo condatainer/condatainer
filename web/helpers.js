@@ -577,6 +577,7 @@ function resetStartForm(helper) {
     if (input.dataset.value !== undefined) input.dataset.value = '';
     input.classList.remove('combo-invalid');
   });
+  _markRequiredParams();
 
   gid('ov-create-form').classList.remove('visible');
   gid('ov-name').value = '';
@@ -701,6 +702,8 @@ function selectHelper(name, overrides) {
     });
   }
 
+  renderHelperSlots();
+
   // Helper-specific params
   const params    = selectedHelper.params || [];
   _helperParamKeys = params.map(p => p.key);
@@ -729,11 +732,11 @@ function selectHelper(name, overrides) {
       '</div>';
     // Wire comboboxes after HTML is in the DOM
     computed.forEach(({ p, opts, isOpen }) => {
-      if (opts.length) initCombobox('hparam-' + p.key, opts, isOpen, () => renderModuleChips());
+      if (opts.length) initCombobox('hparam-' + p.key, opts, isOpen, () => { renderModuleChips(); _markRequiredParams(); });
       const isRequired = !p.optional && !p.default;
       const el = gid('hparam-' + p.key);
       if (!el) return;
-      el.addEventListener('input', () => { renderModuleChips(); _saveSelection(); });
+      el.addEventListener('input', () => { renderModuleChips(); _saveSelection(); _markRequiredParams(); });
       if (!isRequired) return;
       el.dataset.required = '1';
       // Plain inputs need their own blur listener; combobox inputs use initCombobox's
@@ -749,6 +752,7 @@ function selectHelper(name, overrides) {
         if (el) { el.value = v; el.dataset.value = v; }
       });
     }
+    _markRequiredParams();
   } else {
     paramWrap.innerHTML = '';
   }
@@ -905,8 +909,8 @@ async function checkProjectReuse() {
 }
 
 function _reuseSummary(c) {
-  const params = Object.entries(c.params || {}).sort().map(([k, v]) => k + '=' + v);
-  return params.concat(c.overlays || []).map(escHtml).join(', ');
+  const pairs = o => Object.entries(o || {}).sort().map(([k, v]) => k + '=' + v);
+  return pairs(c.params).concat(pairs(c.slots), c.overlays || []).map(escHtml).join(', ');
 }
 
 function openReuseModal() {
@@ -919,7 +923,7 @@ function openReuseModal() {
   gid('rh-modal').classList.add('open');
 }
 
-// applyReuseOverlays sets the helper params and fills the added overlays from the
+// applyReuseOverlays sets the helper params and slots and fills the added overlays from the
 // chosen combination.
 async function applyReuseOverlays(i) {
   closeModal('rh-modal');
@@ -929,6 +933,11 @@ async function applyReuseOverlays(i) {
   Object.entries(combo.params || {}).forEach(([k, v]) => {
     const el = gid('hparam-' + k);
     if (el) { el.value = v; el.dataset.value = v; }
+  });
+  _markRequiredParams();
+  Object.entries(combo.slots || {}).forEach(([k, v]) => {
+    const el = gid('hslot-' + k);
+    if (el) { el.value = v; el.dataset.value = v; el.classList.remove('combo-invalid'); }
   });
   selectedModules = [];
   selectedExternalOverlays = [];
@@ -945,6 +954,69 @@ function _addExternalOverlay(path) {
     selectedExternalOverlays.push(path);
     renderModuleChips();
   }
+}
+
+// A required param is red until it has a value, not only after it was visited.
+function _markRequiredParams() {
+  _helperParamKeys.forEach(key => {
+    const el = gid('hparam-' + key);
+    if (el && el.dataset.required) el.classList.toggle('combo-invalid', !el.value.trim());
+  });
+}
+
+/* ── Slots ──────────────────────────────── */
+// A #SLOT: is a place the user fills with an overlay. The server lists the installed
+// overlays that have what the slot needs, so the form offers only what would launch.
+let _helperSlotNames = [];
+
+async function renderHelperSlots() {
+  const wrap = gid('helper-slots-wrap');
+  if (!wrap) return;
+  const helperName = selectedHelper?.name;
+  _helperSlotNames = [];
+  wrap.innerHTML = '';
+  if (!helperName) return;
+  let slots = [];
+  try {
+    const r = await fetch('api/helpers/' + encodeURIComponent(helperName) + '/slots');
+    if (r.ok) slots = await r.json();
+  } catch { slots = []; }
+  if (selectedHelper?.name !== helperName || !slots.length) return;
+
+  _helperSlotNames = slots.map(s => s.name);
+  wrap.innerHTML =
+    '<div class="f-divider">Slots</div>' +
+    '<div class="param-grid">' +
+    slots.map(s => {
+      const ph = s.default ? s.default : (s.optional ? '(none)' : 'required');
+      const needs = [].concat((s.env || []).map(v => '$' + v), (s.bin || []).map(c => c + ' on PATH')).join(', ');
+      return '<span class="param-name">' + escHtml(s.name) + '</span>' +
+        '<div class="param-cell">' +
+          makeComboboxHtml('hslot-' + s.name, '', ph) +
+          (needs ? '<span class="param-desc">Needs ' + escHtml(needs) + '</span>' : '') +
+        '</div>';
+    }).join('') +
+    '</div>';
+  slots.forEach(s => {
+    const el = gid('hslot-' + s.name);
+    const required = !!el && !s.default && !s.optional;
+    // A slot that must be filled is red until it has a value, not only after it was visited.
+    const mark = () => el.classList.toggle('combo-invalid', !el.value.trim());
+    if (required) el.dataset.required = '1';
+    initCombobox('hslot-' + s.name, s.options || [], !s.strict, required ? mark : null);
+    if (required) mark();
+  });
+}
+
+function _collectSlots() {
+  const out = {};
+  _helperSlotNames.forEach(n => {
+    const e = gid('hslot-' + n);
+    if (!e) return;
+    const v = (e.dataset.value !== undefined ? e.dataset.value : e.value).trim();
+    if (v) out[n] = v;
+  });
+  return out;
 }
 
 function _collectParams() {
@@ -1483,6 +1555,13 @@ async function startHelper() {
     el.classList.toggle('combo-invalid', empty);
     if (empty) hasEmpty = true;
   });
+  _helperSlotNames.forEach(name => {
+    const el = gid('hslot-' + name);
+    if (!el || !el.dataset.required) return;
+    const empty = !el.value.trim();
+    el.classList.toggle('combo-invalid', empty);
+    if (empty) hasEmpty = true;
+  });
   if (hasEmpty) return;
   const _rv  = id => { const e = gid(id); return e.value.trim() || e.placeholder; };
   const _mem  = v => /^\d+$/.test(v) ? v + 'G' : v;
@@ -1498,6 +1577,7 @@ async function startHelper() {
     overlay: gid('cfg-overlay').value || '',
     overlays: [...selectedModules.map(m => m.path), ...selectedExternalOverlays],
     params:  _collectParams(),
+    slots:   _collectSlots(),
     no_submit: gid('cfg-no-submit').checked,
   };
 

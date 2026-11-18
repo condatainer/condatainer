@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -31,6 +32,7 @@ var (
 	// run; "" until then, and always "" if the run's own overlays supply a root.
 	runBaseImage    string
 	runEnvSettings  []string
+	runSlots        []string
 	runBindPaths    []string
 	runFakeroot     bool
 	runStdout       string
@@ -89,6 +91,7 @@ The first line picks the interpreter:
 The script can contain these comment tags in its header:
   - #DEP: name/version    Declares a dependency, loaded automatically
   - #DEP: /path/env.img   Declares an overlay file (.sqf or .img)
+  - #SLOT: name default=o An overlay chosen with --slot NAME=OVERLAY
   - #BIND: host:container Extra bind mount, repeatable
   - #WRITABLE:            Mount .img overlays writable
   - #FAKEROOT:            Run with fakeroot privileges
@@ -133,6 +136,7 @@ func init() {
 	runCmd.Flags().StringVar(&runAfterNotOK, "afternotok", "", "Run after jobs fail (colon-separated IDs)")
 	runCmd.Flags().StringVar(&runAfterAny, "afterany", "", "Run after jobs finish, any outcome (colon-separated IDs)")
 	runCmd.Flags().StringArrayVar(&runEnvSettings, "env", nil, "Set environment variable KEY=VALUE (repeatable)")
+	runCmd.Flags().StringArrayVar(&runSlots, "slot", nil, "Bind a #SLOT: to an overlay, SLOT=OVERLAY, once per slot")
 	runCmd.Flags().StringSliceVar(&runBindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
 	runCmd.Flags().BoolVarP(&runFakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
 	runCmd.Flags().IntVarP(&runCPU, "cpu", "c", 0, "Override CPUs, per rank in an MPI job (e.g. 4)")
@@ -236,8 +240,20 @@ func runScript(cmd *cobra.Command, args []string) error {
 		ExitWithError("Failed to get absolute path: %v", err)
 	}
 
+	// Slots are bound first, since a conditional resource header chooses its line by the overlay a slot is bound to.
+	// A .sub file has no headers, and its content script is not known until its specs are read.
+	var slots *slotPlan
+	var slotErr error
+	slotsPlanned := !strings.HasSuffix(scriptPath, ".sub")
+	subjects := scheduler.Subjects{}
+	if slotsPlanned {
+		slots, slotErr = planSlots(cmd.Context(), scriptPath, runSlots, projectCoversScript(scriptPath))
+		subjects = slotSubjects(scriptPath, slots)
+	}
+	subjects.Skip = flagResourceHeaders()
+
 	// 1. Read specs → resolve the content script (HTCondor: .sub → .sh; others: identity)
-	contentScript, scriptSpecs := resolveScriptAndSpecs(scriptPath)
+	contentScript, scriptSpecs := resolveScriptAndSpecs(scriptPath, subjects)
 	if err := requireInterpreterLine(contentScript); err != nil {
 		ExitWithError("%v", err)
 	}
@@ -389,6 +405,19 @@ func runScript(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
+
+	// Slots mount on top of every #DEP:, in the order they are declared. A submitted job repeats them by exact name.
+	if !slotsPlanned {
+		slots, slotErr = planSlots(cmd.Context(), contentScript, runSlots, projectRun != nil)
+	}
+	if slotErr != nil {
+		if reportSlotError(slotErr) {
+			os.Exit(ExitCodeError)
+		}
+		return slotErr
+	}
+	overlays = append(overlays, slots.Paths()...)
+	containerFlags = append(containerFlags, slots.Flags()...)
 
 	// After the dependencies, which may already supply a root, and after the
 	// dry run, which must not build one. The script may be submitted to a node
@@ -558,12 +587,23 @@ func useSubmitDir(script string, specs *scheduler.ScriptSpecs) error {
 	return nil
 }
 
+// flagResourceHeaders lists the resource headers that -c, -m, -t and -g already set.
+func flagResourceHeaders() []string {
+	var keys []string
+	for header, set := range map[string]bool{"#NCPU": runCPU > 0, "#MEM": runMem != "", "#TIME": runTime != "", "#GPU": runGPU != ""} {
+		if set {
+			keys = append(keys, header)
+		}
+	}
+	return keys
+}
+
 // resolveScriptAndSpecs tries to read scheduler specs and resolves the content script path.
 //   - For HTCondor .sub files: specs.ScriptPath is the bash executable — returned as contentScript.
 //   - For SLURM/PBS/LSF: contentScript == scriptPath.
 //   - On failure: prints a warning and returns (scriptPath, nil).
-func resolveScriptAndSpecs(scriptPath string) (string, *scheduler.ScriptSpecs) {
-	specs, err := scheduler.ReadScriptSpecsFromPath(scriptPath)
+func resolveScriptAndSpecs(scriptPath string, subjects scheduler.Subjects) (string, *scheduler.ScriptSpecs) {
+	specs, err := scheduler.ReadScriptSpecsFor(scriptPath, subjects)
 	if errors.Is(err, scheduler.ErrInvalidHeader) {
 		ExitWithError("%v", err)
 	}
@@ -627,6 +667,14 @@ func dryRunRefusals(ctx context.Context, contentScript string, specs *scheduler.
 	}
 	if arraySpec != nil && len(arraySpec.BlankLines) > 0 {
 		reasons = append(reasons, fmt.Sprintf("the --array file has blank lines at %v", arraySpec.BlankLines))
+	}
+	if _, err := planSlots(ctx, contentScript, runSlots, projectRun != nil); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		var missing *errSlotMissing
+		if errors.As(err, &missing) {
+			reasons = append(reasons, "missing slot overlays: "+strings.Join(missing.Names, ", "))
+		} else {
+			reasons = append(reasons, err.Error())
+		}
 	}
 	if projectRun != nil {
 		return reasons
@@ -971,6 +1019,8 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 		}
 	}
 
+	printDryRunSlots(ctx, contentScript, projectRun != nil)
+
 	if nested := describeNested(); nested != "" {
 		fmt.Printf("Nested run: %s\n", nested)
 	}
@@ -1048,6 +1098,8 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 				fmt.Printf("  mpiexec:    %s\n", mpiexecPath)
 			}
 		}
+
+		printDryRunConditions(specs.Conditions)
 
 		fmt.Printf("%s\n", utils.StyleTitle("Job control:"))
 		scriptBase := strings.TrimSuffix(filepath.Base(originScript), filepath.Ext(originScript))
@@ -1260,6 +1312,9 @@ func forwardedFlagArgs(fs *pflag.FlagSet) []string {
 	var args []string
 	fs.VisitAll(func(fl *pflag.Flag) {
 		if !fl.Changed || runJobFlagNames[fl.Name] {
+			return
+		}
+		if fl.Name == "slot" {
 			return
 		}
 		if fl.Name == "project" {

@@ -41,7 +41,7 @@ func TestClassifyOverlay(t *testing.T) {
 // and drops it the moment a pin is added — never writing one itself.
 func TestUnpinnedHelperOverlays(t *testing.T) {
 	root := projectRoot(t)
-	if err := helperhistory.RecordUsed(root, "rstudio-server", ".", nil, []string{"rstudio-server/4.4.3"}); err != nil {
+	if err := helperhistory.RecordUsed(root, "rstudio-server", ".", nil, []string{"rstudio-server/4.4.3"}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,7 +68,7 @@ func TestUnpinnedHelperOverlays(t *testing.T) {
 // never suggested — nothing could pin it either direction.
 func TestUnpinnedHelperOverlaysExcludesExternalPaths(t *testing.T) {
 	root := projectRoot(t)
-	if err := helperhistory.RecordUsed(root, "rstudio-server", ".", nil, []string{"../../scratch/test.sqf"}); err != nil {
+	if err := helperhistory.RecordUsed(root, "rstudio-server", ".", nil, []string{"../../scratch/test.sqf"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	unpinned, err := UnpinnedHelperOverlays(root, lock.New())
@@ -86,10 +86,10 @@ func TestUnpinnedHelperOverlaysExcludesExternalPaths(t *testing.T) {
 // — an absent list is not the same as "not manual".
 func TestManualPinUsage(t *testing.T) {
 	root := projectRoot(t)
-	if err := helperhistory.RecordUsed(root, "rstudio-server", ".", []string{"build-essential"}, nil); err != nil {
+	if err := helperhistory.RecordUsed(root, "rstudio-server", ".", []string{"build-essential"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := helperhistory.RecordUsed(root, "jupyterlab", ".", nil, []string{"build-essential"}); err != nil {
+	if err := helperhistory.RecordUsed(root, "jupyterlab", ".", nil, []string{"build-essential"}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -144,5 +144,21 @@ func TestStatusAtOnTheRootItself(t *testing.T) {
 	}
 	if !status.HasProject || status.Root != root {
 		t.Fatalf("StatusAt(root) = %+v, want HasProject at %s", status, root)
+	}
+}
+
+// An overlay a helper mounted through a slot is suggested for pinning, as any recorded overlay is.
+func TestUnpinnedHelperOverlaysIncludesSlotOverlays(t *testing.T) {
+	root := projectRoot(t)
+	slots := map[string]string{"genome": "grch38/genome/gencode/49"}
+	if err := helperhistory.RecordUsed(root, "igv", ".", nil, nil, slots); err != nil {
+		t.Fatal(err)
+	}
+	unpinned, err := UnpinnedHelperOverlays(root, lock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unpinned) != 1 || unpinned[0] != "grch38/genome/gencode/49" {
+		t.Fatalf("unpinned = %v, want the slot overlay", unpinned)
 	}
 }

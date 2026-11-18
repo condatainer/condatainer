@@ -26,6 +26,8 @@ type RunPlan struct {
 	Scheduler     scheduler.Scheduler
 	UserOverlays  []string
 	NamedOverlays []string
+	// Slots lists each bound #SLOT:, in the order declared, with the overlay it mounts.
+	Slots []SlotMount
 	// Optional lists each optional #DEP: line, in the order written, with the overlay it resolved to.
 	Optional     []OptionalMount
 	Params       map[string]string
@@ -192,6 +194,11 @@ func PlanRun(ctx context.Context, opts RunOptions) (*RunPlan, error) {
 		logger.Info("Optional overlay mounted", "overlay", o.Name, "path", o.Path)
 	}
 	mounted := depOverlays(meta.DepLines, namedOverlays, optional)
+	slots, err := ResolveSlots(ctx, cwd, meta.Slots, opts.Slots, opts.NoProject)
+	if err != nil {
+		return nil, err
+	}
+	mounted = append(mounted, slotPaths(slots)...)
 	if len(mounted) > 0 {
 		opts.Overlays = append(mounted, opts.Overlays...)
 	}
@@ -231,6 +238,7 @@ func PlanRun(ctx context.Context, opts RunOptions) (*RunPlan, error) {
 		Scheduler:     sched,
 		UserOverlays:  userOverlays,
 		NamedOverlays: namedOverlays,
+		Slots:         slots,
 		Optional:      optional,
 		Params:        params,
 		ContainerCmd:  containerCmd,
@@ -289,6 +297,7 @@ func ExecutePlan(ctx context.Context, plan *RunPlan) (string, error) {
 		}
 		run := newHelperRun(helperID, plan.Options.ScriptName, jobID, cwd, plan.Spec.Time,
 			plan.Options, plan.UserOverlays, plan.Spec, plan.Params, "pending", string(plan.Scheduler.GetType()))
+		run.Slots = plan.SlotNames()
 		_ = AppendHistory(run)
 		recordSharedUsage(cwd, plan, run.Overlays)
 		logger.Info("Helper submitted", "id", helperID)
@@ -312,6 +321,7 @@ func ExecutePlan(ctx context.Context, plan *RunPlan) (string, error) {
 	}
 	run := newHelperRun(helperID, plan.Options.ScriptName, "", cwd, plan.Spec.Time,
 		plan.Options, plan.UserOverlays, plan.Spec, plan.Params, "starting", "local")
+	run.Slots = plan.SlotNames()
 	_ = AppendHistory(run)
 	recordSharedUsage(cwd, plan, run.Overlays)
 	// Reap the child while the caller lives; init reaps it afterwards.
@@ -332,5 +342,5 @@ func recordSharedUsage(cwd string, plan *RunPlan, overlays []string) {
 		return
 	}
 	_ = RecordUsed(standing.Root, plan.Options.ScriptName, filepath.ToSlash(location),
-		fillDeps(plan.Meta.Deps, plan.Params), overlays)
+		fillDeps(plan.Meta.Deps, plan.Params), overlays, plan.SlotNames())
 }

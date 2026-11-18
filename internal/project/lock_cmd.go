@@ -1,6 +1,7 @@
 package project
 
 import (
+	"maps"
 	"path"
 	"path/filepath"
 	"slices"
@@ -126,7 +127,9 @@ func usageIndex(root string) (map[string][]string, error) {
 	for helperName, byLocation := range all {
 		for location, combos := range byLocation {
 			for _, combo := range combos {
-				for _, overlay := range append(slices.Clone(combo.Required), combo.Overlays...) {
+				mounted := append(slices.Clone(combo.Required), combo.Overlays...)
+				mounted = slices.AppendSeq(mounted, maps.Values(combo.Slots))
+				for _, overlay := range mounted {
 					if pinKey, ok := classifyOverlay(overlay, location); ok {
 						add(pinKey, helperName)
 					}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/helper"
+	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/image/ext3"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/logging/weblog"
@@ -25,6 +27,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	cntexec "github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/slot"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -179,6 +182,8 @@ func (s *srv) handleHelpersSub(w http.ResponseWriter, r *http.Request) {
 		s.handleHelperRunning(w, r, id)
 	case "resources":
 		s.handleHelperResources(w, r, id)
+	case "slots":
+		s.handleHelperSlots(w, r, id)
 	case "config":
 		s.handleHelperConfig(w, r, id)
 	default:
@@ -267,6 +272,51 @@ func (s *srv) handleHelperRunning(w http.ResponseWriter, r *http.Request, name s
 		out.SingletonBlocked = helper.SingletonBlocked(meta, running)
 	}
 	writeJSON(w, out)
+}
+
+// slotValue is one #SLOT: of a helper, with what can fill it.
+type slotValue struct {
+	Name     string   `json:"name"`
+	Default  string   `json:"default,omitempty"`
+	Optional bool     `json:"optional,omitempty"`
+	Strict   bool     `json:"strict"`
+	Env      []string `json:"env,omitempty"`
+	Bin      []string `json:"bin,omitempty"`
+	Options  []string `json:"options"`
+}
+
+// handleHelperSlots serves GET /api/helpers/{name}/slots: each slot of the helper with the overlays that can fill it.
+//   - The options come from the installed overlays that have the variables and commands the slot needs, so a page can offer only what would launch.
+func (s *srv) handleHelperSlots(w http.ResponseWriter, r *http.Request, name string) {
+	scriptPath, err := config.FindHelperScript(name)
+	if err != nil {
+		http.Error(w, "helper not found: "+name, http.StatusNotFound)
+		return
+	}
+	meta, _ := helper.ParseHelperScriptMeta(scriptPath)
+	out := []slotValue{}
+	if len(meta.Slots) > 0 {
+		installed, _ := image.ScanOverlays(image.ScanOptions{})
+		for _, d := range meta.Slots {
+			out = append(out, slotValue{
+				Name: d.Name, Default: d.Default, Optional: d.Optional, Strict: d.Strict,
+				Env: d.Env, Bin: d.Bin, Options: slot.Options(d, installed),
+			})
+		}
+	}
+	writeJSON(w, out)
+}
+
+// slotValues turns the slots map of a start request into SLOT=OVERLAY bindings, leaving out an empty value.
+func slotValues(m map[string]string) []string {
+	var out []string
+	for name, overlay := range m {
+		if strings.TrimSpace(overlay) != "" {
+			out = append(out, name+"="+strings.TrimSpace(overlay))
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // handleHelperResources serves GET /api/helpers/{name}/resources?cpu=&mem=&time=
@@ -402,7 +452,7 @@ func (s *srv) handleHelperReuse(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 	meta, _ := helper.ParseHelperScriptMeta(scriptPath)
-	used, err := helper.ListReusable(standing.Root, name, filepath.ToSlash(location), meta.Deps)
+	used, err := helper.ListReusable(standing.Root, name, filepath.ToSlash(location), meta.Deps, meta.Slots)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -444,6 +494,7 @@ func (s *srv) handleHelperStart(w http.ResponseWriter, r *http.Request, name str
 		Overlay   string            `json:"overlay"`
 		Overlays  []string          `json:"overlays"`
 		Params    map[string]string `json:"params"`
+		Slots     map[string]string `json:"slots"`
 		NoProject bool              `json:"no_project"`
 		NoSubmit  bool              `json:"no_submit"`
 	}
@@ -511,6 +562,7 @@ func (s *srv) handleHelperStart(w http.ResponseWriter, r *http.Request, name str
 		Partition:  req.Partition,
 		CWD:        req.CWD,
 		Overlays:   req.Overlays,
+		Slots:      slotValues(req.Slots),
 		Params:     params,
 		ForceNew:   true,
 		NoProject:  req.NoProject,

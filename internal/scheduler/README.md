@@ -34,6 +34,13 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - A GPU request is `N`, `TYPE` or `TYPE:N`. A bare count has no type, and the type is lower case.
 - An empty value is the same as no header.
 - A value that does not parse, or a header written twice, is an error naming its line. What did parse is still returned.
+- A resource header can be conditional on slots: `#MEM: 56G genome=grch38`.
+  - The caller binds the slots first and passes the exact overlay names. The reader never resolves an overlay.
+  - The first conditional line whose slots all match wins, wherever it is written. The unconditional line is the fallback, so its position does not matter.
+  - A header whose conditional lines all fail and that has no unconditional line is refused, since falling back to the scheduler's default would hide that the overlay has no entry.
+  - Every line is checked, chosen or not, so a typo is caught whichever overlay is bound.
+  - A script whose directives set resources refuses a conditional header, since ignoring it would hide the condition.
+  - A reader given no slots, such as a build recipe, refuses any condition.
 
 ## Which source a script is read from
 

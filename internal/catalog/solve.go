@@ -45,16 +45,23 @@ type Resolved struct {
 //   - It never touches Conda. have and distro are supplied, never derived, so it is reachable from any caller without an import cycle.
 //   - It tries raw as given first, and retries under distro/raw only once that comes up empty: using the name as typed is not a guess, a distro prefix is.
 func (c Catalog) SolveName(ctx context.Context, have Have, distro, raw string) (Resolved, bool, error) {
+	return c.SolveNameFor(ctx, have, have, distro, raw)
+}
+
+// SolveNameFor is SolveName with a second Have for the auto-fill steps.
+//   - have answers the exact check, so any installed name resolves as written.
+//   - family answers a bare or partial name, so it can leave out a version that a shorter name must never reach.
+func (c Catalog) SolveNameFor(ctx context.Context, have, family Have, distro, raw string) (Resolved, bool, error) {
 	normalized := utils.NormalizeModule(raw)
 	if normalized == "" || strings.Contains(normalized, "::") {
 		return Resolved{}, false, nil
 	}
 
-	if res, found, err := c.solveGiven(ctx, have, normalized); found || err != nil {
+	if res, found, err := c.solveGiven(ctx, have, family, normalized); found || err != nil {
 		return res, found, err
 	}
 	if distro != "" && strings.Count(normalized, "/") <= 1 {
-		return c.solveGiven(ctx, have, distro+"/"+normalized)
+		return c.solveGiven(ctx, have, family, distro+"/"+normalized)
 	}
 	return Resolved{}, false, nil
 }
@@ -63,7 +70,7 @@ func (c Catalog) SolveName(ctx context.Context, have Have, distro, raw string) (
 // module first, then, for app or os only, an auto-fill scoped by segment count (an app
 // name has at most one slash, an os name two). Data never reaches an auto-fill step:
 // past the exact match, a name with more segments than either pool admits is not found.
-func (c Catalog) solveGiven(ctx context.Context, have Have, name string) (Resolved, bool, error) {
+func (c Catalog) solveGiven(ctx context.Context, have, family Have, name string) (Resolved, bool, error) {
 	if dep, err := utils.ParseDep(name); err == nil && have != nil && dep.Version != "" && slices.Contains(have(dep.Name), dep.Version) {
 		res, _, err := c.lookupExact(ctx, name)
 		res.Name, res.Installed = utils.NormalizeModule(name), dep.Version
@@ -74,12 +81,12 @@ func (c Catalog) solveGiven(ctx context.Context, have Have, name string) (Resolv
 	}
 	slashes := strings.Count(name, "/")
 	if slashes <= 1 {
-		if res, found, err := c.solveApp(ctx, have, name); found || err != nil {
+		if res, found, err := c.solveApp(ctx, family, name); found || err != nil {
 			return res, found, err
 		}
 	}
 	if slashes <= 2 {
-		if res, found, err := c.solveOS(ctx, have, name); found || err != nil {
+		if res, found, err := c.solveOS(ctx, family, name); found || err != nil {
 			return res, found, err
 		}
 	}
@@ -251,7 +258,7 @@ func haveFrom[V any](installed map[string]V) Have {
 // nothing installed answers. installed maps each installed name to its copies
 // in search order, as an overlay scan returns it.
 func SolveInstalled(ctx context.Context, installed map[string][]string, distro, raw string) (name, path string, found bool, err error) {
-	res, ok, err := Catalog(nil).SolveName(ctx, haveFrom(installed), distro, raw)
+	res, ok, err := Catalog(nil).SolveNameFor(ctx, haveFrom(installed), haveFromReleased(installed), distro, raw)
 	if err != nil || !ok {
 		return "", "", false, err
 	}
@@ -260,4 +267,20 @@ func SolveInstalled(ctx context.Context, installed map[string][]string, distro, 
 		return "", "", false, nil
 	}
 	return res.Name, copies[0], true, nil
+}
+
+// haveFromReleased is haveFrom for the steps that complete a bare or partial name: only a version that starts with a digit counts.
+//   - A bare or partial name reaches a released version, such as `4.6.1` or `1.24`. A name like `grch38/genome/gencode` ends in a label, so it is named in full and never completed from `grch38/genome`.
+//   - The name has at most three parts, since a version holds no `/`. An exact name still resolves, through the other Have.
+func haveFromReleased[V any](installed map[string]V) Have {
+	all := haveFrom(installed)
+	return func(name string) []string {
+		var out []string
+		for _, version := range all(name) {
+			if version[0] >= '0' && version[0] <= '9' {
+				out = append(out, version)
+			}
+		}
+		return out
+	}
 }

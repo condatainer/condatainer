@@ -60,6 +60,8 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 - An `optional=true` line is mounted when an installed overlay satisfies it, and skipped otherwise.
   - It never builds or pulls, so a site decides what a helper offers by what it installs.
   - It resolves like a required name, including through a project's pins.
+- A `#SLOT:` is bound with `--slot SLOT=OVERLAY`, and its overlay mounts on top of the optional lines.
+  - A slot with no default and no value refuses the launch. The overlay is built like a required name and then checked for the variables and commands the slot needs.
 - Names resolve against what is installed before anything is built, so a satisfied name costs no network call.
 - `#ENV_PACKAGES:` is two requirements: the packages are installed, and a writable form exists to install into.
   - A bare `.sqf` snapshot can satisfy the first. It cannot satisfy the second, so the plan refuses it and guided creation runs.
@@ -125,6 +127,7 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 - A line that fails to decode is skipped, so a retyped field would hide a running helper.
 - Neither file carries a version.
 - Every duration is whole seconds, in `walltime_secs`.
+- `slots` maps each bound slot to the exact overlay name it mounted. A reuse restores the slots the script still declares, and drops one it no longer declares or a strict slot no longer takes. The exact name keeps a newer overlay from changing what a reused run mounts.
 
 ## Shared history
 
@@ -134,12 +137,13 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
   - A project's presence already changes overlay resolution, so creating one could break the launch.
 - Dedup is by content and recency is the file mtime. A repeat bumps the mtime.
   - The bump uses `UTIME_NOW`, not `os.Chtimes`, so any member of a group-writable `cnt-lock/` can do it.
-- What is offered back is what the user chose: the `-o` overlays and the params behind the `#DEP:` names.
+- What is offered back is what the user chose: the `-o` overlays, the slots and the params behind the `#DEP:` names.
+  - A slot is stored as the exact overlay it mounted, so a reuse mounts the same one. A slot the helper no longer declares, or a strict slot no longer takes, is not offered.
   - The params are not stored. They are recovered by matching the recorded names against the helper's current template.
   - `r/4.4.3` against `r/{POSIT_R}` gives `POSIT_R=4.4.3`, so the same version is restored.
   - `#ENV_PACKAGES:` params are never recorded or recovered. They control the env overlay's content.
   - A bare required name such as `rstudio-server` is recorded as declared, so it still follows the latest.
-- A run with no added overlays and no recoverable param has nothing to offer, so it is skipped.
+- A run with no added overlays, no slot and no recoverable param has nothing to offer, so it is skipped.
 - Reuse is offered, never applied silently. The CLI offers the newest on a fresh start. The web UI has an "Overlay history" button, enabled only when there is something to reuse, that opens a list to choose from.
-- The same records feed the project's "used but not pinned" signals.
+- The same records feed the project's "used but not pinned" signals, slot overlays included.
 - It is a separate package, `internal/helperhistory`, because `internal/project` reads it and `internal/helper` already imports `internal/project`.

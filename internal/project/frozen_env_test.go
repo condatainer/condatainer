@@ -77,7 +77,7 @@ func TestUsageIndexIncludesFrozenEnvOnceAHelperHasRunThere(t *testing.T) {
 	requireSquashfsTools(t)
 	root := projectRoot(t)
 	packEnvSqf(t, filepath.Join(root, "env.sqf"))
-	if err := helperhistory.RecordUsed(root, "rstudio-server", ".", nil, []string{"build-essential"}); err != nil {
+	if err := helperhistory.RecordUsed(root, "rstudio-server", ".", nil, []string{"build-essential"}, nil); err != nil {
 		t.Fatal(err)
 	}
 

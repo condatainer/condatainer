@@ -21,7 +21,7 @@ func testRoot(t *testing.T) string {
 // RecordUsed is a no-op with no standing project — nothing to record for and
 // no error either.
 func TestRecordUsedNoopWithNoRoot(t *testing.T) {
-	if err := RecordUsed("", "rstudio-server", ".", nil, []string{"build-essential"}); err != nil {
+	if err := RecordUsed("", "rstudio-server", ".", nil, []string{"build-essential"}, nil); err != nil {
 		t.Fatalf("RecordUsed(\"\", ...) = %v, want nil", err)
 	}
 }
@@ -29,7 +29,7 @@ func TestRecordUsedNoopWithNoRoot(t *testing.T) {
 // A fresh combination writes exactly one file.
 func TestRecordUsedWritesOneFile(t *testing.T) {
 	root := testRoot(t)
-	if err := RecordUsed(root, "rstudio-server", ".", nil, []string{"build-essential", "r/4.4.3"}); err != nil {
+	if err := RecordUsed(root, "rstudio-server", ".", nil, []string{"build-essential", "r/4.4.3"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(Dir(root))
@@ -46,7 +46,7 @@ func TestRecordUsedWritesOneFile(t *testing.T) {
 func TestRecordUsedRepeatBumpsMtimeNotANewFile(t *testing.T) {
 	root := testRoot(t)
 	overlays := []string{"build-essential", "r/4.4.3"}
-	if err := RecordUsed(root, "rstudio-server", ".", nil, overlays); err != nil {
+	if err := RecordUsed(root, "rstudio-server", ".", nil, overlays, nil); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(Dir(root))
@@ -67,7 +67,7 @@ func TestRecordUsedRepeatBumpsMtimeNotANewFile(t *testing.T) {
 
 	// Order shuffled and re-sorted internally, so this still counts as the
 	// same combination.
-	if err := RecordUsed(root, "rstudio-server", ".", nil, []string{"r/4.4.3", "build-essential"}); err != nil {
+	if err := RecordUsed(root, "rstudio-server", ".", nil, []string{"r/4.4.3", "build-essential"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	entries, err = os.ReadDir(Dir(root))
@@ -90,10 +90,10 @@ func TestRecordUsedRepeatBumpsMtimeNotANewFile(t *testing.T) {
 // second, distinct combination — two files, not a replacement.
 func TestRecordUsedDifferentOverlaysIsASecondFile(t *testing.T) {
 	root := testRoot(t)
-	if err := RecordUsed(root, "rstudio-server", ".", []string{"r/4.4.3"}, []string{"extra"}); err != nil {
+	if err := RecordUsed(root, "rstudio-server", ".", []string{"r/4.4.3"}, []string{"extra"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordUsed(root, "rstudio-server", ".", []string{"r/4.5.0"}, []string{"extra"}); err != nil {
+	if err := RecordUsed(root, "rstudio-server", ".", []string{"r/4.5.0"}, []string{"extra"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(Dir(root))
@@ -108,14 +108,14 @@ func TestRecordUsedDifferentOverlaysIsASecondFile(t *testing.T) {
 // ListUsed returns only the matching helper+location, newest mtime first.
 func TestListUsedFiltersAndOrdersByRecency(t *testing.T) {
 	root := testRoot(t)
-	if err := RecordUsed(root, "rstudio-server", ".", nil, []string{"r/4.4.3"}); err != nil {
+	if err := RecordUsed(root, "rstudio-server", ".", nil, []string{"r/4.4.3"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordUsed(root, "jupyterlab", ".", nil, []string{"python/3.12"}); err != nil {
+	if err := RecordUsed(root, "jupyterlab", ".", nil, []string{"python/3.12"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(10 * time.Millisecond)
-	if err := RecordUsed(root, "rstudio-server", ".", nil, []string{"r/4.5.0"}); err != nil {
+	if err := RecordUsed(root, "rstudio-server", ".", nil, []string{"r/4.5.0"}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,13 +146,13 @@ func TestListUsedEmptyWithNoHistoryDir(t *testing.T) {
 // ListAll groups every combination by helper, then location.
 func TestListAllGroupsByHelperThenLocation(t *testing.T) {
 	root := testRoot(t)
-	if err := RecordUsed(root, "rstudio-server", ".", nil, []string{"r/4.4.3"}); err != nil {
+	if err := RecordUsed(root, "rstudio-server", ".", nil, []string{"r/4.4.3"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordUsed(root, "rstudio-server", "sub", nil, []string{"r/4.5.0"}); err != nil {
+	if err := RecordUsed(root, "rstudio-server", "sub", nil, []string{"r/4.5.0"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordUsed(root, "jupyterlab", ".", nil, []string{"python/3.12"}); err != nil {
+	if err := RecordUsed(root, "jupyterlab", ".", nil, []string{"python/3.12"}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -168,5 +168,31 @@ func TestListAllGroupsByHelperThenLocation(t *testing.T) {
 	}
 	if len(all["jupyterlab"]["."]) != 1 {
 		t.Fatalf("got %d combinations for jupyterlab at \".\", want 1", len(all["jupyterlab"]["."]))
+	}
+}
+
+// Two runs that differ only in a slot's overlay are two combinations, and the slots are read back.
+func TestRecordUsedKeepsSlotsAsPartOfTheCombination(t *testing.T) {
+	root := testRoot(t)
+	human := map[string]string{"genome": "grch38/genome/gencode/49"}
+	mouse := map[string]string{"genome": "grcm39/genome/gencode/37"}
+	for _, slots := range []map[string]string{human, mouse, human} {
+		if err := RecordUsed(root, "igv", ".", nil, nil, slots); err != nil {
+			t.Fatal(err)
+		}
+	}
+	used, err := ListUsed(root, "igv", ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(used) != 2 {
+		t.Fatalf("got %d combinations, want 2 (the repeat of human only bumps it)", len(used))
+	}
+	got := map[string]bool{}
+	for _, u := range used {
+		got[u.Slots["genome"]] = true
+	}
+	if !got[human["genome"]] || !got[mouse["genome"]] {
+		t.Errorf("slots read back = %v", got)
 	}
 }

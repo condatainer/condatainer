@@ -32,6 +32,7 @@
   - The first word is always the value. Options start at the first later word shaped `name=...`, and every word after that must be an option.
   - A boolean is written `name=true`. Quotes are not special, and a `##` ends the value even inside quotes.
   - The reader names the options it accepts. An option it does not name is unknown.
+  - `#NCPU:`, `#MEM:`, `#TIME:` and `#GPU:` take the names of slots as options, which only the reader knows, so each reader passes them in.
   - The recipe scripts read no options, so this is the only parser of them.
 - `ParseValueList` reads a `#PH:` or `#VALUE:` list. A comma sorts newest first, a pipe keeps the order written, `*` is always last, and `values[0]` is the default offered.
 

@@ -55,6 +55,8 @@ type postScriptHelperFlags struct {
 	env          string
 	overlaySet   bool
 	overlays     []string
+	slotSet      bool
+	slots        []string
 	cwdSet       bool
 	cwd          string
 	accountSet   bool
@@ -162,6 +164,13 @@ func parsePostScriptHelperFlags(args []string) (postScriptHelperFlags, []string,
 				}
 				flags.overlaySet = true
 				flags.overlays = append(flags.overlays, v)
+			case "--slot":
+				v, err := valueFor(name, &i, val, hasVal)
+				if err != nil {
+					return flags, nil, err
+				}
+				flags.slotSet = true
+				flags.slots = append(flags.slots, v)
 			case "--cwd":
 				v, err := valueFor(name, &i, val, hasVal)
 				if err != nil {
@@ -332,7 +341,7 @@ func runHelperRun(cmd *cobra.Command, args []string) error {
 	// meaning we skip the history-reuse menu and go straight to settings.
 	startedWithArgs := postFlags.cpusSet || postFlags.memSet ||
 		postFlags.timeSet || postFlags.gpuSet ||
-		postFlags.envSet || postFlags.overlaySet || postFlags.cwdSet ||
+		postFlags.envSet || postFlags.overlaySet || postFlags.slotSet || postFlags.cwdSet ||
 		postFlags.accountSet || postFlags.partitionSet || postFlags.excludeSet ||
 		postFlags.newSet || postFlags.noProjectSet || len(scriptArgs) > 0
 
@@ -410,6 +419,7 @@ func runHelperRun(cmd *cobra.Command, args []string) error {
 		Resources:    overrides,
 		EnvImg:       envImg,
 		Overlays:     postFlags.overlays,
+		Slots:        postFlags.slots,
 		CWD:          cwd,
 		Account:      postFlags.account,
 		Partition:    postFlags.partition,
@@ -641,7 +651,7 @@ func showHelperHelp(scriptName, scriptPath string) error {
 		return err
 	}
 	meta, _ := helper.ParseHelperScriptMeta(scriptPath)
-	helper.PrintHelperUsage(scriptName, params, helper.ResolveHelperSpec(scriptPath), meta.ParamValues)
+	helper.PrintHelperUsage(scriptName, params, meta.Slots, helper.ResolveHelperSpec(scriptPath), meta.ParamValues)
 	return nil
 }
 

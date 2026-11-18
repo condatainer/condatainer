@@ -244,9 +244,11 @@ type ScriptSpecs struct {
 	// NativeResources is true when a native directive set a resource, or the resource directives did not parse.
 	// A script whose directives set none takes its resources from the #KEY: headers.
 	NativeResources bool
-	RawFlags        []string      // ALL original directives — immutable audit log
-	RemainingFlags  []string      // Directives not absorbed by Spec or Control
-	ScriptType      SchedulerType // Scheduler type detected from script directives
+	// Conditions says which line each header with conditional lines chose.
+	Conditions     []Condition
+	RawFlags       []string      // ALL original directives — immutable audit log
+	RemainingFlags []string      // Directives not absorbed by Spec or Control
+	ScriptType     SchedulerType // Scheduler type detected from script directives
 	// ProxyVia, when non-empty, causes writeJobHeader to emit
 	// "condatainer proxy start --via <host>" at the top of the job body.
 	// Set by callers when scheduler.proxy_per_job names their job kind.
@@ -675,7 +677,7 @@ type ParsedScript struct {
 //   - A resource header beside a native directive that sets a resource is ignored with a warning.
 //   - A source passed over prints one note.
 //   - A script written for one scheduler can run on another.
-func ParseScriptAny(scriptPath string) (*ParsedScript, error) {
+func ParseScriptAny(scriptPath string, subjects Subjects) (*ParsedScript, error) {
 	// Determine current scheduler type — use active scheduler if already initialized.
 	var currentType SchedulerType
 	if s := ActiveScheduler(); s != nil {
@@ -686,11 +688,11 @@ func ParseScriptAny(scriptPath string) (*ParsedScript, error) {
 
 	if currentType != SchedulerUnknown {
 		if parsed, err := parseNativeScript(scriptPath, currentType); err != nil || parsed != nil {
-			parsed, err = withHeaders(scriptPath, parsed, err)
+			parsed, err = withHeaders(scriptPath, parsed, err, subjects)
 			return noteIgnoredSources(scriptPath, parsed, err)
 		}
 	}
-	if parsed, err := parseHeaderScript(scriptPath, currentType); err != nil || parsed != nil {
+	if parsed, err := parseHeaderScript(scriptPath, currentType, subjects); err != nil || parsed != nil {
 		return noteIgnoredSources(scriptPath, parsed, err)
 	}
 	for _, schedType := range []SchedulerType{SchedulerSLURM, SchedulerPBS, SchedulerLSF, SchedulerHTCondor} {
@@ -698,7 +700,7 @@ func ParseScriptAny(scriptPath string) (*ParsedScript, error) {
 			continue
 		}
 		if parsed, err := parseNativeScript(scriptPath, schedType); err != nil || parsed != nil {
-			parsed, err = withHeaders(scriptPath, parsed, err)
+			parsed, err = withHeaders(scriptPath, parsed, err, subjects)
 			return noteIgnoredSources(scriptPath, parsed, err)
 		}
 	}
@@ -819,8 +821,13 @@ func getMpiLocalSize() *int {
 //   - Without directives HasDirectives is false and Spec holds GetSpecDefaults().
 //   - HasDirectives and IsUnparsed tell the three states apart.
 func ReadScriptSpecsFromPath(scriptPath string) (*ScriptSpecs, error) {
+	return ReadScriptSpecsFor(scriptPath, Subjects{})
+}
+
+// ReadScriptSpecsFor is ReadScriptSpecsFromPath with the slots of the script bound, so a conditional header chooses its line.
+func ReadScriptSpecsFor(scriptPath string, subjects Subjects) (*ScriptSpecs, error) {
 	// Parse script using any available parser
-	parsed, err := ParseScriptAny(scriptPath)
+	parsed, err := ParseScriptAny(scriptPath, subjects)
 	if err != nil {
 		return nil, err
 	}

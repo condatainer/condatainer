@@ -88,6 +88,9 @@ func OfferRecentSessions(ctx context.Context, name string,
 		} else {
 			fmt.Printf("  %d. %-36s  %-14s  last used %s ago\n", i+1, cwd, res, age)
 		}
+		if slots := formatRunSlots(r); slots != "" {
+			fmt.Printf("     %s\n", utils.StyleDim("slots: "+slots))
+		}
 	}
 	fmt.Print("  n. Start new\n\n[?] Choose [")
 	for i := range entries {
@@ -111,10 +114,10 @@ func OfferRecentSessions(ctx context.Context, name string,
 }
 
 // OfferProjectReuse looks up this project's shared history for name at cwd and offers the newest combination, confirmed like OfferRecentSessions and never silently applied.
-//   - Accepting sets opts.Overlays and returns the params to seed.
-//   - It does nothing outside a project or when opts.Overlays is already set: an explicit -o or a personal match already answered.
+//   - Accepting sets opts.Overlays and opts.Slots and returns the params to seed.
+//   - It does nothing outside a project or when opts.Overlays or opts.Slots is already set: an explicit -o or --slot, or a personal match, already answered.
 func OfferProjectReuse(ctx context.Context, name string, opts *helper.RunOptions) (map[string]string, error) {
-	if len(opts.Overlays) > 0 {
+	if len(opts.Overlays) > 0 || len(opts.Slots) > 0 {
 		return nil, nil
 	}
 	cwd := opts.CWD
@@ -130,7 +133,7 @@ func OfferProjectReuse(ctx context.Context, name string, opts *helper.RunOptions
 		return nil, nil
 	}
 	meta, _ := helper.ParseHelperScriptMeta(opts.ScriptPath)
-	used, err := helper.ListReusable(standing.Root, name, filepath.ToSlash(location), meta.Deps)
+	used, err := helper.ListReusable(standing.Root, name, filepath.ToSlash(location), meta.Deps, meta.Slots)
 	if err != nil || len(used) == 0 {
 		return nil, nil
 	}
@@ -144,6 +147,7 @@ func OfferProjectReuse(ctx context.Context, name string, opts *helper.RunOptions
 	for _, k := range keys {
 		parts = append(parts, k+"="+newest.Params[k])
 	}
+	parts = append(parts, helper.RestoreSlots(meta.Slots, newest.Slots)...)
 	parts = append(parts, newest.Overlays...)
 	fmt.Printf("A previous %s run in this project used: %s\n", name, strings.Join(parts, ", "))
 	fmt.Print("[?] Reuse it? [Y/n]: ")
@@ -153,6 +157,7 @@ func OfferProjectReuse(ctx context.Context, name string, opts *helper.RunOptions
 	}
 	if line == "" || strings.ToLower(strings.TrimSpace(line)) == "y" {
 		opts.Overlays = append([]string(nil), newest.Overlays...)
+		opts.Slots = helper.RestoreSlots(meta.Slots, newest.Slots)
 		return newest.Params, nil
 	}
 	return nil, nil
@@ -191,6 +196,10 @@ func ApplyHistoryRun(opts *helper.RunOptions, r *helper.HelperRun) {
 	}
 	if len(r.Overlays) > 0 {
 		opts.Overlays = append([]string(nil), r.Overlays...)
+	}
+	if len(r.Slots) > 0 {
+		meta, _ := helper.ParseHelperScriptMeta(opts.ScriptPath)
+		opts.Slots = helper.RestoreSlots(meta.Slots, r.Slots)
 	}
 	if len(r.Params) > 0 {
 		opts.Params = make(map[string]string, len(r.Params))
@@ -646,6 +655,9 @@ func PrintLaunchSpec(plan *helper.RunPlan) {
 	if len(userOverlays) > 0 {
 		utils.PrintMessage("  Overlay:  %s", strings.Join(userOverlays, ", "))
 	}
+	for _, m := range plan.Slots {
+		utils.PrintMessage("  Slot:     %s = %s (%s)", m.Binding.Name, m.Name, m.Binding.Source)
+	}
 	for _, o := range plan.Optional {
 		state := "mounted"
 		if o.Path == "" {
@@ -940,6 +952,19 @@ func RunStatusTag(r *helper.HelperRun) (tag, verb string) {
 	default:
 		return "[RUNNING]", "started"
 	}
+}
+
+// formatRunSlots lists the overlay each slot mounted, as `name=overlay`, in name order.
+func formatRunSlots(r *helper.HelperRun) string {
+	names := make([]string, 0, len(r.Slots))
+	for name := range r.Slots {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for i, name := range names {
+		names[i] = name + "=" + r.Slots[name]
+	}
+	return strings.Join(names, " ")
 }
 
 // FormatRunResources returns a compact resource summary like "4c/16GB/12h/a100:1".

@@ -31,6 +31,7 @@ type HelperRun struct {
 	EnvOverlay   string            `json:"env_overlay,omitempty"` // writable .img (-e)
 	Overlays     []string          `json:"overlays,omitempty"`    // read-only .sqf (-o)
 	Params       map[string]string `json:"params,omitempty"`      // resolved #PARAM: values
+	Slots        map[string]string `json:"slots,omitempty"`       // #SLOT: name to the exact overlay it mounted
 	URLPath      string            `json:"url_path"`              // appended to proxy URL (e.g. "?token=abc123")
 	ExternalURL  string            `json:"external_url"`          // shown as-is, no proxy (e.g. vscode-tunnel URL)
 	Connect      string            `json:"connect,omitempty"`     // helper.connect at submission: "auto"|"ssh"|"scheduler"|"direct"

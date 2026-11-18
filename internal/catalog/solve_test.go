@@ -272,3 +272,40 @@ func TestSolveInstalledFlatOverlayWithoutRecipe(t *testing.T) {
 		t.Error("an uninstalled name resolved")
 	}
 }
+
+// A bare or partial name completes only to a version that starts with a digit. A data overlay ends in a label, so it is named in full.
+func TestSolveInstalledCompletesOnlyToANumberedVersion(t *testing.T) {
+	installed := map[string][]string{
+		"grch38/genome/gencode": {"/images/data.sqf"},
+		"samtools/1.24":         {"/images/samtools.sqf"},
+		"ubuntu24/r/4.6.1":      {"/images/r461.sqf"},
+		"ubuntu24/r/4.6.0":      {"/images/r460.sqf"},
+		"ubuntu24/xfce4":        {"/images/xfce4.sqf"},
+	}
+	solve := func(raw string) (string, bool) {
+		name, _, found, err := SolveInstalled(context.Background(), installed, "ubuntu24", raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return name, found
+	}
+
+	for raw, want := range map[string]string{
+		"samtools":              "samtools/1.24",
+		"samtools/1":            "samtools/1.24",
+		"ubuntu24/r/4.6":        "ubuntu24/r/4.6.1",
+		"r/4.6":                 "ubuntu24/r/4.6.1",
+		"r":                     "ubuntu24/r/4.6.1",
+		"xfce4":                 "ubuntu24/xfce4", // no version: found as written
+		"grch38/genome/gencode": "grch38/genome/gencode",
+	} {
+		if name, found := solve(raw); !found || name != want {
+			t.Errorf("%q = %q, found=%v, want %q", raw, name, found, want)
+		}
+	}
+	for _, raw := range []string{"grch38/genome", "grch38", "grch38/genome/gen"} {
+		if name, found := solve(raw); found {
+			t.Errorf("%q completed to %q", raw, name)
+		}
+	}
+}

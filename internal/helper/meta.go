@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/slot"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -36,6 +37,8 @@ type HelperScriptMeta struct {
 	// Deps are the overlays to load before the helper runs, one per required #DEP: line, in the order written.
 	// {KEY} tokens are substituted from resolved #PARAM: values (e.g. "r/{POSIT_R}").
 	Deps []string
+	// Slots are the #SLOT: declarations, in the order written.
+	Slots []slot.Decl
 	// DepLines are every #DEP: line, required and optional, in the order written. Deps and OptionalDeps split it.
 	DepLines []utils.DepLine
 	// OptionalDeps are the #DEP: lines marked optional=true, in the order written. Each is mounted when an installed overlay satisfies it.
@@ -200,7 +203,7 @@ func extractQuotedSuffix(s string) (string, string, error) {
 }
 
 // helperKeys are the headers a helper reads. One after the header block is reported, not dropped silently.
-var helperKeys = []string{"#DESC", "#PARAM", "#VALUE", "#NCPU", "#MEM", "#TIME", "#GPU", "#SINGLETON", "#BIND", "#DEP", "#ENV_PACKAGES", "#ENV_POST_INSTALL"}
+var helperKeys = []string{"#DESC", "#PARAM", "#VALUE", "#NCPU", "#MEM", "#TIME", "#GPU", "#SINGLETON", "#BIND", "#DEP", "#SLOT", "#ENV_PACKAGES", "#ENV_POST_INSTALL"}
 
 // ParseHelperScriptMeta extracts metadata from a helper script.
 // Recognised headers: #NCPU:, #MEM:, #TIME:, #GPU:, #DEP:, #ENV_PACKAGES:,
@@ -218,12 +221,14 @@ func ParseHelperScriptMeta(scriptPath string) (HelperScriptMeta, error) {
 	utils.WarnStray(scriptPath, utils.StrayAnnotations(data, helperKeys...))
 	resources, problem := scheduler.ParseResourceHeaders(annotations)
 	depLines, depProblem := utils.DependencyLines(annotations, utils.OptionOptional)
-	problems := []error{problem, depProblem}
+	slots, slotProblem := slot.ParseHelper(annotations)
+	problems := []error{problem, depProblem, slotProblem}
 	meta := HelperScriptMeta{
 		ParamValues:  make(map[string][]string),
 		DepLines:     depLines,
 		Deps:         utils.RequiredNames(depLines),
 		OptionalDeps: utils.OptionalNames(depLines),
+		Slots:        slots,
 		NCPU:         resources.CpusPerTask,
 		MemMB:        resources.MemPerNodeMB,
 		Walltime:     resources.Time,

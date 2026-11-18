@@ -9,6 +9,7 @@ package helperhistory
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -34,15 +35,18 @@ type record struct {
 	Location string   `json:"location"`
 	Required []string `json:"required,omitempty"`
 	Overlays []string `json:"overlays"`
+	// Slots maps each bound slot to the exact overlay it mounted.
+	Slots map[string]string `json:"slots,omitempty"`
 }
 
 // UsedCombination is one shared record as ListUsed/ListAll return it.
 // Helper/Location are already the map keys (ListAll) or the arguments
 // (ListUsed) by the time a caller sees it, so only what's left is exposed.
 type UsedCombination struct {
-	Required []string  `json:"required,omitempty"`
-	Overlays []string  `json:"overlays"`
-	LastUsed time.Time `json:"last_used"`
+	Required []string          `json:"required,omitempty"`
+	Overlays []string          `json:"overlays"`
+	Slots    map[string]string `json:"slots,omitempty"`
+	LastUsed time.Time         `json:"last_used"`
 }
 
 // Dir is root's .helper-history/ directory, inside cnt-lock/.
@@ -60,10 +64,10 @@ func convertLocationForFilename(location string) string {
 }
 
 // RecordUsed records that name was run at location (project-root-relative, slash-separated) in root's shared history.
-//   - It stores the helper's required overlays and the overlays the user added.
+//   - It stores the helper's required overlays, the overlays the user added and the overlay each slot mounted.
 //   - An empty root does nothing.
 //   - A repeat combination bumps the matching file's mtime. A new one is written as a new file.
-func RecordUsed(root, name, location string, required, overlays []string) error {
+func RecordUsed(root, name, location string, required, overlays []string, slots map[string]string) error {
 	if root == "" {
 		return nil
 	}
@@ -95,12 +99,12 @@ func RecordUsed(root, name, location string, required, overlays []string) error 
 			continue
 		}
 		if rec.Helper == name && rec.Location == location &&
-			slices.Equal(rec.Required, sortedRequired) && slices.Equal(rec.Overlays, sorted) {
+			slices.Equal(rec.Required, sortedRequired) && slices.Equal(rec.Overlays, sorted) && maps.Equal(rec.Slots, slots) {
 			return bumpMtime(path)
 		}
 	}
 
-	rec := record{Helper: name, Location: location, Required: sortedRequired, Overlays: sorted}
+	rec := record{Helper: name, Location: location, Required: sortedRequired, Overlays: sorted, Slots: slots}
 	data, err := json.Marshal(rec)
 	if err != nil {
 		return err
@@ -186,7 +190,7 @@ func ListUsed(root, name, location string) ([]*UsedCombination, error) {
 		if rf.rec.Helper != name || rf.rec.Location != location {
 			continue
 		}
-		out = append(out, &UsedCombination{Required: rf.rec.Required, Overlays: rf.rec.Overlays, LastUsed: rf.lastUsed})
+		out = append(out, &UsedCombination{Required: rf.rec.Required, Overlays: rf.rec.Overlays, Slots: rf.rec.Slots, LastUsed: rf.lastUsed})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastUsed.After(out[j].LastUsed) })
 	return out, nil
@@ -208,7 +212,7 @@ func ListAll(root string) (map[string]map[string][]*UsedCombination, error) {
 			out[rf.rec.Helper] = byLocation
 		}
 		byLocation[rf.rec.Location] = append(byLocation[rf.rec.Location],
-			&UsedCombination{Required: rf.rec.Required, Overlays: rf.rec.Overlays, LastUsed: rf.lastUsed})
+			&UsedCombination{Required: rf.rec.Required, Overlays: rf.rec.Overlays, Slots: rf.rec.Slots, LastUsed: rf.lastUsed})
 	}
 	return out, nil
 }

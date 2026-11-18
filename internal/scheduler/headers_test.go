@@ -240,3 +240,140 @@ func TestUnparsedDirectivesStayUnparsedWithHeaders(t *testing.T) {
 		t.Errorf("spec = %+v, want the directives left unparsed", specs.Spec)
 	}
 }
+
+func conditionalScript() []utils.Annotation {
+	return utils.ScanAnnotations([]byte("#!/bin/bash\n" +
+		"#NCPU: 8\n" +
+		"#MEM: 40G\n" +
+		"#MEM: 56G genome=grch38 star_index=regex:^grch38/star/\n" +
+		"#MEM: 48G star_index=grch38\n" +
+		"#MEM: 44G star_index=grcm39,mm10\n" +
+		"#TIME: 4h\n" +
+		"#TIME: 8h genome=grch38,grcm39\n"))
+}
+
+func TestConditionalHeadersChooseTheFirstMatchingLine(t *testing.T) {
+	declared := []string{"genome", "star_index"}
+	for name, tc := range map[string]struct {
+		bound map[string]string
+		mem   int64
+		time  time.Duration
+		line  int
+		why   string
+	}{
+		"two subjects":     {map[string]string{"genome": "grch38/genome/gencode/49", "star_index": "grch38/star/2.7"}, 56 << 10, 8 * time.Hour, 4, "genome matched grch38, star_index matched regex:^grch38/star/"},
+		"one subject":      {map[string]string{"genome": "grcm39/genome/gencode", "star_index": "grch38/star/2.7"}, 48 << 10, 8 * time.Hour, 5, "star_index matched grch38"},
+		"a list":           {map[string]string{"genome": "x", "star_index": "mm10/star/2.7"}, 44 << 10, 4 * time.Hour, 6, "star_index matched mm10"},
+		"nothing matched":  {map[string]string{"genome": "x", "star_index": "y"}, 40 << 10, 4 * time.Hour, 3, "no condition matched"},
+		"slots unbound":    {nil, 40 << 10, 4 * time.Hour, 3, "no condition matched"},
+		"a slot is absent": {map[string]string{"genome": "grch38/genome"}, 40 << 10, 8 * time.Hour, 3, "no condition matched"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, err := ParseResourceHeadersFor(conditionalScript(), Subjects{Declared: declared, Bound: tc.bound})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if h.MemPerNodeMB != tc.mem || h.Time != tc.time || h.CpusPerTask != 8 {
+				t.Errorf("mem %d, time %v, cpus %d", h.MemPerNodeMB, h.Time, h.CpusPerTask)
+			}
+			if h.Lines["#MEM"] != tc.line {
+				t.Errorf("#MEM chose line %d, want %d", h.Lines["#MEM"], tc.line)
+			}
+			var mem Condition
+			for _, c := range h.Conditions {
+				if c.Key == "#MEM" {
+					mem = c
+				}
+			}
+			if mem.Because != tc.why {
+				t.Errorf("condition = %+v, want because %q", mem, tc.why)
+			}
+		})
+	}
+}
+
+func TestConditionalHeaderWithNoMatchAndNoFallbackIsRefused(t *testing.T) {
+	text := "#MEM: 40G star_index=grch38\n#MEM: 32G star_index=grcm39\n#NCPU: 2\n"
+	declared := []string{"star_index"}
+	for name, bound := range map[string]map[string]string{
+		"another index": {"star_index": "hg19/star/2.7"},
+		"unbound":       nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseResourceHeadersFor(utils.ScanAnnotations([]byte(text)), Subjects{Declared: declared, Bound: bound})
+			if err == nil || !strings.Contains(err.Error(), "#MEM on line 1, 2: no line matches") ||
+				!strings.Contains(err.Error(), "add a #MEM line with no condition") {
+				t.Fatalf("err = %v", err)
+			}
+			if bound != nil && !strings.Contains(err.Error(), "star_index is hg19/star/2.7") {
+				t.Errorf("err = %v, want it to say what the slot is bound to", err)
+			}
+			if bound == nil && !strings.Contains(err.Error(), "star_index is not bound") {
+				t.Errorf("err = %v, want it to say the slot is not bound", err)
+			}
+		})
+	}
+	if _, err := ParseResourceHeadersFor(utils.ScanAnnotations([]byte(text+"#MEM: 8G\n")), Subjects{Declared: declared}); err != nil {
+		t.Errorf("with an unconditional line: %v", err)
+	}
+}
+
+func TestFlagGivenHeaderIsNotRefusedForMatchingNothing(t *testing.T) {
+	text := "#MEM: 32G star_index=grcm39\n#NCPU: 2\n"
+	subjects := Subjects{Declared: []string{"star_index"}, Bound: map[string]string{"star_index": "grch38/star/2.7"}}
+	if _, err := ParseResourceHeadersFor(utils.ScanAnnotations([]byte(text)), subjects); err == nil {
+		t.Fatal("a header that matches nothing was accepted")
+	}
+	subjects.Skip = []string{"#MEM"}
+	h, err := ParseResourceHeadersFor(utils.ScanAnnotations([]byte(text)), subjects)
+	if err != nil {
+		t.Fatalf("a header a flag sets was refused: %v", err)
+	}
+	if h.MemPerNodeMB != 0 || len(h.Conditions) != 0 {
+		t.Errorf("a skipped header was read: %+v", h)
+	}
+}
+
+func TestConditionalHeadersAreRefused(t *testing.T) {
+	declared := Subjects{Declared: []string{"genome"}}
+	for name, tc := range map[string]struct{ text, want string }{
+		"undeclared slot":  {"#MEM: 8G refgenome=x\n", `"refgenome" is not an option`},
+		"two plain lines":  {"#MEM: 8G\n#MEM: 9G\n", "already set on line 1"},
+		"bad value":        {"#MEM: lots genome=x\n", "not a memory size"},
+		"bad value unused": {"#MEM: 8G\n#MEM: lots genome=nothing\n", "not a memory size"},
+		"bad regex":        {"#MEM: 8G genome=regex:(\n", "invalid condition"},
+		"empty list entry": {"#MEM: 8G genome=a,,b\n", "an entry is empty"},
+		"same slot twice":  {"#MEM: 8G genome=a genome=b\n", "written twice"},
+		"name":             {"#NAME: job genome=a\n", "not a name"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseResourceHeadersFor(utils.ScanAnnotations([]byte(tc.text)), declared)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+	if _, err := ParseResourceHeaders(utils.ScanAnnotations([]byte("#MEM: 8G genome=x\n"))); err == nil ||
+		!strings.Contains(err.Error(), "this reader takes no options") {
+		t.Errorf("a reader with no slots: err = %v", err)
+	}
+}
+
+// A script whose directives set resources refuses a conditional header, since ignoring it would hide the condition.
+func TestConditionalHeaderBesideNativeResourcesIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "job.sh")
+	text := "#!/bin/bash\n#SBATCH --mem=8G\n#MEM: 56G genome=grch38\n"
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parseNativeScript(path, SchedulerSLURM)
+	if err != nil || parsed == nil {
+		t.Fatalf("native parse = %v, %v", parsed, err)
+	}
+	_, err = withHeaders(path, parsed, nil, Subjects{Declared: []string{"genome"}, Bound: map[string]string{"genome": "grch38"}})
+	if !errors.Is(err, ErrInvalidHeader) || !strings.Contains(err.Error(), "#MEM on line 3") ||
+		!strings.Contains(err.Error(), "move the resources into the headers") {
+		t.Fatalf("err = %v", err)
+	}
+}

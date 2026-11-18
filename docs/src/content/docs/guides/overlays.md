@@ -215,6 +215,57 @@ condatainer run quant.sh sample1
 - A `#DEP:` line accepts the same syntax as the `-o`.
 - Without scheduler directives, `run` runs the script on the current machine.
 
+### Swap an overlay with a slot
+
+A `#DEP:` names one fixed overlay. A **slot** names a place that different overlays can fill, such as a reference index. The script reads the same variable whichever overlay fills the slot:
+
+```bash title="quant.sh"
+#!/bin/bash
+#DEP: salmon/2.7.0
+#SLOT: index default=grch38/salmon/2.7.0/gencode47-k31 env=SALMON_INDEX_DIR
+
+salmon quant -i "$SALMON_INDEX_DIR" -l A \
+  -1 "$1".fq.gz -2 "$1".fq.gz -o quant/"$1"
+```
+
+```bash
+condatainer run quant.sh sample1
+condatainer run --slot index=grch38/salmon/2.7.0/gencode47-decoy-k31 quant.sh sample1
+```
+
+- The word after `#SLOT:` is the slot name. `default=` is the overlay used when `--slot` does not name the slot. A slot with no `default=` must be filled.
+- `--slot NAME=OVERLAY` fills one slot. Write one `--slot` for each slot. The overlay is written as in a `#DEP:` line.
+- `env=` lists the variables the overlay must export. `bin=` lists the commands it must put on `PATH`. A script whose overlay lacks one is refused before the job is submitted.
+- `choices=` lists the overlays the script supports, and only those can fill the slot. `strict=false` lets other overlays in.
+- A strict slot takes only its choices. Write a choice in full, by its short name, or as a shorter tool or OS name that completes to it, such as `samtools/1` for `samtools/1.24`. A name completes only to a version that starts with a number, so a data overlay such as `grch38/genome/gencode` is written in full. A choice can have a short name, written before an `=`: `choices=human=grch38/genome/gencode,mouse=grcm39/genome/gencode`. Then `--slot genome=mouse` and `default=mouse` stand for `grcm39/genome/gencode`, and the full name still works. A short name uses lower case letters, digits and underscores. The `=` means a short name, so write an overlay as `name/version` in `choices=` and `default=`.
+- Slot overlays are mounted on top of the `#DEP:` overlays, in the order the `#SLOT:` lines are written.
+
+#### Ask for resources by slot
+
+A resource header can name a slot, and then applies only when that slot's overlay matches:
+
+```bash title="align.sh"
+#!/bin/bash
+#SLOT: genome default=grch38/genome/gencode
+#NCPU: 8
+#MEM: 40G
+#MEM: 56G genome=grch38_grcm39
+#TIME: 4h
+#TIME: 8h genome=grch38,grcm39
+```
+
+- `#NCPU:`, `#MEM:`, `#TIME:` and `#GPU:` take a slot name as an option, written `slot=value`, after the value.
+- `value` is an overlay name or the start of one: `grch38` matches `grch38/genome/gencode` and not `grch38_grcm39/genome/gencode`.
+- `value` can be a comma list, where one entry must match: `genome=grch38,grcm39`.
+- `regex:` starts a regular expression, used as written. It matches anywhere in the overlay name, so anchor it with `^` and `$`: `genome=regex:^grch38/`.
+- A header with several slots needs all of them to match.
+- The first line that matches is used. The line with no slot is used when none does.
+- A slot left unbound matches nothing.
+- When no line matches and no line is without a slot, the script is refused, and the message says what each slot is bound to. Add a line with no slot for the other cases.
+- `-c`, `-m`, `-t` and `-g` override every line.
+- A script that also has `#SBATCH`, `#PBS` or `#BSUB` resource lines is refused. Move its resources into the headers.
+- `run --dry-run` prints the line each header used and why.
+
 ## Manage
 
 ```bash

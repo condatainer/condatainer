@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/slot"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -99,7 +100,7 @@ func ValidateHelperParamConflicts(params []HelperParam) error {
 //   - RouteLauncher: only the launching command acts on it.
 //   - A new flag must be listed here, and TestEveryRunFlagHasARoute fails until it is.
 var RunFlagRoutes = map[string]string{
-	"overlay": RouteExec, "env-img": RouteExec, "cwd": RouteExec, "no-project": RouteExec, "gpu": RouteExec,
+	"overlay": RouteExec, "env-img": RouteExec, "cwd": RouteExec, "no-project": RouteExec, "gpu": RouteExec, "slot": RouteExec,
 	"cpu": RouteJob, "mem": RouteJob, "time": RouteJob, "account": RouteJob, "partition": RouteJob, "exclude-nodes": RouteJob,
 	"new": RouteLauncher, "wait": RouteLauncher,
 }
@@ -137,6 +138,7 @@ func PrintRunFlags(w io.Writer, spec *scheduler.ResourceSpec) {
 	fmt.Fprintln(w, "  -g, --gpu         GPU spec (e.g. a100:1)")
 	fmt.Fprintln(w, "  -e, --env-img     Writable overlay (.img)")
 	fmt.Fprintln(w, "  -o, --overlay     Additional read-only overlay (repeatable)")
+	fmt.Fprintln(w, "      --slot <s=o>  Bind a #SLOT: to an overlay, once per slot")
 	fmt.Fprintln(w, "  -w, --cwd <path>  Change working directory (e.g. -w .)")
 	fmt.Fprintln(w, "  -A, --account     Billing/allocation account")
 	fmt.Fprintln(w, "  -p, --partition   Partition/queue")
@@ -148,7 +150,7 @@ func PrintRunFlags(w io.Writer, spec *scheduler.ResourceSpec) {
 
 // PrintHelperUsage prints the combined --help text for a helper.
 // versions is the map from ParseHelperScriptMeta().ParamValues; pass nil if unavailable.
-func PrintHelperUsage(scriptName string, params []HelperParam, spec *scheduler.ResourceSpec, versions map[string][]string) {
+func PrintHelperUsage(scriptName string, params []HelperParam, slots []slot.Decl, spec *scheduler.ResourceSpec, versions map[string][]string) {
 	fmt.Printf("Usage: condatainer helper run %s [flags]\n\n", scriptName)
 	if spec == nil {
 		spec = &scheduler.ResourceSpec{}
@@ -182,5 +184,41 @@ func PrintHelperUsage(scriptName string, params []HelperParam, spec *scheduler.R
 			}
 		}
 	}
+	printSlots(os.Stdout, slots)
 	fmt.Printf("\nSaved defaults: condatainer helper config %s [list | set KEY VALUE]\n", scriptName)
+}
+
+// printSlots lists each slot with its default, its choices and what its overlay must provide.
+func printSlots(w io.Writer, slots []slot.Decl) {
+	if len(slots) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "\nSlots (--slot NAME=OVERLAY):")
+	for _, d := range slots {
+		switch {
+		case d.Default != "":
+			fmt.Fprintf(w, "  %-12s default: %s\n", d.Name, d.Default)
+		case d.Optional:
+			fmt.Fprintf(w, "  %-12s optional\n", d.Name)
+		default:
+			fmt.Fprintf(w, "  %-12s required\n", d.Name)
+		}
+		if len(d.Choices) > 0 {
+			label := "choices"
+			if !d.Strict {
+				label = "suggested"
+			}
+			fmt.Fprintf(w, "  %-12s %s: %s\n", "", label, strings.Join(d.ChoiceLabels(), ", "))
+		}
+		var needs []string
+		for _, v := range d.Env {
+			needs = append(needs, "$"+v)
+		}
+		for _, c := range d.Bin {
+			needs = append(needs, c+" on PATH")
+		}
+		if len(needs) > 0 {
+			fmt.Fprintf(w, "  %-12s needs: %s\n", "", strings.Join(needs, ", "))
+		}
+	}
 }

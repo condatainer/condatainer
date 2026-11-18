@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -67,5 +68,23 @@ func TestCheckFlagRules(t *testing.T) {
 	checkAutoInstall, checkInstallDryRun, checkJSON = true, false, true
 	if err := runCheck(scriptCheckCmd, []string{"x.sh"}); err == nil || !strings.Contains(err.Error(), "--dry-run") {
 		t.Errorf("-a --json without --dry-run: %v", err)
+	}
+}
+
+func TestAddSlotDepsNamesTheBoundOverlays(t *testing.T) {
+	script := slotScript(t, "#SLOT: genome default=a/g\n#SLOT: index\n")
+
+	got, err := addSlotDeps([]string{"samtools/1.22"}, []string{script}, []string{"index=s/1"})
+	if err != nil || !slices.Equal(got, []string{"samtools/1.22", "a/g", "s/1"}) {
+		t.Errorf("deps = %v, err = %v, want the default and the flag added after the #DEP: names", got, err)
+	}
+
+	got, err = addSlotDeps(nil, []string{script}, nil)
+	if err != nil || !slices.Equal(got, []string{"a/g"}) {
+		t.Errorf("deps = %v, err = %v, want the unbound slot left out without an error", got, err)
+	}
+
+	if _, err := addSlotDeps(nil, []string{script}, []string{"nope=x/y"}); err == nil || !strings.Contains(err.Error(), `no script declares slot "nope"`) {
+		t.Errorf("a slot no script declares: err = %v", err)
 	}
 }

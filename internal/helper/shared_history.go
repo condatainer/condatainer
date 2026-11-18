@@ -7,27 +7,29 @@ import (
 	"time"
 
 	"github.com/condatainer/condatainer/internal/helperhistory"
+	"github.com/condatainer/condatainer/internal/slot"
 )
 
 // RecordUsed records that name was run at location (project-root-relative,
-// slash-separated) with its required and added overlays, in root's shared
-// history.
-func RecordUsed(root, name, location string, required, overlays []string) error {
-	return helperhistory.RecordUsed(root, name, location, required, overlays)
+// slash-separated) with its required and added overlays and the overlay each
+// slot mounted, in root's shared history.
+func RecordUsed(root, name, location string, required, overlays []string, slots map[string]string) error {
+	return helperhistory.RecordUsed(root, name, location, required, overlays, slots)
 }
 
 // ReuseOption is a recorded combination as a launch can apply it.
 type ReuseOption struct {
 	Overlays []string          `json:"overlays"`
 	Params   map[string]string `json:"params,omitempty"`
+	Slots    map[string]string `json:"slots,omitempty"`
 	LastUsed time.Time         `json:"last_used"`
 }
 
 // ListReusable returns the combinations recorded for name at location that have something to apply, newest first.
-//   - Something to apply is added overlays, or params recovered from the recorded required names.
+//   - Something to apply is added overlays, slots the helper still declares, or params recovered from the recorded required names.
 //   - Params are recovered by matching the helper's #DEP: names.
 //   - #ENV_PACKAGES: params are never recorded or recovered.
-func ListReusable(root, name, location string, deps []string) ([]ReuseOption, error) {
+func ListReusable(root, name, location string, deps []string, decls []slot.Decl) ([]ReuseOption, error) {
 	used, err := helperhistory.ListUsed(root, name, location)
 	if err != nil {
 		return nil, err
@@ -35,14 +37,15 @@ func ListReusable(root, name, location string, deps []string) ([]ReuseOption, er
 	var out []ReuseOption
 	for _, u := range used {
 		params := paramsFromRequired(deps, u.Required)
-		if len(u.Overlays) == 0 && len(params) == 0 {
+		slots := FilterSlots(decls, u.Slots)
+		if len(u.Overlays) == 0 && len(params) == 0 && len(slots) == 0 {
 			continue
 		}
 		overlays := u.Overlays
 		if overlays == nil {
 			overlays = []string{}
 		}
-		out = append(out, ReuseOption{Overlays: overlays, Params: params, LastUsed: u.LastUsed})
+		out = append(out, ReuseOption{Overlays: overlays, Params: params, Slots: slots, LastUsed: u.LastUsed})
 	}
 	return out, nil
 }

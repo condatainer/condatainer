@@ -66,6 +66,23 @@ func projectRunContext(ctx context.Context, contentScript string, list bool) (*p
 	return projectRun, nil
 }
 
+// projectCoversScript reports whether a run of the script resolves through the standing project, with nothing printed.
+func projectCoversScript(script string) bool {
+	if noProjectRequested {
+		return false
+	}
+	standing, err := standingProjectHere()
+	if err != nil || standing == nil {
+		return false
+	}
+	abs, err := filepath.Abs(script)
+	if err != nil {
+		return false
+	}
+	outside, err := outsideProject(standing.Root, abs)
+	return err == nil && !outside
+}
+
 // outsideProject reports whether the project's lock does not cover a script.
 //   - The project's rules can skip it, or a symlink on its path can lead outside the project or to a file the rules skip.
 //   - A symlink to a script of the project is covered, since the scan reads that script under its own name.

@@ -9,12 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/slot/subject"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // ResourceHeaders is what the resource and job headers of a script ask for.
 //   - A field a script does not set is zero, nil or empty.
-//   - Lines maps each header key that was set to the line it was written on.
+//   - Lines maps each header key that was set to the line it was written on. A key with conditional lines maps to the line chosen, or the first when none matched.
+//   - Conditions says how each header with conditional lines was settled.
 type ResourceHeaders struct {
 	CpusPerTask  int
 	MemPerNodeMB int64
@@ -26,6 +28,26 @@ type ResourceHeaders struct {
 	Partition    string
 	Account      string
 	Lines        map[string]int
+	Conditions   []Condition
+}
+
+// Subjects says which overlay each slot is bound to, so a conditional header can choose its line.
+type Subjects struct {
+	// Declared lists the slots the script declares. A condition on any other name is refused.
+	Declared []string
+	// Bound maps a slot to the exact name of its overlay. A slot that is not in it is unbound and matches nothing.
+	Bound map[string]string
+	// Skip lists the headers a command-line flag already sets, such as #MEM for -m. No line of a conditional one is chosen, so none is refused for matching nothing.
+	Skip []string
+}
+
+// Condition is how a header that has conditional lines was settled.
+type Condition struct {
+	Key   string
+	Line  int
+	Value string
+	// Because names what matched: `genome matched grch38`, or `no condition matched` for the unconditional line.
+	Because string
 }
 
 // resourceHeaderKeys are the headers ParseResourceHeaders reads.
@@ -52,37 +74,184 @@ func (h ResourceHeaders) SetsResources() bool {
 	return false
 }
 
-// ParseResourceHeaders reads the resource and job headers from a script's annotations.
+// ParseResourceHeaders reads the resource and job headers from a script's annotations, with no slot bound.
+//   - A line with a condition is an error, since there is no slot to match.
+//   - See ParseResourceHeadersFor for the rules.
+func ParseResourceHeaders(annotations []utils.Annotation) (ResourceHeaders, error) {
+	return parseHeaderKeys(annotations, resourceHeaderKeys, Subjects{})
+}
+
+// ParseResourceHeadersFor reads the resource and job headers, choosing among conditional lines by the slots in subjects.
 //   - An empty value is the same as no header.
 //   - #MEM: with a bare number is in GB, and #TIME: with a bare number is in hours.
-//   - A value that does not parse, or a key written twice, is an error naming its line.
+//   - A value that does not parse, or an unconditional key written twice, is an error naming its line.
 //   - What did parse is returned with the error.
-func ParseResourceHeaders(annotations []utils.Annotation) (ResourceHeaders, error) {
-	return parseHeaderKeys(annotations, resourceHeaderKeys)
+//   - A resource header may carry a slot as an option: `#MEM: 56G genome=grch38`. The first conditional line whose slots all match wins, and the unconditional line is used when none does.
+func ParseResourceHeadersFor(annotations []utils.Annotation, subjects Subjects) (ResourceHeaders, error) {
+	return parseHeaderKeys(annotations, resourceHeaderKeys, subjects)
+}
+
+// headerLine is one header line, its value without the conditions, and the conditions.
+type headerLine struct {
+	ann   utils.Annotation
+	slots map[string]subject.Subject
+}
+
+func (l headerLine) conditional() bool { return len(l.slots) > 0 }
+
+// matches reports whether every slot of the line is bound to a matching overlay, and what matched.
+func (l headerLine) matches(subjects Subjects) (string, bool) {
+	var because []string
+	for _, name := range sortedKeys(l.slots) {
+		bound, ok := subjects.Bound[name]
+		if !ok {
+			return "", false
+		}
+		entry, ok := l.slots[name].Match(bound)
+		if !ok {
+			return "", false
+		}
+		because = append(because, fmt.Sprintf("%s matched %s", name, entry))
+	}
+	return strings.Join(because, ", "), true
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// readHeaderLine splits a resource header into its value and the slots it is conditional on.
+//   - Only #NCPU:, #MEM:, #TIME: and #GPU: take conditions, and only on a slot the script declares.
+//   - The value is checked, whether or not the line is chosen.
+func readHeaderLine(a utils.Annotation, subjects Subjects) (headerLine, error) {
+	line := headerLine{ann: a}
+	if !slices.Contains(resourceOnlyHeaderKeys, a.Key) {
+		return line, nil
+	}
+	head, opts, err := utils.SplitOptions(a, subjects.Declared...)
+	if err != nil {
+		return line, err
+	}
+	line.ann.Value = head
+	if len(opts) > 0 {
+		line.slots = map[string]subject.Subject{}
+	}
+	for name, value := range opts {
+		subject, err := subject.Parse(value)
+		if err != nil {
+			return line, fmt.Errorf("%s on line %d: %s=%s: %w", a.Key, a.Line, name, value, err)
+		}
+		line.slots[name] = subject
+	}
+	var check ResourceHeaders
+	return line, check.set(line.ann)
 }
 
 // parseHeaderKeys reads only the headers in keys. A header outside keys is not read, so a value it holds is never checked.
-func parseHeaderKeys(annotations []utils.Annotation, keys []string) (ResourceHeaders, error) {
+func parseHeaderKeys(annotations []utils.Annotation, keys []string, subjects Subjects) (ResourceHeaders, error) {
 	h := ResourceHeaders{Lines: map[string]int{}}
 	var problems []error
+	var order []string
+	lines := map[string][]headerLine{}
+	plain := map[string]int{}
 	for _, a := range annotations {
-		if !slices.Contains(keys, a.Key) {
+		if !slices.Contains(keys, a.Key) || a.Value == "" {
 			continue
 		}
-		if a.Value == "" {
-			continue
-		}
-		if first, seen := h.Lines[a.Key]; seen {
-			problems = append(problems, fmt.Errorf("%s on line %d: already set on line %d", a.Key, a.Line, first))
-			continue
-		}
-		if err := h.set(a); err != nil {
+		line, err := readHeaderLine(a, subjects)
+		if err != nil {
 			problems = append(problems, err)
 			continue
 		}
-		h.Lines[a.Key] = a.Line
+		if !line.conditional() {
+			if first, seen := plain[a.Key]; seen {
+				problems = append(problems, fmt.Errorf("%s on line %d: already set on line %d", a.Key, a.Line, first))
+				continue
+			}
+			plain[a.Key] = a.Line
+		}
+		if _, seen := lines[a.Key]; !seen {
+			order = append(order, a.Key)
+		}
+		lines[a.Key] = append(lines[a.Key], line)
+	}
+	for _, key := range order {
+		if slices.Contains(subjects.Skip, key) && len(conditionalLines(lines[key])) > 0 {
+			continue
+		}
+		chosen, because := chooseLine(lines[key], subjects)
+		if chosen == nil {
+			problems = append(problems, noLineMatches(key, lines[key], subjects))
+			continue
+		}
+		if len(conditionalLines(lines[key])) > 0 {
+			h.Conditions = append(h.Conditions, Condition{Key: key, Line: chosen.ann.Line, Value: chosen.ann.Value, Because: because})
+		}
+		if err := h.set(chosen.ann); err != nil {
+			problems = append(problems, err)
+			continue
+		}
+		h.Lines[key] = chosen.ann.Line
 	}
 	return h, errors.Join(problems...)
+}
+
+// chooseLine picks the first conditional line that matches, else the unconditional line.
+func chooseLine(lines []headerLine, subjects Subjects) (*headerLine, string) {
+	var fallback *headerLine
+	for i, l := range lines {
+		if !l.conditional() {
+			fallback = &lines[i]
+			continue
+		}
+		if because, ok := l.matches(subjects); ok {
+			return &lines[i], because
+		}
+	}
+	if fallback != nil && len(conditionalLines(lines)) > 0 {
+		return fallback, "no condition matched"
+	}
+	return fallback, ""
+}
+
+// noLineMatches is the error for a header whose conditional lines all fail and which has no unconditional line.
+//   - It says what each slot the lines name is bound to.
+func noLineMatches(key string, lines []headerLine, subjects Subjects) error {
+	names := map[string]bool{}
+	for _, l := range lines {
+		for name := range l.slots {
+			names[name] = true
+		}
+	}
+	var state []string
+	for _, name := range sortedKeys(names) {
+		if bound, ok := subjects.Bound[name]; ok {
+			state = append(state, fmt.Sprintf("%s is %s", name, bound))
+		} else {
+			state = append(state, name+" is not bound")
+		}
+	}
+	tried := make([]string, 0, len(lines))
+	for _, n := range conditionalLines(lines) {
+		tried = append(tried, strconv.Itoa(n))
+	}
+	return fmt.Errorf("%s on line %s: no line matches (%s); add a %s line with no condition for the other cases",
+		key, strings.Join(tried, ", "), strings.Join(state, ", "), key)
+}
+
+func conditionalLines(lines []headerLine) []int {
+	var out []int
+	for _, l := range lines {
+		if l.conditional() {
+			out = append(out, l.ann.Line)
+		}
+	}
+	return out
 }
 
 func (h *ResourceHeaders) set(a utils.Annotation) error {
@@ -140,7 +309,7 @@ func (h *ResourceHeaders) set(a utils.Annotation) error {
 //   - It returns nil when the script has no resource or job header.
 //   - A header is written for no scheduler in particular, so the result carries the host's type and nothing is translated.
 //   - A submit description file has its own resource lines and is not read here.
-func parseHeaderScript(path string, host SchedulerType) (*ParsedScript, error) {
+func parseHeaderScript(path string, host SchedulerType, subjects Subjects) (*ParsedScript, error) {
 	if strings.HasSuffix(path, ".sub") {
 		return nil, nil
 	}
@@ -149,7 +318,7 @@ func parseHeaderScript(path string, host SchedulerType) (*ParsedScript, error) {
 		return nil, err
 	}
 	annotations := utils.ScanAnnotations([]byte(strings.Join(lines, "\n")))
-	headers, err := ParseResourceHeaders(annotations)
+	headers, err := parseHeaderKeys(annotations, resourceHeaderKeys, subjects)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrInvalidHeader, path, err)
 	}
@@ -171,6 +340,7 @@ func parseHeaderScript(path string, host SchedulerType) (*ParsedScript, error) {
 				Account:   headers.Account,
 			},
 			HasDirectives: true,
+			Conditions:    headers.Conditions,
 			RawFlags:      raw,
 			ScriptType:    host,
 		},
@@ -191,7 +361,7 @@ func headerSpec(h ResourceHeaders) ResourceSpec {
 func headerRawLines(annotations []utils.Annotation, lines []string, h ResourceHeaders, keys []string) []string {
 	var raw []string
 	for _, a := range annotations {
-		if _, ok := h.Lines[a.Key]; ok && slices.Contains(keys, a.Key) {
+		if line, ok := h.Lines[a.Key]; ok && line == a.Line && slices.Contains(keys, a.Key) {
 			raw = append(raw, strings.TrimSpace(lines[a.Line-1]))
 		}
 	}
@@ -203,7 +373,7 @@ func headerRawLines(annotations []utils.Annotation, lines []string, h ResourceHe
 //   - When no directive set a resource, the resource headers give the resources. The other directives still pass through to the job.
 //   - When a directive set one, a resource header is ignored with a warning naming its line.
 //   - A script whose directives did not parse, and a submit description file, are returned as read.
-func withHeaders(path string, parsed *ParsedScript, err error) (*ParsedScript, error) {
+func withHeaders(path string, parsed *ParsedScript, err error, subjects Subjects) (*ParsedScript, error) {
 	if err != nil || parsed == nil || parsed.Specs == nil || parsed.Specs.Spec == nil || strings.HasSuffix(path, ".sub") {
 		return parsed, err
 	}
@@ -218,7 +388,7 @@ func withHeaders(path string, parsed *ParsedScript, err error) (*ParsedScript, e
 	if !specs.NativeResources {
 		keys = resourceHeaderKeys
 	}
-	headers, err := parseHeaderKeys(annotations, keys)
+	headers, err := parseHeaderKeys(annotations, keys, subjects)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrInvalidHeader, path, err)
 	}
@@ -226,12 +396,16 @@ func withHeaders(path string, parsed *ParsedScript, err error) (*ParsedScript, e
 		return nil, err
 	}
 	if specs.NativeResources {
+		if err := refuseConditionalBesideNative(path, parsed, annotations); err != nil {
+			return nil, err
+		}
 		warnIgnoredResourceHeaders(path, parsed, annotations)
 		return parsed, nil
 	}
 	if headers.SetsResources() {
 		spec := headerSpec(headers)
 		specs.Spec = &spec
+		specs.Conditions = headers.Conditions
 		specs.RawFlags = append(specs.RawFlags, headerRawLines(annotations, lines, headers, resourceOnlyHeaderKeys)...)
 		parsed.FromHeaders = true
 	}
@@ -285,6 +459,18 @@ func mergeJobControl(path string, parsed *ParsedScript, h ResourceHeaders) error
 				ErrInvalidHeader, path, f.key, h.Lines[f.key], nativeFlagText(parsed, f.key), f.what)
 		}
 		*f.native = f.header
+	}
+	return nil
+}
+
+// refuseConditionalBesideNative refuses a conditional resource header in a script whose directives set resources.
+//   - Ignoring the header would make its condition do nothing without saying so.
+func refuseConditionalBesideNative(path string, parsed *ParsedScript, annotations []utils.Annotation) error {
+	for _, a := range annotations {
+		if slices.Contains(resourceOnlyHeaderKeys, a.Key) && len(utils.OptionNames(a)) > 0 {
+			return fmt.Errorf("%w: %s: %s on line %d has a condition, but the %s directives set resources; move the resources into the headers",
+				ErrInvalidHeader, path, a.Key, a.Line, parsed.ScriptType)
+		}
 	}
 	return nil
 }

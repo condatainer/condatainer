@@ -447,14 +447,20 @@ func applyEntry(root string, l *Lock, key string, entry PinEntry) error {
 // pinBase resolves distro's conventional "<distro>/base" recipe and writes it
 // to the reserved BaseKey, replacing whatever was there — there is one root
 // per project.
-func pinBase(root string, l *Lock, distro string, manual bool, opts PinOptions) (*Pinned, error) {
+//   - identity picks one installed build. Empty takes the first found, and Others lists the rest.
+func pinBase(root string, l *Lock, distro, identity string, manual bool, opts PinOptions) (*Pinned, error) {
 	distro = strings.TrimSpace(distro)
 	if distro == "" {
 		return nil, fmt.Errorf("%w: no distro to pin as this project's root", ErrInvalid)
 	}
-	pinned, err := Pin(root, distro+"/base", "", opts)
+	pinned, err := Pin(root, distro+"/base", identity, opts)
 	if err != nil {
 		return nil, err
+	}
+	if identity == "" {
+		if _, rest, err := resolveByName(distro+"/base", opts); err == nil {
+			pinned.Others = rest
+		}
 	}
 	previous := l.Pins[BaseKey]
 	if !sameName(root, previous, pinned.Name) {
@@ -469,28 +475,47 @@ func pinBase(root string, l *Lock, distro string, manual bool, opts PinOptions) 
 	return pinned, nil
 }
 
-// DeriveBase writes the reserved base pin from distro unless a manual override
-// already occupies the key. `project lock` calls it on every run.
+// DeriveBase writes the reserved base pin from distro when the project has none.
+//   - An existing base is kept, however it was set, so one machine's default distro never replaces another's choice.
+//   - A base with no artifact for this architecture is pinned again under its own distro.
+//
 // distro is a parameter so this package stays free of machine configuration.
 func DeriveBase(root string, l *Lock, distro string, opts PinOptions) (*Pinned, error) {
-	if existing, ok := l.Pins[BaseKey]; ok && existing.Manual {
+	existing, ok := l.Pins[BaseKey]
+	if !ok {
+		return pinBase(root, l, distro, "", false, opts)
+	}
+	if _, has := existing.For(meta.NativeArch()); has {
 		return nil, nil
 	}
-	return pinBase(root, l, distro, false, opts)
+	if own := baseDistro(root, existing); own != "" {
+		return pinBase(root, l, own, "", existing.Manual, opts)
+	}
+	return pinBase(root, l, distro, "", existing.Manual, opts)
 }
 
-// SelectDistro overrides the derivation, pinning distro's "<distro>/base" at
-// the reserved key as a manual choice that DeriveBase will not revert.
-// `project set-distro <distro>`.
-func SelectDistro(root string, l *Lock, distro string, opts PinOptions) (*Pinned, error) {
-	return pinBase(root, l, distro, true, opts)
+// baseDistro is the distro a base pin names, or "" when no artifact of it can be read.
+func baseDistro(root string, pin PinEntry) string {
+	for _, artifact := range pin.Paths() {
+		if entry, err := ReadEntry(root, artifact); err == nil {
+			if distro, _, found := strings.Cut(entry.Manifest.Name, "/"); found {
+				return distro
+			}
+		}
+	}
+	return ""
 }
 
-// AutoDistro clears a manual override and re-derives from distro immediately,
-// rather than leaving the reserved key stale until the next `project lock`.
+// SelectDistro pins distro's "<distro>/base" at the reserved key as a manual choice, at identity when given.
+// `project set-distro <distro> [identity]`.
+func SelectDistro(root string, l *Lock, distro, identity string, opts PinOptions) (*Pinned, error) {
+	return pinBase(root, l, distro, identity, true, opts)
+}
+
+// AutoDistro pins distro's base as the derived choice, clearing the manual mark.
 // `project set-distro --auto`.
 func AutoDistro(root string, l *Lock, distro string, opts PinOptions) (*Pinned, error) {
-	return pinBase(root, l, distro, false, opts)
+	return pinBase(root, l, distro, "", false, opts)
 }
 
 // dropPrunable removes the problems that do not stop a pin being written: an
@@ -516,10 +541,32 @@ func joinProblems(problems []Problem) string {
 //   - A name request then matches any pin whose name and version the request admits, newest first.
 //   - So a loose declaration reuses a pin from another script instead of resolving to a new version.
 func MatchPin(l *Lock, request Request) (key string, entry PinEntry, ok bool) {
-	for _, candidate := range request.PathCandidates() {
-		if entry, ok := l.Pins[candidate]; ok {
-			return candidate, entry, true
+	return MatchPinFor(l, request, "")
+}
+
+// MatchPinFor is MatchPin for a project whose distro is known.
+//   - A short name, with at most one slash, matches a pin written under the distro when nothing matches as written: `r/4.6` finds `ubuntu24/r/4.6.1`.
+//   - A name that matches as written is never matched under the distro.
+func MatchPinFor(l *Lock, request Request, distro string) (key string, entry PinEntry, ok bool) {
+	if key, entry, ok = matchPin(l, request, ""); ok || distro == "" || request.Kind != KindName || strings.Count(request.Key, "/") > 1 {
+		return key, entry, ok
+	}
+	return matchPin(l, request, distro)
+}
+
+// matchPin is the match of MatchPin. A non-empty prefix is the distro a short name is read under.
+func matchPin(l *Lock, request Request, prefix string) (key string, entry PinEntry, ok bool) {
+	if prefix == "" {
+		for _, candidate := range request.PathCandidates() {
+			if entry, ok := l.Pins[candidate]; ok {
+				return candidate, entry, true
+			}
 		}
+	} else {
+		if entry, ok := l.Pins[prefix+"/"+request.Key]; ok {
+			return prefix + "/" + request.Key, entry, true
+		}
+		request.Dep.Name = prefix + "/" + request.Dep.Name
 	}
 	if request.Kind != KindName {
 		return "", PinEntry{}, false

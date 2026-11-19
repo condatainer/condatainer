@@ -588,3 +588,39 @@ func TestStalePins(t *testing.T) {
 		t.Error("Reconcile dropped a manual pin")
 	}
 }
+
+// A short name finds a pin written under the project's distro, and one that matches as written never does.
+func TestMatchPinForReadsAShortNameUnderTheDistro(t *testing.T) {
+	l := New()
+	l.Pins["ubuntu24/r/4.6.1"] = pinOf("provenance/ubuntu24--r--4.6.1@abc")
+	l.Pins["samtools/1.24"] = pinOf("provenance/samtools--1.24@def")
+	request := func(key string) Request {
+		dep, err := utils.ParseDep(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Request{Key: key, Kind: KindName, Dep: dep}
+	}
+
+	for key, want := range map[string]string{
+		"r/4.6.1":       "ubuntu24/r/4.6.1", // the full version, short form
+		"r/4.6":         "ubuntu24/r/4.6.1", // a partial version, short form
+		"r":             "ubuntu24/r/4.6.1",
+		"samtools/1":    "samtools/1.24", // matches as written
+		"samtools/1.24": "samtools/1.24",
+	} {
+		if got, _, ok := MatchPinFor(l, request(key), "ubuntu24"); !ok || got != want {
+			t.Errorf("MatchPinFor(%q) = %q, %v, want %q", key, got, ok, want)
+		}
+	}
+	if _, _, ok := MatchPinFor(l, request("r/4.6.1"), ""); ok {
+		t.Error("with no distro the short form matched a pin written under one")
+	}
+	if _, _, ok := MatchPinFor(l, request("r/4.7"), "ubuntu24"); ok {
+		t.Error("a version no pin admits matched")
+	}
+	other := request("ubuntu24/r/4.6.1")
+	if got, _, ok := MatchPinFor(l, other, "debian12"); !ok || got != "ubuntu24/r/4.6.1" {
+		t.Errorf("a distro-qualified name was matched as written: %q, %v", got, ok)
+	}
+}

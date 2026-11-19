@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/project/lock"
@@ -117,5 +118,25 @@ func TestOnlyLockCreatesAProject(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, lock.DirName)); !os.IsNotExist(err) {
 		t.Error("resolving a root created cnt-lock/; only publishing should")
+	}
+}
+
+// A base the lock already holds is kept at its identity, whatever default distro this machine has.
+// Nothing is installed here, so re-pinning from the distro would fail instead of returning nil.
+func TestProjectLockKeepsAnExistingBase(t *testing.T) {
+	root := newProject(t)
+	base := vendorArtifact(t, root, "ubuntu22/base", "echo base\n")
+	l := lock.New()
+	l.Pins[lock.BaseKey] = pinOf(base)
+	if err := lock.Publish(root, l); err != nil {
+		t.Fatal(err)
+	}
+
+	pinned, err := lock.DeriveBase(root, l, "ubuntu24", lock.PinOptions{})
+	if err != nil || pinned != nil {
+		t.Fatalf("DeriveBase = %v, %v; want it to leave the base alone", pinned, err)
+	}
+	if got := l.Pins[lock.BaseKey]; !reflect.DeepEqual(got, pinOf(base)) {
+		t.Errorf("the base changed: %#v", got)
 	}
 }

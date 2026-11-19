@@ -108,7 +108,7 @@ func (s *Standing) ResolveNames(ctx context.Context, names []string) ([]Mount, e
 			mounts[i] = mount
 			continue
 		}
-		if _, _, pinned := lock.MatchPin(s.Lock, request); pinned || request.Kind != lock.KindName {
+		if _, _, pinned := lock.MatchPinFor(s.Lock, request, s.DefaultDistro()); pinned || request.Kind != lock.KindName {
 			refused.Unresolved = append(refused.Unresolved, unresolvedFor(resolution, request.Key))
 		}
 		mounts[i] = Mount{Request: request.Key}

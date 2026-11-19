@@ -96,8 +96,15 @@
 - `base:` is a reserved pin key. It holds the artifact restore treats as the container root.
 - Without it, a project would mean whichever `default_distro` the restoring machine has.
 - It is an ordinary pin at a fixed key. No manifest type says "this is a root", because `os` covers both.
-- It is written on every `project lock`. There is no closure to walk to decide, and recording one costs nothing.
-- Its one source is the configured default distro. `project set-distro` overrides it as manual, and `--auto` clears the override.
+- `project lock` writes it when there is none, from the configured default distro. There is no closure to walk to decide, and recording one costs nothing.
+- An existing base is never replaced by `project lock`. One machine's `default_distro` must not change another's choice.
+- `project set-distro` changes it, and `--auto` goes back to the configured default distro.
+- `project set-distro` takes `distro`, `distro@identity` or `distro identity`. Two builds of one base can be installed, and the first found is not a choice the user made.
+  - Without an identity it takes the first found and lists the others.
+- `project set-distro` asks before the base moves to another distro, and `--yes` answers it.
+  - Overlays and environments are built per distro. Another glibc or system library can stop them from working.
+  - It only warns. Finding what depends on the distro would mean scanning the project.
+  - It changes the base alone. Pins, environments and scripts stay as written.
 - Reconcile never sweeps it, and the scan never produces it.
 - Restore runs it first. Nothing in the manifest graph points at it, since `os` carries no `#DEP:`, and every rebuild needs its path.
 - `--only` cannot drop it. A job rebuilding one artifact must resolve its root from the lock, not from the compute node's configuration.
@@ -236,6 +243,11 @@ A pin answers for its own keys. A build dependency only has to leave its depende
 - Resolve never acquires. An absent artifact is an error naming `project restore`.
 - A `name:` request is held to an exact identity when it is pinned, not when it runs.
 - With no pin, `exec -o`, `run` and `check` resolve as they would outside a project: an installed version first, then the catalog's candidates, never a build.
+  - A bare or partial name that a pin satisfies mounts the pin, even when a newer or older installed version also satisfies it.
+  - A full version no pin covers mounts the installed overlay and is marked `not pinned`. One nothing installed has is refused, and says to pin it.
+  - A short name, with at most one slash, that no pin matches as written is read again under the project's distro, so `r/4.6` finds the pin `ubuntu24/r/4.6.1`.
+  - A pin's key must equal its overlay's name, so `project lock` and `project pin` need the distro-qualified name. `project pin r/4.6.1` says it is not installed.
+  - A helper resolves a name the same way. A name no pin and nothing installed answers is built, as outside a project.
 - A live-resolved or equivalent mount is marked. `run`, `exec` and `e` list what they resolved as `request → name@identity`. Outside a project they show only a request that became a different name. A `run` that is about to submit a job and a `--dry-run` leave the list out, since the job's log and the dry-run summary carry it.
 - The project's root is the exception. It is fixed, never live.
 

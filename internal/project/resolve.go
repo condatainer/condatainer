@@ -289,7 +289,7 @@ func Resolve(ctx context.Context, root string, l *lock.Lock, requests []lock.Req
 			})
 			continue
 		}
-		matchedKey, pin, ok := lock.MatchPin(l, request)
+		matchedKey, pin, ok := lock.MatchPinFor(l, request, opts.Distro)
 		if !ok {
 			if request.Kind == lock.KindName && opts.LiveResolve {
 				mount, resolved, err := resolveLive(ctx, opts, request)

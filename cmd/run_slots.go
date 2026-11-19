@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/project"
@@ -53,22 +54,35 @@ func (p *slotPlan) Flags() []string {
 	return flags
 }
 
-// slotSubjects is what a script's conditional headers match against: every declared slot, and the exact overlay of each bound one.
+// slotSubjects is what a script's conditional headers match against: every declared slot and group, the exact overlay of each bound slot, and the short name of each bound group.
 //   - plan is nil when the script declares no slots, or when they could not be bound. Declared slots are then read again so a condition on one is still known.
 func slotSubjects(script string, plan *slotPlan) scheduler.Subjects {
 	subjects := scheduler.Subjects{Bound: map[string]string{}}
 	if plan == nil {
 		decls, _ := slot.ParseScript(script)
-		for _, d := range decls {
-			subjects.Declared = append(subjects.Declared, d.Name)
-		}
-		return subjects
+		return declareSubjects(subjects, decls)
 	}
-	for _, b := range plan.Bindings {
-		subjects.Declared = append(subjects.Declared, b.Name)
+	decls := make([]slot.Decl, len(plan.Bindings))
+	for i, b := range plan.Bindings {
+		decls[i] = b.Decl
 	}
+	subjects = declareSubjects(subjects, decls)
 	for _, m := range plan.Mounts {
 		subjects.Bound[m.Binding.Name] = m.Name
+	}
+	for group, short := range slot.GroupValues(decls, subjects.Bound) {
+		subjects.Bound[group] = short
+	}
+	return subjects
+}
+
+// declareSubjects adds the slot and group names of decls to the names a condition may use.
+func declareSubjects(subjects scheduler.Subjects, decls []slot.Decl) scheduler.Subjects {
+	for _, d := range decls {
+		subjects.Declared = append(subjects.Declared, d.Name)
+		if d.Group != "" && !slices.Contains(subjects.Declared, d.Group) {
+			subjects.Declared = append(subjects.Declared, d.Group)
+		}
 	}
 	return subjects
 }
@@ -228,6 +242,9 @@ func printDryRunSlots(ctx context.Context, script string, inProject bool) {
 		}
 		for _, m := range plan.Mounts {
 			note := string(m.Binding.Source)
+			if m.Binding.Source == slot.FromGroup {
+				note += " " + m.Binding.Group
+			}
 			if m.NotPinned {
 				note += ", not pinned"
 			}

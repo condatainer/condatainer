@@ -147,6 +147,63 @@ The resources of a script come from the first of these that sets one:
 - The job name, the output and error paths, the partition and the account are read from both the directives and the headers. Setting the same one in both is refused, and the message names both lines.
 :::
 
+### Resources by overlay
+
+A resource header can name a slot, so a script asks for more memory only when a larger overlay fills the slot. How to declare a slot and fill it with `--slot` is in [Swap an overlay with a slot](overlays.md#swap-an-overlay-with-a-slot).
+
+```bash title="align.sh"
+#!/bin/bash
+#DEP: star/2.7.11b
+#SLOT: star_index default=human choices=human=grch38/star/2.7.11b/gencode47-151,mouse=grcm39/star/2.7.11b/gencodeM36-151 env=STAR_INDEX_DIR
+#NCPU: 8
+#MEM: 40G
+#MEM: 32G star_index=grcm39
+#TIME: 4h
+```
+
+```bash
+condatainer run --dry-run --slot star_index=mouse align.sh
+```
+
+The dry run prints the line each header used and why:
+
+```text
+Conditions:
+  #MEM   32G  line 6, star_index matched grcm39
+```
+
+`#NCPU:`, `#MEM:`, `#TIME:` and `#GPU:` take `slot=value` after the value. The slot is checked against its overlay name, not its short name, so with `mouse=grcm39/star/...` write `star_index=grcm39`.
+
+| Value | Matches |
+|---|---|
+| `star_index=grch38` | The overlay name, or the start of it by whole parts. `grch38/star/...` matches, `grch38_grcm39/star/...` does not. |
+| `star_index=grch38,grcm39` | Any one entry of the list. |
+| `star_index=regex:^grch38/` | A regular expression, used as written. It matches anywhere in the name unless it holds `^` or `$`. |
+
+- A header with several slots needs all of them to match. A slot left unbound matches nothing.
+- The first line that matches is used. The line with no slot is used when none does.
+- When no line matches and none is without a slot, the script is refused. The message says what each slot is bound to.
+- `-c`, `-m`, `-t` and `-g` replace the header they set, so that header needs no matching line. A script that also has `#SBATCH`, `#PBS` or `#BSUB` resource lines is refused.
+
+#### With a slot group
+
+Slots can share a [group](overlays.md#bind-several-slots-with-one-value), which one `--slot` value fills. A header can name the group:
+
+```bash title="align.sh"
+#SLOT: gtf group=species default=human choices=human=grch38/gtf/gencode/47,mouse=grcm39/gtf/gencode/M36
+#SLOT: star_index group=species default=human choices=human=grch38/star/2.7.11b/gencode47-151,mouse=grcm39/star/2.7.11b/gencodeM36-151
+#MEM: 40G
+#MEM: 32G species=mouse
+```
+
+```bash
+condatainer run --dry-run --slot species=mouse align.sh
+```
+
+- A group is checked against its short name, so write `species=mouse`.
+- A group has a value only when all its slots are bound to choices with one short name.
+- When a `strict=false` slot holds another overlay, as in `--slot gtf=my/custom --slot star_index=human`, a group condition matches nothing. Keep a line with no condition, or give `-m`.
+
 ### Standardized Environment Variables
 
 When your script runs through `condatainer run`, these variables hold the resources of the job:
@@ -200,6 +257,7 @@ A script starts with a first line that names the program that runs it. Next come
 - The first line is `#!/bin/bash`, or `#!/bin/env <program>` for another language, such as `python3` or `Rscript`. `#!/usr/bin/bash` and `#!/usr/bin/env` work too.
 - Any other first line is refused, including `#!/bin/sh` and a script with none. The word after `env` must be a program, not an option such as `-S`.
 - The program must exist inside the container, in the base image or in an overlay listed by `#DEP:`.
+- A `#SLOT:` line is a `#DEP:` whose overlay can change when the script runs. See [Swap an overlay with a slot](overlays.md#swap-an-overlay-with-a-slot).
 - The header block is the first line, the blank lines and the comment lines, up to the first line of code. Directives, such as `#SBATCH` and `#NCPU:`, after the first command are ignored.
 
 ## Run Execution Options

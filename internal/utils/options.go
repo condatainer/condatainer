@@ -26,7 +26,7 @@ const OptionOptional = "optional"
 //   - #NCPU:, #MEM:, #TIME: and #GPU: take the names of slots as options, which only the reader knows, so none is listed.
 var headerOptions = map[string]map[string]optionKind{
 	"#DEP":  {OptionOptional: optBool},
-	"#SLOT": {"default": optText, "choices": optText, "strict": optBool, "env": optText, "bin": optText, OptionOptional: optBool},
+	"#SLOT": {"default": optText, "choices": optText, "strict": optBool, "env": optText, "bin": optText, "group": optText, OptionOptional: optBool},
 	"#NCPU": {},
 	"#MEM":  {},
 	"#TIME": {},

@@ -3,6 +3,8 @@ package slot
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -11,6 +13,7 @@ type Source string
 
 const (
 	FromFlag    Source = "flag"
+	FromGroup   Source = "group"
 	FromDefault Source = "default"
 )
 
@@ -65,27 +68,47 @@ func (b Binding) CheckResolved(resolved string) error {
 }
 
 // Bind chooses an overlay for each slot from the --slot values, written NAME=OVERLAY.
-//   - A value that names a slot the script does not declare is refused, listing the slots it declares.
-//   - A slot written twice is refused.
+//   - A value that names neither a slot nor a group the script declares is refused, listing both.
+//   - A slot or group written twice is refused.
+//   - A group takes a short name, and each of its slots takes the choice with that short name.
+//   - A group is not written with one of its slots, and if one slot of a group is written, all of them are.
 //   - An unbound slot takes its default. With none it stays unbound when optional, and is returned with no overlay. Otherwise it is reported in an *UnboundError.
 //   - A short name from choices= stands for its overlay.
 //   - A strict slot takes a choice by its full name or its short name. Any other value is marked Unlisted, and its resolved overlay must be a choice: strict limits the choices, not how a name is completed.
 //   - The bindings are returned in the order the slots are declared. With an *UnboundError they hold every slot that did bind.
 func Bind(decls []Decl, values []string) ([]Binding, error) {
 	given := map[string]string{}
+	groups := map[string]string{}
 	for _, v := range values {
 		name, overlay, ok := strings.Cut(v, "=")
 		name, overlay = strings.TrimSpace(name), strings.TrimSpace(overlay)
 		if !ok || name == "" || overlay == "" {
 			return nil, fmt.Errorf("--slot %q is not NAME=OVERLAY", v)
 		}
+		if members := groupMembers(decls, name); len(members) > 0 && !declared(decls, name) {
+			if _, ok := members[0].Aliases[overlay]; !ok {
+				return nil, fmt.Errorf("group %q takes %s, not %q", name, strings.Join(slices.Sorted(maps.Keys(members[0].Aliases)), ", "), overlay)
+			}
+			if _, dup := groups[name]; dup {
+				return nil, fmt.Errorf("group %q is bound twice", name)
+			}
+			groups[name] = overlay
+			continue
+		}
 		if !declared(decls, name) {
-			return nil, fmt.Errorf("no slot %q is declared; %s", name, declaredList(decls))
+			what := "slot"
+			if len(groupNames(decls)) > 0 {
+				what = "slot or group"
+			}
+			return nil, fmt.Errorf("no %s %q is declared; %s", what, name, declaredList(decls))
 		}
 		if _, dup := given[name]; dup {
 			return nil, fmt.Errorf("slot %q is bound twice", name)
 		}
 		given[name] = overlay
+	}
+	if err := checkGroupValues(decls, given, groups); err != nil {
+		return nil, err
 	}
 
 	var out []Binding
@@ -93,6 +116,8 @@ func Bind(decls []Decl, values []string) ([]Binding, error) {
 	for _, d := range decls {
 		b := Binding{Decl: d}
 		switch overlay, ok := given[d.Name]; {
+		case d.Group != "" && groups[d.Group] != "":
+			b.Requested, b.Source = d.Aliases[groups[d.Group]], FromGroup
 		case ok:
 			if full, short := d.Aliases[overlay]; short {
 				overlay = full
@@ -131,5 +156,75 @@ func declaredList(decls []Decl) string {
 	for i, d := range decls {
 		names[i] = d.Name
 	}
+	for _, g := range groupNames(decls) {
+		names = append(names, g+" (group)")
+	}
 	return "the script declares " + strings.Join(names, ", ")
+}
+
+// groupNames lists the groups in the order their first slot is declared.
+func groupNames(decls []Decl) []string {
+	var out []string
+	for _, d := range decls {
+		if d.Group != "" && !slices.Contains(out, d.Group) {
+			out = append(out, d.Group)
+		}
+	}
+	return out
+}
+
+// groupMembers are the slots of a group, in declaration order.
+func groupMembers(decls []Decl, group string) []Decl {
+	var out []Decl
+	for _, d := range decls {
+		if d.Group == group {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// checkGroupValues refuses a group written with one of its slots, and a group of which only some slots are written.
+func checkGroupValues(decls []Decl, given, groups map[string]string) error {
+	for _, group := range groupNames(decls) {
+		members := groupMembers(decls, group)
+		var set, unset []string
+		for _, d := range members {
+			if _, ok := given[d.Name]; ok {
+				set = append(set, d.Name)
+			} else {
+				unset = append(unset, d.Name)
+			}
+		}
+		switch {
+		case groups[group] != "" && len(set) > 0:
+			return fmt.Errorf("group %q is written with its slot %s; write the group, or write every slot of it", group, strings.Join(set, ", "))
+		case groups[group] == "" && len(set) > 0 && len(unset) > 0:
+			return fmt.Errorf("slot %s is written but %s, in group %q, is not; write %s too, or write the group with --slot %s=%s",
+				strings.Join(set, ", "), strings.Join(unset, ", "), group, strings.Join(unset, ", "), group, strings.Join(slices.Sorted(maps.Keys(members[0].Aliases)), "|"))
+		}
+	}
+	return nil
+}
+
+// GroupValues maps each group to the short name that all of its slots are bound to, given the exact overlay each slot is bound to.
+//   - A group whose slots are not all bound to one short name, such as when a slot holds an overlay outside its choices, has no value.
+func GroupValues(decls []Decl, overlays map[string]string) map[string]string {
+	values := map[string]string{}
+	broken := map[string]bool{}
+	for _, d := range decls {
+		if d.Group == "" {
+			continue
+		}
+		short, ok := d.ShortName(overlays[d.Name])
+		if prev, seen := values[d.Group]; !ok || (seen && prev != short) {
+			broken[d.Group] = true
+			continue
+		}
+		values[d.Group] = short
+	}
+	for group := range broken {
+		delete(values, group)
+	}
+	return values
 }

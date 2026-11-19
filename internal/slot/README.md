@@ -16,6 +16,13 @@ Reads `#SLOT:` headers, binds each slot to an overlay, and checks what the overl
   - An unlisted value that nothing installed answers is refused and is never built.
   - Reusing a past run's slots is exact. A recorded overlay that is no longer one of the choices is dropped.
 - A slot follows its script in a project too. The lock pins the default and the choices, and a `strict=false` slot bound to another overlay mounts it unpinned, with a note.
+- `group=` binds slots that must change together, such as a genome and its index, with one `--slot GROUP=SHORT_NAME`.
+  - It exists because pairing a genome with an index of another species is silent and wrong. One value cannot make that mistake.
+  - The group value is a short name, so every slot of a group lists the same short names and has a short name on every choice. Checking this when the script is read means a bound group always fits every slot.
+  - Defaults are all given or none, with one short name. A group with a default for one slot and not another would bind half of it.
+  - A group is not written with one of its slots, and if one slot is written, all are. A half-bound group is refused, and an overlay outside the choices needs `strict=false` and every slot written.
+  - A group is a condition subject matched against its short name. It has a value only when all its slots hold choices of one short name. Otherwise it matches nothing.
+  - Only `run` reads `group=`. A helper's slots are mostly optional, and the dashboard fills one slot at a time, so a half-filled group would be refused there.
 - `strict` is on by default, so a script that lists its choices is not run with another overlay by accident.
 - `env=` reads the overlay's `runtime.json`. Nothing is mounted to check it.
 - `bin=` lists the overlay's `PATH` folders in the image and looks for the command.

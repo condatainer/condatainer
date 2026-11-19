@@ -211,7 +211,7 @@ func slotDeps(path string, values []string) (names, declared []string, err error
 	for _, v := range values {
 		name, _, _ := strings.Cut(v, "=")
 		name = strings.TrimSpace(name)
-		if slices.ContainsFunc(decls, func(d slot.Decl) bool { return d.Name == name }) {
+		if slices.ContainsFunc(decls, func(d slot.Decl) bool { return d.Name == name || d.Group == name }) {
 			mine = append(mine, v)
 			declared = append(declared, name)
 		}

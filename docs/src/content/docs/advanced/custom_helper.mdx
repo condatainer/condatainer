@@ -113,7 +113,7 @@ condatainer helper run igv --slot genome=grch38/genome/gencode
 - `default=` is the overlay used when the user fills nothing. `optional=true` lets the slot stay empty, and then nothing is mounted. A slot cannot have both.
 - A slot with neither must be filled, or the launch stops and names it.
 - `env=` lists the variables the overlay must export, and `bin=` the commands it must put on `PATH`. Any overlay that lacks one is refused.
-- `choices=` lists the overlays the helper supports, and only those can fill the slot. `strict=false` lets others in.
+- `choices=` lists the overlays the helper supports. By default only those can fill the slot, and any other overlay is refused. Write `strict=false` to let others in.
 - A strict slot takes only its choices, but a tool or OS name can be shorter, such as `samtools/1` for `samtools/1.24`. A name completes only to a version that starts with a number, so a data overlay such as `grch38/genome/gencode` is written in full.
 - A choice can have a short name before an `=`, as in `choices=human=grch38/genome/gencode,mouse=grcm39/genome/gencode`. `--slot genome=mouse` and `default=mouse` then stand for that overlay.
 - Missing slot overlays are built before the job is submitted, as for a `#DEP:`. Slot overlays are mounted on top of the overlays from the `#DEP:` lines, in the order the `#SLOT:` lines are written.

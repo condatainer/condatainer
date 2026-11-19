@@ -4,6 +4,7 @@ package slot
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -25,6 +26,8 @@ type Decl struct {
 	Choices []string
 	// Aliases maps a short name written in choices= to its overlay. A short name stands for that overlay in --slot and default=.
 	Aliases map[string]string
+	// Group names the set of slots that one --slot value binds together by short name. Empty when the slot is in none.
+	Group string
 	// Strict is true unless strict=false. A strict slot with choices binds only those.
 	Strict bool
 	// Env lists the variables the bound overlay must export.
@@ -47,11 +50,13 @@ var (
 //   - The value is the slot name, and a name written twice is refused.
 //   - default= and each choices= entry are overlay names or files. A version constraint or a {KEY} token is refused.
 //   - The default must be one of choices=, strict= needs choices=, and optional=true cannot have a default.
+//   - group= joins slots that one --slot value binds by short name. Such a slot needs a short name on every choice. A helper does not read it.
+//   - The slots of a group list the same short names, and their defaults are all given or all left out, each with one short name. A group name is not a slot name.
 func Parse(annotations []utils.Annotation) ([]Decl, error) {
 	return parseAll(annotations, false)
 }
 
-// ParseHelper is Parse for a helper, where optional=true lets a slot stay unbound.
+// ParseHelper is Parse for a helper, where optional=true lets a slot stay unbound and group= is not an option.
 func ParseHelper(annotations []utils.Annotation) ([]Decl, error) {
 	return parseAll(annotations, true)
 }
@@ -73,7 +78,56 @@ func parseAll(annotations []utils.Annotation, helper bool) ([]Decl, error) {
 		seen[d.Name] = a.Line
 		decls = append(decls, d)
 	}
+	problems = append(problems, checkGroups(decls)...)
 	return decls, errors.Join(problems...)
+}
+
+// checkGroups reports the rules that tie the slots of a group together.
+func checkGroups(decls []Decl) []error {
+	var problems []error
+	members := map[string][]Decl{}
+	var order []string
+	for _, d := range decls {
+		if d.Group == "" {
+			continue
+		}
+		if _, ok := members[d.Group]; !ok {
+			order = append(order, d.Group)
+		}
+		members[d.Group] = append(members[d.Group], d)
+	}
+	for _, group := range order {
+		list := members[group]
+		fail := func(d Decl, format string, args ...any) {
+			problems = append(problems, fmt.Errorf("%w: line %d: group %q: %s", ErrInvalidSlot, d.Line, group, fmt.Sprintf(format, args...)))
+		}
+		if slices.ContainsFunc(decls, func(d Decl) bool { return d.Name == group }) {
+			fail(list[0], "the name is also the slot %q", group)
+		}
+		first := list[0]
+		names := slices.Sorted(maps.Keys(first.Aliases))
+		var shortDefault string
+		for _, d := range list {
+			if got := slices.Sorted(maps.Keys(d.Aliases)); !slices.Equal(got, names) {
+				fail(d, "slot %q lists the short names %s, but slot %q lists %s", d.Name, strings.Join(got, ","), first.Name, strings.Join(names, ","))
+			}
+			if (d.Default == "") != (first.Default == "") {
+				fail(d, "slots %q and %q must both have a default= or both have none", first.Name, d.Name)
+				continue
+			}
+			if d.Default == "" {
+				continue
+			}
+			short, _ := d.ShortName(d.Default)
+			switch {
+			case shortDefault == "":
+				shortDefault = short
+			case short != shortDefault:
+				fail(d, "slot %q defaults to %q and slot %q to %q; the defaults must have one short name", d.Name, short, first.Name, shortDefault)
+			}
+		}
+	}
+	return problems
 }
 
 func parseOne(a utils.Annotation, helper bool) (Decl, error) {
@@ -83,6 +137,8 @@ func parseOne(a utils.Annotation, helper bool) (Decl, error) {
 	accepts := []string{"default", "choices", "strict", "env", "bin"}
 	if helper {
 		accepts = append(accepts, utils.OptionOptional)
+	} else {
+		accepts = append(accepts, "group")
 	}
 	name, opts, err := utils.SplitOptions(a, accepts...)
 	if err != nil {
@@ -144,6 +200,15 @@ func parseOne(a utils.Annotation, helper bool) (Decl, error) {
 	}
 	if d.Optional && d.Default != "" {
 		return fail("optional=true cannot have a default=, since a default would bind the slot")
+	}
+	if group, ok := opts["group"]; ok {
+		switch {
+		case !slotName.MatchString(group):
+			return fail("group=%s is not a group name; use lower case letters, digits and underscores", group)
+		case len(d.Choices) == 0 || len(d.Aliases) != len(d.Choices):
+			return fail("group=%s needs choices= with a short name on every choice", group)
+		}
+		d.Group = group
 	}
 	if list, ok := opts["env"]; ok {
 		if d.Env, err = splitList(list); err != nil {
@@ -209,6 +274,17 @@ func (d Decl) Takes(overlay string) bool {
 	}
 	overlay = normalize(overlay)
 	return slices.ContainsFunc(d.Choices, func(c string) bool { return normalize(c) == overlay })
+}
+
+// ShortName is the short name of overlay among the choices. It reports false for an overlay that is not a choice or has none.
+func (d Decl) ShortName(overlay string) (string, bool) {
+	overlay = normalize(overlay)
+	for short, full := range d.Aliases {
+		if normalize(full) == overlay {
+			return short, true
+		}
+	}
+	return "", false
 }
 
 // ChoiceLabels lists the choices as written, a short name first: `mouse=grcm39/genome/gencode`.

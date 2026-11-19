@@ -243,11 +243,90 @@ func TestOptionalIsForHelpersOnly(t *testing.T) {
 	text := "#!/bin/bash\n#SLOT: extra optional=true\n"
 	_, err := parseScript(t, text)
 	if err == nil || !strings.Contains(err.Error(), `"optional" is not an option`) ||
-		!strings.Contains(err.Error(), "valid options are bin, choices, default, env, strict") {
+		!strings.Contains(err.Error(), "valid options are bin, choices, default, env, group, strict") {
 		t.Fatalf("a script: err = %v, want optional refused as an unknown option", err)
 	}
 	decls, err := parse(t, text)
 	if err != nil || len(decls) != 1 || !decls[0].Optional {
 		t.Errorf("a helper: decls = %+v, err = %v, want an optional slot", decls, err)
+	}
+}
+
+const groupScript = "#!/bin/bash\n" +
+	"#SLOT: genome group=species default=human choices=human=grch38/genome/gencode,mouse=grcm39/genome/gencode\n" +
+	"#SLOT: star_index group=species default=human choices=human=grch38/star/2.7.11b/gencode47-151,mouse=grcm39/star/2.7.11b/gencodeM36-151\n"
+
+func TestGroupDeclarationsAreChecked(t *testing.T) {
+	const choices = " choices=human=grch38/genome/gencode,mouse=grcm39/genome/gencode"
+	for name, tc := range map[string]struct{ text, want string }{
+		"bad name":                    {"#SLOT: a group=Bad" + choices, "not a group name"},
+		"no choices":                  {"#SLOT: a group=g", "needs choices="},
+		"a choice with no short name": {"#SLOT: a group=g choices=human=grch38/genome/gencode,grcm39/genome/gencode", "short name on every choice"},
+		"group is a slot":             {"#SLOT: g\n#SLOT: a group=g" + choices, "also the slot"},
+		"different short names":       {"#SLOT: a group=g" + choices + "\n#SLOT: b group=g choices=human=grch38/x/1,rat=rn7/x/1", "lists the short names"},
+		"default on one only":         {"#SLOT: a group=g default=human" + choices + "\n#SLOT: b group=g" + choices, "both have a default= or both have none"},
+		"defaults differ":             {"#SLOT: a group=g default=human" + choices + "\n#SLOT: b group=g default=mouse" + choices, "defaults must have one short name"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseScript(t, "#!/bin/bash\n"+tc.text+"\n"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+	if decls, err := parseScript(t, groupScript); err != nil || len(decls) != 2 || decls[0].Group != "species" {
+		t.Fatalf("a valid group: %+v, %v", decls, err)
+	}
+	if _, err := parse(t, groupScript); err == nil || !strings.Contains(err.Error(), `"group" is not an option`) {
+		t.Fatalf("a helper read group=: %v", err)
+	}
+}
+
+func TestBindGroup(t *testing.T) {
+	decls, err := parseScript(t, groupScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Bind(decls, []string{"species=mouse"})
+	if err != nil || got[0].Requested != "grcm39/genome/gencode" || got[1].Requested != "grcm39/star/2.7.11b/gencodeM36-151" || got[0].Source != FromGroup {
+		t.Fatalf("species=mouse: %+v, %v", got, err)
+	}
+	if got, err = Bind(decls, nil); err != nil || got[0].Requested != "grch38/genome/gencode" || got[1].Source != FromDefault {
+		t.Fatalf("defaults: %+v, %v", got, err)
+	}
+	if got, err = Bind(decls, []string{"genome=grch38/genome/gencode", "star_index=mouse"}); err != nil || got[0].Source != FromFlag {
+		t.Fatalf("every slot written: %+v, %v", got, err)
+	}
+	for name, tc := range map[string]struct {
+		values []string
+		want   string
+	}{
+		"group with its slot": {[]string{"species=mouse", "genome=mouse"}, `group "species" is written with its slot genome`},
+		"one slot only":       {[]string{"genome=mouse"}, `slot genome is written but star_index, in group "species", is not`},
+		"group twice":         {[]string{"species=mouse", "species=human"}, `group "species" is bound twice`},
+		"not a short name":    {[]string{"species=grcm39/genome/gencode"}, `group "species" takes human, mouse`},
+		"unknown":             {[]string{"nope=x"}, `no slot or group "nope" is declared; the script declares genome, star_index, species (group)`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Bind(decls, tc.values); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestGroupValues(t *testing.T) {
+	decls, _ := parseScript(t, groupScript)
+	mouse := map[string]string{"genome": "grcm39/genome/gencode", "star_index": "grcm39/star/2.7.11b/gencodeM36-151"}
+	if got := GroupValues(decls, mouse); got["species"] != "mouse" {
+		t.Errorf("both on mouse: %v", got)
+	}
+	for name, overlays := range map[string]map[string]string{
+		"disagree": {"genome": "grcm39/genome/gencode", "star_index": "grch38/star/2.7.11b/gencode47-151"},
+		"outside":  {"genome": "my/custom", "star_index": "grch38/star/2.7.11b/gencode47-151"},
+		"unbound":  {},
+	} {
+		if got := GroupValues(decls, overlays); len(got) != 0 {
+			t.Errorf("%s: group has a value: %v", name, got)
+		}
 	}
 }

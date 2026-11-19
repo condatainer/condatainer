@@ -234,38 +234,59 @@ condatainer run quant.sh sample1
 condatainer run --slot index=grch38/salmon/2.7.0/gencode47-decoy-k31 quant.sh sample1
 ```
 
-- The word after `#SLOT:` is the slot name. `default=` is the overlay used when `--slot` does not name the slot. A slot with no `default=` must be filled.
-- `--slot NAME=OVERLAY` fills one slot. Write one `--slot` for each slot. The overlay is written as in a `#DEP:` line.
-- `env=` lists the variables the overlay must export. `bin=` lists the commands it must put on `PATH`. A script whose overlay lacks one is refused before the job is submitted.
-- `choices=` lists the overlays the script supports, and only those can fill the slot. `strict=false` lets other overlays in.
-- A strict slot takes only its choices. Write a choice in full, by its short name, or as a shorter tool or OS name that completes to it, such as `samtools/1` for `samtools/1.24`. A name completes only to a version that starts with a number, so a data overlay such as `grch38/genome/gencode` is written in full. A choice can have a short name, written before an `=`: `choices=human=grch38/genome/gencode,mouse=grcm39/genome/gencode`. Then `--slot genome=mouse` and `default=mouse` stand for `grcm39/genome/gencode`, and the full name still works. A short name uses lower case letters, digits and underscores. The `=` means a short name, so write an overlay as `name/version` in `choices=` and `default=`.
+- The word after `#SLOT:` is the slot name.
+- `default=` is the overlay used when `--slot` does not name the slot. A slot with no `default=` must be filled.
+- `--slot NAME=OVERLAY` fills one slot. The overlay is written as in a `#DEP:` line. Write one `--slot` for each slot.
 - Slot overlays are mounted on top of the `#DEP:` overlays, in the order the `#SLOT:` lines are written.
 
-#### Ask for resources by slot
+#### Check what the overlay provides
 
-A resource header can name a slot, and then applies only when that slot's overlay matches:
+`env=` lists the variables the overlay must export, and `bin=` lists the commands it must put on `PATH`:
 
-```bash title="align.sh"
-#!/bin/bash
-#SLOT: genome default=grch38/genome/gencode
-#NCPU: 8
-#MEM: 40G
-#MEM: 56G genome=grch38_grcm39
-#TIME: 4h
-#TIME: 8h genome=grch38,grcm39
+```bash
+#SLOT: trimmer bin=trim_galore
 ```
 
-- `#NCPU:`, `#MEM:`, `#TIME:` and `#GPU:` take a slot name as an option, written `slot=value`, after the value.
-- `value` is an overlay name or the start of one: `grch38` matches `grch38/genome/gencode` and not `grch38_grcm39/genome/gencode`.
-- `value` can be a comma list, where one entry must match: `genome=grch38,grcm39`.
-- `regex:` starts a regular expression, used as written. It matches anywhere in the overlay name, so anchor it with `^` and `$`: `genome=regex:^grch38/`.
-- A header with several slots needs all of them to match.
-- The first line that matches is used. The line with no slot is used when none does.
-- A slot left unbound matches nothing.
-- When no line matches and no line is without a slot, the script is refused, and the message says what each slot is bound to. Add a line with no slot for the other cases.
-- `-c`, `-m`, `-t` and `-g` override every line.
-- A script that also has `#SBATCH`, `#PBS` or `#BSUB` resource lines is refused. Move its resources into the headers.
-- `run --dry-run` prints the line each header used and why.
+`run` refuses an overlay that lacks one, before the script starts.
+
+#### Limit what a slot takes
+
+`choices=` lists the overlays the script supports, and only those can fill the slot. Each can have a short name before an `=`:
+
+```bash title="align.sh"
+#SLOT: gtf default=human choices=human=grch38/gtf/gencode/47,mouse=grcm39/gtf/gencode/M36
+```
+
+```bash
+condatainer run --slot gtf=mouse align.sh
+```
+
+- `--slot gtf=mouse` and `default=mouse` stand for `grcm39/gtf/gencode/M36`, and the full name still works.
+- A short name uses lower case letters, digits and underscores. Any other overlay in `choices=` and `default=` is written as `name/version`, without an `=`.
+- A tool or OS overlay can be written with a shorter version. `samtools/1` stands for the newest installed `samtools/1.x`.
+- A data overlay, such as `grch38/gtf/gencode/47`, is always written in full.
+- By default only the choices can fill the slot, and any other overlay is refused with the list of allowed ones. Write `strict=false` to make the list a suggestion.
+
+#### Bind several slots with one value
+
+When slots must change together, such as an annotation and its index, give them the same `group=`. One `--slot` value then fills all of them by short name:
+
+```bash title="align.sh"
+#SLOT: gtf group=species default=human choices=human=grch38/gtf/gencode/47,mouse=grcm39/gtf/gencode/M36
+#SLOT: star_index group=species default=human choices=human=grch38/star/2.7.11b/gencode47-151,mouse=grcm39/star/2.7.11b/gencodeM36-151
+```
+
+```bash
+condatainer run --slot species=mouse align.sh
+```
+
+- A slot in a group needs `choices=` with a short name on every choice. Every slot of the group lists the same short names.
+- The defaults are given for all slots of the group or for none, each with the same short name.
+- A group name cannot be a slot name.
+- Write the group alone, never with one of its slots. `--slot species=mouse --slot gtf=mouse` is refused.
+- To use an overlay outside the choices, give that slot `strict=false` and write every slot of the group: `--slot gtf=my/custom --slot star_index=human`. Writing only some of them is refused.
+
+To give the script different CPUs, memory or time for each overlay, see [Resources by overlay](scheduler.mdx#resources-by-overlay).
 
 ## Manage
 

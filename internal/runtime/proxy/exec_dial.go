@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -22,16 +24,32 @@ const (
 	execStderrKeep   = 2048
 )
 
-var errExecEnded = errors.New("exec tunnel ended")
+// Liveness limits. They are variables so tests can shorten them.
+//   - A ping goes out every execPingInterval, and a relay silent for execDeadAfter is killed.
+//   - A dial waits execAckTimeout for the node to answer. The node's own dial gives up after 10 s, so a longer wait means the relay is dead.
+var (
+	execPingInterval = 30 * time.Second
+	execDeadAfter    = 90 * time.Second
+	execAckTimeout   = 15 * time.Second
+)
+
+var (
+	errExecEnded      = errors.New("exec tunnel ended")
+	errExecAckTimeout = errors.New("exec tunnel: node did not answer a dial")
+	errExecSilent     = errors.New("exec tunnel: node stopped answering")
+)
 
 // DialViaExec runs cmd, which must end up running RunExecRelay on the node of a
 // running job, and returns a DialFunc that reaches loopback ports there through
 // it. done closes when the command exits.
+//   - The command runs in its own process group, and a dead relay is killed as a group.
+//   - A relay that stays silent, or a dial the node never answers, kills the command.
 func DialViaExec(cmd []string) (DialFunc, func(), <-chan struct{}, error) {
 	if len(cmd) == 0 {
 		return nil, nil, nil, errors.New("exec tunnel: empty command")
 	}
 	c := exec.Command(cmd[0], cmd[1:]...)
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stderr := &tailBuffer{}
 	c.Stderr = stderr
 	in, err := c.StdinPipe()
@@ -52,11 +70,18 @@ func DialViaExec(cmd []string) (DialFunc, func(), <-chan struct{}, error) {
 		ready: make(chan struct{}),
 		done:  make(chan struct{}),
 	}
-	go m.readLoop(c, bufio.NewReaderSize(out, 64<<10))
+	m.pingEvery, m.deadAfter, m.ackTimeout = execPingInterval, execDeadAfter, execAckTimeout
+	m.lastSeen.Store(time.Now().UnixNano())
 	stop := func() {
-		in.Close() //nolint:errcheck
-		_ = c.Process.Kill()
+		m.killOnce.Do(func() {
+			in.Close() //nolint:errcheck
+			if syscall.Kill(-c.Process.Pid, syscall.SIGKILL) != nil {
+				_ = c.Process.Kill()
+			}
+		})
 	}
+	m.kill = stop
+	go m.readLoop(c, bufio.NewReaderSize(out, 64<<10))
 
 	select {
 	case <-m.ready:
@@ -66,6 +91,7 @@ func DialViaExec(cmd []string) (DialFunc, func(), <-chan struct{}, error) {
 		stop()
 		return nil, nil, nil, fmt.Errorf("exec tunnel: relay not ready after %s: %s", execReadyTimeout, stderr.String())
 	}
+	go m.pingLoop()
 	return m.dial, stop, m.done, nil
 }
 
@@ -86,6 +112,35 @@ type execMux struct {
 	next  atomic.Uint64
 	ready chan struct{}
 	done  chan struct{}
+
+	pingEvery, deadAfter, ackTimeout time.Duration // the liveness limits this relay started with
+
+	lastSeen atomic.Int64 // unix nanoseconds of the last frame from the node
+	kill     func()       // kills the relay command; safe to call more than once
+	killOnce sync.Once
+}
+
+// pingLoop pings the node every pingEvery and kills the relay once the node
+// has sent no frame for deadAfter.
+//   - Every frame from the node counts as a sign of life, a ping answer included.
+//   - The ping is sent from its own goroutine, so a full stdin pipe cannot keep the check from running.
+func (m *execMux) pingLoop() {
+	t := time.NewTicker(m.pingEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-m.done:
+			return
+		case <-t.C:
+			silent := time.Since(time.Unix(0, m.lastSeen.Load()))
+			if silent > m.deadAfter {
+				slog.Default().Warn("exec tunnel: node sent nothing, closing", "silent", silent.Round(time.Second), "err", errExecSilent)
+				m.kill()
+				return
+			}
+			go m.send(frame{op: "P"})
+		}
+	}
 }
 
 func (m *execMux) send(f frame) {
@@ -115,8 +170,12 @@ func (m *execMux) readLoop(cmd *exec.Cmd, r *bufio.Reader) {
 		if err != nil {
 			break
 		}
+		m.lastSeen.Store(time.Now().UnixNano())
 		if f.op == "R" {
 			readyOnce.Do(func() { close(m.ready) })
+			continue
+		}
+		if f.op == "P" {
 			continue
 		}
 		c := m.lookup(f.id)
@@ -188,6 +247,8 @@ func (m *execMux) dial(ctx context.Context, _, target string) (net.Conn, error) 
 		srv.Close() //nolint:errcheck
 		return nil, err
 	}
+	timeout := time.NewTimer(m.ackTimeout)
+	defer timeout.Stop()
 	select {
 	case ok := <-c.ack:
 		if !ok {
@@ -197,6 +258,10 @@ func (m *execMux) dial(ctx context.Context, _, target string) (net.Conn, error) 
 		return fail(ctx.Err())
 	case <-m.done:
 		return fail(errExecEnded)
+	case <-timeout.C:
+		slog.Default().Warn("exec tunnel: node did not answer a dial, closing", "target", target, "after", m.ackTimeout)
+		m.kill()
+		return fail(errExecAckTimeout)
 	}
 	go c.writeLoop()
 	go m.upLoop(c)

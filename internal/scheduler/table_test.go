@@ -291,6 +291,10 @@ func TestJobNote(t *testing.T) {
 		{"a job of one rank has no layout", JobInfo{State: JobRunning, NodeCount: 2, Ranks: 0}, ""},
 		{"an array has no layout", JobInfo{State: JobRunning, Ranks: 4, Tasks: &ArrayTasks{Running: []string{"a"}}}, "1 running"},
 		{"array with only pending tasks", JobInfo{State: JobPending, Tasks: &ArrayTasks{Pending: []string{"1_1", "1_2"}}}, "2 pending"},
+		{"array waiting on a parent", JobInfo{State: JobPending, Tasks: &ArrayTasks{Pending: []string{"2_1", "2_2"}},
+			DependsOn: []JobDependency{{Type: "afterok", JobID: "1_*"}}}, "2 pending, after 1_*"},
+		{"array whose parent is met", JobInfo{State: JobPending, Tasks: &ArrayTasks{Pending: []string{"2_1"}},
+			DependsOn: []JobDependency{{Type: "afterok", JobID: "1_*", Satisfied: true}}}, "1 pending"},
 	}
 	for _, tt := range tests {
 		if got := jobNote(tt.job); got != tt.want {

@@ -410,16 +410,17 @@ func jobReason(j JobInfo) string {
 				parts = append(parts, strconv.Itoa(c.n)+" "+c.word)
 			}
 		}
+		if dep := waitingOn(j.DependsOn); dep != "" {
+			parts = append(parts, dep)
+		}
 		return strings.Join(parts, ", ")
 	}
 	if j.Suspended {
 		return "suspended"
 	}
 	if j.State == JobPending || j.State == JobCancelled {
-		for _, d := range j.DependsOn {
-			if d.Failed {
-				return "dep failed " + d.JobID
-			}
+		if note := failedDependency(j.DependsOn); note != "" {
+			return note
 		}
 	}
 	switch j.State {
@@ -429,25 +430,47 @@ func jobReason(j JobInfo) string {
 		}
 		return j.Failure
 	case JobPending:
-		var open []JobDependency
-		for _, d := range j.DependsOn {
-			if !d.Satisfied {
-				open = append(open, d)
-			}
-		}
-		if len(open) > 0 {
-			note := dependencyWord(open[0].Type)
-			if open[0].JobID != "" {
-				note += " " + open[0].JobID
-			}
-			if len(open) > 1 {
-				note += " +" + strconv.Itoa(len(open)-1)
-			}
+		if note := waitingOn(j.DependsOn); note != "" {
 			return note
 		}
 		return j.Reason
 	}
 	return ""
+}
+
+// failedDependency is "dep failed <id>" for the first parent that can never hold, or "".
+func failedDependency(deps []JobDependency) string {
+	for _, d := range deps {
+		if d.Failed {
+			return "dep failed " + d.JobID
+		}
+	}
+	return ""
+}
+
+// waitingOn is the parent that keeps a job waiting: "dep failed <id>" for one that can never hold,
+// else the first unmet one, as "after 5" or "after 5 +1" for several. It is "" when none is open.
+func waitingOn(deps []JobDependency) string {
+	if note := failedDependency(deps); note != "" {
+		return note
+	}
+	var open []JobDependency
+	for _, d := range deps {
+		if !d.Satisfied {
+			open = append(open, d)
+		}
+	}
+	if len(open) == 0 {
+		return ""
+	}
+	note := dependencyWord(open[0].Type)
+	if open[0].JobID != "" {
+		note += " " + open[0].JobID
+	}
+	if len(open) > 1 {
+		note += " +" + strconv.Itoa(len(open)-1)
+	}
+	return note
 }
 
 // dependencyWord is how a dependency rule reads in a note. A job that needs its parent to succeed

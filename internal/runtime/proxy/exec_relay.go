@@ -39,6 +39,10 @@ func RunExecRelay(in io.Reader, out io.Writer) error {
 		if err != nil {
 			break
 		}
+		if f.op == "P" {
+			send(frame{op: "P"})
+			continue
+		}
 		id := f.id
 		if id == "" {
 			continue

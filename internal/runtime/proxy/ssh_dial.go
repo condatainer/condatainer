@@ -144,6 +144,52 @@ func buildAuthMethods() []ssh.AuthMethod {
 	return methods
 }
 
+// The keepalive interval and the wait for its reply. They are variables so tests can shorten them.
+var (
+	sshKeepAliveInterval = 60 * time.Second
+	sshKeepAliveTimeout  = 30 * time.Second
+)
+
+// keepAliver is the part of an SSH client that keepAlive uses.
+type keepAliver interface {
+	SendRequest(name string, wantReply bool, payload []byte) (bool, []byte, error)
+	Close() error
+}
+
+// keepAlive sends a keepalive every interval until done closes.
+//   - Traffic keeps a firewall from dropping the idle connection.
+//   - A request that fails, or gets no reply within timeout, closes the client, so done closes and the tunnel is reopened.
+func keepAlive(c keepAliver, interval, timeout time.Duration, done <-chan struct{}) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-t.C:
+		}
+		res := make(chan error, 1)
+		go func() {
+			_, _, err := c.SendRequest("keepalive@openssh.com", true, nil)
+			res <- err
+		}()
+		select {
+		case err := <-res:
+			if err != nil {
+				slog.Default().Debug("proxy go-ssh: keepalive failed, closing", "err", err)
+				c.Close() //nolint:errcheck
+				return
+			}
+		case <-time.After(timeout):
+			slog.Default().Warn("proxy go-ssh: keepalive got no reply, closing", "after", timeout)
+			c.Close() //nolint:errcheck
+			return
+		case <-done:
+			return
+		}
+	}
+}
+
 // DialGoSSH dials sshDest using the Go SSH library with all available
 // non-interactive auth methods. Returns a DialFunc (wrapping client.Dial),
 // a stop closer, and a done channel closed when the connection drops.
@@ -186,19 +232,7 @@ func DialGoSSH(sshDest string) (DialFunc, func(), <-chan struct{}, error) {
 		close(done)
 	}()
 
-	// Send keepalives so firewalls don't silently drop idle SSH connections.
-	go func() {
-		t := time.NewTicker(60 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				client.SendRequest("keepalive@openssh.com", true, nil) //nolint:errcheck
-			case <-done:
-				return
-			}
-		}
-	}()
+	go keepAlive(client, sshKeepAliveInterval, sshKeepAliveTimeout, done)
 
 	dial := func(ctx context.Context, network, tgt string) (net.Conn, error) {
 		type result struct {

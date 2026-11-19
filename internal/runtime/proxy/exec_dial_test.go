@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -147,5 +148,67 @@ func TestExecFrameRoundTrip(t *testing.T) {
 		if err != nil || got.op != want.op || got.id != want.id || got.arg != want.arg || !bytes.Equal(got.data, want.data) {
 			t.Fatalf("got %+v, %v; want %+v", got, err, want)
 		}
+	}
+}
+
+// setExecLimits shortens the liveness limits for one test.
+func setExecLimits(t *testing.T, ping, dead, ack time.Duration) {
+	t.Helper()
+	p, d, a := execPingInterval, execDeadAfter, execAckTimeout
+	execPingInterval, execDeadAfter, execAckTimeout = ping, dead, ack
+	t.Cleanup(func() { execPingInterval, execDeadAfter, execAckTimeout = p, d, a })
+}
+
+// A relay that answers pings stays open while it carries no traffic.
+func TestExecPingKeepsIdleRelayAlive(t *testing.T) {
+	setExecLimits(t, 20*time.Millisecond, 200*time.Millisecond, time.Minute)
+	_, stop, done, err := DialViaExec([]string{"env", "CNT_TEST_EXEC_RELAY=1", os.Args[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	select {
+	case <-done:
+		t.Fatal("an idle relay that answers pings was closed")
+	case <-time.After(800 * time.Millisecond):
+	}
+}
+
+// A relay that stops sending frames is killed, and done closes.
+func TestExecSilentRelayIsKilled(t *testing.T) {
+	setExecLimits(t, 20*time.Millisecond, 100*time.Millisecond, time.Minute)
+	_, stop, done, err := DialViaExec([]string{"sh", "-c", "echo R; sleep 30"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a silent relay was not closed")
+	}
+}
+
+// A dial the node never answers fails with a backend error, not a context error, and closes the relay.
+func TestExecDialAckTimeout(t *testing.T) {
+	setExecLimits(t, time.Hour, time.Hour, 100*time.Millisecond)
+	dial, stop, done, err := DialViaExec([]string{"sh", "-c", "echo R; cat >/dev/null"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_, err = dial(ctx, "tcp", "127.0.0.1:9")
+	if !errors.Is(err, errExecAckTimeout) {
+		t.Fatalf("err = %v, want the ack timeout", err)
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v is a context error, which the proxy takes for a client that left", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("relay still open after a dial timed out")
 	}
 }

@@ -70,7 +70,7 @@ $ condatainer create grch38/salmon/2.7.0/gencode47-k31
 
 When you run `create`, CondaTainer first searches for a recipe; if none is found, it falls back to looking for a Conda package.
 
-- **Version Matching:** If you omit the version or provide a partial one, CondaTainer automatically selects the newest matching version.
+- **Version Matching:** If you omit the version or provide a partial one, CondaTainer automatically selects the newest matching version. A data overlay, such as `grch38/genome/gencode`, is always written in full.
 - **Templates Fill:** Template targets can be directly created by providing its full rendered name.
 - **Dependencies:** Any dependencies declared by a recipe are built automatically. For example, building a Salmon index overlay will create the transcript overlay.
 
@@ -213,6 +213,7 @@ condatainer run quant.sh sample1
 ```
 
 - A `#DEP:` line accepts the same syntax as the `-o`.
+- A tool or OS name can be shorter than its version, such as `samtools/1` for `samtools/1.24` or `r/4.6` for the newest `4.6.x`. CondaTainer picks the newest installed version that starts with a number. A data overlay such as `grch38/genome/gencode` is written in full.
 - Without scheduler directives, `run` runs the script on the current machine.
 
 ### Swap an overlay with a slot

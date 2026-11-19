@@ -25,6 +25,11 @@ Resolves a module name to a recipe.
 - The newest app candidate is safe to pick, because an app's candidates are the same tool at different times.
 - An os candidate is only a template's own declared version list. Its second component names a different app, not a version.
 - Data gets no autofill. Sibling entries under `grch38/genome` are alternative sources, not versions, so comparing them would compare arbitrary strings.
+- Completing a name over what is installed reads the name alone and opens no image.
+  - A bare or partial name reaches an installed version only when that version starts with a digit, and the name has at most three parts: `samtools/1.24`, `ubuntu24/r/4.6.1`.
+  - A name that ends in a label, such as `grch38/genome/gencode`, or that has more than three parts, resolves only when written in full. `grch38/genome` finds nothing.
+  - An exact name always resolves, whatever its last part. A version without a digit first, such as `devel`, is reached by writing it in full.
+  - The check is a name test and not a read of the overlay's type, so it costs nothing at launch.
 - A bare distro name has no versions. `create ubuntu24` reports not found instead of guessing.
 - `have` and `distro` are parameters, never ambient state, so a name means the same thing for every caller and on every machine.
 

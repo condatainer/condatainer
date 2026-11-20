@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/condatainer/condatainer/internal/runtime/hostrun"
+	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -93,6 +94,10 @@ func TestRunOnHostIfAskedSendsTheCommand(t *testing.T) {
 	}
 	if sent.On != "login" || sent.Sock != "/.condatainer/host/sock" {
 		t.Errorf("on %q, socket %q", sent.On, sent.Sock)
+	}
+	// The host runs the binary that was typed.
+	if sent.Exe != utils.SelfPath() {
+		t.Errorf("sent executable %q, want %q", sent.Exe, utils.SelfPath())
 	}
 }
 

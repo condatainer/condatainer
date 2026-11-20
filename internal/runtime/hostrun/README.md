@@ -33,7 +33,11 @@ The relay that lets a program in a container run a command on the host.
 - Each word is quoted for the remote shell, since `ssh` joins its arguments into one string.
 - There is no fallback to another node. A retry after a dropped connection could submit twice.
 - A command run on the node `login` names gets `CNT_LOGIN_NODE` set, so a job it submits carries the record.
-- A leading `condatainer` is the host's own executable, so the version that started the job runs.
+- A leading `condatainer` runs the caller's own binary when the host has it at that path as an executable file.
+  - A forwarded command is parsed by the binary the user typed, so the host runs that same one.
+  - The copy bound into a container is not sent. It is the host's own executable already.
+- Otherwise it is the host's own executable, so the version that started the job runs. Never `PATH`.
+- `host-run` sends no path, so `host-run condatainer ...` runs the host's own executable.
 
 ## What forwards
 

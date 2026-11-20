@@ -25,14 +25,19 @@ A type is a group of nodes with the same CPUs and GPUs.
 
 Columns:
 - AVAIL is whether the partition takes jobs.
-- NODES, CPUS and MEM are per node type.
+- NODES and IDLECPUS are idle over total, such as 3/20.
+- CPUS and MEM are per node.
 - MAXTIME is the longest one job can run.
 - MAXNODES is the most nodes one job can use. Left out if none has a limit.
 - GPUS is each GPU type of the node type, as type:count per node.
 
 In a cell:
 - A + marks the smallest of nodes that differ.
-- In MAXTIME, inf means no limit and - means none is reported.`,
+- In MAXTIME, inf means no limit and - means none is reported.
+
+A node with any job is not idle. Its free CPUs count in IDLECPUS.
+GPUS (idle) ends each GPU type with the idle GPUs of it, such as (6).
+Idle figures show only where the scheduler reports them.`,
 	Example: `  condatainer scheduler partitions
   condatainer scheduler partitions --gpu
   condatainer scheduler partitions --cpu
@@ -85,12 +90,13 @@ func partitionRecord(l scheduler.ResourceLimits, fallbackGpus []scheduler.GpuInf
 	}
 	for _, t := range scheduler.PartitionNodeTypes(l, fallbackGpus) {
 		rec := report.NodeType{
-			Nodes: t.Nodes, NodesUp: t.NodesUp, Cpus: t.Cpus, MemMB: t.MemMB,
+			Nodes: t.Nodes, NodesUp: t.NodesUp, NodesIdle: t.NodesIdle, CpusIdle: t.CpusIdle, CpusTotal: t.CpusTotal,
+			Cpus: t.Cpus, MemMB: t.MemMB,
 			CpusLowerBound: t.CpusLowerBound, MemLowerBound: t.MemLowerBound,
 			Gpus: report.List[report.NodeGpu]{},
 		}
 		for _, g := range t.Gpus {
-			rec.Gpus = append(rec.Gpus, report.NodeGpu{Type: g.Type, PerNode: g.PerNode})
+			rec.Gpus = append(rec.Gpus, report.NodeGpu{Type: g.Type, PerNode: g.PerNode, Idle: g.Idle})
 		}
 		p.NodeTypes = append(p.NodeTypes, rec)
 	}

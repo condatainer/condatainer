@@ -76,6 +76,9 @@ type GpuInfo struct {
 type NodeGpu struct {
 	Type    string
 	PerNode int
+	// Idle is the GPUs of this type that no job holds, over the nodes of the node type that take jobs.
+	// Nil when the scheduler does not report it.
+	Idle *int
 }
 
 // NodeType is a group of nodes of one partition with the same CPUs, GPUs and memory class.
@@ -83,8 +86,13 @@ type NodeType struct {
 	Nodes int
 	// NodesUp is how many of Nodes are allocated or idle, so not down or drained. Nil when the scheduler does not report node state.
 	NodesUp *int
-	Cpus    int   // CPUs per node
-	MemMB   int64 // Memory per node in MB
+	// NodesIdle is how many nodes run no job. CpusIdle is the free CPUs of nodes that take jobs, and
+	// CpusTotal is every CPU of the group, down nodes included. Each is nil when the scheduler does not report it.
+	NodesIdle *int
+	CpusIdle  *int
+	CpusTotal *int
+	Cpus      int   // CPUs per node
+	MemMB     int64 // Memory per node in MB
 	// CpusLowerBound and MemLowerBound mark a figure that is the smallest of unequal nodes.
 	// The largest node has more.
 	CpusLowerBound bool

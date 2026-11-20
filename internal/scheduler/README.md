@@ -109,6 +109,18 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - SLURM partitions come from one grouped `sinfo -e` call, never `sinfo -N`.
   - The node-based listing is orders of magnitude slower on a large cluster.
   - `-e` keeps nodes of different memory in separate rows. Without it `sinfo` shows only the smallest, as `748G+`.
+- Idle figures are optional. A scheduler that does not report them leaves them unset, and the table omits what they fill.
+  - Idle is a hint. Reservations, account limits and shared nodes can still keep a job waiting.
+- SLURM idle nodes and CPUs come from `%F` and `%C` of the partition call, so they add no call.
+  - A node with any job counts as allocated, so idle nodes understate the room. Idle CPUs are shown too.
+  - Idle CPUs are those of nodes that take jobs. The total includes down and drained nodes.
+- SLURM idle GPUs come from a second grouped `sinfo -e -O` call, since `GresUsed` exists only in `-O`.
+  - It covers only the partitions that have GPUs, and never uses `-N`.
+  - Each row carries the partition, CPUs, memory and GPUs, so it finds its node type without a node list.
+  - Only idle, mixed and allocated nodes count. State flags such as `-` and `*` are stripped first.
+  - Each partition counts its own nodes. One node is in many partitions, so figures are never added across them.
+  - A cut value or an unreadable line leaves the figure unreported, since a wrong figure is worse.
+  - A failed call leaves the figures unreported and does not fail the listing.
 - A figure the scheduler gives as a minimum is reported as a lower bound, never as exact.
 - The JSON lists node types exactly. The table joins types whose memory is within 10%, so a few MB do not add a row.
 - A GPU type keeps the CPUs and memory of its own nodes.

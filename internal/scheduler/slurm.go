@@ -871,24 +871,26 @@ func (s *SlurmScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, erro
 // It never passes -N, which lists a row per node per partition and is far slower on a large cluster.
 func (s *SlurmScheduler) getPartitions(ctx context.Context) ([]ResourceLimits, []GpuInfo, error) {
 	// %P=partition (* marks the default) %a=state %l=max time %s=job size
-	// %c=CPUs/node %m=mem/node(MB) %G=GRES %F=nodes allocated/idle/other/total
+	// %c=CPUs/node %m=mem/node(MB) %G=GRES %F=nodes and %C=CPUs allocated/idle/other/total
 	output, err := runCommandEnv(ctx, slurmToolEnv("SINFO_", false), "SLURM", "query-partitions", s.sinfoCommand, "-e", "-o", sinfoPartitionFormat, "--noheader")
 	if err != nil {
 		return nil, nil, NewClusterError("SLURM", "query partitions", err)
 	}
 	limits, gpus := parseSinfoPartitions(string(output))
+	s.addIdleGpus(ctx, limits)
 	return limits, gpus, nil
 }
 
 // sinfoPartitionFormat has no %T, which would split a partition into a row per node state.
 // It is used with -e, so a row holds only nodes that agree on every column.
-const sinfoPartitionFormat = "%P|%a|%l|%s|%c|%m|%G|%F"
+const sinfoPartitionFormat = "%P|%a|%l|%s|%c|%m|%G|%F|%C"
 
 // parseSinfoPartitions reads the rows of sinfoPartitionFormat, in the order sinfo prints them.
 //   - A partition has several rows when its nodes differ in CPUs, memory or GRES. Rows that agree on
 //     CPUs, memory and GRES are one node type. Their nodes add up. A socket suffix such as "(S:0-3)" is ignored.
 //   - The node column is "allocated/idle/other/total", or a plain total. Nodes that are allocated or idle
 //     are up and take jobs. The rest are down, drained or in another state that takes none.
+//   - The CPU column has the same shape. Its idle and total figures are reported only when it does.
 //   - A trailing "+" on CPUs or memory marks the smallest value of a row that groups unequal nodes.
 //   - The per-node figures and the node count of a partition are the largest and the sum over its
 //     node types.
@@ -925,7 +927,11 @@ func parseSinfoPartitions(output string) ([]ResourceLimits, []GpuInfo) {
 		cpus, _ := strconv.Atoi(cpuText)
 		memText, memLower := splitLowerBound(f[5])
 		memMB, _ := parseMemoryMB(memText)
-		nodes, nodesUp := parseSlurmNodeCounts(f[7])
+		nodes, nodesUp, nodesIdle := parseSlurmNodeCounts(f[7])
+		var cpusIdle, cpusTotal *int
+		if len(f) > 8 {
+			cpusIdle, cpusTotal = parseSlurmCpuCounts(f[8])
+		}
 		gpus := parseSlurmGres(f[6])
 
 		key := name + "|" + strconv.Itoa(cpus) + "|" + strconv.FormatInt(memMB, 10) + "|" + gpuKey(gpus)
@@ -937,7 +943,10 @@ func parseSinfoPartitions(output string) ([]ResourceLimits, []GpuInfo) {
 		}
 		t := &l.NodeTypes[j]
 		t.Nodes += nodes
-		t.NodesUp = addNodesUp(t.NodesUp, nodesUp)
+		t.NodesUp = addReported(t.NodesUp, nodesUp)
+		t.NodesIdle = addReported(t.NodesIdle, nodesIdle)
+		t.CpusIdle = addReported(t.CpusIdle, cpusIdle)
+		t.CpusTotal = addReported(t.CpusTotal, cpusTotal)
 		t.CpusLowerBound = t.CpusLowerBound || cpuLower
 		t.MemLowerBound = t.MemLowerBound || memLower
 	}
@@ -968,26 +977,41 @@ func parseSinfoPartitions(output string) ([]ResourceLimits, []GpuInfo) {
 	return limits, gpus
 }
 
-// parseSlurmNodeCounts reads the node column of sinfoPartitionFormat. It returns the total, and the
-// nodes that are allocated or idle, which is nil when the column is a plain total.
-func parseSlurmNodeCounts(s string) (total int, up *int) {
+// parseSlurmNodeCounts reads the node column of sinfoPartitionFormat. It returns the total, the nodes
+// that are allocated or idle, and the nodes that are idle. The last two are nil when the column is a plain total.
+func parseSlurmNodeCounts(s string) (total int, up, idle *int) {
 	parts := strings.Split(strings.TrimSpace(s), "/")
 	if len(parts) != 4 {
 		total, _ = strconv.Atoi(parts[0])
-		return total, nil
+		return total, nil, nil
 	}
 	allocated, _ := strconv.Atoi(parts[0])
-	idle, _ := strconv.Atoi(parts[1])
+	n, _ := strconv.Atoi(parts[1])
 	total, _ = strconv.Atoi(parts[3])
-	n := allocated + idle
-	return total, &n
+	upNodes := allocated + n
+	return total, &upNodes, &n
+}
+
+// parseSlurmCpuCounts reads the CPU column of sinfoPartitionFormat, "allocated/idle/other/total".
+// It returns the idle and the total CPUs, or nil for both when the column has another shape.
+func parseSlurmCpuCounts(s string) (idle, total *int) {
+	parts := strings.Split(strings.TrimSpace(s), "/")
+	if len(parts) != 4 {
+		return nil, nil
+	}
+	i, errIdle := strconv.Atoi(parts[1])
+	t, errTotal := strconv.Atoi(parts[3])
+	if errIdle != nil || errTotal != nil {
+		return nil, nil
+	}
+	return &i, &t
 }
 
 // parseSlurmGres reads the GPUs of a sinfo GRES column, such as
 // "gpu:nvidia_h100:8(S:0-3),gpu:nvidia_a100:4". A GPU with no type is "gpu", and other GRES are skipped.
 func parseSlurmGres(gres string) []NodeGpu {
 	var gpus []NodeGpu
-	for _, entry := range strings.Split(strings.TrimSpace(gres), ",") {
+	for _, entry := range splitGres(strings.TrimSpace(gres)) {
 		if !strings.HasPrefix(entry, "gpu:") {
 			continue
 		}

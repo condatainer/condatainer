@@ -1365,10 +1365,10 @@ retired|down|1:00:00|1-4|8|1000|(null)|3
 		t.Errorf("gpubase_bynode_b4 = %+v", gpu)
 	}
 	want := []NodeType{
-		{Nodes: 6, Cpus: 112, MemMB: 2048000, Gpus: []NodeGpu{{"h100", 8}}},
+		{Nodes: 6, Cpus: 112, MemMB: 2048000, Gpus: []NodeGpu{{Type: "h100", PerNode: 8}}},
 		{Nodes: 5, Cpus: 112, MemMB: 2048000, Gpus: []NodeGpu{
-			{"nvidia_h100_80gb_hbm3_3g.40gb", 8}, {"nvidia_h100_80gb_hbm3_1g.10gb", 16}}},
-		{Nodes: 4, Cpus: 96, MemMB: 507000, Gpus: []NodeGpu{{"mi300a", 4}}},
+			{Type: "nvidia_h100_80gb_hbm3_3g.40gb", PerNode: 8}, {Type: "nvidia_h100_80gb_hbm3_1g.10gb", PerNode: 16}}},
+		{Nodes: 4, Cpus: 96, MemMB: 507000, Gpus: []NodeGpu{{Type: "mi300a", PerNode: 4}}},
 	}
 	if !reflect.DeepEqual(gpu.NodeTypes, want) {
 		t.Errorf("gpubase_bynode_b4 node types = %+v\nwant %+v", gpu.NodeTypes, want)
@@ -1442,6 +1442,36 @@ plain|up|infinite|1-infinite|8|1000|(null)|7
 	limits, _ = parseSinfoPartitions("a|up|infinite|1-infinite|8|1000|gpu:t4:2(S:0)|1/1/0/2\na|up|infinite|1-infinite|8|1000|gpu:t4:2|0/0/1/1\n")
 	if types := limits[0].NodeTypes; len(types) != 1 || types[0].Nodes != 3 || *types[0].NodesUp != 2 {
 		t.Errorf("rows of one type = %+v", types)
+	}
+}
+
+func TestParseSinfoIdleCounts(t *testing.T) {
+	out := `cpu*|up|infinite|1-infinite|64|256000|(null)|10/5/3/18|400/412/64/876
+cpu*|up|infinite|1-infinite|64|256000|(null)|1/2/0/3|10/20/0/30
+gpu|up|infinite|1-infinite|64|256000|(null)|4/0/0/4|0/0/0/256
+plain|up|infinite|1-infinite|8|1000|(null)|7|56
+old|up|infinite|1-infinite|8|1000|(null)|2/1/0/3
+`
+	limits, _ := parseSinfoPartitions(out)
+	figure := func(p *int) string {
+		if p == nil {
+			return "unreported"
+		}
+		return fmt.Sprint(*p)
+	}
+	var got []string
+	for _, l := range limits {
+		t0 := l.NodeTypes[0]
+		got = append(got, fmt.Sprintf("%s: nodes %s, cpus %s/%s", l.Partition, figure(t0.NodesIdle), figure(t0.CpusIdle), figure(t0.CpusTotal)))
+	}
+	want := []string{
+		"cpu: nodes 7, cpus 432/906", // rows of one node type add up
+		"gpu: nodes 0, cpus 0/256",   // an idle count of 0 is a figure
+		"plain: nodes unreported, cpus unreported/unreported",
+		"old: nodes 1, cpus unreported/unreported", // a format with no CPU column
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("idle figures = %q, want %q", got, want)
 	}
 }
 

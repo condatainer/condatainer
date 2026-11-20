@@ -129,6 +129,75 @@ c          up         2     8  16G        -  -
 	}
 }
 
+func TestPartitionTableIdleFigures(t *testing.T) {
+	n := func(v int) *int { return &v }
+	limits := []ResourceLimits{
+		{Partition: "a", State: "up", NodeTypes: []NodeType{
+			{Nodes: 20, NodesIdle: n(3), Cpus: 64, CpusIdle: n(412), CpusTotal: n(1280), MemMB: 262144},
+			{Nodes: 4, NodesIdle: n(0), Cpus: 32, CpusIdle: n(0), CpusTotal: n(128), MemMB: 524288},
+		}},
+		{Partition: "b", State: "up", NodeTypes: []NodeType{{Nodes: 2, Cpus: 8, MemMB: 16384}}},
+	}
+	var out bytes.Buffer
+	WritePartitionTable(&out, limits, nil)
+	want := `PARTITION  AVAIL  NODES  IDLECPUS  CPUS   MEM  MAXTIME  GPUS
+a          up      3/20  412/1280    64  256G        -  -
+                    0/4     0/128    32  512G           -
+b          up         2         -     8   16G        -  -
+`
+	if got := stripColor(out.String()); got != want {
+		t.Errorf("table mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A scheduler that reports no idle figures keeps plain NODES and has no IDLECPUS.
+func TestPartitionTableWithoutIdleFigures(t *testing.T) {
+	limits := []ResourceLimits{{Partition: "a", State: "up", NodeTypes: []NodeType{{Nodes: 2, Cpus: 8, MemMB: 16384}}}}
+	var out bytes.Buffer
+	WritePartitionTable(&out, limits, nil)
+	want := `PARTITION  AVAIL  NODES  CPUS  MEM  MAXTIME  GPUS
+a          up         2     8  16G        -  -
+`
+	if got := stripColor(out.String()); got != want {
+		t.Errorf("table mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestPartitionTableShowsIdleGpus(t *testing.T) {
+	n := func(v int) *int { return &v }
+	limits := []ResourceLimits{
+		{Partition: "g", State: "up", NodeTypes: []NodeType{
+			{Nodes: 4, Cpus: 112, MemMB: 2048000, Gpus: []NodeGpu{{Type: "h100", PerNode: 8, Idle: n(6)}}},
+			{Nodes: 2, Cpus: 96, MemMB: 507000, Gpus: []NodeGpu{{Type: "mig3", PerNode: 8, Idle: n(0)}, {Type: "mig1", PerNode: 16}}},
+		}},
+	}
+	var out bytes.Buffer
+	WritePartitionTable(&out, limits, nil)
+	got := stripColor(out.String())
+	for _, want := range []string{"GPUS (idle)\n", "h100:8 (6)\n", "mig3:8 (0)\n", "mig1:16\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("table lacks %q:\n%s", want, got)
+		}
+	}
+}
+
+// Joining node types adds their idle GPUs, and leaves the exact types the JSON reports unchanged.
+func TestMergeMemoryClassesSumsIdleGpusWithoutChangingItsInput(t *testing.T) {
+	n := func(v int) *int { return &v }
+	types := []NodeType{
+		{Nodes: 1, Cpus: 64, MemMB: 524072, Gpus: []NodeGpu{{Type: "t4", PerNode: 2, Idle: n(1)}}},
+		{Nodes: 1, Cpus: 64, MemMB: 523547, Gpus: []NodeGpu{{Type: "t4", PerNode: 2, Idle: n(2)}}},
+		{Nodes: 1, Cpus: 64, MemMB: 524000, Gpus: []NodeGpu{{Type: "t4", PerNode: 2}}},
+	}
+	merged := mergeMemoryClasses(types)
+	if len(merged) != 1 || merged[0].Gpus[0].Idle == nil || *merged[0].Gpus[0].Idle != 3 {
+		t.Fatalf("merged = %+v, want one type with 3 idle", merged)
+	}
+	if *types[0].Gpus[0].Idle != 1 || *types[1].Gpus[0].Idle != 2 || types[2].Gpus[0].Idle != nil {
+		t.Errorf("the input changed: %+v", types)
+	}
+}
+
 var colorRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 func stripColor(s string) string { return colorRe.ReplaceAllString(s, "") }
@@ -139,7 +208,7 @@ func TestPartitionRowsWithoutNodeTypes(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1: %v", len(rows), rows)
 	}
-	want := []string{"q1", "-", "-", "32", "64G", "-", "-", "v100"}
+	want := []string{"q1", "-", "-", "-", "32", "64G", "-", "-", "v100"}
 	for i, w := range want {
 		if rows[0][i] != w {
 			t.Errorf("column %s = %q, want %q", partitionColumns[i], rows[0][i], w)

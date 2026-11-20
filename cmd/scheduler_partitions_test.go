@@ -51,6 +51,22 @@ func TestPartitionRecord(t *testing.T) {
 		t.Errorf("nodes up = %+v", withState.NodeTypes)
 	}
 
+	// The idle figures are reported only when the scheduler gives them, and 0 is a figure.
+	idle := partitionRecord(scheduler.ResourceLimits{Partition: "i",
+		NodeTypes: []scheduler.NodeType{{Nodes: 4, NodesIdle: &zero, CpusIdle: &zero, CpusTotal: &zero}, {Nodes: 2}}}, nil)
+	first, second := idle.NodeTypes[0], idle.NodeTypes[1]
+	if first.NodesIdle == nil || first.CpusIdle == nil || first.CpusTotal == nil ||
+		second.NodesIdle != nil || second.CpusIdle != nil || second.CpusTotal != nil {
+		t.Errorf("idle figures = %+v", idle.NodeTypes)
+	}
+
+	// The idle GPUs of a type are reported only when the scheduler gives them, and 0 is a figure.
+	gpus := partitionRecord(scheduler.ResourceLimits{Partition: "g", NodeTypes: []scheduler.NodeType{{Nodes: 2, Gpus: []scheduler.NodeGpu{
+		{Type: "h100", PerNode: 8, Idle: &zero}, {Type: "t4", PerNode: 2}}}}}, nil).NodeTypes[0].Gpus
+	if len(gpus) != 2 || gpus[0].Idle == nil || *gpus[0].Idle != 0 || gpus[1].Idle != nil {
+		t.Errorf("gpus = %+v", gpus)
+	}
+
 	if unlimited := partitionRecord(scheduler.ResourceLimits{Partition: "u", TimeUnlimited: true}, nil); !unlimited.TimeUnlimited || unlimited.MaxTimeS != 0 {
 		t.Errorf("unlimited partition = %+v", unlimited)
 	}

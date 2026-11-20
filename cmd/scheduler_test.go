@@ -3,12 +3,15 @@ package cmd
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/runtime/hostrun"
+	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -159,5 +162,57 @@ func TestNoSchedulerHintsHostOnlyWithARelay(t *testing.T) {
 		if got := strings.Contains(err.Error(), "--host"); got != c.hint {
 			t.Errorf("container %v, socket %q: hint %v, want %v", c.container, c.sock, got, c.hint)
 		}
+	}
+}
+
+// statusScheduler is a scheduler with a binary that works or not, and a flag for being inside its own job.
+type statusScheduler struct {
+	scheduler.Scheduler
+	available, inside bool
+}
+
+func (s statusScheduler) GetType() scheduler.SchedulerType { return "FAKE" }
+func (s statusScheduler) GetBinary() string                { return "/fake/bin/fsub" }
+func (s statusScheduler) IsAvailable() bool                { return s.available }
+func (s statusScheduler) IsInsideJob() bool                { return s.inside }
+
+// clearJobEnv removes the variables that say a process runs inside a scheduled job.
+func clearJobEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"SLURM_JOB_ID", "PBS_JOBID", "LSB_JOBID", "_CONDOR_JOB_AD"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+}
+
+// The status is one word: inside a job submission is off, else a found scheduler is available.
+func TestSchedulerStatus(t *testing.T) {
+	clearJobEnv(t)
+	tests := []struct {
+		name  string
+		sched statusScheduler
+		want  report.SchedulerStatus
+	}{
+		{"a scheduler", statusScheduler{available: true}, report.SchedulerAvailable},
+		{"inside the scheduler's own job", statusScheduler{available: true, inside: true}, report.SchedulerInsideJob},
+	}
+	for _, tt := range tests {
+		if got := schedulerStatus(tt.sched); got != tt.want {
+			t.Errorf("%s: %q, want %q", tt.name, got, tt.want)
+		}
+	}
+
+	t.Setenv("SLURM_JOB_ID", "1")
+	if got := schedulerStatus(statusScheduler{available: true}); got != report.SchedulerInsideJob {
+		t.Errorf("with a job in the environment: %q, want %q", got, report.SchedulerInsideJob)
+	}
+
+	if rec := schedulerRecord(nil, ""); rec.Status != report.SchedulerNotFound || rec.Type != "" || rec.Binary != "" {
+		t.Errorf("no scheduler found: record = %+v, want only the status not_found", rec)
+	}
+
+	rec := schedulerRecord(statusScheduler{available: true}, "1.0")
+	if rec.Type != "fake" || rec.Binary != "/fake/bin/fsub" || rec.Version != "1.0" || rec.Status != report.SchedulerInsideJob {
+		t.Errorf("record = %+v", rec)
 	}
 }

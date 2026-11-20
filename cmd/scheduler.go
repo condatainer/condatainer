@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -79,42 +78,39 @@ func noScheduler() error {
 	return errNoScheduler
 }
 
-// lookupScheduler finds the scheduler to report on. Inside a scheduled job it looks for none and
-// reports insideJob, so no binary is probed there.
-func lookupScheduler() (sched scheduler.Scheduler, insideJob bool, err error) {
-	if scheduler.IsInsideJob() {
-		return nil, true, nil
-	}
-	// Use the already-initialized scheduler if there is one.
+// lookupQueryScheduler finds the scheduler for a command that only reads. It also works inside a scheduled
+// job, since reading state submits nothing.
+func lookupQueryScheduler() (scheduler.Scheduler, error) {
 	if sched := scheduler.ActiveScheduler(); sched != nil {
-		return sched, false, nil
+		return sched, nil
 	}
-	sched, err = scheduler.DetectSchedulerWithBinary(scheduler.Bin())
+	sched, err := scheduler.DetectSchedulerWithBinary(scheduler.Bin())
 	if err != nil {
-		return nil, false, noScheduler()
+		return nil, noScheduler()
 	}
-	return sched, false, nil
+	return sched, nil
 }
 
-// schedulerRecord describes the scheduler for the JSON documents.
-func schedulerRecord(ctx context.Context, sched scheduler.Scheduler, insideJob bool) *report.Scheduler {
+// schedulerStatus is what can be done with a scheduler that was found. Inside a scheduled job submission is off.
+func schedulerStatus(sched scheduler.Scheduler) report.SchedulerStatus {
+	if scheduler.IsInsideJob() || sched.IsInsideJob() {
+		return report.SchedulerInsideJob
+	}
+	return report.SchedulerAvailable
+}
+
+// schedulerRecord describes the scheduler for the JSON documents. A nil sched is no scheduler found.
+// The version is a call of its own, so a document that does not read it passes "".
+func schedulerRecord(sched scheduler.Scheduler, version string) *report.Scheduler {
 	if sched == nil {
-		return &report.Scheduler{InsideJob: insideJob}
+		return &report.Scheduler{Status: report.SchedulerNotFound}
 	}
-	inside := insideJob || sched.IsInsideJob()
 	return &report.Scheduler{
-		Type:      strings.ToLower(string(sched.GetType())),
-		Binary:    sched.GetBinary(),
-		Version:   sched.GetVersion(ctx),
-		Available: sched.IsAvailable() && !inside,
-		InsideJob: inside,
+		Type:    strings.ToLower(string(sched.GetType())),
+		Binary:  sched.GetBinary(),
+		Version: version,
+		Status:  schedulerStatus(sched),
 	}
-}
-
-func printInsideJob() {
-	utils.PrintMessage("Scheduler Status: %s", utils.StyleWarning("Unavailable (inside job)"))
-	utils.PrintMessage("")
-	utils.PrintMessage("You are currently inside a scheduled job; job submission is disabled to prevent nested submissions.")
 }
 
 func printNoScheduler() {

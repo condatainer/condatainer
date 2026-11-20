@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -87,5 +90,53 @@ func TestSelectPartitionsFiltersAndOrders(t *testing.T) {
 	gpu, _ := selectPartitions(info, false, true)
 	if got := names(gpu); got != "gpu" {
 		t.Errorf("--gpu = %s", got)
+	}
+}
+
+// partitionLister is a scheduler that reports partitions, and says it runs inside a job.
+type partitionLister struct {
+	scheduler.Scheduler
+	info *scheduler.ClusterInfo
+}
+
+func (partitionLister) GetType() scheduler.SchedulerType  { return "FAKE" }
+func (partitionLister) GetBinary() string                 { return "/fake/bin/fsub" }
+func (partitionLister) GetVersion(context.Context) string { return "1.0" }
+func (partitionLister) IsAvailable() bool                 { return true }
+func (partitionLister) IsInsideJob() bool                 { return true }
+func (p partitionLister) GetClusterInfo(context.Context) (*scheduler.ClusterInfo, error) {
+	return p.info, nil
+}
+
+// Listing partitions reads state and submits nothing, so it works inside a scheduled job.
+func TestSchedulerPartitionsWorkInsideAJob(t *testing.T) {
+	t.Setenv("SLURM_JOB_ID", "1")
+	scheduler.SetActiveScheduler(partitionLister{info: &scheduler.ClusterInfo{Limits: []scheduler.ResourceLimits{
+		{Partition: "gpu", State: "up", NodeTypes: []scheduler.NodeType{{Nodes: 2, Cpus: 8}}},
+	}}})
+	t.Cleanup(scheduler.ClearActiveScheduler)
+	schedulerPartitionsJSON = true
+	t.Cleanup(func() { schedulerPartitionsJSON = false })
+
+	c := schedulerPartitionsCmd
+	c.SetContext(context.Background())
+	var out bytes.Buffer
+	c.SetOut(&out)
+	if err := runSchedulerPartitions(c, nil); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Scheduler struct {
+			Status string `json:"status"`
+		} `json:"scheduler"`
+		Partitions []struct {
+			Name string `json:"name"`
+		} `json:"partitions"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(doc.Partitions) != 1 || doc.Partitions[0].Name != "gpu" || doc.Scheduler.Status != "inside_job" {
+		t.Errorf("document = %+v, want the partition and inside_job", doc)
 	}
 }

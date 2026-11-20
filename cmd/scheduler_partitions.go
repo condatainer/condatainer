@@ -104,20 +104,16 @@ func runSchedulerPartitions(cmd *cobra.Command, args []string) error {
 	cpuOnly, _ := cmd.Flags().GetBool("cpu")
 	gpuOnly, _ := cmd.Flags().GetBool("gpu")
 
-	sched, insideJob, err := lookupScheduler()
-	if err == nil && !insideJob && sched.IsInsideJob() {
-		insideJob = true
-	}
+	sched, err := lookupQueryScheduler()
 
 	if schedulerPartitionsJSON {
 		doc := &report.Partitions{Partitions: report.List[report.Partition]{}, Problems: report.List[report.Problem]{}}
 		switch {
 		case err != nil:
+			doc.Scheduler = schedulerRecord(nil, "")
 			doc.Problems = append(doc.Problems, report.Problem{Message: err.Error()})
-		case insideJob:
-			doc.Scheduler = schedulerRecord(cmd.Context(), sched, true)
 		default:
-			doc.Scheduler = schedulerRecord(cmd.Context(), sched, false)
+			doc.Scheduler = schedulerRecord(sched, sched.GetVersion(cmd.Context()))
 			info, infoErr := sched.GetClusterInfo(cmd.Context())
 			if infoErr != nil {
 				doc.Problems = append(doc.Problems, report.Problem{Message: infoErr.Error()})
@@ -137,10 +133,6 @@ func runSchedulerPartitions(cmd *cobra.Command, args []string) error {
 
 	if err != nil {
 		printNoScheduler()
-		return nil
-	}
-	if insideJob {
-		printInsideJob()
 		return nil
 	}
 

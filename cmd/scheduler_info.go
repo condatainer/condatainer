@@ -15,7 +15,8 @@ var schedulerInfoCmd = &cobra.Command{
 	Short:        "Show the detected job scheduler",
 	Long: `Show the detected job scheduler: type, binary path, version, and availability.
 
-Inside a scheduled job it reports the scheduler as unavailable.`,
+Inside a scheduled job the status says that job submission is disabled.
+Listing jobs and partitions still works there.`,
 	Example: `  condatainer scheduler info
   condatainer scheduler info --host`,
 	RunE: runSchedulerInfo,
@@ -30,22 +31,19 @@ func runSchedulerInfo(cmd *cobra.Command, args []string) error {
 	if done, err := runOnHostIfAsked(cmd, args); done {
 		return err
 	}
-	sched, insideJob, err := lookupScheduler()
+	sched, err := lookupQueryScheduler()
 
 	if schedulerInfoJSON {
 		doc := &report.SchedulerInfo{Problems: report.List[report.Problem]{}}
 		if err != nil {
 			doc.Problems = append(doc.Problems, report.Problem{Message: err.Error()})
+			doc.Scheduler = schedulerRecord(nil, "")
 		} else {
-			doc.Scheduler = schedulerRecord(cmd.Context(), sched, insideJob)
+			doc.Scheduler = schedulerRecord(sched, sched.GetVersion(cmd.Context()))
 		}
 		return report.Write(cmd.OutOrStdout(), doc)
 	}
 
-	if insideJob {
-		printInsideJob()
-		return nil
-	}
 	if err != nil {
 		printNoScheduler()
 		return nil
@@ -59,20 +57,17 @@ func runSchedulerInfo(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Version:   %s\n", version)
 	}
 
-	switch {
-	case sched.IsInsideJob():
-		fmt.Printf("  Status:    %s (inside job)\n", utils.StyleError("Unavailable"))
+	switch schedulerStatus(sched) {
+	case report.SchedulerInsideJob:
+		fmt.Printf("  Status:    %s\n", utils.StyleWarning("Submission disabled (inside job)"))
 		fmt.Println()
-		fmt.Println("You are currently inside a scheduled job (detected via environment).")
+		fmt.Println("You are inside a scheduled job (detected via environment).")
 		fmt.Println("Job submission is disabled to prevent nested job submissions.")
-	case sched.IsAvailable():
+		fmt.Println("Listing jobs and partitions still works.")
+	default:
 		fmt.Printf("  Status:    %s\n", utils.StyleSuccess("Available"))
 		fmt.Println()
 		fmt.Println("The scheduler is available and ready for job submission.")
-	default:
-		fmt.Printf("  Status:    %s\n", utils.StyleError("Unavailable"))
-		fmt.Println()
-		fmt.Println("Scheduler detected but not available for job submission.")
 	}
 	return nil
 }

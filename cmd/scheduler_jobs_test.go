@@ -259,6 +259,49 @@ func TestJobsOnASchedulerWithoutListing(t *testing.T) {
 	}
 }
 
+// A scheduler that was found but cannot list jobs is named in the document, and is not "not_found".
+func TestJobsJSONNamesASchedulerThatCannotList(t *testing.T) {
+	clearJobEnv(t)
+	out, err := runJobs(t, statusScheduler{available: true}, "--json")
+	if err == nil {
+		t.Fatal("a scheduler that cannot list jobs did not fail")
+	}
+	var doc struct {
+		Scheduler struct {
+			Type   string `json:"type"`
+			Status string `json:"status"`
+		} `json:"scheduler"`
+		Problems []struct{} `json:"problems"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("%v\n%s", jerr, out)
+	}
+	if doc.Scheduler.Type != "fake" || doc.Scheduler.Status != "available" || len(doc.Problems) != 1 {
+		t.Errorf("document = %+v, want the fake scheduler as available and the problem", doc)
+	}
+}
+
+// With no scheduler found the document still has one, and its status says so.
+func TestJobsJSONWithNoSchedulerSaysNotFound(t *testing.T) {
+	schedulerJobsJSON = true
+	t.Cleanup(func() { schedulerJobsJSON = false })
+	c := schedulerJobsCmd
+	var out bytes.Buffer
+	c.SetOut(&out)
+	if err := jobsFailure(c, nil, errors.New("no scheduler")); err == nil {
+		t.Fatal("the failure was not returned")
+	}
+	var doc struct {
+		Scheduler map[string]any `json:"scheduler"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(doc.Scheduler) != 1 || doc.Scheduler["status"] != "not_found" {
+		t.Errorf("scheduler = %v, want only the status not_found", doc.Scheduler)
+	}
+}
+
 func jsonJobs(t *testing.T, out string) []map[string]any {
 	t.Helper()
 	var doc struct {

@@ -132,7 +132,7 @@ func TestSchedulerDocuments(t *testing.T) {
 	}
 
 	doc := &Partitions{
-		Scheduler: &Scheduler{Type: "slurm", Available: true},
+		Scheduler: &Scheduler{Type: "slurm", Status: SchedulerAvailable},
 		Partitions: List[Partition]{{
 			Name: "gpu", State: "up", MaxTimeS: 3600,
 			NodeTypes: List[NodeType]{{Nodes: 2, Cpus: 64, Gpus: List[NodeGpu]{{Type: "h100", PerNode: 8}}}},
@@ -157,7 +157,10 @@ func TestSchedulerDocuments(t *testing.T) {
 		t.Error("mem_mb written when not reported")
 	}
 	sched := got["scheduler"].(map[string]any)
-	if sched["inside_job"] != false || sched["available"] != true {
+	if sched["status"] != "available" {
 		t.Errorf("scheduler = %v", sched)
+	}
+	if _, ok := sched["available"]; ok {
+		t.Errorf("scheduler = %v, want one status and no flags", sched)
 	}
 }

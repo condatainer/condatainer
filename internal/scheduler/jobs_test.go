@@ -38,6 +38,36 @@ func TestGroupArrayTasks(t *testing.T) {
 	}
 }
 
+func TestGroupArrayTasksUnitesTheDependenciesOfWaitingTasks(t *testing.T) {
+	waiting := func(id string, deps ...JobDependency) JobInfo {
+		j := task("9", id, JobPending)
+		j.DependsOn = deps
+		return j
+	}
+	met := JobDependency{Type: "afterok", JobID: "5_*", Satisfied: true}
+	open := JobDependency{Type: "afterok", JobID: "5_*"}
+	extra := JobDependency{Type: "afterany", JobID: "6"}
+	running := task("9", "1", JobRunning)
+
+	tests := []struct {
+		name string
+		jobs []JobInfo
+		want []JobDependency
+	}{
+		{"same list counts once", []JobInfo{running, waiting("2", open), waiting("3", open)}, []JobDependency{open}},
+		{"a parent of one task is kept", []JobInfo{waiting("2", open), waiting("3", open, extra)}, []JobDependency{open, extra}},
+		{"met only when met in every task", []JobInfo{waiting("2", met), waiting("3", open)}, []JobDependency{open}},
+		{"failed in any task", []JobInfo{waiting("2", open), waiting("3", JobDependency{Type: "afterok", JobID: "5_*", Failed: true})},
+			[]JobDependency{{Type: "afterok", JobID: "5_*", Failed: true}}},
+		{"no waiting task", []JobInfo{running}, nil},
+	}
+	for _, tt := range tests {
+		if got := GroupArrayTasks(tt.jobs, false)[0].DependsOn; !slices.Equal(got, tt.want) {
+			t.Errorf("%s: DependsOn = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestGroupArrayTasksAllPendingIsPending(t *testing.T) {
 	got := GroupArrayTasks([]JobInfo{task("9", "1", JobPending), task("9", "2", JobPending)}, false)
 	if len(got) != 1 || got[0].State != JobPending || len(got[0].Tasks.Running) != 0 {

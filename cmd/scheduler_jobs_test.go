@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -101,8 +103,10 @@ func runJobs(t *testing.T, sched scheduler.Scheduler, args ...string) (string, e
 	t.Helper()
 	scheduler.SetActiveScheduler(sched)
 	t.Cleanup(scheduler.ClearActiveScheduler)
-	schedulerJobsTasks, schedulerJobsJSON = false, false
-	t.Cleanup(func() { schedulerJobsTasks, schedulerJobsJSON = false, false })
+	schedulerJobsTasks, schedulerJobsDetail, schedulerJobsNoTrunc, schedulerJobsJSON = false, false, false, false
+	t.Cleanup(func() {
+		schedulerJobsTasks, schedulerJobsDetail, schedulerJobsNoTrunc, schedulerJobsJSON = false, false, false, false
+	})
 
 	c := schedulerJobsCmd
 	c.SetContext(context.Background())
@@ -113,6 +117,10 @@ func runJobs(t *testing.T, sched scheduler.Scheduler, args ...string) (string, e
 		switch a {
 		case "--tasks":
 			schedulerJobsTasks = true
+		case "--detail":
+			schedulerJobsDetail = true
+		case "--no-trunc":
+			schedulerJobsNoTrunc = true
 		case "--json":
 			schedulerJobsJSON = true
 		default:
@@ -256,6 +264,131 @@ func TestJobsOnASchedulerWithoutListing(t *testing.T) {
 	_, err := runJobs(t, notALister{})
 	if err == nil || err.Error() != "scheduler pbs is not supported" {
 		t.Errorf("err = %v, want the scheduler named as not supported", err)
+	}
+}
+
+// In a terminal a long name is cut to fit, and --no-trunc keeps it whole.
+func TestJobsNoTruncKeepsValuesWhole(t *testing.T) {
+	old := jobsTableWidth
+	jobsTableWidth = func(io.Writer) int { return 50 }
+	t.Cleanup(func() { jobsTableWidth = old })
+	name := "align_sample_with_a_very_long_name_that_cannot_fit_the_terminal"
+	queue := func() *fakeJobScheduler {
+		return &fakeJobScheduler{jobs: []scheduler.JobInfo{{ID: "21", Name: name, State: scheduler.JobRunning, Cpus: 8, MemMB: 65536, TimeLimit: time.Hour}}}
+	}
+
+	cut, err := runJobs(t, queue())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(cut, name) || !strings.Contains(cut, "…") {
+		t.Errorf("the table was not cut to the terminal:\n%s", cut)
+	}
+	whole, err := runJobs(t, queue(), "--no-trunc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(whole, name) || strings.Contains(whole, "…") {
+		t.Errorf("--no-trunc cut a value:\n%s", whole)
+	}
+}
+
+// --detail shows every job as a block, in ID order with a blank line between, and reads the full listing.
+func TestJobsDetailShowsEveryJobInFull(t *testing.T) {
+	f := &fakeJobScheduler{jobs: fakeQueue()}
+	out, err := runJobs(t, f, "--detail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.full {
+		t.Error("--detail did not ask for the full listing")
+	}
+	var titles []string
+	for _, block := range strings.Split(strings.TrimRight(out, "\n"), "\n\n") {
+		titles = append(titles, strings.SplitN(block, "\n", 2)[0])
+	}
+	want := []string{"9  pending  Align_Index", "21  running  align_sample", "30  running  Count"}
+	if !slices.Equal(titles, want) {
+		t.Errorf("blocks start with %q, want %q", titles, want)
+	}
+	if strings.Contains(out, "JOBID") {
+		t.Errorf("--detail printed a table:\n%s", out)
+	}
+}
+
+func TestJobsDetailWithTasksShowsEachTask(t *testing.T) {
+	out, err := runJobs(t, &fakeJobScheduler{jobs: fakeQueue()}, "--detail", "--tasks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(strings.Split(strings.TrimRight(out, "\n"), "\n\n")); got != 5 {
+		t.Errorf("%d blocks, want one for each of the 2 jobs and 3 tasks:\n%s", got, out)
+	}
+}
+
+func TestJobsDetailOfNothingPrintsNothing(t *testing.T) {
+	out, err := runJobs(t, &fakeJobScheduler{}, "--detail")
+	if err != nil || out != "" {
+		t.Errorf("out %q, err %v, want nothing", out, err)
+	}
+}
+
+func TestJobsDetailAndJSONExclude(t *testing.T) {
+	c := schedulerJobsCmd
+	if err := c.ParseFlags([]string{"--detail", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		for _, name := range []string{"detail", "json"} {
+			_ = c.Flags().Set(name, "false")
+			c.Flags().Lookup(name).Changed = false
+		}
+	}()
+	if err := c.ValidateFlagGroups(); err == nil {
+		t.Error("--detail with --json was accepted")
+	}
+}
+
+// A scheduler that was found but cannot list jobs is named in the document, and is not "not_found".
+func TestJobsJSONNamesASchedulerThatCannotList(t *testing.T) {
+	clearJobEnv(t)
+	out, err := runJobs(t, statusScheduler{available: true}, "--json")
+	if err == nil {
+		t.Fatal("a scheduler that cannot list jobs did not fail")
+	}
+	var doc struct {
+		Scheduler struct {
+			Type   string `json:"type"`
+			Status string `json:"status"`
+		} `json:"scheduler"`
+		Problems []struct{} `json:"problems"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("%v\n%s", jerr, out)
+	}
+	if doc.Scheduler.Type != "fake" || doc.Scheduler.Status != "available" || len(doc.Problems) != 1 {
+		t.Errorf("document = %+v, want the fake scheduler as available and the problem", doc)
+	}
+}
+
+// With no scheduler found the document still has one, and its status says so.
+func TestJobsJSONWithNoSchedulerSaysNotFound(t *testing.T) {
+	schedulerJobsJSON = true
+	t.Cleanup(func() { schedulerJobsJSON = false })
+	c := schedulerJobsCmd
+	var out bytes.Buffer
+	c.SetOut(&out)
+	if err := jobsFailure(c, nil, errors.New("no scheduler")); err == nil {
+		t.Fatal("the failure was not returned")
+	}
+	var doc struct {
+		Scheduler map[string]any `json:"scheduler"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(doc.Scheduler) != 1 || doc.Scheduler["status"] != "not_found" {
+		t.Errorf("scheduler = %v, want only the status not_found", doc.Scheduler)
 	}
 }
 

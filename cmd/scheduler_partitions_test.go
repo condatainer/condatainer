@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +51,22 @@ func TestPartitionRecord(t *testing.T) {
 		t.Errorf("nodes up = %+v", withState.NodeTypes)
 	}
 
+	// The idle figures are reported only when the scheduler gives them, and 0 is a figure.
+	idle := partitionRecord(scheduler.ResourceLimits{Partition: "i",
+		NodeTypes: []scheduler.NodeType{{Nodes: 4, NodesIdle: &zero, CpusIdle: &zero, CpusTotal: &zero}, {Nodes: 2}}}, nil)
+	first, second := idle.NodeTypes[0], idle.NodeTypes[1]
+	if first.NodesIdle == nil || first.CpusIdle == nil || first.CpusTotal == nil ||
+		second.NodesIdle != nil || second.CpusIdle != nil || second.CpusTotal != nil {
+		t.Errorf("idle figures = %+v", idle.NodeTypes)
+	}
+
+	// The idle GPUs of a type are reported only when the scheduler gives them, and 0 is a figure.
+	gpus := partitionRecord(scheduler.ResourceLimits{Partition: "g", NodeTypes: []scheduler.NodeType{{Nodes: 2, Gpus: []scheduler.NodeGpu{
+		{Type: "h100", PerNode: 8, Idle: &zero}, {Type: "t4", PerNode: 2}}}}}, nil).NodeTypes[0].Gpus
+	if len(gpus) != 2 || gpus[0].Idle == nil || *gpus[0].Idle != 0 || gpus[1].Idle != nil {
+		t.Errorf("gpus = %+v", gpus)
+	}
+
 	if unlimited := partitionRecord(scheduler.ResourceLimits{Partition: "u", TimeUnlimited: true}, nil); !unlimited.TimeUnlimited || unlimited.MaxTimeS != 0 {
 		t.Errorf("unlimited partition = %+v", unlimited)
 	}
@@ -76,16 +95,102 @@ func TestSelectPartitionsFiltersAndOrders(t *testing.T) {
 		}
 		return strings.Join(s, ",")
 	}
-	all, _ := selectPartitions(info, false, false)
-	if got := names(all); got != "cpu,gpu,old" {
-		t.Errorf("all = %s, want the partition that is not up last", got)
+	up, _ := selectPartitions(info, false, false, false)
+	if got := names(up); got != "cpu,gpu" {
+		t.Errorf("default = %s, want only the partitions that are up", got)
 	}
-	cpu, _ := selectPartitions(info, true, false)
+	all, _ := selectPartitions(info, false, false, true)
+	if got := names(all); got != "cpu,gpu,old" {
+		t.Errorf("--all = %s, want the partition that is not up last", got)
+	}
+	cpu, _ := selectPartitions(info, true, false, true)
 	if got := names(cpu); got != "cpu,old" {
+		t.Errorf("--cpu --all = %s", got)
+	}
+	cpuUp, _ := selectPartitions(info, true, false, false)
+	if got := names(cpuUp); got != "cpu" {
 		t.Errorf("--cpu = %s", got)
 	}
-	gpu, _ := selectPartitions(info, false, true)
+	gpu, _ := selectPartitions(info, false, true, false)
 	if got := names(gpu); got != "gpu" {
 		t.Errorf("--gpu = %s", got)
+	}
+}
+
+// partitionLister is a scheduler that reports partitions, and says it runs inside a job.
+type partitionLister struct {
+	scheduler.Scheduler
+	info *scheduler.ClusterInfo
+}
+
+func (partitionLister) GetType() scheduler.SchedulerType  { return "FAKE" }
+func (partitionLister) GetBinary() string                 { return "/fake/bin/fsub" }
+func (partitionLister) GetVersion(context.Context) string { return "1.0" }
+func (partitionLister) IsAvailable() bool                 { return true }
+func (partitionLister) IsInsideJob() bool                 { return true }
+func (p partitionLister) GetClusterInfo(context.Context) (*scheduler.ClusterInfo, error) {
+	return p.info, nil
+}
+
+// The JSON lists every partition with its state, so a script need not pass --all.
+func TestSchedulerPartitionsJSONListsPartitionsThatAreNotUp(t *testing.T) {
+	scheduler.SetActiveScheduler(partitionLister{info: &scheduler.ClusterInfo{Limits: []scheduler.ResourceLimits{
+		{Partition: "old", State: "down"}, {Partition: "cpu", State: "up"},
+	}}})
+	t.Cleanup(scheduler.ClearActiveScheduler)
+	schedulerPartitionsJSON = true
+	t.Cleanup(func() { schedulerPartitionsJSON = false })
+
+	c := schedulerPartitionsCmd
+	c.SetContext(context.Background())
+	var out bytes.Buffer
+	c.SetOut(&out)
+	if err := runSchedulerPartitions(c, nil); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Partitions []struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+		} `json:"partitions"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(doc.Partitions) != 2 || doc.Partitions[0].Name != "cpu" || doc.Partitions[1].Name != "old" || doc.Partitions[1].State != "down" {
+		t.Errorf("partitions = %+v, want cpu then old with its state", doc.Partitions)
+	}
+}
+
+// Listing partitions reads state and submits nothing, so it works inside a scheduled job.
+func TestSchedulerPartitionsWorkInsideAJob(t *testing.T) {
+	t.Setenv("SLURM_JOB_ID", "1")
+	scheduler.SetActiveScheduler(partitionLister{info: &scheduler.ClusterInfo{Limits: []scheduler.ResourceLimits{
+		{Partition: "gpu", State: "up", NodeTypes: []scheduler.NodeType{{Nodes: 2, Cpus: 8}}},
+	}}})
+	t.Cleanup(scheduler.ClearActiveScheduler)
+	schedulerPartitionsJSON = true
+	t.Cleanup(func() { schedulerPartitionsJSON = false })
+
+	c := schedulerPartitionsCmd
+	c.SetContext(context.Background())
+	var out bytes.Buffer
+	c.SetOut(&out)
+	if err := runSchedulerPartitions(c, nil); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Scheduler struct {
+			Status string `json:"status"`
+		} `json:"scheduler"`
+		Partitions []struct {
+			Name string `json:"name"`
+		} `json:"partitions"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(doc.Partitions) != 1 || doc.Partitions[0].Name != "gpu" || doc.Scheduler.Status != "inside_job" {
+		t.Errorf("document = %+v, want the partition and inside_job", doc)
 	}
 }

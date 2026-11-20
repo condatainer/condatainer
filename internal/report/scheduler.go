@@ -1,16 +1,24 @@
 package report
 
-// Scheduler is the job scheduler of the system. Type and Binary are absent inside a scheduled job,
-// where no scheduler is looked up. Available and InsideJob are always written.
+// SchedulerStatus is what can be done with the scheduler of the system.
+type SchedulerStatus string
+
+const (
+	SchedulerAvailable SchedulerStatus = "available"  // a job can be submitted
+	SchedulerInsideJob SchedulerStatus = "inside_job" // inside a scheduled job, where submission is off and reading works
+	SchedulerNotFound  SchedulerStatus = "not_found"  // no scheduler was found, so there is no type or binary
+)
+
+// Scheduler is the job scheduler of the system. Status is always written.
 type Scheduler struct {
-	Type      string `json:"type,omitempty"`
-	Binary    string `json:"binary,omitempty"`
-	Version   string `json:"version,omitempty"`
-	Available bool   `json:"available"`
-	InsideJob bool   `json:"inside_job"`
+	Type    string          `json:"type,omitempty"`
+	Binary  string          `json:"binary,omitempty"`
+	Version string          `json:"version,omitempty"`
+	Status  SchedulerStatus `json:"status"`
 }
 
-// SchedulerInfo is the document of the command that shows the scheduler. Scheduler is absent when none is found.
+// SchedulerInfo is the document of the command that shows the scheduler. The commands set Scheduler always, and
+// its status says when none was found.
 type SchedulerInfo struct {
 	Doc
 	Scheduler *Scheduler    `json:"scheduler,omitempty"`
@@ -18,17 +26,25 @@ type SchedulerInfo struct {
 }
 
 // NodeGpu is one GPU type and how many of it one node carries. PerNode is absent when the scheduler does not say.
+// Idle is the GPUs of this type that no job holds, over the nodes of the node type that take jobs.
+// It is absent when the scheduler does not report it, and 0 is a figure.
 type NodeGpu struct {
 	Type    string `json:"type"`
 	PerNode int    `json:"per_node,omitempty"`
+	Idle    *int   `json:"idle,omitempty"`
 }
 
 // NodeType is a group of a partition's nodes with the same CPUs, GPUs and memory class.
 // NodesUp is how many of Nodes are allocated or idle, so not down or drained. It is absent when the scheduler does not report node state.
+// NodesIdle is how many run no job. CpusIdle is the free CPUs of nodes that take jobs, and CpusTotal is every CPU
+// of the node type, down nodes included. Each is absent when the scheduler does not report it, and 0 is a figure.
 // A lower-bound flag says the figure is the smallest of unequal nodes, and the largest node has more.
 type NodeType struct {
 	Nodes          int           `json:"nodes,omitempty"`
 	NodesUp        *int          `json:"nodes_up,omitempty"`
+	NodesIdle      *int          `json:"nodes_idle,omitempty"`
+	CpusIdle       *int          `json:"cpus_idle,omitempty"`
+	CpusTotal      *int          `json:"cpus_total,omitempty"`
 	Cpus           int           `json:"cpus,omitempty"`
 	MemMB          int64         `json:"mem_mb,omitempty"`
 	CpusLowerBound bool          `json:"cpus_lower_bound"`

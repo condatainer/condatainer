@@ -222,7 +222,7 @@ func TestLoginOnTheLoginNodeRunsHereWithTheVariableSet(t *testing.T) {
 func TestRemoteScriptKeepsEveryWordWhole(t *testing.T) {
 	words := []string{"printf", "[%s]", "a b", "it's", "$(touch pwned)", ";", "`id`", "*"}
 	dir := t.TempDir()
-	out, err := exec.Command("sh", "-c", remoteScript(dir, "", words)).Output()
+	out, err := exec.Command("sh", "-c", remoteScript(dir, "", words, "")).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,13 +236,47 @@ func TestRemoteScriptKeepsEveryWordWhole(t *testing.T) {
 
 func TestRemoteScriptSetsTheLoginNodeAndChangesDirectory(t *testing.T) {
 	dir := t.TempDir()
-	out, err := exec.Command("sh", "-c", remoteScript(dir, "login02", []string{"sh", "-c", "echo $CNT_LOGIN_NODE; pwd"})).Output()
+	out, err := exec.Command("sh", "-c", remoteScript(dir, "login02", []string{"sh", "-c", "echo $CNT_LOGIN_NODE; pwd"}, "")).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Fields(string(out))
 	if len(lines) != 2 || lines[0] != "login02" {
 		t.Errorf("printed %q", out)
+	}
+}
+
+// ssh hands the remote string to the user's login shell, which need not be a POSIX shell.
+func TestRemoteScriptRunsInEveryLoginShell(t *testing.T) {
+	exe := callerBinary(t)
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing")
+	tests := []struct {
+		name   string
+		script string
+		check  func(out string) bool
+	}{
+		{"the caller's binary", remoteScript(dir, "", []string{"condatainer", "a b", "it's"}, exe),
+			func(out string) bool { return strings.TrimSpace(out) == "caller a b it's" }},
+		{"the host's own executable", remoteScript(dir, "", []string{"condatainer", "-test.run=^$"}, missing),
+			func(out string) bool { return strings.Contains(out, "PASS") && !strings.Contains(out, "caller") }},
+	}
+	ran := 0
+	for _, shell := range []string{"sh", "bash", "dash", "zsh", "tcsh", "csh"} {
+		path, err := exec.LookPath(shell)
+		if err != nil {
+			continue
+		}
+		ran++
+		for _, tt := range tests {
+			out, err := exec.Command(path, "-c", tt.script).CombinedOutput()
+			if err != nil || !tt.check(string(out)) {
+				t.Errorf("%s, %s: printed %q, err %v", shell, tt.name, out, err)
+			}
+		}
+	}
+	if ran == 0 {
+		t.Skip("no shell found")
 	}
 }
 
@@ -295,12 +329,79 @@ func TestLoginOverSSHGivesTheCommandTheLoginNode(t *testing.T) {
 }
 
 func TestALeadingCondatainerIsTheHostExecutable(t *testing.T) {
-	got := hostArgv([]string{"condatainer", "run", "x.sh"})
+	got := hostArgv([]string{"condatainer", "run", "x.sh"}, "")
 	if got[0] != utils.SelfPath() || got[1] != "run" {
 		t.Errorf("hostArgv = %q", got)
 	}
-	if got := hostArgv([]string{"sbatch", "condatainer"}); got[0] != "sbatch" || got[1] != "condatainer" {
+	if got := hostArgv([]string{"sbatch", "condatainer"}, ""); got[0] != "sbatch" || got[1] != "condatainer" {
 		t.Errorf("only the first word is replaced: %q", got)
+	}
+}
+
+// callerBinary writes a script that prints "caller" and its arguments, and returns its path.
+func callerBinary(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "condatainer_dev")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho caller \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The caller's binary runs when the host can run it. Anything else falls back to the host's own executable,
+// and never to what PATH finds.
+func TestALeadingCondatainerPrefersTheCallersBinary(t *testing.T) {
+	exe := callerBinary(t)
+	plain := filepath.Join(t.TempDir(), "plain")
+	if err := os.WriteFile(plain, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		exe  string
+		want string
+	}{
+		{"a runnable path", exe, exe},
+		{"no path", "", utils.SelfPath()},
+		{"a path the host lacks", filepath.Join(t.TempDir(), "missing"), utils.SelfPath()},
+		{"a file that is not executable", plain, utils.SelfPath()},
+		{"a directory", t.TempDir(), utils.SelfPath()},
+		{"a relative path", "bin/condatainer", utils.SelfPath()},
+	}
+	for _, tt := range tests {
+		if got := hostArgv([]string{"condatainer", "run"}, tt.exe)[0]; got != tt.want {
+			t.Errorf("%s: runs %q, want %q", tt.name, got, tt.want)
+		}
+	}
+	if got := hostArgv([]string{"sbatch", "x"}, exe); got[0] != "sbatch" {
+		t.Errorf("a command that is not condatainer ran %q", got[0])
+	}
+}
+
+func TestRelayRunsTheCallersBinaryForACondatainerCommand(t *testing.T) {
+	r := startRelay(t, "")
+	exe := callerBinary(t)
+	if got := call(t, r, Call{Argv: []string{"condatainer", "scheduler", "jobs"}, Exe: exe}); strings.TrimSpace(got.stdout) != "caller scheduler jobs" {
+		t.Errorf("ran %+v, want the caller's binary", got)
+	}
+	// A path the host lacks falls back to the host's own executable, which here is the test binary.
+	got := call(t, r, Call{Argv: []string{"condatainer", "-test.run=^$"}, Exe: filepath.Join(t.TempDir(), "missing")})
+	if strings.Contains(got.stdout, "caller") || !strings.Contains(got.stdout, "PASS") {
+		t.Errorf("fallback ran %+v, want the host's own executable", got)
+	}
+}
+
+// On another node the shell tests for the caller's binary there, and falls back to the host's own executable.
+func TestRemoteScriptPrefersTheCallersBinaryWhereItExists(t *testing.T) {
+	dir := t.TempDir()
+	exe := callerBinary(t)
+	out, err := exec.Command("sh", "-c", remoteScript(dir, "", []string{"condatainer", "a b"}, exe)).Output()
+	if err != nil || strings.TrimSpace(string(out)) != "caller a b" {
+		t.Errorf("printed %q, err %v, want the caller's binary with its arguments whole", out, err)
+	}
+	out, err = exec.Command("sh", "-c", remoteScript(dir, "", []string{"condatainer", "-test.run=^$"}, filepath.Join(dir, "missing"))).Output()
+	if err != nil || strings.Contains(string(out), "caller") || !strings.Contains(string(out), "PASS") {
+		t.Errorf("printed %q, err %v, want the host's own executable", out, err)
 	}
 }
 

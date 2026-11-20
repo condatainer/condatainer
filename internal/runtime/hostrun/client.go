@@ -18,10 +18,12 @@ var ErrStdinTooLarge = fmt.Errorf("standard input is over %d bytes: write the da
 
 // Call is one command a container asks its host to run.
 type Call struct {
-	Sock   string    // the relay socket
-	Argv   []string  // the command and its arguments
-	Cwd    string    // the working directory
-	On     string    // the node to run on; "" takes the launch's default
+	Sock string   // the relay socket
+	Argv []string // the command and its arguments
+	Cwd  string   // the working directory
+	On   string   // the node to run on; "" takes the launch's default
+	// Exe is the caller's own binary. A leading "condatainer" runs it where the host can, else the host's own executable.
+	Exe    string
 	Stdin  io.Reader // standard input to send; nil sends none
 	Stdout io.Writer
 	Stderr io.Writer
@@ -52,7 +54,7 @@ func (c Call) Run(ctx context.Context) (int, error) {
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 
-	head, err := json.Marshal(request{Argv: c.Argv, Cwd: c.Cwd, On: c.On, StdinLen: len(stdin)})
+	head, err := json.Marshal(request{Argv: c.Argv, Cwd: c.Cwd, On: c.On, Exe: c.Exe, StdinLen: len(stdin)})
 	if err != nil {
 		return 0, err
 	}

@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
+	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/runtime/hostrun"
+	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -16,8 +19,8 @@ var (
 
 var hostRunCmd = &cobra.Command{
 	Use:   "host-run [flags] <command> [args...]",
-	Short: "Run a command on the host from inside a container",
-	Long: `Run a command on the host from inside a container.
+	Short: "Run a command on the host from a container",
+	Long: `Run a command on the host from a container.
 
 - The command runs on the host with your full user and group identity.
 - It starts in the current directory, which must exist on the host.
@@ -72,6 +75,18 @@ func runHostRun(cmd *cobra.Command, args []string) error {
 // hostRunCall sends a call to the host through host-run. Tests replace it.
 var hostRunCall = func(ctx context.Context, call hostrun.Call) (int, error) { return call.Run(ctx) }
 
+// callerExecutable is self, the path of this binary, for a command sent as "condatainer", so the host runs the
+// binary that was typed. It is "" for the copy bound into a container, which is the host's own executable.
+func callerExecutable(argv []string, self string) string {
+	if len(argv) == 0 || argv[0] != "condatainer" {
+		return ""
+	}
+	if !filepath.IsAbs(self) || self == container.BoundExecPath {
+		return ""
+	}
+	return self
+}
+
 // runOnHost runs argv on the host through host-run, from the current directory, and exits with its exit code.
 //   - Output comes back on the streams it was written to.
 //   - flag names the option that asked for it, in the error.
@@ -85,11 +100,12 @@ func runOnHost(ctx context.Context, argv []string, on, flag string) error {
 		Argv:   argv,
 		Cwd:    cwd,
 		On:     on,
+		Exe:    callerExecutable(argv, utils.SelfPath()),
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 	})
 	if err != nil {
-		return fmt.Errorf("%s from inside a container goes through host-run: %w", flag, err)
+		return fmt.Errorf("%s runs through host-run: %w", flag, err)
 	}
 	if code != 0 {
 		os.Exit(code)

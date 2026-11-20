@@ -260,7 +260,8 @@ func shortName(name string) string {
 }
 
 // run runs a request's command and returns its exit code.
-//   - A leading condatainer is the host's own executable, not whatever PATH finds.
+//   - A leading condatainer is the caller's binary where the host can run it, else the host's own executable.
+//     It is never whatever PATH finds.
 //   - The command runs directly, never through a shell. Over ssh each word is quoted for the remote shell.
 func (r *Relay) run(ctx context.Context, req request, stdin []byte, stdout, stderr io.Writer) int {
 	tgt, err := r.resolve(req.On)
@@ -268,11 +269,11 @@ func (r *Relay) run(ctx context.Context, req request, stdin []byte, stdout, stde
 		fmt.Fprintf(stderr, "host-run: %v\n", err)
 		return 1
 	}
-	argv := hostArgv(req.Argv)
+	argv := hostArgv(req.Argv, req.Exe)
 
 	var cmd *exec.Cmd
 	if tgt.node != "" {
-		args := append(slices.Clone(sshOptions()), "--", tgt.node, remoteScript(req.Cwd, tgt.loginEnv, argv))
+		args := append(slices.Clone(sshOptions()), "--", tgt.node, remoteScript(req.Cwd, tgt.loginEnv, req.Argv, req.Exe))
 		cmd = exec.CommandContext(ctx, sshBin, args...)
 	} else {
 		if st, err := os.Stat(req.Cwd); err != nil || !st.IsDir() {
@@ -293,19 +294,51 @@ func (r *Relay) run(ctx context.Context, req request, stdin []byte, stdout, stde
 	return exitCode(cmd.Run(), argv[0], stderr)
 }
 
-// hostArgv is argv with a leading condatainer replaced by the host's own executable, so the version that started the job runs.
-func hostArgv(argv []string) []string {
+// hostArgv is argv with a leading condatainer replaced by the executable the host runs: exe when this
+// host can run it, else the host's own executable, so the version that started the job runs.
+func hostArgv(argv []string, exe string) []string {
 	argv = slices.Clone(argv)
 	if argv[0] == "condatainer" {
 		argv[0] = utils.SelfPath()
+		if runnable(exe) {
+			argv[0] = exe
+		}
 	}
 	return argv
 }
 
+// runnable reports whether path is an absolute path to an executable file here.
+func runnable(path string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	st, err := os.Stat(path)
+	return err == nil && st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0
+}
+
 // remoteScript is the one string ssh hands the remote shell: a cd, then the command with every word quoted.
-func remoteScript(cwd, loginEnv string, argv []string) string {
+// A leading condatainer runs exe when the remote node has it as an executable file, else the host's own executable.
+// The test runs in sh, so the user's login shell, which may not be a POSIX shell, sees only the cd and one word.
+func remoteScript(cwd, loginEnv string, argv []string, exe string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "cd %s && ", utils.ShellQuote(cwd))
+	own := hostArgv(argv, "")
+	if argv[0] == "condatainer" && filepath.IsAbs(exe) {
+		caller := slices.Clone(own)
+		caller[0] = exe
+		q := utils.ShellQuote(exe)
+		test := fmt.Sprintf("if [ -f %s ] && [ -x %s ]; then %s; else %s; fi", q, q, remoteCommand(loginEnv, caller), remoteCommand(loginEnv, own))
+		b.WriteString("sh -c ")
+		b.WriteString(utils.ShellQuote(test))
+		return b.String()
+	}
+	b.WriteString(remoteCommand(loginEnv, own))
+	return b.String()
+}
+
+// remoteCommand is argv with every word quoted, after the login node variable when there is one.
+func remoteCommand(loginEnv string, argv []string) string {
+	var b strings.Builder
 	if loginEnv != "" {
 		fmt.Fprintf(&b, "env %s=%s ", scheduler.LoginNodeVar, utils.ShellQuote(loginEnv))
 	}

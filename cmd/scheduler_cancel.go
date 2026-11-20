@@ -40,7 +40,7 @@ Arguments are all job IDs, or all name filters, as for jobs.
   condatainer scheduler cancel 245080_4      # One task
   condatainer scheduler cancel align         # Asks first
   condatainer scheduler cancel align -y
-  condatainer scheduler cancel 245068 --host # From inside a container`,
+  condatainer scheduler cancel 245068 --host # Inside a container`,
 	RunE: runSchedulerCancel,
 }
 
@@ -58,7 +58,7 @@ func runSchedulerCancel(cmd *cobra.Command, args []string) error {
 	}
 	sched, lister, err := lookupJobLister()
 	if err != nil {
-		return cancelFailure(cmd, nil, err)
+		return cancelFailure(cmd, sched, err)
 	}
 	canceller, ok := sched.(scheduler.JobCanceller)
 	if !ok {
@@ -200,7 +200,7 @@ func printCancelSummary(w io.Writer, picks []cancelPick) {
 
 // writeCancelDoc writes the document of a cancel. acted is false for a preview, which has no outcome.
 func writeCancelDoc(cmd *cobra.Command, sched scheduler.Scheduler, picks []cancelPick, acted bool, callErr error) error {
-	doc := &report.Cancel{Scheduler: jobsSchedulerRecord(sched), Jobs: report.List[report.CancelJob]{}, Problems: report.List[report.Problem]{}}
+	doc := &report.Cancel{Scheduler: schedulerRecord(sched, ""), Jobs: report.List[report.CancelJob]{}, Problems: report.List[report.Problem]{}}
 	if callErr != nil {
 		doc.Problems = append(doc.Problems, report.Problem{Message: callErr.Error()})
 	}
@@ -214,16 +214,14 @@ func writeCancelDoc(cmd *cobra.Command, sched scheduler.Scheduler, picks []cance
 	return report.Write(cmd.OutOrStdout(), doc)
 }
 
-// cancelFailure reports a call that could not pick the jobs. With --json the document carries the problem
+// cancelFailure reports a call that could not pick the jobs. A nil sched is none found. With --json the document carries the problem
 // and the error is returned after it, so the exit status is not zero.
 func cancelFailure(cmd *cobra.Command, sched scheduler.Scheduler, err error) error {
 	if !schedulerCancelJSON {
 		return err
 	}
 	doc := &report.Cancel{Jobs: report.List[report.CancelJob]{}, Problems: report.List[report.Problem]{{Message: err.Error()}}}
-	if sched != nil {
-		doc.Scheduler = jobsSchedulerRecord(sched)
-	}
+	doc.Scheduler = schedulerRecord(sched, "")
 	if werr := report.Write(cmd.OutOrStdout(), doc); werr != nil {
 		return werr
 	}

@@ -21,21 +21,27 @@ A partition has a row for each type of node in it.
 A type is a group of nodes with the same CPUs and GPUs.
 
 - A * after a partition name marks the default partition.
-- Partitions that are not up are listed last.
+- Only partitions that are up are listed. --all adds the rest, last.
 
 Columns:
-- AVAIL is whether the partition takes jobs.
-- NODES, CPUS and MEM are per node type.
+- AVAIL is whether the partition takes jobs. Shown only with --all.
+- NODES and IDLECPUS are idle over total, such as 3/20.
+- CPUS and MEM are per node.
 - MAXTIME is the longest one job can run.
 - MAXNODES is the most nodes one job can use. Left out if none has a limit.
 - GPUS is each GPU type of the node type, as type:count per node.
 
 In a cell:
 - A + marks the smallest of nodes that differ.
-- In MAXTIME, inf means no limit and - means none is reported.`,
+- In MAXTIME, inf means no limit and - means none is reported.
+
+A node with any job is not idle. Its free CPUs count in IDLECPUS.
+GPUS (idle) ends each GPU type with the idle GPUs of it, such as (6).
+Idle figures show only where the scheduler reports them.`,
 	Example: `  condatainer scheduler partitions
   condatainer scheduler partitions --gpu
   condatainer scheduler partitions --cpu
+  condatainer scheduler partitions --all
   condatainer scheduler partitions --host`,
 	RunE: runSchedulerPartitions,
 }
@@ -44,13 +50,14 @@ func init() {
 	jsonFlag(schedulerPartitionsCmd.Flags(), &schedulerPartitionsJSON)
 	schedulerPartitionsCmd.Flags().Bool("cpu", false, "Show only CPU-only partitions (no GPUs)")
 	schedulerPartitionsCmd.Flags().Bool("gpu", false, "Show only GPU partitions")
+	schedulerPartitionsCmd.Flags().Bool("all", false, "Also show partitions that are not up")
 	schedulerPartitionsCmd.MarkFlagsMutuallyExclusive("cpu", "gpu")
 	addHostFlags(schedulerPartitionsCmd.Flags())
 }
 
-// selectPartitions applies --cpu and --gpu and puts the partitions that are not up last,
+// selectPartitions applies --cpu and --gpu, drops the partitions that are not up unless all is set, and puts them last,
 // each group in the scheduler's order. It also returns the GPU types of each partition.
-func selectPartitions(info *scheduler.ClusterInfo, cpuOnly, gpuOnly bool) ([]scheduler.ResourceLimits, map[string][]scheduler.GpuInfo) {
+func selectPartitions(info *scheduler.ClusterInfo, cpuOnly, gpuOnly, all bool) ([]scheduler.ResourceLimits, map[string][]scheduler.GpuInfo) {
 	gpusByPartition := make(map[string][]scheduler.GpuInfo)
 	for _, gpu := range info.AvailableGpus {
 		name := scheduler.PartitionName(gpu.Partition)
@@ -63,7 +70,7 @@ func selectPartitions(info *scheduler.ClusterInfo, cpuOnly, gpuOnly bool) ([]sch
 		for _, t := range limit.NodeTypes {
 			hasGpu = hasGpu || len(t.Gpus) > 0
 		}
-		if (cpuOnly && hasGpu) || (gpuOnly && !hasGpu) {
+		if (cpuOnly && hasGpu) || (gpuOnly && !hasGpu) || (!all && !limit.IsUp()) {
 			continue
 		}
 		shown = append(shown, limit)
@@ -85,12 +92,13 @@ func partitionRecord(l scheduler.ResourceLimits, fallbackGpus []scheduler.GpuInf
 	}
 	for _, t := range scheduler.PartitionNodeTypes(l, fallbackGpus) {
 		rec := report.NodeType{
-			Nodes: t.Nodes, NodesUp: t.NodesUp, Cpus: t.Cpus, MemMB: t.MemMB,
+			Nodes: t.Nodes, NodesUp: t.NodesUp, NodesIdle: t.NodesIdle, CpusIdle: t.CpusIdle, CpusTotal: t.CpusTotal,
+			Cpus: t.Cpus, MemMB: t.MemMB,
 			CpusLowerBound: t.CpusLowerBound, MemLowerBound: t.MemLowerBound,
 			Gpus: report.List[report.NodeGpu]{},
 		}
 		for _, g := range t.Gpus {
-			rec.Gpus = append(rec.Gpus, report.NodeGpu{Type: g.Type, PerNode: g.PerNode})
+			rec.Gpus = append(rec.Gpus, report.NodeGpu{Type: g.Type, PerNode: g.PerNode, Idle: g.Idle})
 		}
 		p.NodeTypes = append(p.NodeTypes, rec)
 	}
@@ -103,21 +111,18 @@ func runSchedulerPartitions(cmd *cobra.Command, args []string) error {
 	}
 	cpuOnly, _ := cmd.Flags().GetBool("cpu")
 	gpuOnly, _ := cmd.Flags().GetBool("gpu")
+	all, _ := cmd.Flags().GetBool("all")
 
-	sched, insideJob, err := lookupScheduler()
-	if err == nil && !insideJob && sched.IsInsideJob() {
-		insideJob = true
-	}
+	sched, err := lookupQueryScheduler()
 
 	if schedulerPartitionsJSON {
 		doc := &report.Partitions{Partitions: report.List[report.Partition]{}, Problems: report.List[report.Problem]{}}
 		switch {
 		case err != nil:
+			doc.Scheduler = schedulerRecord(nil, "")
 			doc.Problems = append(doc.Problems, report.Problem{Message: err.Error()})
-		case insideJob:
-			doc.Scheduler = schedulerRecord(cmd.Context(), sched, true)
 		default:
-			doc.Scheduler = schedulerRecord(cmd.Context(), sched, false)
+			doc.Scheduler = schedulerRecord(sched, sched.GetVersion(cmd.Context()))
 			info, infoErr := sched.GetClusterInfo(cmd.Context())
 			if infoErr != nil {
 				doc.Problems = append(doc.Problems, report.Problem{Message: infoErr.Error()})
@@ -127,7 +132,7 @@ func runSchedulerPartitions(cmd *cobra.Command, args []string) error {
 				doc.Problems = append(doc.Problems, report.Problem{Message: "this scheduler reported no partitions"})
 				break
 			}
-			shown, gpus := selectPartitions(info, cpuOnly, gpuOnly)
+			shown, gpus := selectPartitions(info, cpuOnly, gpuOnly, true)
 			for _, limit := range shown {
 				doc.Partitions = append(doc.Partitions, partitionRecord(limit, gpus[scheduler.PartitionName(limit.Partition)]))
 			}
@@ -139,10 +144,6 @@ func runSchedulerPartitions(cmd *cobra.Command, args []string) error {
 		printNoScheduler()
 		return nil
 	}
-	if insideJob {
-		printInsideJob()
-		return nil
-	}
 
 	info, err := sched.GetClusterInfo(cmd.Context())
 	if err != nil {
@@ -152,16 +153,23 @@ func runSchedulerPartitions(cmd *cobra.Command, args []string) error {
 		utils.PrintWarning("This scheduler reported no partitions")
 		return nil
 	}
-	shown, gpus := selectPartitions(info, cpuOnly, gpuOnly)
+	shown, gpus := selectPartitions(info, cpuOnly, gpuOnly, all)
 	if len(shown) == 0 {
-		if gpuOnly {
-			utils.PrintWarning("No GPU partitions available")
+		what := "partitions"
+		switch {
+		case gpuOnly:
+			what = "GPU partitions"
+		case cpuOnly:
+			what = "CPU-only partitions"
+		}
+		if all {
+			utils.PrintWarning("No %s available", what)
 		} else {
-			utils.PrintWarning("No CPU-only partitions available")
+			utils.PrintWarning("No %s are up. --all lists the rest", what)
 		}
 		return nil
 	}
 
-	scheduler.WritePartitionTable(os.Stdout, shown, gpus)
+	scheduler.WritePartitionTable(os.Stdout, shown, gpus, all)
 	return nil
 }

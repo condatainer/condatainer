@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,12 +33,17 @@ func formatHM(d time.Duration) string {
 }
 
 // partitionColumns are the columns of the partition table. Numbers align right.
-var partitionColumns = []string{"PARTITION", "AVAIL", "NODES", "CPUS", "MEM", "MAXTIME", "MAXNODES", "GPUS"}
+var partitionColumns = []string{"PARTITION", "AVAIL", "NODES", "IDLECPUS", "CPUS", "MEM", "MAXTIME", "MAXNODES", "GPUS"}
 
-var partitionRightAligned = map[int]bool{2: true, 3: true, 4: true, 5: true, 6: true}
+var partitionRightAligned = map[int]bool{2: true, 3: true, 4: true, 5: true, 6: true, 7: true}
 
-// maxNodesColumn is the index of MAXNODES in partitionColumns.
-const maxNodesColumn = 6
+// Indexes of the columns that are left out when they say nothing.
+const (
+	availColumn    = 1
+	idleCpusColumn = 3
+	maxNodesColumn = 7
+	gpusColumn     = 8
+)
 
 // PartitionNodeTypes is the node types of a partition. A scheduler that reports none has one,
 // built from the partition's largest host and the GPU types of the partition.
@@ -73,8 +79,8 @@ func sameMemoryClass(a, b int64) bool {
 	return max(a, b)*10 <= min(a, b)*11
 }
 
-// addNodesUp adds two counts of nodes that are up. The sum is unreported when both are.
-func addNodesUp(a, b *int) *int {
+// addReported adds two counts a scheduler may not report. The sum is unreported when both are.
+func addReported(a, b *int) *int {
 	if a == nil && b == nil {
 		return nil
 	}
@@ -103,12 +109,19 @@ func mergeMemoryClasses(types []NodeType) []NodeType {
 			}
 		}
 		if j < 0 {
+			t.Gpus = slices.Clone(t.Gpus)
 			merged = append(merged, t)
 			continue
 		}
 		m := &merged[j]
+		for k := range m.Gpus {
+			m.Gpus[k].Idle = addReported(m.Gpus[k].Idle, t.Gpus[k].Idle)
+		}
 		m.Nodes += t.Nodes
-		m.NodesUp = addNodesUp(m.NodesUp, t.NodesUp)
+		m.NodesUp = addReported(m.NodesUp, t.NodesUp)
+		m.NodesIdle = addReported(m.NodesIdle, t.NodesIdle)
+		m.CpusIdle = addReported(m.CpusIdle, t.CpusIdle)
+		m.CpusTotal = addReported(m.CpusTotal, t.CpusTotal)
 		m.CpusLowerBound = m.CpusLowerBound || t.CpusLowerBound
 		m.MemLowerBound = m.MemLowerBound || t.MemLowerBound
 		switch {
@@ -126,6 +139,7 @@ func mergeMemoryClasses(types []NodeType) []NodeType {
 // Node types whose memory is within 10% share a row.
 // The partition's name, state, time and node cap are on its first row only. The cap is "-" unless the scheduler reports one.
 // fallbackGpus are the GPU types of a partition whose scheduler reports no node types.
+// NODES is "idle/total" and IDLECPUS is "idle/total" where the scheduler reports the idle figures.
 func partitionRows(l ResourceLimits, fallbackGpus []GpuInfo) [][]string {
 	types := mergeMemoryClasses(PartitionNodeTypes(l, fallbackGpus))
 
@@ -151,9 +165,15 @@ func partitionRows(l ResourceLimits, fallbackGpus []GpuInfo) [][]string {
 
 	var rows [][]string
 	for ti, t := range types {
-		nodes, cpus, mem := "-", "-", "-"
+		nodes, cpus, idleCpus, mem := "-", "-", "-", "-"
 		if t.Nodes > 0 {
 			nodes = strconv.Itoa(t.Nodes)
+			if t.NodesIdle != nil {
+				nodes = strconv.Itoa(*t.NodesIdle) + "/" + nodes
+			}
+		}
+		if t.CpusIdle != nil && t.CpusTotal != nil {
+			idleCpus = strconv.Itoa(*t.CpusIdle) + "/" + strconv.Itoa(*t.CpusTotal)
 		}
 		if t.Cpus > 0 {
 			cpus = strconv.Itoa(t.Cpus)
@@ -170,11 +190,14 @@ func partitionRows(l ResourceLimits, fallbackGpus []GpuInfo) [][]string {
 
 		gpuLines := make([]string, 0, len(t.Gpus))
 		for _, g := range t.Gpus {
+			line := g.Type
 			if g.PerNode > 0 {
-				gpuLines = append(gpuLines, g.Type+":"+strconv.Itoa(g.PerNode))
-			} else {
-				gpuLines = append(gpuLines, g.Type)
+				line += ":" + strconv.Itoa(g.PerNode)
 			}
+			if g.Idle != nil {
+				line += " (" + strconv.Itoa(*g.Idle) + ")"
+			}
+			gpuLines = append(gpuLines, line)
 		}
 		if len(gpuLines) == 0 {
 			gpuLines = []string{"-"}
@@ -183,12 +206,12 @@ func partitionRows(l ResourceLimits, fallbackGpus []GpuInfo) [][]string {
 		for gi, gpu := range gpuLines {
 			row := make([]string, len(partitionColumns))
 			if ti == 0 && gi == 0 {
-				row[0], row[1], row[5], row[6] = name, avail, maxTime, maxNodes
+				row[0], row[1], row[6], row[maxNodesColumn] = name, avail, maxTime, maxNodes
 			}
 			if gi == 0 {
-				row[2], row[3], row[4] = nodes, cpus, mem
+				row[2], row[idleCpusColumn], row[4], row[5] = nodes, idleCpus, cpus, mem
 			}
-			row[7] = gpu
+			row[8] = gpu
 			rows = append(rows, row)
 		}
 	}
@@ -240,6 +263,18 @@ func writeTable(w io.Writer, header []string, rows [][]string, right map[int]boo
 	}
 }
 
+// anyIdleGpus reports whether the scheduler gave the idle GPUs of any GPU type in limits.
+func anyIdleGpus(limits []ResourceLimits, gpusByPartition map[string][]GpuInfo) bool {
+	for _, l := range limits {
+		for _, t := range PartitionNodeTypes(l, gpusByPartition[PartitionName(l.Partition)]) {
+			if slices.ContainsFunc(t.Gpus, func(g NodeGpu) bool { return g.Idle != nil }) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // PartitionName is the name a partition or a GPU is listed under. One with no name is "default".
 func PartitionName(name string) string {
 	if name == "" {
@@ -251,34 +286,45 @@ func PartitionName(name string) string {
 // WritePartitionTable prints the partitions as one table, a row per node type.
 // gpusByPartition holds the GPU types of a partition whose scheduler reports no node types.
 // A partition that is not up has its state in red.
-func WritePartitionTable(w io.Writer, limits []ResourceLimits, gpusByPartition map[string][]GpuInfo) {
+//   - AVAIL is shown only when avail is set, for a listing that has partitions that are not up.
+//   - MAXNODES is left out when no partition limits the nodes of a job.
+//   - IDLECPUS is left out when the scheduler reports no idle CPUs.
+//   - GPUS reads "GPUS (idle)" when the scheduler reports idle GPUs, and a GPU type then ends in its idle number.
+func WritePartitionTable(w io.Writer, limits []ResourceLimits, gpusByPartition map[string][]GpuInfo, avail bool) {
 	var rows [][]string
 	style := map[[2]int]func(string) string{}
 	capped := false
 	for _, l := range limits {
-		if !l.IsUp() {
-			style[[2]int{len(rows), 1}] = utils.StyleError
+		if avail && !l.IsUp() {
+			style[[2]int{len(rows), availColumn}] = utils.StyleError
 		}
 		capped = capped || l.MaxNodes > 0
 		rows = append(rows, partitionRows(l, gpusByPartition[PartitionName(l.Partition)])...)
 	}
 
-	header, right := partitionColumns, partitionRightAligned
-	if !capped {
-		// No partition limits the nodes of a job, so the column says nothing.
-		header = append(append([]string{}, header[:maxNodesColumn]...), header[maxNodesColumn+1:]...)
-		right = make(map[int]bool)
-		for i := range partitionColumns {
-			switch {
-			case i < maxNodesColumn:
-				right[i] = partitionRightAligned[i]
-			case i > maxNodesColumn:
-				right[i-1] = partitionRightAligned[i]
+	drop := map[int]bool{availColumn: !avail, maxNodesColumn: !capped, idleCpusColumn: !slices.ContainsFunc(rows, func(row []string) bool {
+		return row[idleCpusColumn] != "" && row[idleCpusColumn] != "-"
+	})}
+	var header []string
+	right := map[int]bool{}
+	for i, h := range partitionColumns {
+		if drop[i] {
+			continue
+		}
+		if i == gpusColumn && anyIdleGpus(limits, gpusByPartition) {
+			h += " (idle)"
+		}
+		right[len(header)] = partitionRightAligned[i]
+		header = append(header, h)
+	}
+	for r, row := range rows {
+		var kept []string
+		for i, cell := range row {
+			if !drop[i] {
+				kept = append(kept, cell)
 			}
 		}
-		for i, row := range rows {
-			rows[i] = append(append([]string{}, row[:maxNodesColumn]...), row[maxNodesColumn+1:]...)
-		}
+		rows[r] = kept
 	}
 	writeTable(w, header, rows, right, style)
 }
@@ -410,16 +456,17 @@ func jobReason(j JobInfo) string {
 				parts = append(parts, strconv.Itoa(c.n)+" "+c.word)
 			}
 		}
+		if dep := waitingOn(j.DependsOn); dep != "" {
+			parts = append(parts, dep)
+		}
 		return strings.Join(parts, ", ")
 	}
 	if j.Suspended {
 		return "suspended"
 	}
 	if j.State == JobPending || j.State == JobCancelled {
-		for _, d := range j.DependsOn {
-			if d.Failed {
-				return "dep failed " + d.JobID
-			}
+		if note := failedDependency(j.DependsOn); note != "" {
+			return note
 		}
 	}
 	switch j.State {
@@ -429,25 +476,47 @@ func jobReason(j JobInfo) string {
 		}
 		return j.Failure
 	case JobPending:
-		var open []JobDependency
-		for _, d := range j.DependsOn {
-			if !d.Satisfied {
-				open = append(open, d)
-			}
-		}
-		if len(open) > 0 {
-			note := dependencyWord(open[0].Type)
-			if open[0].JobID != "" {
-				note += " " + open[0].JobID
-			}
-			if len(open) > 1 {
-				note += " +" + strconv.Itoa(len(open)-1)
-			}
+		if note := waitingOn(j.DependsOn); note != "" {
 			return note
 		}
 		return j.Reason
 	}
 	return ""
+}
+
+// failedDependency is "dep failed <id>" for the first parent that can never hold, or "".
+func failedDependency(deps []JobDependency) string {
+	for _, d := range deps {
+		if d.Failed {
+			return "dep failed " + d.JobID
+		}
+	}
+	return ""
+}
+
+// waitingOn is the parent that keeps a job waiting: "dep failed <id>" for one that can never hold,
+// else the first unmet one, as "after 5" or "after 5 +1" for several. It is "" when none is open.
+func waitingOn(deps []JobDependency) string {
+	if note := failedDependency(deps); note != "" {
+		return note
+	}
+	var open []JobDependency
+	for _, d := range deps {
+		if !d.Satisfied {
+			open = append(open, d)
+		}
+	}
+	if len(open) == 0 {
+		return ""
+	}
+	note := dependencyWord(open[0].Type)
+	if open[0].JobID != "" {
+		note += " " + open[0].JobID
+	}
+	if len(open) > 1 {
+		note += " +" + strconv.Itoa(len(open)-1)
+	}
+	return note
 }
 
 // dependencyWord is how a dependency rule reads in a note. A job that needs its parent to succeed

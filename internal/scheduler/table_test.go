@@ -67,7 +67,7 @@ func TestPartitionTable(t *testing.T) {
 	limits[2].Nodes = 15
 
 	var out bytes.Buffer
-	WritePartitionTable(&out, limits, nil)
+	WritePartitionTable(&out, limits, nil, true)
 
 	want := `PARTITION          AVAIL  NODES  CPUS    MEM  MAXTIME  MAXNODES  GPUS
 cpubase_interac    up       702   192   748G    08:00         -  -
@@ -97,7 +97,7 @@ func TestPartitionTableMergesMemoryClasses(t *testing.T) {
 		}},
 	}
 	var out bytes.Buffer
-	WritePartitionTable(&out, limits, nil)
+	WritePartitionTable(&out, limits, nil, true)
 	want := `PARTITION  AVAIL  NODES  CPUS    MEM  MAXTIME  GPUS
 a          up         4    64  511G+        -  -
                     203   192   748G           -
@@ -106,6 +106,26 @@ a          up         4    64  511G+        -  -
 `
 	if got := stripColor(out.String()); got != want {
 		t.Errorf("table mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// Without avail the table has no AVAIL column, and a down partition is not marked.
+func TestPartitionTableWithoutAvail(t *testing.T) {
+	limits := []ResourceLimits{
+		{Partition: "a", State: "up", MaxTime: time.Hour, NodeTypes: []NodeType{{Nodes: 2, Cpus: 8, MemMB: 16384}}},
+		{Partition: "b", State: "down", TimeUnlimited: true, NodeTypes: []NodeType{{Nodes: 2, Cpus: 8, MemMB: 16384}}},
+	}
+	var out bytes.Buffer
+	WritePartitionTable(&out, limits, nil, false)
+	want := `PARTITION  NODES  CPUS  MEM  MAXTIME  GPUS
+a              2     8  16G    01:00  -
+b              2     8  16G      inf  -
+`
+	if got := out.String(); got != want {
+		t.Errorf("table mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Errorf("a column that is not shown was coloured:\n%q", out.String())
 	}
 }
 
@@ -118,7 +138,7 @@ func TestPartitionTableWithoutNodeCap(t *testing.T) {
 		{Partition: "c", State: "up", NodeTypes: []NodeType{{Nodes: 2, Cpus: 8, MemMB: 16384}}},
 	}
 	var out bytes.Buffer
-	WritePartitionTable(&out, limits, nil)
+	WritePartitionTable(&out, limits, nil, true)
 	want := `PARTITION  AVAIL  NODES  CPUS  MEM  MAXTIME  GPUS
 a          up         2     8  16G    01:00  -
 b          up         2     8  16G      inf  -
@@ -126,6 +146,75 @@ c          up         2     8  16G        -  -
 `
 	if got := stripColor(out.String()); got != want {
 		t.Errorf("table mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestPartitionTableIdleFigures(t *testing.T) {
+	n := func(v int) *int { return &v }
+	limits := []ResourceLimits{
+		{Partition: "a", State: "up", NodeTypes: []NodeType{
+			{Nodes: 20, NodesIdle: n(3), Cpus: 64, CpusIdle: n(412), CpusTotal: n(1280), MemMB: 262144},
+			{Nodes: 4, NodesIdle: n(0), Cpus: 32, CpusIdle: n(0), CpusTotal: n(128), MemMB: 524288},
+		}},
+		{Partition: "b", State: "up", NodeTypes: []NodeType{{Nodes: 2, Cpus: 8, MemMB: 16384}}},
+	}
+	var out bytes.Buffer
+	WritePartitionTable(&out, limits, nil, true)
+	want := `PARTITION  AVAIL  NODES  IDLECPUS  CPUS   MEM  MAXTIME  GPUS
+a          up      3/20  412/1280    64  256G        -  -
+                    0/4     0/128    32  512G           -
+b          up         2         -     8   16G        -  -
+`
+	if got := stripColor(out.String()); got != want {
+		t.Errorf("table mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A scheduler that reports no idle figures keeps plain NODES and has no IDLECPUS.
+func TestPartitionTableWithoutIdleFigures(t *testing.T) {
+	limits := []ResourceLimits{{Partition: "a", State: "up", NodeTypes: []NodeType{{Nodes: 2, Cpus: 8, MemMB: 16384}}}}
+	var out bytes.Buffer
+	WritePartitionTable(&out, limits, nil, true)
+	want := `PARTITION  AVAIL  NODES  CPUS  MEM  MAXTIME  GPUS
+a          up         2     8  16G        -  -
+`
+	if got := stripColor(out.String()); got != want {
+		t.Errorf("table mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestPartitionTableShowsIdleGpus(t *testing.T) {
+	n := func(v int) *int { return &v }
+	limits := []ResourceLimits{
+		{Partition: "g", State: "up", NodeTypes: []NodeType{
+			{Nodes: 4, Cpus: 112, MemMB: 2048000, Gpus: []NodeGpu{{Type: "h100", PerNode: 8, Idle: n(6)}}},
+			{Nodes: 2, Cpus: 96, MemMB: 507000, Gpus: []NodeGpu{{Type: "mig3", PerNode: 8, Idle: n(0)}, {Type: "mig1", PerNode: 16}}},
+		}},
+	}
+	var out bytes.Buffer
+	WritePartitionTable(&out, limits, nil, true)
+	got := stripColor(out.String())
+	for _, want := range []string{"GPUS (idle)\n", "h100:8 (6)\n", "mig3:8 (0)\n", "mig1:16\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("table lacks %q:\n%s", want, got)
+		}
+	}
+}
+
+// Joining node types adds their idle GPUs, and leaves the exact types the JSON reports unchanged.
+func TestMergeMemoryClassesSumsIdleGpusWithoutChangingItsInput(t *testing.T) {
+	n := func(v int) *int { return &v }
+	types := []NodeType{
+		{Nodes: 1, Cpus: 64, MemMB: 524072, Gpus: []NodeGpu{{Type: "t4", PerNode: 2, Idle: n(1)}}},
+		{Nodes: 1, Cpus: 64, MemMB: 523547, Gpus: []NodeGpu{{Type: "t4", PerNode: 2, Idle: n(2)}}},
+		{Nodes: 1, Cpus: 64, MemMB: 524000, Gpus: []NodeGpu{{Type: "t4", PerNode: 2}}},
+	}
+	merged := mergeMemoryClasses(types)
+	if len(merged) != 1 || merged[0].Gpus[0].Idle == nil || *merged[0].Gpus[0].Idle != 3 {
+		t.Fatalf("merged = %+v, want one type with 3 idle", merged)
+	}
+	if *types[0].Gpus[0].Idle != 1 || *types[1].Gpus[0].Idle != 2 || types[2].Gpus[0].Idle != nil {
+		t.Errorf("the input changed: %+v", types)
 	}
 }
 
@@ -139,7 +228,7 @@ func TestPartitionRowsWithoutNodeTypes(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1: %v", len(rows), rows)
 	}
-	want := []string{"q1", "-", "-", "32", "64G", "-", "-", "v100"}
+	want := []string{"q1", "-", "-", "-", "32", "64G", "-", "-", "v100"}
 	for i, w := range want {
 		if rows[0][i] != w {
 			t.Errorf("column %s = %q, want %q", partitionColumns[i], rows[0][i], w)
@@ -291,6 +380,10 @@ func TestJobNote(t *testing.T) {
 		{"a job of one rank has no layout", JobInfo{State: JobRunning, NodeCount: 2, Ranks: 0}, ""},
 		{"an array has no layout", JobInfo{State: JobRunning, Ranks: 4, Tasks: &ArrayTasks{Running: []string{"a"}}}, "1 running"},
 		{"array with only pending tasks", JobInfo{State: JobPending, Tasks: &ArrayTasks{Pending: []string{"1_1", "1_2"}}}, "2 pending"},
+		{"array waiting on a parent", JobInfo{State: JobPending, Tasks: &ArrayTasks{Pending: []string{"2_1", "2_2"}},
+			DependsOn: []JobDependency{{Type: "afterok", JobID: "1_*"}}}, "2 pending, after 1_*"},
+		{"array whose parent is met", JobInfo{State: JobPending, Tasks: &ArrayTasks{Pending: []string{"2_1"}},
+			DependsOn: []JobDependency{{Type: "afterok", JobID: "1_*", Satisfied: true}}}, "1 pending"},
 	}
 	for _, tt := range tests {
 		if got := jobNote(tt.job); got != tt.want {

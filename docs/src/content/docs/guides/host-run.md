@@ -1,6 +1,6 @@
 ---
 title: Host Run
-description: Run a command on the host from inside a container, such as scheduler's commands from a helper, with full user and group identity.
+description: Run a command on the host from a container, such as scheduler's commands from a helper, with full user and group identity.
 ---
 
 `condatainer host-run` runs one command on the **host**, the node a container runs on, from a program inside that **container**. The output and the exit code come back.
@@ -73,7 +73,7 @@ Use `login` where compute nodes may not submit jobs.
 
 ## Submit Jobs From a Job
 
-A job that plans a pipeline can submit the steps after it. Inside a job, `condatainer run` runs its script in that job. `--submit` makes it submit a new job instead. From inside a container, it goes through `host-run` for you:
+A job that plans a pipeline can submit the steps after it. Inside a job, `condatainer run` runs its script in that job. `--submit` makes it submit a new job instead. Inside a container, it goes through `host-run` for you:
 
 ```bash
 JOB=$(condatainer run --submit step1.sh)

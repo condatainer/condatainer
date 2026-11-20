@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -172,6 +173,7 @@ type JobCanceller interface {
 
 // GroupArrayTasks folds the task rows of each array into one row that sorts its tasks by what became of them.
 //   - The row takes the first task's name and per-task figures, and the earliest submit time.
+//   - Its dependencies are those of the tasks that wait, each parent once.
 //   - Its state is running while a task runs, else pending while one waits, else failed when one failed,
 //     unknown when one could not be read, cancelled when one was, and success when all succeeded.
 //   - complete says the rows hold every task. Then the row has the first task's start and, once every
@@ -202,6 +204,9 @@ func GroupArrayTasks(jobs []JobInfo, complete bool) []JobInfo {
 		}
 		array := &out[i]
 		array.Tasks.add(j)
+		if j.State == JobPending {
+			array.DependsOn = mergeDependencies(array.DependsOn, j.DependsOn)
+		}
 		if array.Name == "" {
 			array.Name = j.Name
 		}
@@ -230,6 +235,25 @@ func GroupArrayTasks(jobs []JobInfo, complete bool) []JobInfo {
 		if len(t.Running)+len(t.Pending) > 0 {
 			out[i].EndTime = time.Time{}
 		}
+	}
+	return out
+}
+
+// mergeDependencies adds the parents in more to those in have. A parent is matched by type and job ID.
+// It holds only when it holds in both lists, and it can never hold when it can in either.
+func mergeDependencies(have, more []JobDependency) []JobDependency {
+	out := append([]JobDependency{}, have...)
+	for _, d := range more {
+		i := slices.IndexFunc(out, func(o JobDependency) bool { return o.Type == d.Type && o.JobID == d.JobID })
+		if i < 0 {
+			out = append(out, d)
+			continue
+		}
+		out[i].Satisfied = out[i].Satisfied && d.Satisfied
+		out[i].Failed = out[i].Failed || d.Failed
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

@@ -13,9 +13,14 @@ import (
 )
 
 var (
-	schedulerJobsTasks bool
-	schedulerJobsJSON  bool
+	schedulerJobsTasks   bool
+	schedulerJobsDetail  bool
+	schedulerJobsNoTrunc bool
+	schedulerJobsJSON    bool
 )
+
+// jobsTableWidth is the width the jobs table fits. Tests replace it.
+var jobsTableWidth = writerWidth
 
 var schedulerJobsCmd = &cobra.Command{
 	SilenceUsage: true, // Runtime errors should not show usage
@@ -37,6 +42,8 @@ The table has a row for each job. An array is one row with its tasks counted.
 In a cell:
 - A - is a figure the scheduler does not report.
 - inf in TIME means no limit.
+- A … ends a value cut to fit the terminal. Piped output is never cut.
+- --no-trunc keeps every value whole in a terminal.
 - An ID can also have the state notfound or unknown.
 
 One ID shows the job in full: a line for each fact the scheduler reported.
@@ -46,26 +53,24 @@ An array lists its tasks by state, and the IDs of the tasks that failed.`,
 	Example: `  condatainer scheduler jobs
   condatainer scheduler jobs align   # Jobs with "align" in the name
   condatainer scheduler jobs 245068  # One job in full, even after it ended
-  # Several jobs as rows
-  condatainer scheduler jobs 245068 245070
+  condatainer scheduler jobs 245068 245070     # Several jobs as rows
   condatainer scheduler jobs --tasks 245080
-  condatainer scheduler jobs --host  # From inside a container`,
+  condatainer scheduler jobs --detail
+  condatainer scheduler jobs --no-trunc
+  condatainer scheduler jobs --host            # Inside a container`,
 	RunE: runSchedulerJobs,
 }
 
-// lookupJobLister finds the scheduler that lists jobs. It also works inside a scheduled job, since
-// it only reads the queue.
+// lookupJobLister finds the scheduler that lists jobs. A scheduler that was found but cannot list is returned
+// with the error, and none found is nil.
 func lookupJobLister() (scheduler.Scheduler, scheduler.JobLister, error) {
-	sched := scheduler.ActiveScheduler()
-	if sched == nil {
-		var err error
-		if sched, err = scheduler.DetectSchedulerWithBinary(scheduler.Bin()); err != nil {
-			return nil, nil, noScheduler()
-		}
+	sched, err := lookupQueryScheduler()
+	if err != nil {
+		return nil, nil, err
 	}
 	lister, ok := sched.(scheduler.JobLister)
 	if !ok {
-		return nil, nil, fmt.Errorf("scheduler %s is not supported", strings.ToLower(string(sched.GetType())))
+		return sched, nil, fmt.Errorf("scheduler %s is not supported", strings.ToLower(string(sched.GetType())))
 	}
 	return sched, lister, nil
 }
@@ -197,21 +202,13 @@ func arrayTasksRecord(j scheduler.JobInfo) *report.JobTasks {
 	return rec
 }
 
-// jobsSchedulerRecord describes the scheduler for the jobs document. It reads no version, which is a call of its own.
-func jobsSchedulerRecord(sched scheduler.Scheduler) *report.Scheduler {
-	return &report.Scheduler{
-		Type: strings.ToLower(string(sched.GetType())), Binary: sched.GetBinary(),
-		Available: sched.IsAvailable(), InsideJob: sched.IsInsideJob(),
-	}
-}
-
 func runSchedulerJobs(cmd *cobra.Command, args []string) error {
 	if done, err := runOnHostIfAsked(cmd, args); done {
 		return err
 	}
 	sched, lister, err := lookupJobLister()
 	if err != nil {
-		return jobsFailure(cmd, nil, err)
+		return jobsFailure(cmd, sched, err)
 	}
 	ids, names, err := splitJobArgs(args, lister.IsJobID)
 	if err != nil {
@@ -222,7 +219,7 @@ func runSchedulerJobs(cmd *cobra.Command, args []string) error {
 	if len(ids) > 0 {
 		jobs, err = lister.LookupJobs(cmd.Context(), ids)
 	} else {
-		jobs, err = lister.ListJobs(cmd.Context(), scheduler.ListOptions{Full: schedulerJobsJSON})
+		jobs, err = lister.ListJobs(cmd.Context(), scheduler.ListOptions{Full: schedulerJobsJSON || schedulerJobsDetail})
 		jobs = selectJobs(jobs, nil, names)
 	}
 	if err != nil {
@@ -236,29 +233,36 @@ func runSchedulerJobs(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	switch {
 	case schedulerJobsJSON:
-		doc := &report.Jobs{Scheduler: jobsSchedulerRecord(sched), Jobs: report.List[report.Job]{}, Problems: report.List[report.Problem]{}}
+		doc := &report.Jobs{Scheduler: schedulerRecord(sched, ""), Jobs: report.List[report.Job]{}, Problems: report.List[report.Problem]{}}
 		for _, j := range jobs {
 			doc.Jobs = append(doc.Jobs, jobRecord(j))
 		}
 		return report.Write(out, doc)
-	case len(ids) == 1 && len(jobs) == 1:
-		scheduler.WriteJobDetail(out, jobs[0])
+	case schedulerJobsDetail || (len(ids) == 1 && len(jobs) == 1):
+		for i, j := range jobs {
+			if i > 0 {
+				fmt.Fprintln(out)
+			}
+			scheduler.WriteJobDetail(out, j)
+		}
 	default:
-		scheduler.WriteJobTable(out, jobs, writerWidth(out))
+		width := jobsTableWidth(out)
+		if schedulerJobsNoTrunc {
+			width = 0
+		}
+		scheduler.WriteJobTable(out, jobs, width)
 	}
 	return nil
 }
 
-// jobsFailure reports a call that could not list jobs. With --json the document carries the problem
+// jobsFailure reports a call that could not list jobs. A nil sched is none found. With --json the document carries the problem
 // and the error is returned after it, so the exit status is not zero.
 func jobsFailure(cmd *cobra.Command, sched scheduler.Scheduler, err error) error {
 	if !schedulerJobsJSON {
 		return err
 	}
 	doc := &report.Jobs{Jobs: report.List[report.Job]{}, Problems: report.List[report.Problem]{{Message: err.Error()}}}
-	if sched != nil {
-		doc.Scheduler = jobsSchedulerRecord(sched)
-	}
+	doc.Scheduler = schedulerRecord(sched, "")
 	if werr := report.Write(cmd.OutOrStdout(), doc); werr != nil {
 		return werr
 	}
@@ -266,7 +270,10 @@ func jobsFailure(cmd *cobra.Command, sched scheduler.Scheduler, err error) error
 }
 
 func init() {
-	schedulerJobsCmd.Flags().BoolVar(&schedulerJobsTasks, "tasks", false, "List each task of an array as a row")
+	schedulerJobsCmd.Flags().BoolVar(&schedulerJobsTasks, "tasks", false, "List each task of an array")
+	schedulerJobsCmd.Flags().BoolVar(&schedulerJobsDetail, "detail", false, "Show each job in full")
+	schedulerJobsCmd.Flags().BoolVar(&schedulerJobsNoTrunc, "no-trunc", false, "Do not cut long values")
 	jsonFlag(schedulerJobsCmd.Flags(), &schedulerJobsJSON)
+	schedulerJobsCmd.MarkFlagsMutuallyExclusive("detail", "json")
 	addHostFlags(schedulerJobsCmd.Flags())
 }

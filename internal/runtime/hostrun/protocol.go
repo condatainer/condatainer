@@ -33,6 +33,7 @@ type request struct {
 	Argv     []string `json:"argv"`
 	Cwd      string   `json:"cwd"`
 	On       string   `json:"on,omitempty"`
+	Exe      string   `json:"exe,omitempty"`
 	StdinLen int      `json:"stdin_len"`
 }
 

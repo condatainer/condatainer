@@ -13,9 +13,14 @@ import (
 )
 
 var (
-	schedulerJobsTasks bool
-	schedulerJobsJSON  bool
+	schedulerJobsTasks   bool
+	schedulerJobsDetail  bool
+	schedulerJobsNoTrunc bool
+	schedulerJobsJSON    bool
 )
+
+// jobsTableWidth is the width the jobs table fits. Tests replace it.
+var jobsTableWidth = writerWidth
 
 var schedulerJobsCmd = &cobra.Command{
 	SilenceUsage: true, // Runtime errors should not show usage
@@ -37,6 +42,8 @@ The table has a row for each job. An array is one row with its tasks counted.
 In a cell:
 - A - is a figure the scheduler does not report.
 - inf in TIME means no limit.
+- A … ends a value cut to fit the terminal. Piped output is never cut.
+- --no-trunc keeps every value whole in a terminal.
 - An ID can also have the state notfound or unknown.
 
 One ID shows the job in full: a line for each fact the scheduler reported.
@@ -46,10 +53,11 @@ An array lists its tasks by state, and the IDs of the tasks that failed.`,
 	Example: `  condatainer scheduler jobs
   condatainer scheduler jobs align   # Jobs with "align" in the name
   condatainer scheduler jobs 245068  # One job in full, even after it ended
-  # Several jobs as rows
-  condatainer scheduler jobs 245068 245070
+  condatainer scheduler jobs 245068 245070     # Several jobs as rows
   condatainer scheduler jobs --tasks 245080
-  condatainer scheduler jobs --host  # Inside a container`,
+  condatainer scheduler jobs --detail
+  condatainer scheduler jobs --no-trunc
+  condatainer scheduler jobs --host            # Inside a container`,
 	RunE: runSchedulerJobs,
 }
 
@@ -211,7 +219,7 @@ func runSchedulerJobs(cmd *cobra.Command, args []string) error {
 	if len(ids) > 0 {
 		jobs, err = lister.LookupJobs(cmd.Context(), ids)
 	} else {
-		jobs, err = lister.ListJobs(cmd.Context(), scheduler.ListOptions{Full: schedulerJobsJSON})
+		jobs, err = lister.ListJobs(cmd.Context(), scheduler.ListOptions{Full: schedulerJobsJSON || schedulerJobsDetail})
 		jobs = selectJobs(jobs, nil, names)
 	}
 	if err != nil {
@@ -230,10 +238,19 @@ func runSchedulerJobs(cmd *cobra.Command, args []string) error {
 			doc.Jobs = append(doc.Jobs, jobRecord(j))
 		}
 		return report.Write(out, doc)
-	case len(ids) == 1 && len(jobs) == 1:
-		scheduler.WriteJobDetail(out, jobs[0])
+	case schedulerJobsDetail || (len(ids) == 1 && len(jobs) == 1):
+		for i, j := range jobs {
+			if i > 0 {
+				fmt.Fprintln(out)
+			}
+			scheduler.WriteJobDetail(out, j)
+		}
 	default:
-		scheduler.WriteJobTable(out, jobs, writerWidth(out))
+		width := jobsTableWidth(out)
+		if schedulerJobsNoTrunc {
+			width = 0
+		}
+		scheduler.WriteJobTable(out, jobs, width)
 	}
 	return nil
 }
@@ -253,7 +270,10 @@ func jobsFailure(cmd *cobra.Command, sched scheduler.Scheduler, err error) error
 }
 
 func init() {
-	schedulerJobsCmd.Flags().BoolVar(&schedulerJobsTasks, "tasks", false, "List each task of an array as a row")
+	schedulerJobsCmd.Flags().BoolVar(&schedulerJobsTasks, "tasks", false, "List each task of an array")
+	schedulerJobsCmd.Flags().BoolVar(&schedulerJobsDetail, "detail", false, "Show each job in full")
+	schedulerJobsCmd.Flags().BoolVar(&schedulerJobsNoTrunc, "no-trunc", false, "Do not cut long values")
 	jsonFlag(schedulerJobsCmd.Flags(), &schedulerJobsJSON)
+	schedulerJobsCmd.MarkFlagsMutuallyExclusive("detail", "json")
 	addHostFlags(schedulerJobsCmd.Flags())
 }

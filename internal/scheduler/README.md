@@ -123,6 +123,7 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
   - A failed call leaves the figures unreported and does not fail the listing.
 - A figure the scheduler gives as a minimum is reported as a lower bound, never as exact.
 - The JSON lists node types exactly. The table joins types whose memory is within 10%, so a few MB do not add a row.
+- The partition table never cuts a value. A GPU type is copied into a job request, so it stays whole.
 - A GPU type keeps the CPUs and memory of its own nodes.
   - A partition's own figures are the largest over its node types, so they do not describe a GPU node.
 - The JSON always lists every partition with its state.
@@ -137,6 +138,8 @@ Rules for every scheduler.
 - The model is scheduler-neutral, so another scheduler adds no command or table code.
   - A scheduler without it is refused by name. There is no half implementation.
 - Call counts are fixed, since each call loads the scheduler's server.
+- The table fits the terminal by cutting NAME, NODE and NOTE. `--no-trunc` and output that is not a terminal cut nothing.
+- A listing reads the times, log paths and process layout only for `--json` and `--detail`. The table does not show them.
 - A call runs without the user's defaults for that tool, with a standard time format.
   - They reshape the output, and no option switches each of them off.
   - This includes `sinfo`.

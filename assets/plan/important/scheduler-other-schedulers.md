@@ -1,8 +1,8 @@
 # SLURM is settled, other schedulers next
 
-Status: SLURM is implemented and checked on two real clusters.
+Status: SLURM is done and checked on two real clusters. The other schedulers are open.
 The feature is not promoted. It is under testing, and the user docs do not mention it.
-PBS, LSF and HTCondor have no `jobs`, job lookup or `cancel`. None has run on a real cluster.
+PBS, LSF and HTCondor have no `jobs`, job lookup, `cancel` or idle figures. None has run on a real cluster.
 
 This plan records what SLURM settled and what each other scheduler needs.
 Every line stays under 100 columns, so a terminal shows it without wrapping.
@@ -11,8 +11,11 @@ Every line stays under 100 columns, so a terminal shows it without wrapping.
 
 ### Commands of condatainer
 
-- `scheduler info`, `scheduler partitions [--cpu|--gpu]`.
-- `scheduler jobs [<id>...|<name>...] [--tasks] [--json]`: a table, or one job in full.
+- `scheduler info`, `scheduler partitions [--cpu|--gpu] [--all]`.
+- `scheduler jobs [<id>...|<name>...] [--tasks] [--detail] [--no-trunc] [--json]`.
+  - A table, or each job in full. One ID is in full without `--detail`.
+- `info`, `partitions`, `jobs` and `cancel` work inside a scheduled job. Only submission is off there.
+- The scheduler record of every JSON document has one `status`: `available`, `inside_job` or `not_found`.
 - `scheduler cancel <id>...|<name>... [-y] [--json]`.
 - A job of several ranks shows its layout: `2n x 4r x 2c`, or `8r x 2c` if the scheduler placed it.
   - Nodes and ranks per node show only when the user fixed the ranks per node.
@@ -21,7 +24,7 @@ Every line stays under 100 columns, so a terminal shows it without wrapping.
 
 | condatainer command | SLURM calls |
 |---|---|
-| `partitions` | one `sinfo -e -o <fields> --noheader` |
+| `partitions` | one `sinfo -e -o <fields> --noheader`, and one `sinfo -e -h -O` over the partitions with GPUs |
 | `jobs` | one `squeue --me -r -h -O <fixed-width fields>` |
 | `jobs <id>...` | one `squeue --me -r -h -t all -j <ids> --expand-patterns`, then one `sacct` |
 | `cancel` | one `squeue --me` listing, then one `scancel --me <ids>` |
@@ -54,8 +57,13 @@ Every line stays under 100 columns, so a terminal shows it without wrapping.
 - `sinfo -e` is always on. Without it the larger nodes of a mixed group are hidden.
 - The table joins types with the same CPUs and GPUs whose memory is within 10%.
   - The JSON and a partition's largest memory use the exact types.
-- The table shows the total nodes.
+- The table lists only partitions that are up. `--all` adds the rest, with AVAIL. The JSON lists all.
+- The table shows idle over total for nodes and CPUs, and the idle GPUs of each type.
+  - A node with any job is not idle, so idle CPUs are shown too.
   - `nodes_up` in the JSON counts nodes that are allocated or idle, not down or drained.
+  - The JSON also has `nodes_idle`, `cpus_idle`, `cpus_total` and `gpus[].idle`.
+  - Idle is a hint. Reservations, limits and shared nodes can keep a job waiting.
+- The partition table never cuts a value. A GPU type is copied into a job request.
 - A node type's CPUs are the node's total. A site may reserve some, so a fit can still be refused.
 - No node listing. Per-node diagnosis stays with the scheduler's own tools.
 - A per-job cap (a QOS, `resources_max`, `MEMLIMIT`) limits a job, not a node. It is not modelled.
@@ -67,6 +75,7 @@ Every line stays under 100 columns, so a terminal shows it without wrapping.
 - Help lines stay under 100 columns, with short bullets and no hard-wrapped sentences.
 - Help does not repeat what the flag list says. Example comments may.
 - A table on a terminal fits its width. `NAME`, `NODE` and `NOTE` shrink, to a minimum.
+  - `--no-trunc` turns that off.
 - IDs, states and the other columns are never cut.
 - `NODE` shows one host name, or `N nodes` for a job on several.
 - A table that is piped is never cut.
@@ -102,7 +111,7 @@ Every line stays under 100 columns, so a terminal shows it without wrapping.
   - An ID is `sent` unless the tool printed an error line that names it.
   - Output that names no ID it was given fails the whole call.
 - An array is read as one row per task, never as a range.
-  - It is shown as one row with counts.
+  - It is shown as one row with counts, and with what its waiting tasks wait for.
   - A task ID is the form `jobs` takes as an argument.
 - Resources are what the scheduler reports, never what condatainer asked for.
   - The request while a job waits, the allocation once it runs.
@@ -139,11 +148,12 @@ Every line stays under 100 columns, so a terminal shows it without wrapping.
 - `jobs --format FIELDS` and a `scheduler.jobs_format` setting.
 - Other users' jobs, and a listing of finished jobs (`sacct -X -S now-7days`, one call).
 - A start estimate for a pending job (`squeue --start`).
-- A `PARTITION` column in the table. A pending job lists many partitions. The JSON has them.
+- A `PARTITION` column in the table. A pending job lists many partitions. The JSON and `--detail` have them.
+- `jobs -o` to choose the columns. `--detail` and `--json` cover it.
 - Heterogeneous jobs (`#+#` IDs) have no special case. Each component is a row.
 - The limit on running tasks of an array (`%3`). The output of `-r` grows with the array.
 - Live usage of a running job (`sstat`).
-- Partitions: queue depth, idle CPUs, exact node sizes, and a GPU-type-first view.
+- Partitions: queue depth, exact node sizes, and a GPU-type-first view.
 - A check of a request against partition limits at submit time.
   - It would warn only, since limits miss QOS caps and reserved cores.
 
@@ -200,6 +210,7 @@ Confirm every command and field against the site's documentation and a probe bef
   - A site may use another name or none. Confirm it on a real cluster.
 - LSF does not link hosts to queues in these calls. HTCondor reports no GPU type.
 - A node type with no partition applies to every partition.
+- Idle nodes, CPUs and GPUs stay unset until a scheduler reports them. The table then leaves them out.
 - Open on LSF: whether `lshosts -gpu` without a host lists every host.
   - Whether `ncpus` matches what a job can use, and which memory unit the site prints.
 - Open on PBS and HTCondor: their output needs a run on a real cluster.

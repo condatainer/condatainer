@@ -34,7 +34,7 @@ var schedulerCmd = &cobra.Command{
 
 var errNoScheduler = errors.New("no job scheduler detected on this system")
 
-var errHostOnNeedsHost = errors.New("--host-on needs --host from inside a container, where it picks the node the command runs on")
+var errHostOnNeedsHost = errors.New("--host-on picks the node the command runs on, so it needs --host inside a container")
 
 func init() {
 	rootCmd.AddCommand(schedulerCmd)
@@ -43,7 +43,7 @@ func init() {
 
 // addHostFlags adds --host and --host-on to a member of the group.
 func addHostFlags(fs *pflag.FlagSet) {
-	fs.BoolVar(&schedulerHost, "host", false, "Run on the host through host-run (from inside a container)")
+	fs.BoolVar(&schedulerHost, "host", false, "Run on the host through host-run (inside a container)")
 	fs.StringVar(&schedulerHostOn, "host-on", "", "Node to run on: localhost, login or a node name (default: host_run.on)")
 }
 

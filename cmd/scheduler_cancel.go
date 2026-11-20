@@ -40,7 +40,7 @@ Arguments are all job IDs, or all name filters, as for jobs.
   condatainer scheduler cancel 245080_4      # One task
   condatainer scheduler cancel align         # Asks first
   condatainer scheduler cancel align -y
-  condatainer scheduler cancel 245068 --host # From inside a container`,
+  condatainer scheduler cancel 245068 --host # Inside a container`,
 	RunE: runSchedulerCancel,
 }
 

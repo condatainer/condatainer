@@ -13,7 +13,7 @@
   - That path is unavailable on a `nosuid` filesystem, or where the binary is not setuid, or where an admin disabled it.
 - `unshare --mount --user --map-root-user` does not use setuid at all.
   - It maps namespace-uid 0 to the caller, and the kernel grants capability inside a namespace nobody else can see.
-  - It works from a login shell or from inside a container, since each call creates a fresh namespace.
+  - It works from a login shell or from a container, since each call creates a fresh namespace.
 - Namespace root skips file permission checks, so a cleared write bit would not stop a FUSE server from opening an image read-write.
   - The FUSE process is started through `_mount_exec`, which drops `CAP_DAC_OVERRIDE` and `CAP_DAC_READ_SEARCH` from the bounding set first.
   - It keeps the rest, including the capability to mount.

@@ -72,7 +72,7 @@ var runJobFlagNames = map[string]bool{
 var (
 	errSubmitWithNoSubmit  = errors.New("--submit and --no-submit cannot be used together")
 	errSubmitNoScheduler   = errors.New("--submit needs a scheduler, and none is available (job submission is off or none was found)")
-	errSubmitOnNeedsSubmit = errors.New("--submit-on needs --submit from inside a container, where it picks the node the job is submitted from")
+	errSubmitOnNeedsSubmit = errors.New("--submit-on picks the node the job is submitted from, so it needs --submit inside a container")
 )
 
 // jobIDRe matches a single scheduler job ID.

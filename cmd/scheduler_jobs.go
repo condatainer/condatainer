@@ -49,7 +49,7 @@ An array lists its tasks by state, and the IDs of the tasks that failed.`,
   # Several jobs as rows
   condatainer scheduler jobs 245068 245070
   condatainer scheduler jobs --tasks 245080
-  condatainer scheduler jobs --host  # From inside a container`,
+  condatainer scheduler jobs --host  # Inside a container`,
 	RunE: runSchedulerJobs,
 }
 

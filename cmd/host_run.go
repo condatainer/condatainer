@@ -19,8 +19,8 @@ var (
 
 var hostRunCmd = &cobra.Command{
 	Use:   "host-run [flags] <command> [args...]",
-	Short: "Run a command on the host from inside a container",
-	Long: `Run a command on the host from inside a container.
+	Short: "Run a command on the host from a container",
+	Long: `Run a command on the host from a container.
 
 - The command runs on the host with your full user and group identity.
 - It starts in the current directory, which must exist on the host.
@@ -105,7 +105,7 @@ func runOnHost(ctx context.Context, argv []string, on, flag string) error {
 		Stderr: os.Stderr,
 	})
 	if err != nil {
-		return fmt.Errorf("%s from inside a container goes through host-run: %w", flag, err)
+		return fmt.Errorf("%s runs through host-run: %w", flag, err)
 	}
 	if code != 0 {
 		os.Exit(code)

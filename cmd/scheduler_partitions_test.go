@@ -95,15 +95,23 @@ func TestSelectPartitionsFiltersAndOrders(t *testing.T) {
 		}
 		return strings.Join(s, ",")
 	}
-	all, _ := selectPartitions(info, false, false)
-	if got := names(all); got != "cpu,gpu,old" {
-		t.Errorf("all = %s, want the partition that is not up last", got)
+	up, _ := selectPartitions(info, false, false, false)
+	if got := names(up); got != "cpu,gpu" {
+		t.Errorf("default = %s, want only the partitions that are up", got)
 	}
-	cpu, _ := selectPartitions(info, true, false)
+	all, _ := selectPartitions(info, false, false, true)
+	if got := names(all); got != "cpu,gpu,old" {
+		t.Errorf("--all = %s, want the partition that is not up last", got)
+	}
+	cpu, _ := selectPartitions(info, true, false, true)
 	if got := names(cpu); got != "cpu,old" {
+		t.Errorf("--cpu --all = %s", got)
+	}
+	cpuUp, _ := selectPartitions(info, true, false, false)
+	if got := names(cpuUp); got != "cpu" {
 		t.Errorf("--cpu = %s", got)
 	}
-	gpu, _ := selectPartitions(info, false, true)
+	gpu, _ := selectPartitions(info, false, true, false)
 	if got := names(gpu); got != "gpu" {
 		t.Errorf("--gpu = %s", got)
 	}
@@ -122,6 +130,36 @@ func (partitionLister) IsAvailable() bool                 { return true }
 func (partitionLister) IsInsideJob() bool                 { return true }
 func (p partitionLister) GetClusterInfo(context.Context) (*scheduler.ClusterInfo, error) {
 	return p.info, nil
+}
+
+// The JSON lists every partition with its state, so a script need not pass --all.
+func TestSchedulerPartitionsJSONListsPartitionsThatAreNotUp(t *testing.T) {
+	scheduler.SetActiveScheduler(partitionLister{info: &scheduler.ClusterInfo{Limits: []scheduler.ResourceLimits{
+		{Partition: "old", State: "down"}, {Partition: "cpu", State: "up"},
+	}}})
+	t.Cleanup(scheduler.ClearActiveScheduler)
+	schedulerPartitionsJSON = true
+	t.Cleanup(func() { schedulerPartitionsJSON = false })
+
+	c := schedulerPartitionsCmd
+	c.SetContext(context.Background())
+	var out bytes.Buffer
+	c.SetOut(&out)
+	if err := runSchedulerPartitions(c, nil); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Partitions []struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+		} `json:"partitions"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(doc.Partitions) != 2 || doc.Partitions[0].Name != "cpu" || doc.Partitions[1].Name != "old" || doc.Partitions[1].State != "down" {
+		t.Errorf("partitions = %+v, want cpu then old with its state", doc.Partitions)
+	}
 }
 
 // Listing partitions reads state and submits nothing, so it works inside a scheduled job.

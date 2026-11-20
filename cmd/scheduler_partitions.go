@@ -21,10 +21,10 @@ A partition has a row for each type of node in it.
 A type is a group of nodes with the same CPUs and GPUs.
 
 - A * after a partition name marks the default partition.
-- Partitions that are not up are listed last.
+- Only partitions that are up are listed. --all adds the rest, last.
 
 Columns:
-- AVAIL is whether the partition takes jobs.
+- AVAIL is whether the partition takes jobs. Shown only with --all.
 - NODES and IDLECPUS are idle over total, such as 3/20.
 - CPUS and MEM are per node.
 - MAXTIME is the longest one job can run.
@@ -41,6 +41,7 @@ Idle figures show only where the scheduler reports them.`,
 	Example: `  condatainer scheduler partitions
   condatainer scheduler partitions --gpu
   condatainer scheduler partitions --cpu
+  condatainer scheduler partitions --all
   condatainer scheduler partitions --host`,
 	RunE: runSchedulerPartitions,
 }
@@ -49,13 +50,14 @@ func init() {
 	jsonFlag(schedulerPartitionsCmd.Flags(), &schedulerPartitionsJSON)
 	schedulerPartitionsCmd.Flags().Bool("cpu", false, "Show only CPU-only partitions (no GPUs)")
 	schedulerPartitionsCmd.Flags().Bool("gpu", false, "Show only GPU partitions")
+	schedulerPartitionsCmd.Flags().Bool("all", false, "Also show partitions that are not up")
 	schedulerPartitionsCmd.MarkFlagsMutuallyExclusive("cpu", "gpu")
 	addHostFlags(schedulerPartitionsCmd.Flags())
 }
 
-// selectPartitions applies --cpu and --gpu and puts the partitions that are not up last,
+// selectPartitions applies --cpu and --gpu, drops the partitions that are not up unless all is set, and puts them last,
 // each group in the scheduler's order. It also returns the GPU types of each partition.
-func selectPartitions(info *scheduler.ClusterInfo, cpuOnly, gpuOnly bool) ([]scheduler.ResourceLimits, map[string][]scheduler.GpuInfo) {
+func selectPartitions(info *scheduler.ClusterInfo, cpuOnly, gpuOnly, all bool) ([]scheduler.ResourceLimits, map[string][]scheduler.GpuInfo) {
 	gpusByPartition := make(map[string][]scheduler.GpuInfo)
 	for _, gpu := range info.AvailableGpus {
 		name := scheduler.PartitionName(gpu.Partition)
@@ -68,7 +70,7 @@ func selectPartitions(info *scheduler.ClusterInfo, cpuOnly, gpuOnly bool) ([]sch
 		for _, t := range limit.NodeTypes {
 			hasGpu = hasGpu || len(t.Gpus) > 0
 		}
-		if (cpuOnly && hasGpu) || (gpuOnly && !hasGpu) {
+		if (cpuOnly && hasGpu) || (gpuOnly && !hasGpu) || (!all && !limit.IsUp()) {
 			continue
 		}
 		shown = append(shown, limit)
@@ -109,6 +111,7 @@ func runSchedulerPartitions(cmd *cobra.Command, args []string) error {
 	}
 	cpuOnly, _ := cmd.Flags().GetBool("cpu")
 	gpuOnly, _ := cmd.Flags().GetBool("gpu")
+	all, _ := cmd.Flags().GetBool("all")
 
 	sched, err := lookupQueryScheduler()
 
@@ -129,7 +132,7 @@ func runSchedulerPartitions(cmd *cobra.Command, args []string) error {
 				doc.Problems = append(doc.Problems, report.Problem{Message: "this scheduler reported no partitions"})
 				break
 			}
-			shown, gpus := selectPartitions(info, cpuOnly, gpuOnly)
+			shown, gpus := selectPartitions(info, cpuOnly, gpuOnly, true)
 			for _, limit := range shown {
 				doc.Partitions = append(doc.Partitions, partitionRecord(limit, gpus[scheduler.PartitionName(limit.Partition)]))
 			}
@@ -150,16 +153,23 @@ func runSchedulerPartitions(cmd *cobra.Command, args []string) error {
 		utils.PrintWarning("This scheduler reported no partitions")
 		return nil
 	}
-	shown, gpus := selectPartitions(info, cpuOnly, gpuOnly)
+	shown, gpus := selectPartitions(info, cpuOnly, gpuOnly, all)
 	if len(shown) == 0 {
-		if gpuOnly {
-			utils.PrintWarning("No GPU partitions available")
+		what := "partitions"
+		switch {
+		case gpuOnly:
+			what = "GPU partitions"
+		case cpuOnly:
+			what = "CPU-only partitions"
+		}
+		if all {
+			utils.PrintWarning("No %s available", what)
 		} else {
-			utils.PrintWarning("No CPU-only partitions available")
+			utils.PrintWarning("No %s are up. --all lists the rest", what)
 		}
 		return nil
 	}
 
-	scheduler.WritePartitionTable(os.Stdout, shown, gpus)
+	scheduler.WritePartitionTable(os.Stdout, shown, gpus, all)
 	return nil
 }

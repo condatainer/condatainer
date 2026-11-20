@@ -125,6 +125,7 @@ One interface over SLURM, PBS, LSF and HTCondor: submit, parse a script's direct
 - The JSON lists node types exactly. The table joins types whose memory is within 10%, so a few MB do not add a row.
 - A GPU type keeps the CPUs and memory of its own nodes.
   - A partition's own figures are the largest over its node types, so they do not describe a GPU node.
+- The JSON always lists every partition with its state.
 - A partition with no default is normal.
   - The site's submit plugin may choose one, so a job names no partition unless the user does.
 - LSF hosts and GPUs come from `lshosts`, not `bhosts`. This is untested on a real cluster.

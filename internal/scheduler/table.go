@@ -39,6 +39,7 @@ var partitionRightAligned = map[int]bool{2: true, 3: true, 4: true, 5: true, 6: 
 
 // Indexes of the columns that are left out when they say nothing.
 const (
+	availColumn    = 1
 	idleCpusColumn = 3
 	maxNodesColumn = 7
 	gpusColumn     = 8
@@ -285,22 +286,23 @@ func PartitionName(name string) string {
 // WritePartitionTable prints the partitions as one table, a row per node type.
 // gpusByPartition holds the GPU types of a partition whose scheduler reports no node types.
 // A partition that is not up has its state in red.
+//   - AVAIL is shown only when avail is set, for a listing that has partitions that are not up.
 //   - MAXNODES is left out when no partition limits the nodes of a job.
 //   - IDLECPUS is left out when the scheduler reports no idle CPUs.
 //   - GPUS reads "GPUS (idle)" when the scheduler reports idle GPUs, and a GPU type then ends in its idle number.
-func WritePartitionTable(w io.Writer, limits []ResourceLimits, gpusByPartition map[string][]GpuInfo) {
+func WritePartitionTable(w io.Writer, limits []ResourceLimits, gpusByPartition map[string][]GpuInfo, avail bool) {
 	var rows [][]string
 	style := map[[2]int]func(string) string{}
 	capped := false
 	for _, l := range limits {
-		if !l.IsUp() {
-			style[[2]int{len(rows), 1}] = utils.StyleError
+		if avail && !l.IsUp() {
+			style[[2]int{len(rows), availColumn}] = utils.StyleError
 		}
 		capped = capped || l.MaxNodes > 0
 		rows = append(rows, partitionRows(l, gpusByPartition[PartitionName(l.Partition)])...)
 	}
 
-	drop := map[int]bool{maxNodesColumn: !capped, idleCpusColumn: !slices.ContainsFunc(rows, func(row []string) bool {
+	drop := map[int]bool{availColumn: !avail, maxNodesColumn: !capped, idleCpusColumn: !slices.ContainsFunc(rows, func(row []string) bool {
 		return row[idleCpusColumn] != "" && row[idleCpusColumn] != "-"
 	})}
 	var header []string

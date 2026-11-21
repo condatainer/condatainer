@@ -93,8 +93,9 @@ func (s *srv) handleHelpersList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var resp []helperListEntry
+	port := s.requestPort(r)
 	for _, run := range out {
-		resp = append(resp, s.enrichRun(run))
+		resp = append(resp, s.enrichRun(run, port))
 	}
 	writeJSON(w, resp)
 }

@@ -51,7 +51,13 @@ func rewriteLocationResponse(target *url.URL) func(*http.Response) error {
 // stale entry from the registry; the watcher will then attempt to reopen it.
 func newReverseProxy(target *url.URL, transport http.RoundTripper, closeFunc func()) *httputil.ReverseProxy {
 	rp := &httputil.ReverseProxy{Rewrite: hostRewrite(target)}
-	rp.ModifyResponse = rewriteLocationResponse(target)
+	rewriteLocation := rewriteLocationResponse(target)
+	rp.ModifyResponse = func(resp *http.Response) error {
+		if err := rewriteLocation(resp); err != nil {
+			return err
+		}
+		return capCookiesResponse(resp)
+	}
 	rp.FlushInterval = -1 // flush immediately for streaming (R console, terminal)
 
 	if transport != nil {
@@ -75,7 +81,8 @@ type proxyEntry struct {
 	name string // helper script name (e.g. "code-server")
 	node string
 	port int
-	stop func() // closes the tunnel or exec relay; nil for a direct TCP entry
+	end  time.Time // when the run's walltime ends; zero when unknown
+	stop func()    // closes the tunnel or exec relay; nil for a direct TCP entry
 }
 
 // proxyRegistry caches one reverse-proxy per helper ID.
@@ -110,10 +117,10 @@ func isLocalHost(node string) bool {
 	return false
 }
 
-// Open creates (or returns existing) a reverse-proxy for the given helper.
+// Open creates (or returns existing) a reverse-proxy for the given helper. end is when the run's walltime ends, or zero.
 //   - Same-host and helper.connect=direct connect over TCP; otherwise the helper is reached through an SSH tunnel and/or the scheduler's exec into job jobID, as connect allows.
 //   - Dialing happens outside the registry lock, and concurrent Open() calls for the same ID are deduplicated via the pending set.
-func (r *proxyRegistry) Open(id, name, node string, port int, connect, jobID string) {
+func (r *proxyRegistry) Open(id, name, node string, port int, connect, jobID string, end time.Time) {
 	r.mu.Lock()
 	if _, ok := r.entries[id]; ok {
 		r.mu.Unlock()
@@ -139,7 +146,7 @@ func (r *proxyRegistry) Open(id, name, node string, port int, connect, jobID str
 		delete(r.pending, id)
 		if _, ok := r.entries[id]; !ok {
 			r.entries[id] = &proxyEntry{
-				rp: rp, name: name, node: node, port: port,
+				rp: rp, name: name, node: node, port: port, end: end,
 			}
 			delete(r.lastErrors, id)
 			delete(r.failures, id)
@@ -182,7 +189,7 @@ func (r *proxyRegistry) Open(id, name, node string, port int, connect, jobID str
 		stop()
 	}()
 
-	r.entries[id] = &proxyEntry{rp: rp, name: name, node: node, port: port, stop: stop}
+	r.entries[id] = &proxyEntry{rp: rp, name: name, node: node, port: port, end: end, stop: stop}
 	delete(r.lastErrors, id)
 	delete(r.failures, id)
 	r.log.Debug("server: proxy tunnel opened", "id", id, "node", node, "port", port, "took", took)
@@ -322,8 +329,10 @@ func (r *proxyRegistry) LastError(id string) string {
 // serveSubdomainProxy handles requests to {id}.localhost:{port} by forwarding to the helper's tunnel.
 //   - The full request path is forwarded as-is — no URL rewriting needed since the service is at the root of its own subdomain.
 //   - Lookup order: exact ID match first, then earliest submitted active instance by name (e.g. "code-server.localhost" → earliest submitted running code-server).
+//   - A cookie the helper sets through the ID link has its age capped. The name link keeps the helper's own ages.
 func (s *srv) serveSubdomainProxy(w http.ResponseWriter, r *http.Request, id string) {
 	entry := s.proxies.Get(id)
+	byID := entry != nil
 	if entry == nil {
 		entry = s.proxies.GetByName(id)
 	}
@@ -338,6 +347,10 @@ func (s *srv) serveSubdomainProxy(w http.ResponseWriter, r *http.Request, id str
 	// Store the original frontend Host so ModifyResponse can rewrite Location
 	// headers that apps (e.g. RStudio) emit using their own bound address.
 	ctx := context.WithValue(r.Context(), origHostKey{}, r.Host)
+	// Cookies set through an id link, which is never opened again, expire with the run.
+	if byID {
+		ctx = context.WithValue(ctx, cookieCapKey{}, idCookieCap(entry.end, time.Now()))
+	}
 	entry.rp.ServeHTTP(w, r.WithContext(ctx))
 }
 

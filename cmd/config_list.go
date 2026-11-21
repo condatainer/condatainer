@@ -70,16 +70,20 @@ var configListCmd = &cobra.Command{
 		}
 		fmt.Println()
 
-		fmt.Printf("%s %s\n", utils.StyleTitle("Helper Configuration:"), "helper.*")
-		printSection("helper")
-		fmt.Println()
-
 		fmt.Printf("%s %s\n", utils.StyleTitle("Build Configuration:"), "build.*")
 		printSection("build")
 		fmt.Println()
 
 		fmt.Printf("%s %s\n", utils.StyleTitle("Scheduler Configuration:"), "scheduler.*")
 		printSection("scheduler")
+		fmt.Println()
+
+		fmt.Printf("%s %s\n", utils.StyleTitle("Server Configuration:"), "server.*")
+		printSection("server")
+		fmt.Println()
+
+		fmt.Printf("%s %s\n", utils.StyleTitle("Helper Configuration:"), "helper.*")
+		printSection("helper")
 		fmt.Println()
 
 		// Show environment variable overrides

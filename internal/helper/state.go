@@ -356,21 +356,17 @@ func LoadHistory() ([]*HelperRun, error) {
 	return runs, scanner.Err()
 }
 
-// HistoryRetentionLimit is the maximum number of completed (non-active) entries
-// kept in history. Active entries are always preserved. 0 disables pruning.
-var HistoryRetentionLimit = 100
-
 // UpdateHistoryStatus rewrites the JSONL history, setting status and endedAt for the given ID.
 // endedAt should reflect when the job actually ended (e.g. the done-event timestamp or
 // StartedAt+Walltime for synthesised expiry), not merely when the server noticed.
-// Prunes old completed entries if HistoryRetentionLimit is set.
+// Prunes old completed entries when helper.history_limit is above 0.
 func UpdateHistoryStatus(id, status string, endedAt time.Time) error {
 	err := UpdateHistoryRun(id, func(r *HelperRun) {
 		r.Status = status
 		r.EndedAt = &endedAt
 	})
-	if err == nil && HistoryRetentionLimit > 0 {
-		_ = pruneHistory(HistoryRetentionLimit)
+	if limit := HistoryLimit(); err == nil && limit > 0 {
+		_ = pruneHistory(limit)
 	}
 	return err
 }

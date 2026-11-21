@@ -48,16 +48,24 @@ function _fireJobNotification(job) {
   });
 }
 
+let _jobsHTML = null; // the markup on screen, so a list that did not change is left alone
+
 function renderJobs() {
   const wrap = gid('job-list-wrap');
+  let html;
   if (!allJobs.length) {
-    wrap.innerHTML = '<div class="empty"><div>No active jobs.</div>' +
+    html = '<div class="empty"><div>No active jobs.</div>' +
       '<div class="empty-link"><a href="#" onclick="navigate(\'start\');return false;">Start a helper →</a></div></div>';
-    return;
+  } else {
+    const stableJobIds = oldestRunningJobIdsByName(allJobs);
+    html = '<div class="job-list">' + allJobs.map(j => jobCardHTML(j, stableJobIds)).join('') + '</div>';
   }
-  const stableJobIds = oldestRunningJobIdsByName(allJobs);
-  wrap.innerHTML = '<div class="job-list">' + allJobs.map(j => jobCardHTML(j, stableJobIds)).join('') + '</div>';
-  startWalltimeCountdowns();
+  if (html !== _jobsHTML) {
+    wrap.innerHTML = html;
+    _jobsHTML = html;
+    if (allJobs.length) startWalltimeCountdowns();
+  }
+  markSelected();
 }
 
 function oldestRunningJobIdsByName(jobs) {
@@ -93,7 +101,7 @@ function jobCardHTML(j, stableJobIds) {
   const lastMsg = j.last_message || '';
   const id      = escHtml(j.id);
   return (
-    '<div class="job-card" id="jcard-' + id + '" onclick="openDetail(\'' + id + '\')">' +
+    '<div class="job-card" id="jcard-' + id + '" tabindex="0" role="button" onclick="openDetail(' + jsArg(j.id) + ')">' +
       '<div class="jc-top">' +
         '<span class="jc-name">' + escHtml(j.name) + '</span>' +
         '<span class="badge ' + badgeClass(j.status) + '">' + escHtml(j.status) + '</span>' +
@@ -112,14 +120,14 @@ function jobCardHTML(j, stableJobIds) {
             '<a class="jc-link" href="' + escHtml(url) + '" target="_blank" title="' + escHtml(url) + '">' +
               '<span class="jc-link-text">' + escHtml(url) + '</span><span class="jc-link-ext">↗</span>' +
             '</a>' +
-            '<button class="btn btn-sm jc-icon-btn" onclick="copyStr(\'' + escHtml(url) + '\',this)" title="Copy URL">' + iconSvg('content_copy') + '</button>' +
+            '<button class="btn btn-sm jc-icon-btn" onclick="copyStr(' + jsArg(url) + ',this)" title="Copy URL">' + iconSvg('content_copy') + '</button>' +
             (stableURL
               ? '<a class="btn btn-sm jc-icon-btn" href="' + escHtml(stableURL) + '" target="_blank" title="' + escHtml(stableURL) + '">' + iconSvg('link_2') + '</a>'
               : '') +
           '</div>'
         : '') +
       '<div class="jc-stop-wrap" onclick="event.stopPropagation()">' +
-        '<button class="btn btn-danger btn-sm" onclick="stopJob(\'' + id + '\',this)">Stop</button>' +
+        '<button class="btn btn-danger btn-sm" onclick="stopJob(' + jsArg(j.id) + ',this)">Stop</button>' +
       '</div>' +
     '</div>'
   );
@@ -137,6 +145,7 @@ async function stopJob(id, btn) {
       ok = r.ok;
     } catch {}
 
+    _jobsHTML = null; // the button was changed by hand, so the list is built again
     await refreshJobs();
     if (detailJobId === id) closeDetail();
 
@@ -152,7 +161,11 @@ async function stopJob(id, btn) {
     btn.dataset.confirm = '1';
     btn.innerHTML = 'Confirm?';
     setTimeout(() => {
-      if (btn.dataset.confirm === '1') { btn.dataset.confirm = ''; btn.innerHTML = 'Stop'; }
+      if (btn.dataset.confirm === '1') {
+        btn.dataset.confirm = '';
+        btn.innerHTML = 'Stop';
+        renderJobs(); // refreshes that came during the confirm were held back
+      }
     }, 3000);
   }
 }
@@ -212,15 +225,34 @@ function refreshDetail() {
   else closeDetail();
 }
 
+// markSelected highlights the open job's card or row in the section on screen.
+// The Jobs list keeps a card for a running job while History is shown, so only
+// the active section is searched.
+function markSelected() {
+  document.querySelectorAll('.job-card,.data-table tbody tr').forEach(e => e.classList.remove('selected'));
+  const section = document.querySelector('.section.active');
+  if (!detailJobId || !section) return;
+  const item = Array.from(section.querySelectorAll('.job-card, tbody tr[data-id]'))
+    .find(e => (e.dataset.id || e.id.replace(/^jcard-/, '')) === detailJobId);
+  if (item) item.classList.add('selected');
+}
+
+// Enter or Space on a focused card or row opens its detail panel.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const item = e.target.closest && e.target.closest('.job-card, tbody tr[data-id]');
+  if (!item || e.target !== item) return;
+  e.preventDefault();
+  openDetail(item.dataset.id || item.id.replace(/^jcard-/, ''));
+});
+
 // renderDetail fills the detail panel's header, meta, resources, parameters and
 // buttons from job, and marks its card or row as selected.
 function renderDetail(job) {
   const id = job.id;
   const isRunning = job.status === 'running' || job.status === 'pending' || job.status === 'starting';
 
-  document.querySelectorAll('.job-card,.data-table tbody tr').forEach(e => e.classList.remove('selected'));
-  const card = gid('jcard-' + id) || document.querySelector('tr[data-id="' + id + '"]');
-  if (card) card.classList.add('selected');
+  markSelected();
 
   gid('d-title').textContent = job.name;
   gid('d-badge').innerHTML = '<span class="badge ' + badgeClass(job.status) + '">' + escHtml(job.status) + '</span>';

@@ -68,6 +68,7 @@ func TestRegisteredKeyNames(t *testing.T) {
 		"channels CNT_CONFIG_CHANNELS",
 		"default_distro CNT_CONFIG_DEFAULT_DISTRO",
 		"helper.connect CNT_CONFIG_HELPER_CONNECT",
+		"helper.history_limit CNT_CONFIG_HELPER_HISTORY_LIMIT",
 		"helper.notification CNT_CONFIG_HELPER_NOTIFICATION",
 		"home_override CNT_CONFIG_HOME_OVERRIDE",
 		"host_apptainer CNT_CONFIG_HOST_APPTAINER",

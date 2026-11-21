@@ -655,12 +655,12 @@ function renderHelperList(filter) {
   }
   list.innerHTML = helpers.map(h => {
     const isBookmarked = bookmarked.has(h.name);
-    return '<div class="h-item" data-name="' + escHtml(h.name) + '" onclick="selectHelper(\'' + escHtml(h.name) + '\')">' +
+    return '<div class="h-item" data-name="' + escHtml(h.name) + '" onclick="selectHelper(' + jsArg(h.name) + ')">' +
       '<div class="h-item-content">' +
         '<div class="h-item-name">' + escHtml(h.name) + '</div>' +
         '<div class="h-item-desc">'  + escHtml(h.description || '') + '</div>' +
       '</div>' +
-      '<button class="btn btn-icon btn-ghost h-item-star' + (isBookmarked ? ' starred' : '') + '" onclick="toggleHelperBookmark(\'' + escHtml(h.name) + '\',event)" title="' + (isBookmarked ? 'Remove bookmark' : 'Bookmark') + '">' +
+      '<button class="btn btn-icon btn-ghost h-item-star' + (isBookmarked ? ' starred' : '') + '" onclick="toggleHelperBookmark(' + jsArg(h.name) + ',event)" title="' + (isBookmarked ? 'Remove bookmark' : 'Bookmark') + '">' +
         iconSvg('star', null, isBookmarked) +
       '</button>' +
     '</div>';

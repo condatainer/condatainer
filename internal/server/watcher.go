@@ -315,7 +315,7 @@ func (w *watcher) pollHelper(id string) {
 				return
 			}
 			w.lastOpenAttempt[id] = time.Now()
-			go w.s.proxies.Open(id, inf.name, inf.node, inf.port, inf.connect, inf.jobID)
+			go w.s.proxies.Open(id, inf.name, inf.node, inf.port, inf.connect, inf.jobID, endOf(inf.startedAt, inf.walltime))
 		}
 	}
 
@@ -324,7 +324,7 @@ func (w *watcher) pollHelper(id string) {
 		walltime := time.Duration(rs.WalltimeSec) * time.Second
 		if inf, ok := w.info[id]; ok {
 			if rs.Port > 0 && w.s.proxies.Get(id) == nil {
-				go w.s.proxies.Open(id, inf.name, rs.Node, rs.Port, inf.connect, inf.jobID)
+				go w.s.proxies.Open(id, inf.name, rs.Node, rs.Port, inf.connect, inf.jobID, endOf(rs.Timestamp, walltime))
 			}
 			// Update cached info with actual start time, walltime, and service address from the ready event.
 			// connect is preserved from the initial history entry (set at submission time).
@@ -343,6 +343,14 @@ func (w *watcher) pollHelper(id string) {
 		_ = helper.UpdateHistoryRun(id, func(run *helper.HelperRun) { run.ApplyReady(rs) })
 		invalidateHistoryCache()
 	}
+}
+
+// endOf is start plus walltime, or zero when the walltime is unknown.
+func endOf(start time.Time, walltime time.Duration) time.Time {
+	if walltime <= 0 {
+		return time.Time{}
+	}
+	return start.Add(walltime)
 }
 
 // applyStart records the node a helper's job started on and moves a pending run to starting.
@@ -503,7 +511,7 @@ func (w *watcher) restoreExisting() {
 		if err != nil || rs == nil || rs.Port == 0 {
 			continue
 		}
-		w.s.proxies.Open(r.ID, r.Name, rs.Node, rs.Port, r.Connect, r.JobID)
+		w.s.proxies.Open(r.ID, r.Name, rs.Node, rs.Port, r.Connect, r.JobID, endOf(rs.Timestamp, time.Duration(rs.WalltimeSec)*time.Second))
 		logging.FromContext(w.s.ctx).Debug("server: restored tunnel", "id", r.ID, "node", rs.Node, "port", rs.Port)
 	}
 }

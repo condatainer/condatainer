@@ -3,8 +3,11 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/condatainer/condatainer/internal/config"
@@ -49,10 +52,30 @@ func fmtUptime(since time.Time) string {
 	return fmt.Sprintf("%dd %dh", days, h)
 }
 
-// enrichRun wraps a HelperRun with computed fields using the server's port.
-func (s *srv) enrichRun(run *helper.HelperRun) helperListEntry {
+// requestPort is the port the client used to reach the server, read from the Host header.
+//   - It differs from the listening port when a forward maps another local port to it.
+//   - A Host without a port means the HTTP default, 80. An empty or unreadable Host gives the listening port.
+func (s *srv) requestPort(r *http.Request) int {
+	if r.Host == "" {
+		return s.port
+	}
+	_, portText, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		if strings.Contains(r.Host, ":") {
+			return s.port
+		}
+		return 80
+	}
+	if n, err := strconv.Atoi(portText); err == nil && n > 0 && n < 65536 {
+		return n
+	}
+	return s.port
+}
+
+// enrichRun wraps a HelperRun with computed fields. The access URL uses port, the one the client reached the server on.
+func (s *srv) enrichRun(run *helper.HelperRun, port int) helperListEntry {
 	e := helperListEntry{HelperRun: *run}
-	e.AccessURL = run.AccessURL(s.port)
+	e.AccessURL = run.AccessURL(port)
 	if est := run.EstimatedEnd(); !est.IsZero() {
 		e.EndsAtMs = est.UnixMilli()
 	}

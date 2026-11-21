@@ -5,6 +5,12 @@ function escHtml(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// jsArg writes a value as a JavaScript string argument inside an inline handler
+// attribute, whatever quotes or backslashes the value holds.
+function jsArg(v) {
+  return escHtml(JSON.stringify(String(v == null ? '' : v)));
+}
+
 // A node name up to its first dot, for display. An IPv4 address stays whole.
 function shortNode(node) {
   if (!node || /^[\d.]+$/.test(node)) return node || '';
@@ -242,7 +248,10 @@ function _applyHash() {
     // The lists these act on load asynchronously — retry briefly.
     if (section === 'jobs' || section === 'history') {
       _tryUntil(() => {
-        if (!allJobs.some(j => j.id === arg) && !allHistory.some(j => j.id === arg)) return false;
+        if (!allJobs.some(j => j.id === arg) && !allHistory.some(j => j.id === arg)) {
+          if (section === 'history' && historyHasMore()) loadAllHistory(); // the run may be on a later page
+          return false;
+        }
         openDetail(arg);
         return true;
       });

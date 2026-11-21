@@ -40,8 +40,8 @@ function renderOverlays(filter) {
       '<td class="mono td-muted td-fit">' + fmtSize(o.size) + '</td>' +
       '<td class="mono path-cell td-muted">' + pathTailHtml(o.path) + '</td>' +
       '<td class="td-nowrap td-fit">' +
-        '<button class="btn btn-sm btn-flat btn-icon" onclick="copyStr(\'' + escHtml(o.path) + '\',this)" title="Copy path">' + iconSvg('content_copy') + '</button>' +
-        ' <button class="btn btn-sm btn-flat btn-icon btn-icon-danger" onclick="deleteOverlay(\'' + escHtml(o.path) + '\',\'' + escHtml(o.name) + '\')" title="Delete overlay">' + iconSvg('delete') + '</button>' +
+        '<button class="btn btn-sm btn-flat btn-icon" onclick="copyStr(' + jsArg(o.path) + ',this)" title="Copy path">' + iconSvg('content_copy') + '</button>' +
+        ' <button class="btn btn-sm btn-flat btn-icon btn-icon-danger" onclick="deleteOverlay(' + jsArg(o.path) + ',' + jsArg(o.name) + ')" title="Delete overlay">' + iconSvg('delete') + '</button>' +
       '</td>' +
     '</tr>'
   ).join('');
@@ -103,7 +103,7 @@ async function loadProjectPins() {
   } catch { /* shown as empty */ }
   list.innerHTML = pins.length
     ? pins.map(p =>
-        '<div class="modal-row" onclick="selectPinnedOverlay(\'' + escHtml(p.path) + '\',\'' + escHtml(p.name) + '\')">' +
+        '<div class="modal-row" onclick="selectPinnedOverlay(' + jsArg(p.path) + ',' + jsArg(p.name) + ')">' +
           '<span class="modal-row-icon">' + iconSvg('hexagon') + '</span>' +
           '<span class="modal-row-name fw-bold">' + escHtml(p.name) + '<span class="td-muted">@' + escHtml(p.ident) + '</span></span>' +
           '<span class="modal-row-sel"><button class="btn btn-sm btn-primary">Select</button></span>' +
@@ -126,7 +126,7 @@ function filterAppOverlays(q) {
   const hits   = terms.length ? sqfOvs.filter(o => matchesAllTerms(o.name, terms)) : sqfOvs;
   gid('op-app-list').innerHTML = hits.length
     ? hits.map(o =>
-        '<div class="modal-row" onclick="selectOverlay(\'' + escHtml(o.path) + '\')">' +
+        '<div class="modal-row" onclick="selectOverlay(' + jsArg(o.path) + ')">' +
           '<span class="modal-row-icon">' + iconSvg('hexagon') + '</span>' +
           '<span class="modal-row-name fw-bold">' + escHtml(o.name) + '</span>' +
           '<span class="modal-row-size mono">' + fmtSize(o.size) + '</span>' +
@@ -150,7 +150,7 @@ async function opFileNavigate(path) {
     const files = entries.filter(e => !e.is_dir && e.name.endsWith('.sqf'));
     gid('op-file-list').innerHTML =
       dirs.map(d =>
-        '<div class="modal-row" onclick="opFileNavigate(\'' + escHtml(d.path) + '\')">' +
+        '<div class="modal-row" onclick="opFileNavigate(' + jsArg(d.path) + ')">' +
           '<span class="modal-row-icon">' + iconSvg('folder', 'icon-folder', true) + '</span>' +
           '<span class="modal-row-name">' + escHtml(d.name) + '</span>' +
           '<span class="modal-row-sel">' + iconSvg('chevron_right') + '</span>' +
@@ -158,11 +158,11 @@ async function opFileNavigate(path) {
       ).join('') +
       (files.length
         ? files.map(f =>
-            '<div class="modal-row" onclick="selectExternalOverlay(\'' + escHtml(f.path) + '\')">' +
+            '<div class="modal-row" onclick="selectExternalOverlay(' + jsArg(f.path) + ')">' +
               '<span class="modal-row-icon">' + iconSvg('draft') + '</span>' +
               '<span class="modal-row-name">' + escHtml(f.name) + '</span>' +
               '<span class="modal-row-size mono">' + fmtSize(f.size) + '</span>' +
-              '<span class="modal-row-sel"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();selectExternalOverlay(\'' + escHtml(f.path) + '\')">Select</button></span>' +
+              '<span class="modal-row-sel"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();selectExternalOverlay(' + jsArg(f.path) + ')">Select</button></span>' +
             '</div>'
           ).join('')
         : (!dirs.length ? '<div class="modal-empty">No .sqf files here.</div>' : ''));

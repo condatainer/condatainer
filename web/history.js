@@ -8,6 +8,21 @@ document.addEventListener('jobs:changed', () => {
 // renderHistory renders the history table, keeping only entries that match
 // every whitespace-separated term of filter (across name/label/status/node/cwd).
 let _histHTML = null; // the markup on screen, so a table that did not change is left alone
+let _histObserver = null;
+
+// _observeHistoryMore loads the next page when the last row, the "Loading…" row, scrolls into view.
+function _observeHistoryMore() {
+  const sentinel = gid('hist-more');
+  if (!sentinel) return;
+  if (typeof IntersectionObserver === 'undefined') { loadAllHistory(); return; }
+  if (!_histObserver) {
+    _histObserver = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) loadMoreHistory();
+    });
+  }
+  _histObserver.disconnect();
+  _histObserver.observe(sentinel);
+}
 
 function renderHistory(filter) {
   const terms = searchTerms(filter);
@@ -25,8 +40,11 @@ function renderHistory(filter) {
     return bt - at;
   });
   const tbody = gid('hist-tbody');
+  const more = historyHasMore();
+  if (q && more) loadAllHistory(); // a search looks at every page
+  const moreRow = more ? '<tr id="hist-more"><td colspan="6" class="td-empty">Loading…</td></tr>' : '';
   let html;
-  if (!rows.length) {
+  if (!rows.length && !more) {
     html = '<tr><td colspan="6" class="td-empty">' +
       (q ? 'No matches.' : 'No history yet.') + '</td></tr>';
   } else html = rows.map(h => {
@@ -48,10 +66,11 @@ function renderHistory(filter) {
         '</td>' +
       '</tr>'
     );
-  }).join('');
+  }).join('') + moreRow;
   if (html !== _histHTML) {
     tbody.innerHTML = html;
     _histHTML = html;
+    _observeHistoryMore();
   }
   markSelected();
 }
@@ -66,9 +85,10 @@ function isActiveHistoryStatus(status) {
 // after confirmation (DELETE /api/helpers/finished).
 async function clearFinishedHistory() {
   const finished = allHistory.filter(h => !isActiveHistoryStatus(h.status));
-  if (!finished.length) return;
-  const ok = await askConfirm('Remove ' + finished.length + ' finished ' +
-    (finished.length === 1 ? 'entry' : 'entries') + ' from history? ' +
+  const total = Math.max(historyTotal, finished.length); // the server removes every finished run, loaded or not
+  if (!total) return;
+  const ok = await askConfirm('Remove ' + total + ' finished ' +
+    (total === 1 ? 'entry' : 'entries') + ' from history? ' +
     'This cannot be undone.',
     { title: 'Clear finished history', okLabel: 'Clear' });
   if (!ok) return;
@@ -120,7 +140,7 @@ async function removeHistoryEntry(ev, id, btn) {
       return;
     }
     if (detailJobId === id) closeDetail();
-    allHistory = allHistory.filter(h => h.id !== id);
+    forgetHistoryRun(id);
     renderHistory(gid('hist-search').value);
   } catch (e) {
     btn.disabled = false;

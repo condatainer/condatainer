@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/condatainer/condatainer/internal/helper"
 )
@@ -66,39 +69,112 @@ func TestHelperListLinkUsesTheRequestPort(t *testing.T) {
 	}
 }
 
-// The helper list holds every run the history keeps, so the History tab shows what is on disk. A caller can still ask for fewer.
-func TestHelperListHasNoDefaultCut(t *testing.T) {
+// listHelpers calls the helper list with a request target and decodes the reply.
+func listHelpers(t *testing.T, s *srv, target string) ([]helperListEntry, *httptest.ResponseRecorder) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	s.handleHelpersList(w, httptest.NewRequest("GET", target, nil))
+	var got []helperListEntry
+	if w.Code == 200 {
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%s: %v: %s", target, err, w.Body.String())
+		}
+	}
+	return got, w
+}
+
+func finishedIDs(list []helperListEntry) []string {
+	var ids []string
+	for _, e := range list {
+		if !isActiveRunStatus(e.Status) {
+			ids = append(ids, e.ID)
+		}
+	}
+	return ids
+}
+
+// The helper list holds every active run and one page of finished runs, the last ended first. A cursor continues after the last run a caller has.
+func TestHelperListPagesFinishedRuns(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	invalidateHistoryCache()
 	t.Cleanup(invalidateHistoryCache)
-	if err := helper.AppendHistory(&helper.HelperRun{ID: "long-running", Name: "svc", Port: 9000, Status: "running"}); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 150; i++ {
-		id := fmt.Sprintf("done-%03d", i)
-		if err := helper.AppendHistory(&helper.HelperRun{ID: id, Name: "svc", Status: "done"}); err != nil {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 123456789, time.UTC)
+	add := func(id, status string, ended time.Time) {
+		run := &helper.HelperRun{ID: id, Name: "svc", Port: 9000, Status: status}
+		if status == "done" {
+			run.EndedAt = &ended
+		}
+		if err := helper.AppendHistory(run); err != nil {
 			t.Fatal(err)
 		}
 	}
+	add("long-running", "running", time.Time{})
+	for i := 0; i < 120; i++ {
+		add(fmt.Sprintf("done-%03d", i), "done", base.Add(time.Duration(i)*time.Second))
+	}
+	tie := base.Add(500 * time.Second)
+	add("tie-a", "done", tie)
+	add("tie-b", "done", tie)
 	s := &srv{ctx: context.Background(), port: 13182}
 	s.watcher = newWatcher(s)
 
-	for _, tc := range []struct {
-		target string
-		want   int
-	}{
-		{"/api/helpers", 151},
-		{"/api/helpers?limit=10", 10},
-		{"/api/helpers?status=active", 1},
-	} {
-		w := httptest.NewRecorder()
-		s.handleHelpersList(w, httptest.NewRequest("GET", tc.target, nil))
-		var got []helperListEntry
-		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-			t.Fatalf("%s: %v", tc.target, err)
+	first, w := listHelpers(t, s, "/api/helpers")
+	if len(first) != 51 || first[0].ID != "long-running" {
+		t.Fatalf("first page = %d entries starting %q, want the active run and 50 finished", len(first), first[0].ID)
+	}
+	if got := w.Header().Get("X-Total-Count"); got != "122" {
+		t.Errorf("X-Total-Count = %q, want 122", got)
+	}
+	if ids := finishedIDs(first); ids[0] != "tie-b" || ids[1] != "tie-a" || ids[2] != "done-119" {
+		t.Errorf("finished runs start %v, want the last ended first and the tie by id", ids[:3])
+	}
+
+	seen := map[string]bool{}
+	var pages []int
+	list := first
+	for {
+		ids := finishedIDs(list)
+		for _, id := range ids {
+			if seen[id] {
+				t.Fatalf("%s listed twice", id)
+			}
+			seen[id] = true
 		}
-		if len(got) != tc.want {
-			t.Errorf("%s: %d entries, want %d", tc.target, len(got), tc.want)
+		pages = append(pages, len(ids))
+		last := list[len(list)-1]
+		if len(ids) < 50 {
+			break
 		}
+		target := fmt.Sprintf("/api/helpers?before=%s&before_id=%s", url.QueryEscape(last.EndedAt.Format(time.RFC3339Nano)), last.ID)
+		list, _ = listHelpers(t, s, target)
+		for _, e := range list {
+			if e.ID == "long-running" {
+				t.Fatal("a page after the first repeats an active run")
+			}
+		}
+	}
+	if len(seen) != 122 || !slices.Equal(pages, []int{50, 50, 22}) {
+		t.Errorf("pages = %v, finished seen = %d, want 50, 50, 22 and 122", pages, len(seen))
+	}
+
+	if got, _ := listHelpers(t, s, "/api/helpers?limit=10"); len(got) != 11 {
+		t.Errorf("limit=10: %d entries, want the active run and 10", len(got))
+	}
+	if got, w := listHelpers(t, s, "/api/helpers?status=active"); len(got) != 1 || w.Header().Get("X-Total-Count") != "0" {
+		t.Errorf("status=active: %d entries, total %q, want only the active run and 0", len(got), w.Header().Get("X-Total-Count"))
+	}
+
+	// A cursor needs no entry to exist.
+	missing := fmt.Sprintf("/api/helpers?limit=1&before=%s&before_id=zzz-pruned", url.QueryEscape(base.Add(100*time.Second).Format(time.RFC3339Nano)))
+	if got, _ := listHelpers(t, s, missing); len(got) != 1 || got[0].ID != "done-100" {
+		t.Errorf("cursor on a pruned run gave %v, want done-100", finishedIDs(got))
+	}
+	// A tie continues after the run the caller has.
+	afterTie := fmt.Sprintf("/api/helpers?limit=1&before=%s&before_id=tie-b", url.QueryEscape(tie.Format(time.RFC3339Nano)))
+	if got, _ := listHelpers(t, s, afterTie); len(got) != 1 || got[0].ID != "tie-a" {
+		t.Errorf("after tie-b gave %v, want tie-a", finishedIDs(got))
+	}
+	if _, w := listHelpers(t, s, "/api/helpers?before=yesterday"); w.Code != 400 {
+		t.Errorf("a bad before gave %d, want 400", w.Code)
 	}
 }

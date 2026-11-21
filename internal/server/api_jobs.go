@@ -55,11 +55,49 @@ func invalidateHistoryCache() {
 	notifyJobsChanged()
 }
 
-// handleHelpersList serves GET /api/helpers?q=&limit=&status=
-// It lists every matching run, newest first, unless the caller sends a limit.
+// historyPageSize is how many finished runs one reply of the helper list holds, unless the caller sends limit.
+const historyPageSize = 50
+
+// endedOf is when a run ended. A run with no end time sorts last.
+func endedOf(r *helper.HelperRun) time.Time {
+	if r.EndedAt == nil {
+		return time.Time{}
+	}
+	return *r.EndedAt
+}
+
+// endedAfter orders finished runs the way the History table shows them: ended last first, then id.
+func endedAfter(a, b *helper.HelperRun) bool {
+	if ae, be := endedOf(a), endedOf(b); !ae.Equal(be) {
+		return ae.After(be)
+	}
+	return a.ID > b.ID
+}
+
+// handleHelpersList serves GET /api/helpers?q=&status=&limit=&before=&before_id=
+//   - The reply holds every active run, newest first, then one page of finished runs, the last ended first.
+//   - A page is historyPageSize finished runs, or limit when the caller sends it.
+//   - before and before_id are the ended time (RFC 3339) and id of the last finished run the caller has. The reply then holds only the finished runs after it.
+//   - X-Total-Count is the number of finished runs that match, before paging.
+//   - status=active lists the active runs only.
 func (s *srv) handleHelpersList(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
-	status := r.URL.Query().Get("status")
+	query := r.URL.Query()
+	q := query.Get("q")
+	status := query.Get("status")
+
+	limit := historyPageSize
+	if n, err := strconv.Atoi(query.Get("limit")); err == nil && n > 0 {
+		limit = n
+	}
+	var cursor *helper.HelperRun
+	if before := query.Get("before"); before != "" {
+		ended, err := time.Parse(time.RFC3339Nano, before)
+		if err != nil {
+			http.Error(w, "before must be an RFC 3339 time", http.StatusBadRequest)
+			return
+		}
+		cursor = &helper.HelperRun{ID: query.Get("before_id"), EndedAt: &ended}
+	}
 
 	runs, err := cachedLoadHistory()
 	if err != nil {
@@ -67,14 +105,7 @@ func (s *srv) handleHelpersList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 0
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 {
-			limit = n
-		}
-	}
-
-	var out []*helper.HelperRun
+	var active, finished []*helper.HelperRun
 	for i := len(runs) - 1; i >= 0; i-- {
 		run := runs[i]
 		if status == "active" {
@@ -87,15 +118,26 @@ func (s *srv) handleHelpersList(w http.ResponseWriter, r *http.Request) {
 		if q != "" && !strings.Contains(run.Name, q) && !strings.Contains(run.CWD, q) {
 			continue
 		}
-		out = append(out, run)
-		if limit > 0 && len(out) >= limit {
-			break
+		if isActiveRunStatus(run.Status) {
+			active = append(active, run)
+		} else {
+			finished = append(finished, run)
 		}
 	}
+	sort.SliceStable(finished, func(i, j int) bool { return endedAfter(finished[i], finished[j]) })
+	w.Header().Set("X-Total-Count", strconv.Itoa(len(finished)))
 
-	var resp []helperListEntry
+	if cursor != nil {
+		active = nil
+		finished = finished[sort.Search(len(finished), func(i int) bool { return endedAfter(cursor, finished[i]) }):]
+	}
+	if len(finished) > limit {
+		finished = finished[:limit]
+	}
+
+	resp := make([]helperListEntry, 0, len(active)+len(finished))
 	port := s.requestPort(r)
-	for _, run := range out {
+	for _, run := range append(active, finished...) {
 		resp = append(resp, s.enrichRun(run, port))
 	}
 	writeJSON(w, resp)

@@ -248,7 +248,10 @@ function _applyHash() {
     // The lists these act on load asynchronously — retry briefly.
     if (section === 'jobs' || section === 'history') {
       _tryUntil(() => {
-        if (!allJobs.some(j => j.id === arg) && !allHistory.some(j => j.id === arg)) return false;
+        if (!allJobs.some(j => j.id === arg) && !allHistory.some(j => j.id === arg)) {
+          if (section === 'history' && historyHasMore()) loadAllHistory(); // the run may be on a later page
+          return false;
+        }
         openDetail(arg);
         return true;
       });

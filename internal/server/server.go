@@ -76,7 +76,7 @@ func RunDaemon(port int, reportPipe *os.File, watchPID int) error {
 		ctx:       ctx,
 		brokers:   newBrokerRegistry(),
 		proxies:   newProxyRegistry(logger),
-		tokens:    newTokenStore(config.GetServerTokenPath(), logger),
+		tokens:    newTokenStore(config.GetServerTokenPath(), logger, keyTokenDays.Get),
 	}
 	s.watcher = newWatcher(s)
 	if keyRequireToken.Get() {

@@ -16,4 +16,18 @@ var (
 	keyRequireToken = settings.Bool("server.require_token",
 		settings.Default(true), settings.Order(3),
 		settings.Help("The dashboard asks for its token. Turn off only on a host that no other user can reach."))
+
+	keyTokenDays = settings.Days("server.token_days",
+		settings.Default(30), settings.Min(0), settings.Order(4),
+		settings.Help("Days before the dashboard token is replaced and every browser signs in again. 0 never replaces it."),
+		settings.Suggest("7", "30", "90", "0"))
 )
+
+func init() {
+	keyTokenDays.SetShow(func(stored string) string {
+		if stored == "0" {
+			return "0 (disabled)"
+		}
+		return stored + "d"
+	})
+}

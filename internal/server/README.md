@@ -12,8 +12,15 @@ The dashboard HTTP server and the reverse proxy to helper services.
 - The listening port is open to every user of the login node, so every request needs the owner's token, for every route and every helper.
 - The token is one file per user, `server.token` in the state directory, mode 0600. A server never passes it as an argument.
   - It outlives every server. Login nodes that share a home share the token.
-  - A running server reads the file again at least every 3 seconds while it serves requests, and at once when a request does not match. It does not watch the file, because another node's write on NFS raises no event.
+  - A running server starts a read of the file at least every 3 seconds while it serves requests, and when a request does not match. It does not watch the file, because another node's write on NFS raises no event.
   - A file that is missing, short, has other characters than letters, digits and `. _ ~ -`, or is readable by group or others is not used. The server keeps the token it has. A starting server stops.
+- The token is replaced after `server.token_days` days, 30 by default. The age is the modification time of the file, so a hand edit and `--rotate-token` both reset it.
+  - A running server and a starting server both replace an old token. Every browser then signs in again.
+  - A node reads the file again before it writes. If another node already replaced the token, it takes that one. Two nodes that replace together each write a token, and the last wins.
+  - `server.token_days` is the age of the token, not of a browser's cookie.
+  - The age is read from the open file, not from a `stat`, because NFS can serve a stat from its attribute cache.
+  - The read runs in the background, outside the lock, one at a time. A request is judged by the token in memory, so a stalled NFS read never holds up a request.
+  - A request that does not match waits up to 1 second for the read it started, so a token just written works at once. After that it gets 401.
 - A sign-in link carries `?cnt_token=`. The server sets a cookie for that host and redirects to the URL without it.
   - The parameter is not `token`, because a helper app puts its own `token` in its links.
   - The cookie is `cnt_token_{port}` with the port the browser used, so two forwarded servers on one host keep apart.

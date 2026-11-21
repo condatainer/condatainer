@@ -16,11 +16,21 @@ var serverStartCmd = &cobra.Command{
 	Long: `Start the dashboard server in the background.
 
 - By default the server exits when your SSH session ends.
-- --daemon keeps it running.`,
+- --daemon keeps it running.
+- --rotate-token replaces the dashboard token.
+- The token is in ~/.local/state/condatainer/server.token.
+- You may write your own token there.
+- It needs 16 or more of A-Z a-z 0-9 . _ ~ - and mode 600.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 		if err := requireLoginNode(cmd); err != nil {
 			return err
+		}
+
+		if serverStartRotateToken {
+			if err := rotateServerToken(); err != nil {
+				return err
+			}
 		}
 
 		port := serverStartPort
@@ -56,9 +66,12 @@ var serverStartCmd = &cobra.Command{
 var (
 	serverStartPort   int
 	serverStartDaemon bool
+
+	serverStartRotateToken bool
 )
 
 func init() {
 	serverStartCmd.Flags().IntVarP(&serverStartPort, "port", "p", 0, "Port to listen on (remembered for the next start)")
 	serverStartCmd.Flags().BoolVar(&serverStartDaemon, "daemon", false, "Keep running after SSH logout")
+	serverStartCmd.Flags().BoolVar(&serverStartRotateToken, "rotate-token", false, "Replace the dashboard token")
 }

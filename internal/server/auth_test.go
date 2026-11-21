@@ -40,7 +40,7 @@ func newAuthServer(t *testing.T) *authServer {
 		port:    testPort,
 		ctx:     context.Background(),
 		proxies: newProxyRegistry(log),
-		tokens:  newTokenStore(filepath.Join(t.TempDir(), "server.token"), log),
+		tokens:  newTokenStore(filepath.Join(t.TempDir(), "server.token"), log, never),
 	}
 	s.proxies.entries["code-20260101-000000"] = &proxyEntry{
 		rp:   newReverseProxy(target, nil, func() {}),
@@ -51,7 +51,7 @@ func newAuthServer(t *testing.T) *authServer {
 		t.Fatal(err)
 	}
 	a.s = s
-	a.token, _ = readTokenFile(s.tokens.path)
+	a.token, _, _ = readTokenFile(s.tokens.path)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("dash")) }) //nolint:errcheck
 	a.h = s.requireToken(s.hostDispatch(mux))
@@ -187,7 +187,7 @@ func TestProxyKeepsTheServersCookieAndTokenFromTheHelper(t *testing.T) {
 func TestTokenOffLetsEveryRouteThroughAndCreatesNoFile(t *testing.T) {
 	a := newAuthServer(t)
 	path := filepath.Join(t.TempDir(), "never.token")
-	a.s.tokens = newTokenStore(path, quietLog())
+	a.s.tokens = newTokenStore(path, quietLog(), never)
 	settingstest.Override(t, "server.require_token", "false")
 	if rec := a.do("localhost:44449", "/api/status"); rec.Code != http.StatusOK {
 		t.Errorf("status %d with the token off, want 200", rec.Code)
@@ -195,7 +195,7 @@ func TestTokenOffLetsEveryRouteThroughAndCreatesNoFile(t *testing.T) {
 	if rec := a.do("code-20260101-000000.localhost:44449", "/"); rec.Code != http.StatusOK {
 		t.Errorf("helper status %d with the token off, want 200", rec.Code)
 	}
-	if _, err := readTokenFile(path); err == nil {
+	if _, _, err := readTokenFile(path); err == nil {
 		t.Error("a token file was created with the token off")
 	}
 	settingstest.Override(t, "server.require_token", "true")

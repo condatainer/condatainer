@@ -697,9 +697,18 @@ func GetHelperBookmarksPath() string {
 type ServerState struct {
 	Host   string `json:"host"`
 	Port   int    `json:"port"`
-	Token  string `json:"token"`
 	PID    int    `json:"pid"`
 	Daemon bool   `json:"daemon"` // Saved for 'server restart' using same daemon mode.
+}
+
+// GetServerTokenPath returns the path to the dashboard token file, which every server of this user shares.
+// Path: ~/.local/state/condatainer/server.token
+func GetServerTokenPath() string {
+	stateDir := GetUserStateDir()
+	if stateDir == "" {
+		return ""
+	}
+	return filepath.Join(stateDir, "server.token")
 }
 
 // GetServerPidFilePath returns the path to the server PID/state file for the current host.

@@ -7,6 +7,21 @@ The dashboard HTTP server and the reverse proxy to helper services.
 - The server listens on `127.0.0.1` only. A remote user reaches it through an SSH port forward.
 - A helper link carries the port of the browser's address bar, not the server's own. A forward may use a different local port.
 
+## Token
+
+- The listening port is open to every user of the login node, so every request needs the owner's token, for every route and every helper.
+- The token is one file per user, `server.token` in the state directory, mode 0600. A server never passes it as an argument.
+  - It outlives every server. Login nodes that share a home share the token.
+  - A running server reads the file again at least every 3 seconds while it serves requests, and at once when a request does not match. It does not watch the file, because another node's write on NFS raises no event.
+  - A file that is missing, short, has other characters than letters, digits and `. _ ~ -`, or is readable by group or others is not used. The server keeps the token it has. A starting server stops.
+- A sign-in link carries `?cnt_token=`. The server sets a cookie for that host and redirects to the URL without it.
+  - The parameter is not `token`, because a helper app puts its own `token` in its links.
+  - The cookie is `cnt_token_{port}` with the port the browser used, so two forwarded servers on one host keep apart.
+  - `SameSite=Lax`, not `Strict`. A dashboard link to a helper is a cross-site navigation, and `Strict` would drop the cookie on it.
+  - The cookie lives 400 days on the dashboard and on a name origin. On an id origin it ends with the run, like a helper's own cookies.
+- The proxy removes the server's cookies from a request before the helper sees it.
+- `server.require_token` off lets every request through and creates no file.
+
 ## Helper links
 
 - Each helper is served on its own origin, `{id}.localhost:{port}`. The proxy forwards the whole path as it is.

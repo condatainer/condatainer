@@ -12,4 +12,8 @@ var (
 		settings.Default(10000), settings.Min(1), settings.Order(2),
 		settings.Help("The dashboard asks before downloading a zip of more files than this."),
 		settings.Suggest("5000", "10000", "20000", "100000"))
+
+	keyRequireToken = settings.Bool("server.require_token",
+		settings.Default(true), settings.Order(3),
+		settings.Help("The dashboard asks for its token. Turn off only on a host that no other user can reach."))
 )

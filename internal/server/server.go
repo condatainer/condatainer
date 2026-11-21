@@ -35,6 +35,7 @@ type srv struct {
 	ctx       context.Context
 	brokers   *brokerRegistry
 	proxies   *proxyRegistry
+	tokens    *tokenStore
 	watcher   *watcher
 	tasks     sync.Map // taskID → *taskEntry
 }
@@ -75,12 +76,19 @@ func RunDaemon(port int, reportPipe *os.File, watchPID int) error {
 		ctx:       ctx,
 		brokers:   newBrokerRegistry(),
 		proxies:   newProxyRegistry(logger),
+		tokens:    newTokenStore(config.GetServerTokenPath(), logger),
 	}
 	s.watcher = newWatcher(s)
+	if keyRequireToken.Get() {
+		if err := s.tokens.ensure(); err != nil {
+			report(err.Error())
+			return err
+		}
+	}
 
 	mux := http.NewServeMux()
 	registerRoutes(mux, s)
-	httpServer := &http.Server{Handler: s.reloadConfig(s.hostDispatch(mux))}
+	httpServer := &http.Server{Handler: s.reloadConfig(s.requireToken(s.hostDispatch(mux)))}
 
 	// Write PID file.
 	host, _ := os.Hostname()

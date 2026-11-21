@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 
@@ -61,6 +62,43 @@ func TestHelperListLinkUsesTheRequestPort(t *testing.T) {
 		}
 		if len(got) != 1 || got[0].AccessURL != tc.want {
 			t.Errorf("Host %q: access_url = %+v, want %q", tc.host, got, tc.want)
+		}
+	}
+}
+
+// The helper list holds every run the history keeps, so the History tab shows what is on disk. A caller can still ask for fewer.
+func TestHelperListHasNoDefaultCut(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	invalidateHistoryCache()
+	t.Cleanup(invalidateHistoryCache)
+	if err := helper.AppendHistory(&helper.HelperRun{ID: "long-running", Name: "svc", Port: 9000, Status: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 150; i++ {
+		id := fmt.Sprintf("done-%03d", i)
+		if err := helper.AppendHistory(&helper.HelperRun{ID: id, Name: "svc", Status: "done"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &srv{ctx: context.Background(), port: 13182}
+	s.watcher = newWatcher(s)
+
+	for _, tc := range []struct {
+		target string
+		want   int
+	}{
+		{"/api/helpers", 151},
+		{"/api/helpers?limit=10", 10},
+		{"/api/helpers?status=active", 1},
+	} {
+		w := httptest.NewRecorder()
+		s.handleHelpersList(w, httptest.NewRequest("GET", tc.target, nil))
+		var got []helperListEntry
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("%s: %v", tc.target, err)
+		}
+		if len(got) != tc.want {
+			t.Errorf("%s: %d entries, want %d", tc.target, len(got), tc.want)
 		}
 	}
 }

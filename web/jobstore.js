@@ -35,7 +35,7 @@ function refreshJobs(withHistory) {
       try {
         const [active, hist] = await Promise.all([
           fetch('api/helpers?status=active').then(r => r.json()),
-          history ? fetch('api/helpers?limit=100').then(r => r.json()) : null,
+          history ? fetch('api/helpers').then(r => r.json()) : null,
         ]);
         allJobs = active || [];
         if (history) { allHistory = hist || []; _historyStale = false; }

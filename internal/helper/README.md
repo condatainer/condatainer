@@ -127,6 +127,9 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 - A line that fails to decode is skipped, so a retyped field would hide a running helper.
 - Neither file carries a version.
 - Every duration is whole seconds, in `walltime_secs`.
+- History keeps the newest `helper.history_limit` finished runs, counted in file order. `0` keeps all.
+  - A run that finishes prunes the file, and removes the state folder of each run it drops.
+  - A pending, starting or running run is never pruned and never counts.
 - `slots` maps each bound slot to the exact overlay name it mounted. A reuse restores the slots the script still declares, and drops one it no longer declares or a strict slot no longer takes. The exact name keeps a newer overlay from changing what a reused run mounts.
 
 ## Shared history

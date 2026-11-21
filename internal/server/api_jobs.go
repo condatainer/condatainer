@@ -56,6 +56,7 @@ func invalidateHistoryCache() {
 }
 
 // handleHelpersList serves GET /api/helpers?q=&limit=&status=
+// It lists every matching run, newest first, unless the caller sends a limit.
 func (s *srv) handleHelpersList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	status := r.URL.Query().Get("status")
@@ -66,7 +67,7 @@ func (s *srv) handleHelpersList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 100
+	limit := 0
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 {
 			limit = n
@@ -87,7 +88,7 @@ func (s *srv) handleHelpersList(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		out = append(out, run)
-		if len(out) >= limit {
+		if limit > 0 && len(out) >= limit {
 			break
 		}
 	}

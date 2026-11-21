@@ -65,7 +65,7 @@ function _renderBreadcrumb(containerId, path, navFn) {
       const full = '/' + parts.slice(0, i + 1).join('/');
       const isLast = i === parts.length - 1;
       if (isLast) return '<span class="bc-cur">' + escHtml(p) + '</span>';
-      return '<span class="bc-seg" onclick="event.stopPropagation();' + navFn + '(\'' + escHtml(full) + '\')">' + escHtml(p) + '</span>' +
+      return '<span class="bc-seg" onclick="event.stopPropagation();' + navFn + '(' + jsArg(full) + ')">' + escHtml(p) + '</span>' +
         '<span class="bc-sep">/</span>';
     }).join('');
   el.scrollLeft = el.scrollWidth; // keep the tail of a long path visible
@@ -958,15 +958,15 @@ function renderFileTree() {
   if (srvScratch) permanent.push([srvScratch, '$SCRATCH']);
   let html = permanent.map(([p, label]) =>
     '<div class="tree-item ' + (p === currentPath ? 'active' : '') + '"' +
-      ' onclick="navigateFiles(\'' + escHtml(p) + '\')">' + escHtml(label) + '</div>'
+      ' onclick="navigateFiles(' + jsArg(p) + ')">' + escHtml(label) + '</div>'
   ).join('');
   if (fileBookmarks.length) {
     html += '<div class="tree-sep"></div>' + fileBookmarks.map(b =>
       '<div class="tree-item tree-item-bm ' + (b.path === currentPath ? 'active' : '') + '"' +
         ' draggable="true" data-path="' + escHtml(b.path) + '"' +
-        ' onclick="navigateFiles(\'' + escHtml(b.path) + '\')" title="' + escHtml(b.path) + '">' +
+        ' onclick="navigateFiles(' + jsArg(b.path) + ')" title="' + escHtml(b.path) + '">' +
         '<span class="tree-item-label">' + escHtml(b.label || b.path) + '</span>' +
-        '<button class="btn btn-ghost btn-sm tree-item-remove" onclick="event.stopPropagation();toggleBookmark(\'' + escHtml(b.path) + '\')" title="Remove bookmark">' + iconSvg('close') + '</button>' +
+        '<button class="btn btn-ghost btn-sm tree-item-remove" onclick="event.stopPropagation();toggleBookmark(' + jsArg(b.path) + ')" title="Remove bookmark">' + iconSvg('close') + '</button>' +
       '</div>'
     ).join('');
   }
@@ -1448,19 +1448,19 @@ async function fpNavigate(path) {
     const files = fpMode !== 'dir' ? entries.filter(e => !e.is_dir && (showHiddenFiles || !e.name.startsWith('.')) && (!fpSuffix || e.name.endsWith(fpSuffix))) : [];
     gid('fp-body').innerHTML =
       dirs.map(d =>
-        '<div class="modal-row" onclick="fpNavigate(\'' + escHtml(d.path) + '\')">' +
+        '<div class="modal-row" onclick="fpNavigate(' + jsArg(d.path) + ')">' +
           '<span class="modal-row-icon">' + iconSvg('folder', 'icon-folder', true) + '</span>' +
           '<span class="modal-row-name">' + escHtml(d.name) + '</span>' +
           '<span class="modal-row-sel">' + iconSvg('chevron_right') + '</span>' +
         '</div>'
       ).join('') +
       files.map(f =>
-        '<div class="modal-row" onclick="fpSelectDir(\'' + escHtml(f.path) + '\')">' +
+        '<div class="modal-row" onclick="fpSelectDir(' + jsArg(f.path) + ')">' +
           '<span class="modal-row-icon">' + iconSvg('draft') + '</span>' +
           '<span class="modal-row-name">' + escHtml(f.name) + '</span>' +
           '<span class="modal-row-size mono">' + fmtSize(f.size) + '</span>' +
           '<span class="modal-row-sel">' +
-            '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();fpSelectDir(\'' + escHtml(f.path) + '\')">Select</button>' +
+            '<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();fpSelectDir(' + jsArg(f.path) + ')">Select</button>' +
           '</span></div>'
       ).join('') ||
       '<div class="modal-empty">Empty directory</div>';

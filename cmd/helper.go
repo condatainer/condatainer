@@ -10,7 +10,7 @@ import (
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/helper"
 	"github.com/condatainer/condatainer/internal/scheduler"
-	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/server"
 	"github.com/spf13/cobra"
 )
 
@@ -136,7 +136,7 @@ func showHelperStatus(name string) error {
 		}
 		fmt.Printf("  %-14s  %-14s  %-40s  %s %s %s ago%s\n", r.Name, res, cwd, tag, verb, age, runnerTag)
 		if url != "" {
-			fmt.Printf("    %s\n", utils.StyleDim("→ "+url))
+			fmt.Printf("  %s\n", server.TokenLink(url))
 		}
 	}
 	return nil

@@ -39,6 +39,14 @@ Host hpc
 
 Now, simply typing `ssh hpc` will log you in and forward the port automatically. Because all helpers route through this single port, you can now visit `http://localhost:13182/` in your browser.
 
+**Sign in with the printed link:**
+The dashboard asks for a token, a private secret that keeps other users of the login node out. `condatainer server start` prints a link that carries it. Open that link once in each browser, and the browser remembers it.
+
+- `condatainer server status` prints the link again.
+- A helper link copied from the dashboard works only in a browser that has already signed in. Open it from the dashboard first.
+- The token stays the same when the server restarts. It is replaced after `server.token_days` days (30 by default), or when you run `condatainer server start --rotate-token`. Open the printed link again after that.
+- The token is in `~/.local/state/condatainer/server.token`. Keep it private.
+
 :::tip[Passwordless Login]
 To make connecting even smoother, you can set up SSH keys so you don't have to type your password every time.
 

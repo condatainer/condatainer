@@ -53,7 +53,8 @@ var serverStartCmd = &cobra.Command{
 		pidFile := config.GetServerPidFilePath()
 		if server.IsAlive(pidFile) {
 			if ss, err := server.ReadState(pidFile); err == nil {
-				utils.PrintMessage("Server already running at http://localhost:%d/", ss.Port)
+				utils.PrintMessage("Server already running at:")
+				utils.PrintLink(server.TokenLink(fmt.Sprintf("http://localhost:%d/", ss.Port)))
 				utils.PrintMessage("Log: %s", config.GetServerLogPath())
 				return nil
 			}

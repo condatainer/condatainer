@@ -20,6 +20,7 @@ import (
 	"github.com/condatainer/condatainer/internal/project"
 	cntexec "github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/server"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -83,7 +84,7 @@ func OfferRecentSessions(ctx context.Context, name string,
 			tag, verb := RunStatusTag(r)
 			fmt.Printf("  %d. %-36s  %-14s  %s %s %s ago\n", i+1, cwd, res, tag, verb, age)
 			if url != "" {
-				fmt.Printf("     %s\n", utils.StyleDim("→ "+url))
+				fmt.Printf("  %s\n", server.TokenLink(url))
 			}
 		} else {
 			fmt.Printf("  %d. %-36s  %-14s  last used %s ago\n", i+1, cwd, res, age)
@@ -219,7 +220,8 @@ func OfferSingletonBlocked(name string, running []*helper.HelperRun, serverPort 
 		tag, verb := RunStatusTag(r)
 		utils.PrintMessage("  %s  %s  %s %s %s ago", r.ID, helper.ShortNode(r.Node), tag, verb, age)
 		if url != "" {
-			utils.PrintMessage("  Access: %s", url)
+			utils.PrintMessage("  Access:")
+			utils.PrintLink(server.TokenLink(url))
 		}
 	}
 	utils.PrintMessage("Stop the existing instance first, or use `condatainer helper` to see it.")
@@ -874,9 +876,11 @@ func MonitorHelper(ctx context.Context, id string, detached bool) error {
 				tmp := &helper.HelperRun{ID: id, Port: rs.Port, URLPath: rs.URLPath, ExternalURL: rs.ExternalURL}
 				if u := tmp.AccessURL(config.GetRunningServerPort()); u != "" {
 					if detached {
-						utils.PrintSuccess("%s is ready. Access at: %s", id, u)
+						utils.PrintSuccess("%s is ready. Access at:", id)
+						utils.PrintLink(server.TokenLink(u))
 					} else {
-						utils.PrintSuccess("Access at: %s", u)
+						utils.PrintSuccess("Access at:")
+						utils.PrintLink(server.TokenLink(u))
 					}
 				}
 				if n := helper.Notification(); n == "terminal" || n == "both" {

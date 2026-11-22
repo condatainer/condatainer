@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/condatainer/condatainer/internal/config"
@@ -34,11 +35,13 @@ var serverStatusCmd = &cobra.Command{
 			if ss.Host == currentHost {
 				if server.IsAlive(pidFile) {
 					utils.PrintSuccess("Running: %s  port:%d  PID:%d", ss.Host, ss.Port, ss.PID)
+					printServerLink(ss.Port)
 				} else {
 					utils.PrintMessage("Not running: %s (stale PID file)", ss.Host)
 				}
 			} else {
 				utils.PrintSuccess("Running: %s  port:%d  PID:%d", ss.Host, ss.Port, ss.PID)
+				printServerLink(ss.Port)
 			}
 		}
 		if !found {
@@ -46,4 +49,9 @@ var serverStatusCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// printServerLink prints the dashboard link, with the token, under a running server's line.
+func printServerLink(port int) {
+	utils.PrintLink(server.TokenLink(fmt.Sprintf("http://localhost:%d/", port)))
 }

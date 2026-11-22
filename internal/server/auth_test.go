@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bufio"
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -40,6 +42,7 @@ func newAuthServer(t *testing.T) *authServer {
 		port:    testPort,
 		ctx:     context.Background(),
 		proxies: newProxyRegistry(log),
+		tickets: newTicketStore(),
 		tokens:  newTokenStore(filepath.Join(t.TempDir(), "server.token"), log, never),
 	}
 	s.proxies.entries["code-20260101-000000"] = &proxyEntry{
@@ -54,6 +57,7 @@ func newAuthServer(t *testing.T) *authServer {
 	a.token, _, _ = readTokenFile(s.tokens.path)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("dash")) }) //nolint:errcheck
+	mux.HandleFunc("/go", s.handleGo)
 	a.h = s.requireToken(s.hostDispatch(mux))
 	return a
 }
@@ -87,7 +91,7 @@ func TestEveryRouteNeedsTheToken(t *testing.T) {
 				if rec.Code != http.StatusUnauthorized {
 					t.Errorf("%s %s%s: status %d, want 401", name, host, target, rec.Code)
 				}
-				if !strings.Contains(rec.Body.String(), "condatainer server start") {
+				if !strings.Contains(rec.Body.String(), "condatainer server status") {
 					t.Errorf("%s %s%s: the 401 body does not say how to sign in: %q", name, host, target, rec.Body.String())
 				}
 			}
@@ -204,7 +208,7 @@ func TestTokenOffLetsEveryRouteThroughAndCreatesNoFile(t *testing.T) {
 	}
 }
 
-func TestSplitTokenParam(t *testing.T) {
+func TestSplitQueryParam(t *testing.T) {
 	tests := []struct {
 		in, token, rest string
 		ok              bool
@@ -218,9 +222,61 @@ func TestSplitTokenParam(t *testing.T) {
 		{"mycnt_token=T", "", "mycnt_token=T", false},
 	}
 	for _, tt := range tests {
-		token, rest, ok := splitTokenParam(tt.in)
+		token, rest, ok := splitQueryParam(tt.in, tokenParam)
 		if token != tt.token || rest != tt.rest || ok != tt.ok {
-			t.Errorf("splitTokenParam(%q) = %q, %q, %v; want %q, %q, %v", tt.in, token, rest, ok, tt.token, tt.rest, tt.ok)
+			t.Errorf("splitQueryParam(%q) = %q, %q, %v; want %q, %q, %v", tt.in, token, rest, ok, tt.token, tt.rest, tt.ok)
 		}
+	}
+}
+
+// A rotation changes what new requests need. A stream that is already open keeps flowing.
+func TestRotationLeavesAnOpenStreamConnected(t *testing.T) {
+	a := newAuthServer(t)
+	release := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
+		fl := w.(http.Flusher)
+		w.Write([]byte("one\n")) //nolint:errcheck
+		fl.Flush()
+		<-release
+		w.Write([]byte("two\n")) //nolint:errcheck
+		fl.Flush()
+	})
+	ts := httptest.NewServer(a.s.requireToken(mux))
+	defer ts.Close()
+	cookie := &http.Cookie{Name: tokenCookieName(ts.Listener.Addr().(*net.TCPAddr).Port), Value: a.token}
+	client := &http.Client{Timeout: 5 * time.Second}
+	open := func() *http.Response {
+		req, _ := http.NewRequest("GET", ts.URL+"/stream", nil)
+		req.AddCookie(cookie)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	stream := open()
+	defer stream.Body.Close()
+	rd := bufio.NewReader(stream.Body)
+	if line, _ := rd.ReadString('\n'); line != "one\n" {
+		t.Fatalf("first chunk = %q", line)
+	}
+
+	if _, err := replaceTokenFile(a.s.tokens.path); err != nil {
+		t.Fatal(err)
+	}
+	a.s.tokens.mu.Lock()
+	a.s.tokens.loadedAt = time.Time{}
+	a.s.tokens.mu.Unlock()
+	if resp := open(); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a new stream with the old cookie: status %d, want 401", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+
+	close(release)
+	if line, _ := rd.ReadString('\n'); line != "two\n" {
+		t.Errorf("the open stream stopped after the rotation: got %q", line)
 	}
 }

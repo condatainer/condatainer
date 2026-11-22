@@ -28,6 +28,8 @@ const (
 	tokenMissRecheck = time.Second
 	// tokenMissWait is the longest a mismatching request waits for the read it started.
 	tokenMissWait = time.Second
+	// tokenFreshWait is the longest a request waits for the read that brings the token up to date.
+	tokenFreshWait = 200 * time.Millisecond
 	// tokenFileLimit is the most bytes read from the token file.
 	tokenFileLimit = 4096
 )
@@ -155,9 +157,9 @@ func RotateToken() (string, error) {
 }
 
 // tokenStore holds the token a server checks requests against.
-//   - It follows the file. A request that finds the last read older than tokenRecheck starts a read in the background and is judged by the token the store has.
+//   - It follows the file. A request that finds the last read older than tokenRecheck starts a read and waits a moment for it.
 //   - A request that does not match starts a read too, and waits up to tokenMissWait for it, so a token just written works at once.
-//   - A read runs outside the lock, one at a time. A file that stalls leaves every request answered from memory.
+//   - A read runs outside the lock, one at a time. A file that stalls costs one request a short wait per interval, and the rest are answered from memory.
 //   - A file that is missing, unreadable or refused leaves the token the store already has.
 type tokenStore struct {
 	path   string
@@ -247,7 +249,20 @@ func (t *tokenStore) startRefresh(now time.Time) <-chan struct{} {
 	return done
 }
 
+// waitFor waits for done to close, for at most d. It reports whether done closed.
+func waitFor(done <-chan struct{}, d time.Duration) bool {
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
 // check reports whether candidate is the token. The comparison takes the same time for any candidate of one length.
+//   - A request that finds the last read too old starts one and waits up to tokenFreshWait for it, so a token replaced while the server was quiet is refused at once.
+//   - Only that request waits. The others in the same interval are judged by the token in memory.
+//   - A request that still does not match starts a read, at most once a second, and waits up to tokenMissWait for it, unless a read just ended.
 func (t *tokenStore) check(candidate string) bool {
 	if candidate == "" {
 		return false
@@ -258,29 +273,38 @@ func (t *tokenStore) check(candidate string) bool {
 		return false
 	}
 	now := time.Now()
+	var stale <-chan struct{}
 	if now.Sub(t.loadedAt) >= tokenRecheck {
-		t.startRefresh(now)
+		stale = t.startRefresh(now)
+		t.loadedAt = now
 	}
+	t.mu.Unlock()
+	justRead := stale != nil && waitFor(stale, tokenFreshWait)
+
+	t.mu.Lock()
 	if t.matches(candidate) {
 		t.mu.Unlock()
 		return true
 	}
-	if now.Sub(t.missAt) < tokenMissRecheck {
+	if justRead || now.Sub(t.missAt) < tokenMissRecheck {
 		t.mu.Unlock()
 		return false
 	}
 	t.missAt = now
 	done := t.startRefresh(now)
 	t.mu.Unlock()
+	waitFor(done, tokenMissWait)
 
-	select {
-	case <-done:
-	case <-time.After(tokenMissWait):
-		return false
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.matches(candidate)
+}
+
+// current returns the token the store holds.
+func (t *tokenStore) current() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.token
 }
 
 func (t *tokenStore) matches(candidate string) bool {

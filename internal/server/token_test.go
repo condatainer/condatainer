@@ -236,8 +236,6 @@ func TestRunningServerReplacesATokenThatGrewOld(t *testing.T) {
 	store.mu.Lock()
 	store.loadedAt = time.Time{} // the next request looks at the file
 	store.mu.Unlock()
-	store.check(old) // answered from memory while the read starts
-	settle(store)
 	if store.check(old) {
 		t.Error("the old token is still accepted after it passed server.token_days")
 	}
@@ -346,8 +344,18 @@ func TestStalledTokenFileDoesNotBlockRequests(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if d := time.Since(start); d > 500*time.Millisecond {
-		t.Errorf("20 requests took %v while the file read stalled, want them answered from memory", d)
+	// One request pays the short wait for the read, and the others are answered from memory.
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("20 requests took %v while the file read stalled, want about %v", d, tokenFreshWait)
+	}
+	start = time.Now()
+	for range 20 {
+		if !store.check(tok) {
+			t.Fatal("a right token was refused while the file read stalled")
+		}
+	}
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Errorf("20 later requests took %v, want them answered from memory", d)
 	}
 	// A wrong token waits for the read it started, then gives up.
 	start = time.Now()
@@ -356,5 +364,26 @@ func TestStalledTokenFileDoesNotBlockRequests(t *testing.T) {
 	}
 	if d := time.Since(start); d > 2*tokenMissWait {
 		t.Errorf("a wrong token waited %v, want about %v", d, tokenMissWait)
+	}
+}
+
+// The first request after a quiet spell is judged by the file, not by the token the server held while it was idle.
+func TestRequestAfterAQuietSpellSeesAReplacedToken(t *testing.T) {
+	store, path, old := ageStore(t, time.Minute, 0)
+	if err := store.ensure(); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := replaceTokenFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.loadedAt, store.missAt = time.Now().Add(-time.Hour), time.Now()
+	store.mu.Unlock()
+	if store.check(old) {
+		t.Error("the first request after a quiet spell accepted a token the file no longer holds")
+	}
+	if !store.check(fresh) {
+		t.Error("the new token was refused")
 	}
 }

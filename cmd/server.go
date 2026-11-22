@@ -25,10 +25,10 @@ var serverCmd = &cobra.Command{
 The server runs on the login node and provides:
   - A web dashboard at http://localhost:{port}/
   - A reverse proxy to helper apps on compute nodes
-  - Live log streaming
 
 - The port is remembered after the first start.
-- start, stop and restart cannot run inside a container or a scheduler job.`,
+- start, stop and restart cannot run inside a container or a scheduler job.
+- The token is private and stays the same across restarts.`,
 }
 
 func init() {
@@ -131,7 +131,8 @@ func startServerDaemon(port int, daemon bool) error {
 		return fmt.Errorf("%s", strings.TrimSpace(string(msg)))
 	}
 
-	utils.PrintSuccess("Sever Dashboard started: http://localhost:%d/", port)
+	utils.PrintSuccess("Server dashboard started:")
+	utils.PrintLink(server.TokenLink(fmt.Sprintf("http://localhost:%d/", port)))
 	if logPath != "" {
 		utils.PrintMessage("Log: %s", logPath)
 	}

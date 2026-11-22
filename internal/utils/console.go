@@ -102,6 +102,15 @@ func PrintMessage(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "[%s] %s\n", projectPrefix, msg)
 }
 
+// PrintLink prints a link on a line of its own, with no prefix, color or trailing text. → stderr
+// A terminal then finds the whole link, and a link that wraps stays one selection.
+func PrintLink(link string) {
+	if QuietMode {
+		return
+	}
+	fmt.Fprintln(os.Stderr, link)
+}
+
 // PrintSuccess prints a success message with a Green prefix. → stderr
 // Output: [CNT✓] Operation complete.
 func PrintSuccess(format string, a ...any) {

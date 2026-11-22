@@ -36,6 +36,7 @@ type srv struct {
 	brokers   *brokerRegistry
 	proxies   *proxyRegistry
 	tokens    *tokenStore
+	tickets   *ticketStore
 	watcher   *watcher
 	tasks     sync.Map // taskID → *taskEntry
 }
@@ -76,6 +77,7 @@ func RunDaemon(port int, reportPipe *os.File, watchPID int) error {
 		ctx:       ctx,
 		brokers:   newBrokerRegistry(),
 		proxies:   newProxyRegistry(logger),
+		tickets:   newTicketStore(),
 		tokens:    newTokenStore(config.GetServerTokenPath(), logger, keyTokenDays.Get),
 	}
 	s.watcher = newWatcher(s)

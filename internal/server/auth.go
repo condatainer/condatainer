@@ -13,13 +13,15 @@ import (
 const (
 	// tokenParam is the query parameter that carries the token in a sign-in link.
 	tokenParam = "cnt_token"
+	// ticketParam is the query parameter that carries a one-time ticket from the dashboard to a helper origin.
+	ticketParam = "cnt_ticket"
 	// tokenCookiePrefix starts the name of the sign-in cookie, which ends with the port the browser used.
 	tokenCookiePrefix = "cnt_token_"
 	// tokenCookieAge is the age of the sign-in cookie on the dashboard and on a name origin.
 	tokenCookieAge = 400 * 24 * time.Hour
 )
 
-const signInRequired = "Sign in required. Open the link that `condatainer server start` prints, or run `condatainer server status` to see it again.\n"
+const signInRequired = "Sign in required. Run `condatainer server status` on the login node, then open the link it prints.\n"
 
 // tokenCookieName is the sign-in cookie for the port the browser reached the server on.
 // Cookies ignore the port, so the port in the name keeps two forwarded servers apart.
@@ -42,7 +44,15 @@ func (s *srv) requireToken(next http.Handler) http.Handler {
 			http.Error(w, "the server token is not available: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if candidate, rest, ok := splitTokenParam(r.URL.RawQuery); ok {
+		if id, rest, ok := splitQueryParam(r.URL.RawQuery, ticketParam); ok {
+			if !s.tickets.redeem(id, r.Host, time.Now()) {
+				denySignIn(w)
+				return
+			}
+			s.signIn(w, r, s.tokens.current(), rest)
+			return
+		}
+		if candidate, rest, ok := splitQueryParam(r.URL.RawQuery, tokenParam); ok {
 			if !s.tokens.check(candidate) {
 				denySignIn(w)
 				return
@@ -105,25 +115,25 @@ func (s *srv) tokenCookieLife(host string) time.Duration {
 	return idCookieNoWalltime
 }
 
-// splitTokenParam takes the token out of a raw query. rest is the query without it, in its original spelling.
-// ok is false when the query has no token parameter.
-func splitTokenParam(rawQuery string) (token, rest string, ok bool) {
+// splitQueryParam takes the parameter name out of a raw query and returns its value.
+// rest is the query without it, in its original spelling. ok is false when the query has no such parameter.
+func splitQueryParam(rawQuery, name string) (value, rest string, ok bool) {
 	if rawQuery == "" {
 		return "", "", false
 	}
 	var kept []string
 	for _, pair := range strings.Split(rawQuery, "&") {
 		key, val, _ := strings.Cut(pair, "=")
-		if k, err := url.QueryUnescape(key); err == nil && k == tokenParam {
+		if k, err := url.QueryUnescape(key); err == nil && k == name {
 			if v, err := url.QueryUnescape(val); err == nil && !ok {
-				token = v
+				value = v
 			}
 			ok = true
 			continue
 		}
 		kept = append(kept, pair)
 	}
-	return token, strings.Join(kept, "&"), ok
+	return value, strings.Join(kept, "&"), ok
 }
 
 // stripTokenCookies removes the server's sign-in cookies from a request's Cookie headers.

@@ -104,6 +104,30 @@ condatainer create -f environment.yml  # Conda environment file
 condatainer create -f spec.txt         # Conda explicit spec
 ```
 
+`--desc` sets the description that `condatainer list --desc` shows for the overlay:
+
+```bash
+condatainer create -n nvim nvim nodejs --desc "Neovim with Node.js"
+```
+
+It also works with one Conda package. A Conda package takes its description from the newest release, which can be wrong for an older version.
+
+```bash
+condatainer create trim-galore/0.6.10 --desc "Python wrapper around Cutadapt and FastQC"
+```
+
+A Conda file can carry its own description in a `#DESC:` line before its first key. `--desc` replaces it.
+
+```yaml
+#DESC: RNA-seq quantification tools
+name: rnaseq
+dependencies:
+  - salmon
+  - star
+```
+
+`--desc` describes the resulting overlay: one Conda package, or `-n`, `-p` or `-f`.
+
 ### From a build recipe
 
 `-f` also builds from a custom build recipe. If you don't give a location, the overlay is created next to the file. `-p` or `-n` overrides that:

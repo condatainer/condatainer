@@ -78,6 +78,9 @@ type BuildObject struct {
 	lockedKeys      meta.Keys
 	scriptSpecs     *scheduler.ScriptSpecs
 	condaChannelPkg string // channel-annotated package spec, e.g. "bioconda::star"; set when input uses "::" notation
+	// description is the one the user gave with WithDescription. It replaces any
+	// description the source declares.
+	description string
 
 	// Every question the build puts to the user and the answers, same order: the
 	// recipe's #INPUT: prompts first, then each #SOURCE: ask:. The first
@@ -224,12 +227,24 @@ func (b *BuildObject) SetJobArgs(args []string) {
 	b.jobArgs, b.submitJob = args, scheduler.Enabled()
 }
 
-// jobTarget is what a submitted create command names the build by.
+// jobTarget is what a submitted create command names the build by, and the
+// description it was given.
 func (b *BuildObject) jobTarget() []string {
+	target := []string{b.spec.Image.Name}
 	if len(b.jobArgs) > 0 {
-		return b.jobArgs
+		target = slices.Clone(b.jobArgs)
 	}
-	return []string{b.spec.Image.Name}
+	if b.description != "" {
+		target = append(target, "--desc", b.description)
+	}
+	return target
+}
+
+// SetDescription gives the build a description of the user's, over the one its
+// Conda package or source declares.
+func (b *BuildObject) SetDescription(description string) {
+	b.description = description
+	b.overrideDescription()
 }
 
 // StoreOverflow reports whether this build is filed by identity.
@@ -310,11 +325,13 @@ func (b *BuildObject) setupCondaFields() error {
 
 // setCondaSpec fills the Spec for a Conda build. A Conda environment carries its
 // own libraries, so it is always an app contributing only its prefix — there is
-// no recipe to take #ENV: or a description from.
+// no recipe to take #ENV: from. A Conda file's #DESC: is the description.
 func (b *BuildObject) setCondaSpec() {
 	b.spec.Image.Type = artifact.TypeApp
 	b.spec.Image.Prefix = meta.Prefix(b.spec.Image.Name, artifact.TypeApp)
 	b.spec.Image.Env = nil
+	b.spec.Image.Description = ""
+	defer b.overrideDescription()
 
 	src := &CondaSource{Channels: slices.Clone(conda.Channels())}
 	switch {
@@ -326,6 +343,7 @@ func (b *BuildObject) setCondaSpec() {
 			slog.Default().Debug("could not capture conda input file", "path", b.buildSource, "err", err)
 		}
 		src.File = &SourceFile{Name: filepath.Base(b.buildSource), Data: data}
+		b.spec.Image.Description, _ = utils.FindAnnotation(utils.ScanAnnotations(data), "#DESC")
 	case b.buildSource != "":
 		src.Packages = strings.Split(b.buildSource, ",")
 	default:
@@ -884,12 +902,25 @@ func newBuildObject(ctx context.Context, nameVersion string, external bool, imag
 // Option adjusts a BuildObject made from a source the user supplied.
 type Option func(*sourceOptions)
 
-type sourceOptions struct{ name string }
+type sourceOptions struct{ name, description string }
 
 // WithName names the artifact, whatever the target path is called. It also
 // overrides a script's #TARGET:.
 func WithName(name string) Option {
 	return func(o *sourceOptions) { o.name = utils.NormalizeModule(name) }
+}
+
+// WithDescription sets the artifact's description, over any #DESC: the source
+// declares.
+func WithDescription(description string) Option {
+	return func(o *sourceOptions) { o.description = description }
+}
+
+// overrideDescription puts the user's description over the one a source gave.
+func (b *BuildObject) overrideDescription() {
+	if b.description != "" {
+		b.spec.Image.Description = b.description
+	}
 }
 
 func applyOptions(opts []Option) sourceOptions {
@@ -944,6 +975,7 @@ func NewCondaObjectWithSource(nameVersion, buildSource, imagesDir string, update
 		tgt:         targetFor(targetOverlay),
 		buildSource: buildSource,
 		update:      update,
+		description: applyOptions(opts).description,
 	}
 
 	if err := base.setupCondaFields(); err != nil {
@@ -959,6 +991,7 @@ func NewCondaObjectWithSource(nameVersion, buildSource, imagesDir string, update
 // means the same either way. A parse failure only costs descriptive metadata.
 func (b *BuildObject) captureLocalSourceSpec(isDef bool) {
 	// Drop anything a previous source contributed; the recipe below re-supplies it.
+	defer b.overrideDescription()
 	b.spec.Image.Description = ""
 	b.spec.Image.URL = ""
 	b.spec.Image.License = ""
@@ -1065,6 +1098,7 @@ func FromExternalSource(ctx context.Context, targetPrefix, source string, isAppt
 		tgt:         targetFor(targetPrefix + ".sqf"),
 		buildSource: source,
 		update:      update,
+		description: applyOptions(opts).description,
 	}
 
 	if err := base.clearStaleLock(ctx); err != nil {

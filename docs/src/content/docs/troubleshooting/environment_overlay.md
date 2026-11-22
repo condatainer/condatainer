@@ -90,6 +90,10 @@ To free space first, run `mm clean -a` inside the container. It removes Conda's 
 
 ## Permission denied inside the container
 
+```text
+The files in env.img belong to uid 1001, not you (uid 1000). Run `condatainer overlay chown /path/env.img` to take ownership of them.
+```
+
 Files in the overlay that belong to another user ID cannot be changed by you. Change their owner without mounting:
 
 ```bash

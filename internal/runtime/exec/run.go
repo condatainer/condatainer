@@ -76,7 +76,10 @@ func Prepare(ctx context.Context, options Options) (*Plan, error) {
 	}
 
 	// Auto-enable fakeroot if needed for writable .img
-	fakeroot, fakerootDiagnostics := container.AutoEnableFakeroot(setupResult.LastImg, options.WritableImg, setupResult.Fakeroot)
+	fakeroot, fakerootDiagnostics, err := container.AutoEnableFakeroot(setupResult.LastImg, options.WritableImg, setupResult.Fakeroot)
+	if err != nil {
+		return nil, err
+	}
 
 	// Resolved last, once fakeroot is final: fakeroot (explicit or
 	// auto-enabled) is refused inside a container.

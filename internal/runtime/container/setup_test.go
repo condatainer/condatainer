@@ -1,7 +1,10 @@
 package container
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -476,4 +479,80 @@ func TestSetupBindsLibexecWithNoEnvironment(t *testing.T) {
 	if !bound(SetupConfig{}) {
 		t.Error("libexec not bound at its fixed path with no environment mounted")
 	}
+}
+
+// ownedImage makes an ext3 image whose upper directory belongs to uid.
+func ownedImage(t *testing.T, uid int) string {
+	t.Helper()
+	for _, bin := range []string{"mke2fs", "debugfs"} {
+		if _, err := osexec.LookPath(bin); err != nil {
+			t.Skipf("%s not available", bin)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "env.img")
+	for _, argv := range [][]string{
+		{"mke2fs", "-q", "-t", "ext3", "-F", path, "4M"},
+		{"debugfs", "-w", "-R", "mkdir upper", path},
+		{"debugfs", "-w", "-R", fmt.Sprintf("set_inode_field upper uid %d", uid), path},
+	} {
+		if out, err := osexec.Command(argv[0], argv[1:]...).CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", argv, err, out)
+		}
+	}
+	return path
+}
+
+func TestAutoEnableFakeroot(t *testing.T) {
+	me := os.Getuid()
+	other := me + 1
+
+	t.Run("files owned by root enable fakeroot", func(t *testing.T) {
+		fakeroot, diagnostics, err := AutoEnableFakeroot(ownedImage(t, 0), true, false)
+		if err != nil || !fakeroot || len(diagnostics) != 1 || diagnostics[0].Level != "note" {
+			t.Errorf("got (%v, %v, %v), want fakeroot with one note", fakeroot, diagnostics, err)
+		}
+	})
+	t.Run("files owned by the user are left alone", func(t *testing.T) {
+		if me == 0 {
+			t.Skip("root owns them as root")
+		}
+		fakeroot, diagnostics, err := AutoEnableFakeroot(ownedImage(t, me), true, false)
+		if err != nil || fakeroot || diagnostics != nil {
+			t.Errorf("got (%v, %v, %v), want no change", fakeroot, diagnostics, err)
+		}
+	})
+	t.Run("files owned by another uid are refused", func(t *testing.T) {
+		img := ownedImage(t, other)
+		_, _, err := AutoEnableFakeroot(img, true, false)
+		if !errors.Is(err, ErrImageOwner) {
+			t.Fatalf("error = %v, want ErrImageOwner", err)
+		}
+		for _, want := range []string{fmt.Sprintf("uid %d", other), "overlay chown " + img} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q should contain %q", err, want)
+			}
+		}
+	})
+	t.Run("explicit fakeroot is not checked", func(t *testing.T) {
+		fakeroot, diagnostics, err := AutoEnableFakeroot(ownedImage(t, other), true, true)
+		if err != nil || !fakeroot || diagnostics != nil {
+			t.Errorf("got (%v, %v, %v), want fakeroot kept", fakeroot, diagnostics, err)
+		}
+	})
+	t.Run("a read-only run is not checked", func(t *testing.T) {
+		fakeroot, diagnostics, err := AutoEnableFakeroot(ownedImage(t, other), false, false)
+		if err != nil || fakeroot || diagnostics != nil {
+			t.Errorf("got (%v, %v, %v), want no change", fakeroot, diagnostics, err)
+		}
+	})
+	t.Run("an owner that cannot be read is left alone", func(t *testing.T) {
+		notImage := filepath.Join(t.TempDir(), "env.img")
+		if err := os.WriteFile(notImage, []byte("not ext3"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		fakeroot, diagnostics, err := AutoEnableFakeroot(notImage, true, false)
+		if err != nil || fakeroot || diagnostics != nil {
+			t.Errorf("got (%v, %v, %v), want no change", fakeroot, diagnostics, err)
+		}
+	})
 }

@@ -3,6 +3,7 @@
 package container
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -303,27 +304,39 @@ func nestedRootEnv(inherited, root string) string {
 	return "CNT_ROOT=" + root
 }
 
-// AutoEnableFakeroot checks if fakeroot should be auto-enabled for writable .img overlays
-// Returns the updated fakeroot setting
-func AutoEnableFakeroot(lastImg string, writable bool, currentFakeroot bool) (bool, []Diagnostic) {
+// ErrImageOwner marks a writable .img whose files belong to a user the run cannot write as.
+var ErrImageOwner = errors.New("image files are owned by another user")
+
+// ownerError is a message written for the reader that still matches ErrImageOwner with errors.Is.
+type ownerError struct{ msg string }
+
+func (e *ownerError) Error() string { return e.msg }
+func (e *ownerError) Unwrap() error { return ErrImageOwner }
+
+// AutoEnableFakeroot decides --fakeroot for a writable .img from who owns the files in it.
+//   - Files owned by root enable fakeroot, with a note.
+//   - Files owned by the current user, or by an owner that cannot be read, leave the setting as given.
+//   - Files owned by another user are refused. Fakeroot runs commands as uid 0, which changes how some tools behave, and writes them only on a host where the user has a subuid range, so the error names `overlay chown`.
+func AutoEnableFakeroot(lastImg string, writable bool, currentFakeroot bool) (bool, []Diagnostic, error) {
 	if lastImg == "" || !writable || currentFakeroot {
-		return currentFakeroot, nil
+		return currentFakeroot, nil, nil
 	}
 
-	// Check UID status and auto-enable fakeroot if needed
-	if status := ext3.InspectImageUIDStatus(lastImg); status == ext3.UIDStatusRoot {
+	uid, ok := ext3.ImageOwnerUID(lastImg)
+	switch {
+	case !ok:
+		return currentFakeroot, nil, nil
+	case uid == 0:
 		return true, []Diagnostic{{
 			Level:   "note",
 			Message: fmt.Sprintf("Root overlay %s detected. --fakeroot enabled automatically.", filepath.Base(lastImg)),
-		}}
-	} else if status == ext3.UIDStatusDifferentUser {
-		return true, []Diagnostic{{
-			Level:   "warn",
-			Message: fmt.Sprintf("%s's inner UID differs from current user. --fakeroot enabled automatically.", filepath.Base(lastImg)),
-		}}
+		}}, nil
+	case uid == os.Getuid():
+		return currentFakeroot, nil, nil
 	}
-
-	return currentFakeroot, nil
+	return false, nil, &ownerError{fmt.Sprintf(
+		"The files in %s belong to uid %d, not you (uid %d). Run `condatainer overlay chown %s` to take ownership of them.",
+		filepath.Base(lastImg), uid, os.Getuid(), lastImg)}
 }
 
 // ensureSingleImage checks that at most one .img overlay is specified

@@ -249,6 +249,7 @@ condatainer e
 - Everyone shares the same base read-only software without ownership conflicts.
 - `env-<user>.img` will pair with `env.sqf`.
 - If `.img` is missing, `condatainer e` will load the shared `env.sqf`.
+- `condatainer e env.sqf` opens that snapshot alone, read-only.
 
 ### Fix Ownership
 

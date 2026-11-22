@@ -3,6 +3,7 @@ package container
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/artifact"
@@ -72,6 +73,15 @@ func PairedSize(path string) (sizeBytes int64, snapshot string) {
 		}
 	}
 	return sizeBytes, snapshot
+}
+
+// NamesEnvironment reports whether overlays already name an environment: a writable .img, or an env-typed .sqf.
+// A run that names one is given no other.
+func NamesEnvironment(overlays []string) bool {
+	return slices.ContainsFunc(overlays, func(overlay string) bool {
+		path := cleanOverlayPath(overlay)
+		return utils.IsImg(path) || isEnvSnapshotSqf(path)
+	})
 }
 
 // isEnvSnapshotSqf reports whether path is a .sqf recording Type == TypeEnv.

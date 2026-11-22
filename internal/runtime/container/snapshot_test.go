@@ -105,3 +105,32 @@ func TestLookupSnapshotBlockedByNonEnvFile(t *testing.T) {
 		t.Fatalf("lookup = %+v, want Blocked on %s", got, notASnapshot)
 	}
 }
+
+func TestNamesEnvironment(t *testing.T) {
+	requireSquashfsTools(t)
+	dir := t.TempDir()
+	envSqf := filepath.Join(dir, "env.sqf")
+	packRuntimeSqf(t, envSqf, envRuntime())
+	appSqf := filepath.Join(dir, "tool.sqf")
+	app := envRuntime()
+	app.Type, app.Name, app.Prefix = artifact.TypeApp, "tool/1.0", "/cnt/tool/1.0"
+	packRuntimeSqf(t, appSqf, app)
+
+	for _, tc := range []struct {
+		name     string
+		overlays []string
+		want     bool
+	}{
+		{"nothing", nil, false},
+		{"an installed name", []string{"samtools/1.22"}, false},
+		{"an app overlay", []string{appSqf}, false},
+		{"a writable image", []string{filepath.Join(dir, "env.img")}, true},
+		{"an environment snapshot", []string{envSqf}, true},
+		{"a snapshot with a mode", []string{envSqf + ":ro"}, true},
+		{"a snapshot among others", []string{"samtools/1.22", envSqf}, true},
+	} {
+		if got := NamesEnvironment(tc.overlays); got != tc.want {
+			t.Errorf("%s: NamesEnvironment = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

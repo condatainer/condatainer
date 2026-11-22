@@ -28,6 +28,7 @@ type Plan struct {
 	Options      Options
 	Setup        *container.SetupResult
 	Fakeroot     bool
+	Bin          apptainer.Bin // The apptainer the plan runs
 	EnvList      []string
 	Diagnostics  []Diagnostic
 	ExecOptions  *apptainer.ExecOptions
@@ -64,7 +65,6 @@ func Prepare(ctx context.Context, options Options) (*Plan, error) {
 		Fakeroot:       options.Fakeroot,
 		ApptainerFlags: options.ApptainerFlags,
 		GpuRequested:   options.GpuRequested,
-		BindLibexec:    options.BindLibexec,
 	})
 	if err != nil {
 		return nil, err
@@ -80,11 +80,7 @@ func Prepare(ctx context.Context, options Options) (*Plan, error) {
 
 	// Resolved last, once fakeroot is final: fakeroot (explicit or
 	// auto-enabled) is refused inside a container.
-	resolve := apptainer.Normal
-	if fakeroot {
-		resolve = apptainer.Fakeroot
-	}
-	bin, err := resolve()
+	bin, err := apptainer.Resolve(apptainer.Need{Fakeroot: fakeroot, Overlays: true})
 	if err != nil {
 		if config.IsInsideContainer() {
 			return nil, fmt.Errorf("cannot start a nested container: %w", err)
@@ -201,6 +197,7 @@ func Prepare(ctx context.Context, options Options) (*Plan, error) {
 		Options:      options,
 		Setup:        setupResult,
 		Fakeroot:     fakeroot,
+		Bin:          bin,
 		EnvList:      envList,
 		Diagnostics:  diagnostics,
 		ExecOptions:  opts,
@@ -237,9 +234,15 @@ func RunPrepared(ctx context.Context, plan *Plan, ioStreams IO) error {
 // Run executes a command inside a configured Apptainer container. It is silent by default;
 // callers that want terminal or web output must pass explicit IO writers.
 func Run(ctx context.Context, options Options, ioStreams IO) error {
+	_, err := RunWithBin(ctx, options, ioStreams)
+	return err
+}
+
+// RunWithBin is Run that also returns the apptainer the command ran under, once it was resolved.
+func RunWithBin(ctx context.Context, options Options, ioStreams IO) (apptainer.Bin, error) {
 	plan, err := Prepare(ctx, options)
 	if err != nil {
-		return err
+		return apptainer.Bin{}, err
 	}
-	return RunPrepared(ctx, plan, ioStreams)
+	return plan.Bin, RunPrepared(ctx, plan, ioStreams)
 }

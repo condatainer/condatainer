@@ -157,10 +157,11 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 			ExitWithError("--prefix requires either packages, --file, or --from to be specified.")
 		}
 
-		// 2. Apptainer runs every build, so fail here rather than after
-		// resolution has already fetched recipes. The base image is not checked:
-		// it is an implicit prerequisite of the plan, built with everything else.
-		if _, err := apptainer.Normal(); err != nil {
+		// 2. Apptainer runs every build, and what a build makes is mounted to use,
+		// so fail here rather than after resolution has already fetched recipes.
+		// The base image is not checked: it is an implicit prerequisite of the
+		// plan, built with everything else.
+		if _, err := apptainer.Resolve(apptainer.Need{Overlays: true}); err != nil {
 			ExitWithError("cannot build an overlay: %v", err)
 		}
 

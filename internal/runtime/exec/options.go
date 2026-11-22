@@ -34,10 +34,6 @@ type Options struct {
 	// for a command that explicitly declared a GPU requirement.
 	GpuRequested bool
 
-	// BindLibexec binds the libexec toolchain into the container, so a nested
-	// condatainer reaches the apptainer installed there.
-	BindLibexec bool
-
 	BaseImage string
 
 	// HostRun names the launch kind that decides whether the container gets the
@@ -82,7 +78,7 @@ func (ioStreams IO) IsZero() bool {
 
 // ensureDefaults fills in what the caller left blank: a command to run.
 //   - BaseImage is resolved separately, after overlay setup — see Prepare — since the exec root may come from the requested overlays.
-//   - The apptainer binary is not caller-configurable at all: Prepare picks apptainer.Fakeroot or apptainer.Normal from whether this invocation ends up needing fakeroot.
+//   - The apptainer binary is not caller-configurable at all: Prepare asks apptainer.Resolve for one that fits whether this invocation ends up needing fakeroot.
 func (o Options) ensureDefaults() (Options, error) {
 	if len(o.Command) == 0 {
 		o.Command = []string{"bash"}

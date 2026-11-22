@@ -24,6 +24,9 @@ const (
 	BoundExecPath = BoundExecDir + "/condatainer"
 )
 
+// BoundLibexecDir is where a container sees the toolchain, bound whole under config.ContainerRoot.
+const BoundLibexecDir = config.ContainerRoot + "/libexec"
+
 // EnvBind names the variable that adds binds to every run, "|"-separated, each as host[:container[:opts]].
 const EnvBind = "CNT_BIND"
 

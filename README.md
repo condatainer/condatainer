@@ -25,7 +25,7 @@
 curl -fsSL https://install.condatainer.org | bash
 ```
 
-The script asks where to install (default `$SCRATCH/condatainer/`, else `$HOME/condatainer/`), whether to set up your shell, and whether to download the toolchain. See [Installation](https://docs.condatainer.org/get_started/installation/) for group and site installs.
+The script asks where to install (default `$SCRATCH/condatainer/`, else `$HOME/condatainer/`) and whether to set up your shell. It also downloads Apptainer and the other tools CondaTainer needs. See [Installation](https://docs.condatainer.org/get_started/installation/) for group and site installs.
 
 ## Quick Start
 

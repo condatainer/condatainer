@@ -75,7 +75,6 @@ func TestRegisteredKeyNames(t *testing.T) {
 		"host_run.launch CNT_CONFIG_HOST_RUN_LAUNCH",
 		"host_run.on CNT_CONFIG_HOST_RUN_ON",
 		"metadata_cache_ttl CNT_CONFIG_METADATA_CACHE_TTL",
-		"nested_run CNT_CONFIG_NESTED_RUN",
 		"scheduler.account CNT_CONFIG_SCHEDULER_ACCOUNT",
 		"scheduler.bin CNT_CONFIG_SCHEDULER_BIN",
 		"scheduler.exclude_nodes CNT_CONFIG_SCHEDULER_EXCLUDE_NODES",

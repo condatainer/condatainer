@@ -28,7 +28,8 @@ The self-provisioned toolchain: one directory holding micromamba and the Apptain
   - It belongs to the install, like the Apptainer binary. No other layer can shadow it.
   - With no root, it falls back to the user data directory.
 - `CNT_LIBEXEC` is a variable only, with no config key, so no config layer can move it.
-- A container binds the directory whole, at its real path.
+- A container binds the directory whole, at `/.condatainer/libexec`, and `CNT_LIBEXEC` names it there.
+  - The bundle is relocatable, so it runs from that path.
 - The name is `libexec`, not `tools`. "Tool" already means other things here. `libexec` is the FHS term for executables invoked by other programs.
 - The directory counts as installed when it has `bin/micromamba` or `MANIFEST.json`. Either one alone is a valid toolchain.
 

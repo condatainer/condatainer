@@ -13,9 +13,9 @@ type ApptainerNotFoundError struct {
 
 func (e *ApptainerNotFoundError) Error() string {
 	if e.Path == "" {
-		return "no apptainer or singularity found on PATH"
+		return "host_apptainer is not set"
 	}
-	return fmt.Sprintf("apptainer or singularity not found: %s", e.Path)
+	return fmt.Sprintf("apptainer not found: %s", e.Path)
 }
 
 // ApptainerError represents errors from apptainer command execution

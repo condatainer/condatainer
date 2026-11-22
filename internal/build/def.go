@@ -74,14 +74,14 @@ func (b *BuildObject) buildDef(ctx context.Context) error {
 	}
 
 	// Resolved directly, not via captureCommonBuildTools: a def build must run
-	// apptainer build regardless, always against the system/module binary
-	// (never libexec's), so this is a hard prerequisite rather than a
+	// apptainer build regardless, so this is a hard prerequisite rather than a
 	// best-effort diagnostic.
-	bin, err := apptainer.ForBuild()
+	bin, err := apptainer.Resolve(apptainer.Need{Fakeroot: true})
 	if err != nil {
 		b.Cleanup(true) //nolint:errcheck
 		return err
 	}
+	b.apptainerBin = bin
 
 	// A synthesized definition is the only record of what a scheme:// build was.
 	b.captureSynthesizedRecipe(defSource, defData)

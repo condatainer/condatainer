@@ -330,15 +330,13 @@ fi
 # Steps. A download-only install does nothing past the download.
 DO_INIT=true
 DO_SHELL=false
-DO_LIBEXEC=false
+DO_LIBEXEC=true
 if [ "$CLI_DOWNLOAD_ONLY" = true ]; then
     DO_INIT=false
+    DO_LIBEXEC=false
 else
     if [ "$CLI_NO_SHELL" != true ] && confirm_action "Set up condatainer in your shell (PATH, completion, mm) in $SHELL_FILES?"; then
         DO_SHELL=true
-    fi
-    if confirm_action "Download the toolchain now (apptainer, micromamba and the tools they use)?"; then
-        DO_LIBEXEC=true
     fi
 fi
 
@@ -357,7 +355,7 @@ else
 fi
 if [ "$DO_INIT" = true ]; then echo -e "Config      : ${GREEN}Yes${NC}"; else echo -e "Config      : skipped"; fi
 if [ "$DO_SHELL" = true ]; then echo -e "Shell config: ${BLUE}$SHELL_FILES${NC}"; else echo -e "Shell config: skipped"; fi
-if [ "$DO_LIBEXEC" = true ]; then echo -e "Toolchain   : ${GREEN}Yes${NC}"; else echo -e "Toolchain   : skipped"; fi
+if [ "$DO_LIBEXEC" = true ]; then echo -e "Toolchain   : ${GREEN}Yes${NC}"; fi
 echo -e "----------------------------------------"
 
 if ! confirm_action "Proceed?"; then echo "Aborted."; exit 0; fi
@@ -403,8 +401,6 @@ if [ "$DO_LIBEXEC" = true ]; then
         echo -e "${YELLOW}[WARN]${NC} Could not install the toolchain."
         echo "Run 'condatainer update --libexec' to retry."
     fi
-elif [ "$CLI_DOWNLOAD_ONLY" != true ]; then
-    echo -e "${BLUE}[INFO]${NC} Skipped the toolchain. Run 'condatainer update --libexec' to install it."
 fi
 
 # Set up the shell (only when not declined). A failure is a warning:

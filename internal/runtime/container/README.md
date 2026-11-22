@@ -102,9 +102,13 @@ Root selection has already run, so ordering never decides which overlay becomes 
 
 ## Nested running
 
-- `nested_run` decides whether a container can start containers of its own. The decision is made by the caller, not `Setup`.
-- The only source is the apptainer installed in `libexec/`, which is bound whole. Nothing is built or mounted for it.
-- `true` refuses a launch without it, so a job that needs nested running fails at its start.
+- Every container binds the toolchain, `libexec/`, whole at `/.condatainer/libexec`, when it is installed. There is no setting to leave it out.
+  - It sits under `/.condatainer` with the executable, so the container root gains no entry of its own.
+  - Nothing is built or mounted for it.
+- The container gets `CNT_LIBEXEC=/.condatainer/libexec`. A condatainer inside finds the toolchain through it, as it does on the host.
+  - So everything inside uses that toolchain: containers it starts, freeze, unfreeze and the other mount jobs.
+  - A per-user install has no root for a condatainer inside to find the toolchain from, so the variable is always set.
+- A container started with no toolchain installed has no apptainer. The error says to install it on the host and start the container again.
 
 ## GPU detection
 

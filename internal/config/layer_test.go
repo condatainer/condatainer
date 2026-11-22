@@ -26,7 +26,7 @@ build:
   mem: 16g
 "scheduler.partition": gpu   # flat dotted key
 Autoload_GPU: "1"
-nested_run:
+metadata_cache_ttl:
 helper:
   notification: ""
 channels: conda-forge bioconda
@@ -44,7 +44,7 @@ bind: [/a, /b]
 	if !l.GetBool("autoload_gpu") {
 		t.Error(`"1" reads as true, case-insensitively`)
 	}
-	if l.InConfig("nested_run") {
+	if l.InConfig("metadata_cache_ttl") {
 		t.Error("a null value is unset")
 	}
 	if !l.InConfig("helper.notification") || l.GetString("helper.notification") != "" {
@@ -56,7 +56,7 @@ bind: [/a, /b]
 	if got := l.GetStringSlice("bind"); !slices.Equal(got, []string{"/a", "/b"}) {
 		t.Errorf("bind = %v", got)
 	}
-	want := []string{"build.ncpu", "build.mem", "scheduler.partition", "autoload_gpu", "nested_run", "helper.notification", "channels", "bind"}
+	want := []string{"build.ncpu", "build.mem", "scheduler.partition", "autoload_gpu", "metadata_cache_ttl", "helper.notification", "channels", "bind"}
 	if got := l.Keys(); !slices.Equal(got, want) {
 		t.Errorf("Keys = %v", got)
 	}
@@ -100,7 +100,7 @@ func TestDeleteConfigKeyPrunesEmptyParents(t *testing.T) {
 func TestConcurrentWritesDoNotLoseKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	var wg sync.WaitGroup
-	keys := []string{"build.ncpu", "build.time", "autoload_gpu", "channels", "nested_run", "scheduler.account"}
+	keys := []string{"build.ncpu", "build.time", "autoload_gpu", "channels", "metadata_cache_ttl", "scheduler.account"}
 	for _, k := range keys {
 		wg.Add(1)
 		go func() {

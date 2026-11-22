@@ -269,3 +269,25 @@ func TestCollidedReadsMksquashfsAnnouncement(t *testing.T) {
 		t.Error("ordinary mksquashfs output read as a collision")
 	}
 }
+
+// mksquashfs packs a file it cannot read as an empty one and exits 0. The pack must fail then, and pass its status on otherwise.
+func TestPackScriptFailsWhenAFileWasPackedEmpty(t *testing.T) {
+	run := func(stderr string, exit int) error {
+		bin := filepath.Join(t.TempDir(), "mksquashfs")
+		body := fmt.Sprintf("#!/bin/sh\necho '%s' >&2\nexit %d\n", stderr, exit)
+		if err := os.WriteFile(bin, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return exec.Command("/bin/bash", "-c", packScript([]string{"/src"}, "/out.sqf", nil, PackOptions{}, bin)).Run()
+	}
+
+	if err := run("Failed to read file /a, creating empty file", 0); err == nil {
+		t.Error("a file packed empty did not fail the pack")
+	}
+	if err := run("", 0); err != nil {
+		t.Errorf("a clean pack failed: %v", err)
+	}
+	if err := run("", 3); err == nil {
+		t.Error("a failing mksquashfs did not fail the pack")
+	}
+}

@@ -28,7 +28,7 @@ func newProjectValidateCmd() *cobra.Command {
 - Every dependency resolves to another recorded overlay.
 - Every pin is installed on this machine.
 
---payload needs squashfuse and unshare.`,
+--payload needs squashfuse and apptainer.`,
 		Example: `  condatainer project validate  # Lock, scripts and installed overlays
   condatainer project validate --lock-only`,
 		Args:         cobra.NoArgs,

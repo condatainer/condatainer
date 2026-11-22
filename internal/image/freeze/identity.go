@@ -18,7 +18,7 @@ import (
 
 // TreeIdentity hashes the payload of a packed artifact into its payload key.
 //   - It reads the finished .sqf, not the overlay, so the key describes what the archive holds.
-//   - The walk is this binary's own `_payload_key`, run inside the mount's namespace.
+//   - The walk is this binary's own `_payload_key`, run inside the mount's job.
 //   - It is the code a build keys its payload with, and needs no host find or sha256sum.
 func TreeIdentity(ctx context.Context, artifact string) (meta.KeyRef, error) {
 	squashfuse, err := FindSquashfuse()
@@ -42,7 +42,7 @@ func TreeIdentity(ctx context.Context, artifact string) (meta.KeyRef, error) {
 
 	work := fmt.Sprintf("%s _payload_key %s '' %d", shellQuote(self), shellQuote(mnt), runtime.GOMAXPROCS(0))
 	var stdout, stderr bytes.Buffer
-	err = MountedRun(ctx, squashfuse, []string{artifact}, mnt, work,
+	err = MountedRun(ctx, []Mount{{Bin: squashfuse, Args: []string{artifact}, Path: mnt}}, []string{artifact, self}, work,
 		execpkg.IO{Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
 		return meta.KeyRef{}, fmt.Errorf("read %s to identify it: %w: %s", artifact, err, stderr.String())

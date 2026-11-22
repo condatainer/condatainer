@@ -257,7 +257,7 @@ func (b *BuildObject) buildForeign(ctx context.Context) error {
 
 // packFromSIF mounts a .sif's primary SquashFS partition read-only via
 // squashfuse, at the partition's own byte offset, inside freeze.MountedRun's
-// unprivileged namespace, and packs it plus metaDir directly.
+// apptainer job, and packs it plus metaDir directly.
 func packFromSIF(ctx context.Context, b *BuildObject, sifPath, metaDir, targetPath string) error {
 	if absTarget, err := filepath.Abs(targetPath); err == nil {
 		targetPath = absTarget
@@ -293,7 +293,8 @@ func packFromSIF(ctx context.Context, b *BuildObject, sifPath, metaDir, targetPa
 	script := squashfsScript(mksquashfsBin, []string{mnt, metaDir}, targetPath, ncpus, blockSize, compressArgs, true)
 	offsetArg := "offset=" + strconv.FormatInt(part.Offset, 10)
 
-	runErr := freeze.MountedRun(ctx, squashfuseBin, []string{"-o", offsetArg, sifPath}, mnt, script, io)
+	mounts := []freeze.Mount{{Bin: squashfuseBin, Args: []string{"-o", offsetArg, sifPath}, Path: mnt}}
+	runErr := freeze.MountedRun(ctx, mounts, []string{sifPath, metaDir, targetPath, mksquashfsBin}, script, io)
 	if runErr != nil {
 		if isCancelledByUser(runErr) {
 			return ErrBuildCancelled

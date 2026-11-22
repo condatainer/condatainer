@@ -163,7 +163,7 @@ func parentVisible(p string, provided map[string]Entry, deleted, opaque map[stri
 }
 
 // packStacked packs the image layered over its snapshot into one self-contained
-// archive, reading both through mounts in a private unprivileged namespace.
+// archive, reading both through mounts in one apptainer job.
 //   - The snapshot and the image are lower layers of a fuse-overlayfs union with a scratch upper, so neither is written.
 //   - The union applies the image's edits, deletions, opaque directories and type changes as they mount.
 //   - Deletions are injected as pseudo-file whiteouts, because the union swallows char 0:0 nodes.
@@ -216,17 +216,23 @@ func packStacked(ctx context.Context, opts PackOptions, img, target, stage, mksq
 	if err != nil {
 		return meta.BuildTools{}, err
 	}
-	script := stackedScript(stackedRun{
-		Snapshot: snapshot, Squashfuse: squashfuse, Overlayfs: overlayfs,
-		ImageUpper: filepath.Join(dirs["mnt"], UpperDir),
-		Lower:      dirs["lower"], Upper: dirs["upper"], Work: dirs["work"], Merged: dirs["merged"],
-		Sources: plan.Sources,
-	}, packScript([]string{`"${srcs[@]}"`}, target, args, opts, mksquashfsBin))
+	script := stackedScript(dirs["merged"], plan.Sources,
+		packScript([]string{`"${srcs[@]}"`}, target, args, opts, mksquashfsBin))
 
 	log.Info("Packing snapshot", "source", opts.Image, "target", opts.Target,
 		"route", "stacked on "+opts.Snapshot, "roots", strings.Join(plan.Sources, " "),
 		"deletions", len(plan.Translation.Pseudo))
-	err = MountedRun(ctx, fuse2fs, []string{"-o", "ro", img}, dirs["mnt"], script, execpkg.IOFromContext(ctx))
+	mounts := []Mount{
+		fuse2fsMount(fuse2fs, img, dirs["mnt"]),
+		{Bin: squashfuse, Args: []string{snapshot}, Path: dirs["lower"]},
+		{Bin: overlayfs, Path: dirs["merged"], Args: []string{
+			"-o", "squash_to_root",
+			"-o", "lowerdir=" + filepath.Join(dirs["mnt"], UpperDir) + ":" + dirs["lower"],
+			"-o", "upperdir=" + dirs["upper"],
+			"-o", "workdir=" + dirs["work"],
+		}},
+	}
+	err = MountedRun(ctx, mounts, []string{img, snapshot, stage, target, mksquashfsBin}, script, execpkg.IOFromContext(ctx))
 	if err != nil {
 		os.Remove(target)
 		return meta.BuildTools{}, fmt.Errorf("pack %s: %w", opts.Target, err)
@@ -237,31 +243,13 @@ func packStacked(ctx context.Context, opts PackOptions, img, target, stage, mksq
 	return tools, nil
 }
 
-// stackedRun is what the script that layers the mounts needs.
-type stackedRun struct {
-	Snapshot, Squashfuse, Overlayfs string
-	ImageUpper                      string
-	Lower, Upper, Work, Merged      string
-	Sources                         []string
-}
-
-// stackedScript renders the work run inside the image's mount: mount the
-// snapshot, union it under the image, and pack the roots that exist in the union.
-//   - The FUSE processes stay in the background, so they are killed on exit. Otherwise the namespace would never end.
+// stackedScript renders the work run with the mounts in place: pack the roots that exist in the union.
 //   - ls tests for a root, not a stat of a device node through a mount, which can hang.
-func stackedScript(r stackedRun, pack string) string {
+func stackedScript(merged string, sources []string, pack string) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
-	fmt.Fprintf(&b, "waitmnt() { for _ in $(seq 100); do grep -q \" $1 \" /proc/self/mountinfo && return 0; sleep 0.1; done; echo \"mount of $1 did not appear\" >&2; return 1; }\n")
-	b.WriteString("trap 'kill $P1 $P2 2>/dev/null || true' EXIT\n")
-	fmt.Fprintf(&b, "%s -f %s %s &\nP1=$!\nwaitmnt %s\n",
-		shellQuote(r.Squashfuse), shellQuote(r.Snapshot), shellQuote(r.Lower), shellQuote(r.Lower))
-	fmt.Fprintf(&b, "%s -f -o %s %s &\nP2=$!\nwaitmnt %s\n",
-		shellQuote(r.Overlayfs),
-		shellQuote("squash_to_root,lowerdir="+r.ImageUpper+":"+r.Lower+",upperdir="+r.Upper+",workdir="+r.Work),
-		shellQuote(r.Merged), shellQuote(r.Merged))
-	fmt.Fprintf(&b, "cd %s\nsrcs=()\n", shellQuote(r.Merged))
-	for _, s := range r.Sources {
+	fmt.Fprintf(&b, "cd %s\nsrcs=()\n", shellQuote(merged))
+	for _, s := range sources {
 		fmt.Fprintf(&b, "ls -d -- %s >/dev/null 2>&1 && srcs+=(%s)\n", shellQuote(s), shellQuote(s))
 	}
 	b.WriteString(pack)

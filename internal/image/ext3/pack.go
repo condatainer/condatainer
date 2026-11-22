@@ -10,7 +10,6 @@ import (
 
 	"github.com/condatainer/condatainer/internal/image/tool"
 	"github.com/condatainer/condatainer/internal/logging"
-	"github.com/condatainer/condatainer/internal/toolpath"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -32,7 +31,7 @@ const (
 // Pack builds the overlay at opts.Path from stage, a directory holding upper/ and work/.
 //   - The image is written to <path>.partial, locked while it is written, and renamed on success, so a failed run leaves nothing at the destination.
 //   - Opaque markers left by fuse-overlayfs are dropped and work/ is emptied.
-//   - A root owner is recorded by running mke2fs in a root-mapped user namespace; any other owner is applied to the finished image.
+//   - An owner other than the caller's is applied to the finished image.
 func Pack(ctx context.Context, stage string, opts *CreateOptions) error {
 	if err := validateOpts(opts); err != nil {
 		return err
@@ -82,18 +81,7 @@ func Pack(ctx context.Context, stage string, opts *CreateOptions) error {
 		"-d", stage, "-F", partial,
 	}
 	chown := opts.UID != os.Getuid() || opts.GID != os.Getgid()
-	if chown && opts.UID == 0 && opts.GID == 0 && rootNamespaceAvailable(ctx) {
-		// Inside the namespace the caller is root, so mke2fs records 0:0.
-		mke2fs, err := toolpath.Resolve("mke2fs")
-		if err != nil {
-			return err
-		}
-		err = tool.RunCommandBound(ctx, "pack", opts.Path, "unshare", append([]string{"-r", mke2fs}, mkfs...)...)
-		if err != nil {
-			return err
-		}
-		chown = false
-	} else if err := tool.RunCommandBound(ctx, "pack", opts.Path, "mke2fs", mkfs...); err != nil {
+	if err := tool.RunCommandBound(ctx, "pack", opts.Path, "mke2fs", mkfs...); err != nil {
 		return err
 	}
 	if chown {
@@ -143,11 +131,6 @@ func lockPartial(ctx context.Context, path string) (*utils.FileLock, error) {
 		return lock, nil
 	}
 	return nil, fmt.Errorf("%w: %s keeps changing", ErrCreateInProgress, path)
-}
-
-// rootNamespaceAvailable reports whether an unprivileged user namespace mapping the caller to root can be created.
-func rootNamespaceAvailable(ctx context.Context) bool {
-	return tool.RunCommand(ctx, "probe", "", "unshare", "-r", "true") == nil
 }
 
 // prepareStage normalizes stage for mke2fs and measures upper.

@@ -103,8 +103,7 @@ func startSocksSSH(listen, network, addr string, sshArgs []string, cleanup func(
 	cmd := exec.Command("ssh", append([]string{"-D", listen}, sshArgs...)...)
 	// Pdeathsig: if the daemon itself dies (crash, OOM-kill) before stop()
 	// runs, the kernel kills this ssh process directly instead of leaving
-	// it holding the tunnel open. ssh never escalates privilege, so
-	// unlike freeze.MountedRun's namespaced mount this needs no sentinel.
+	// it holding the tunnel open.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {

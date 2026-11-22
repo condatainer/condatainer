@@ -161,3 +161,14 @@ func TestEnsureMicromambaLeavesAProvisionedToolchainAlone(t *testing.T) {
 		t.Fatalf("EnsureMicromamba on a provisioned toolchain: %v", err)
 	}
 }
+
+// The advice names the host inside a container, where the update itself is refused.
+func TestMessagesSayWhereToUpdate(t *testing.T) {
+	t.Setenv("IN_CONDATAINER", "1")
+	if got := NotProvisionedMessage("mksquashfs"); !strings.Contains(got, "on the host") {
+		t.Errorf("inside a container: %q does not say to update on the host", got)
+	}
+	if err := NotInstalledError("mksquashfs"); err == nil || !strings.Contains(err.Error(), "update --libexec") {
+		t.Errorf("NotInstalledError = %v, want it to name the update", err)
+	}
+}

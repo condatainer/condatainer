@@ -197,21 +197,34 @@ func TestUpdateReplacesThePreviousBundle(t *testing.T) {
 	}
 }
 
-// A bundle of the installed Apptainer version is left alone unless force is set.
-func TestUpdateSkipsTheInstalledBundleUnlessForced(t *testing.T) {
+// The installed archive is left alone unless force is set.
+// A different archive of the same Apptainer version is installed.
+func TestUpdateSkipsTheInstalledArchiveUnlessForced(t *testing.T) {
 	dir := withLibexecDir(t)
-	serveRelease(t, "1.5.4", tarball(t, fakeBundle(t, "1.5.4", nil)), "")
+	same := tarball(t, fakeBundle(t, "1.5.4", nil))
+	serveRelease(t, "1.5.4", same, "")
 	if err := Update(context.Background(), false, PackageApptainer); err != nil {
 		t.Fatal(err)
 	}
+	if m, _ := readManifest(dir); m.Archive == "" {
+		t.Fatal("the installed manifest records no archive")
+	}
 	extra := filepath.Join(dir, "lib", "extra")
-	serveRelease(t, "1.5.4", tarball(t, fakeBundle(t, "1.5.4", map[string]fakeFile{"lib/extra": {body: "x"}})), "")
+	rebuilt := tarball(t, fakeBundle(t, "1.5.4", map[string]fakeFile{"lib/extra": {body: "x"}}))
 
+	serveRelease(t, "1.5.4", rebuilt, "")
+	if err := Update(context.Background(), false, PackageApptainer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(extra); err != nil {
+		t.Errorf("a rebuilt archive of the same version was not installed: %v", err)
+	}
+	os.Remove(extra)
 	if err := Update(context.Background(), false, PackageApptainer); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(extra); !os.IsNotExist(err) {
-		t.Errorf("an unforced update reinstalled the same version: %v", err)
+		t.Errorf("an unforced update reinstalled the same archive: %v", err)
 	}
 	if err := Update(context.Background(), true, PackageApptainer); err != nil {
 		t.Fatal(err)

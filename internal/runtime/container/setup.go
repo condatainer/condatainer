@@ -213,18 +213,10 @@ func buildEnvironment(overlays []string, lastImg string, envMounted bool, cfg Se
 
 	// Add conda-env-specific environment variables
 	if envMounted {
-		if os.Getenv("IN_CONDATAINER") != "" {
-			diagnostics = append(diagnostics, Diagnostic{
-				Level:   "warn",
-				Message: "You are trying to mount a environment overlay inside an existing CondaTainer environment. This may lead to unexpected behavior.",
-			})
-		}
-
 		envList = append(envList,
 			"CONDA_DEFINE_ENV=env",
 			"RETICULATE_PYTHON=/cnt_env/bin/python",
 		)
-
 	}
 
 	// Add user-specified environment variables (with validation)

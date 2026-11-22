@@ -310,8 +310,6 @@ func writeSidecar(img string, m meta.Manifest, env []meta.EnvVar) error {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# unfrozen from %s on %s\n", m.Name, time.Now().UTC().Format("2006-01-02"))
-	b.WriteString("# it is a new development line: this overlay has no identity, is not lockable,\n")
-	b.WriteString("# and is not publishable until it is frozen again.\n")
 
 	// The artifact's environment comes back out. A frozen artifact keeps its
 	// variables inside, where an immutable image's metadata belongs; a writable

@@ -111,14 +111,10 @@ func resolveUnfreezeTarget(artifact, dest string) (string, error) {
 	return abs, nil
 }
 
-// reportUnfreeze says what came back and, more importantly, what the result is
-// not. "I unfroze it, so the project now uses it" is the wrong mental model and
-// nothing else will correct it.
+// reportUnfreeze says what came back.
 func reportUnfreeze(res freeze.UnfreezeResult) {
 	utils.PrintMessage("Unfroze %s → %s (%d MB payload, %d entries, in %d MB)",
 		res.From, res.Path, res.PayloadMB, res.Entries, res.SizeMB)
-	utils.PrintWarning("This is a new development line. A writable overlay has no identity: it cannot be pinned, and it cannot be published.")
-	utils.PrintWarning("A project pinning %s still resolves that overlay. Freeze this one again when it is worth keeping.", res.From)
 }
 
 func init() {

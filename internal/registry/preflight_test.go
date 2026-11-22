@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/condatainer/condatainer/internal/logging"
+	"github.com/condatainer/condatainer/internal/testenv"
 )
 
 // The probe's retryable cases are only observable once the budget cuts them off,
@@ -22,6 +23,7 @@ import (
 // holds at any budget, and every server here is a local httptest, so the suite
 // runs against a short one.
 func TestMain(m *testing.M) {
+	testenv.LibexecOnPath()
 	probeTimeout = 200 * time.Millisecond
 	os.Exit(m.Run())
 }

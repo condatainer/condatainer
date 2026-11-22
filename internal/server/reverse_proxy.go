@@ -364,6 +364,7 @@ func isWebSocketUpgrade(req *http.Request) bool {
 // WebSocket origin checks in apps like JupyterLab and code-server (which
 // reject requests whose Host/Origin doesn't match their bound address) from
 // blocking proxied requests that arrive with a subdomain Host header.
+// It also drops the server's sign-in cookies from the request.
 func hostRewrite(target *url.URL) func(*httputil.ProxyRequest) {
 	origin := "http://" + target.Host
 	return func(proxyReq *httputil.ProxyRequest) {
@@ -383,7 +384,22 @@ func hostRewrite(target *url.URL) func(*httputil.ProxyRequest) {
 		if req.Header.Get("Origin") != "" {
 			req.Header.Set("Origin", origin)
 		}
+		// The helper app never sees the server's sign-in cookie.
+		stripTokenCookies(req.Header)
 	}
+}
+
+// subdomainLabel returns the label of a Host such as "{label}.localhost:{port}", or "" for any other host.
+func subdomainLabel(host string) string {
+	// Safely strip port suffix, ignoring the error if no port exists.
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	const suffix = ".localhost"
+	if strings.HasSuffix(host, suffix) {
+		return host[:len(host)-len(suffix)]
+	}
+	return ""
 }
 
 // hostDispatch wraps the dashboard mux with subdomain-based proxy routing.
@@ -391,19 +407,9 @@ func hostRewrite(target *url.URL) func(*httputil.ProxyRequest) {
 // all other requests (localhost:{port}) are handled by the dashboard mux.
 func (s *srv) hostDispatch(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := r.Host
-		// Safely strip port suffix, ignoring the error if no port exists.
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			host = h
-		}
-		// {id}.localhost → proxy to helper.
-		const suffix = ".localhost"
-		if strings.HasSuffix(host, suffix) {
-			id := host[:len(host)-len(suffix)]
-			if id != "" {
-				s.serveSubdomainProxy(w, r, id)
-				return
-			}
+		if id := subdomainLabel(r.Host); id != "" {
+			s.serveSubdomainProxy(w, r, id)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})

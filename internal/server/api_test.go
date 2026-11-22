@@ -7,10 +7,13 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/helper"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
 // A helper link in the dashboard uses the port the browser reached the server on, which a forward can make differ from the listening port.
@@ -176,5 +179,34 @@ func TestHelperListPagesFinishedRuns(t *testing.T) {
 	}
 	if _, w := listHelpers(t, s, "/api/helpers?before=yesterday"); w.Code != 400 {
 		t.Errorf("a bad before gave %d, want 400", w.Code)
+	}
+}
+
+// The dashboard's own replies never hold the token. A link in the list is the plain one.
+func TestHelperListNeverCarriesTheToken(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	invalidateHistoryCache()
+	t.Cleanup(invalidateHistoryCache)
+	settingstest.Override(t, "server.require_token", "true")
+	tok, err := createTokenFile(config.GetServerTokenPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := helper.AppendHistory(&helper.HelperRun{ID: "svc-20260101-000000", Name: "svc", Port: 9000, Status: "running", URLPath: "?token=jup"}); err != nil {
+		t.Fatal(err)
+	}
+	s := &srv{ctx: context.Background(), port: 13182}
+	s.watcher = newWatcher(s)
+	r := httptest.NewRequest("GET", "/api/helpers", nil)
+	r.Host = "localhost:13182"
+	w := httptest.NewRecorder()
+	s.handleHelpersList(w, r)
+	body := w.Body.String()
+	if !strings.Contains(body, "svc-20260101-000000.localhost:13182/?token=jup") {
+		t.Fatalf("the list has no access_url: %s", body)
+	}
+	if strings.Contains(body, tok) || strings.Contains(body, tokenParam) {
+		t.Errorf("the list carries the token: %s", body)
 	}
 }

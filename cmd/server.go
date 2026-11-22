@@ -12,6 +12,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/server"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -24,10 +25,10 @@ var serverCmd = &cobra.Command{
 The server runs on the login node and provides:
   - A web dashboard at http://localhost:{port}/
   - A reverse proxy to helper apps on compute nodes
-  - Live log streaming
 
 - The port is remembered after the first start.
-- start, stop and restart cannot run inside a container or a scheduler job.`,
+- start, stop and restart cannot run inside a container or a scheduler job.
+- The token is private and stays the same across restarts.`,
 }
 
 func init() {
@@ -49,6 +50,20 @@ func requireLoginNode(cmd *cobra.Command) error {
 	}
 	cmd.SilenceUsage = true
 	return fmt.Errorf("server %s cannot run inside %s; run it on the login node", cmd.Name(), where)
+}
+
+// rotateServerToken replaces the dashboard token for --rotate-token.
+// A running server follows the file within seconds, so it needs no restart.
+func rotateServerToken() error {
+	if !server.TokenRequired() {
+		utils.PrintWarning("server.require_token is off, so there is no token to replace.")
+		return nil
+	}
+	if _, err := server.RotateToken(); err != nil {
+		return fmt.Errorf("replacing the token: %w", err)
+	}
+	utils.PrintMessage("Dashboard token replaced. Every browser signs in again.")
+	return nil
 }
 
 // startServerDaemon forks the server using the pipe-readiness protocol.
@@ -116,7 +131,8 @@ func startServerDaemon(port int, daemon bool) error {
 		return fmt.Errorf("%s", strings.TrimSpace(string(msg)))
 	}
 
-	utils.PrintSuccess("Sever Dashboard started: http://localhost:%d/", port)
+	utils.PrintSuccess("Server dashboard started:")
+	utils.PrintLink(server.TokenLink(fmt.Sprintf("http://localhost:%d/", port)))
 	if logPath != "" {
 		utils.PrintMessage("Log: %s", logPath)
 	}

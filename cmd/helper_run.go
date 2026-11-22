@@ -17,6 +17,7 @@ import (
 	"github.com/condatainer/condatainer/internal/helper"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	"github.com/condatainer/condatainer/internal/scheduler"
+	"github.com/condatainer/condatainer/internal/server"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
@@ -454,7 +455,8 @@ func runHelperRun(cmd *cobra.Command, args []string) error {
 					return ui.MonitorHelper(ctx, chosen.ID, false)
 				}
 				if url := chosen.AccessURL(serverPort); url != "" {
-					utils.PrintSuccess("Access at: %s", url)
+					utils.PrintSuccess("Access at:")
+					utils.PrintLink(server.TokenLink(url))
 				}
 				return nil
 			}
@@ -466,7 +468,7 @@ func runHelperRun(cmd *cobra.Command, args []string) error {
 			serverPort := config.GetRunningServerPort()
 			for _, r := range running {
 				if url := r.AccessURL(serverPort); url != "" {
-					fmt.Printf("%s already running: %s\n", opts.ScriptName, url)
+					fmt.Printf("%s already running:\n  %s\n", opts.ScriptName, server.TokenLink(url))
 				} else if r.Status == "pending" || r.Status == "starting" {
 					fmt.Printf("%s already submitted (%s); check with `condatainer helper`\n",
 						opts.ScriptName, r.Status)

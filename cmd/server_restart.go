@@ -16,10 +16,19 @@ var serverRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Args:  cobra.NoArgs,
 	Short: "Restart the dashboard server (stop + start)",
+	Long: `Restart the dashboard server: stop it, then start it.
+
+- The server keeps its daemon mode unless --daemon is given.
+- --rotate-token replaces the dashboard token.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 		if err := requireLoginNode(cmd); err != nil {
 			return err
+		}
+		if serverRestartRotateToken {
+			if err := rotateServerToken(); err != nil {
+				return err
+			}
 		}
 
 		pidFile := config.GetServerPidFilePath()
@@ -74,9 +83,12 @@ var serverRestartCmd = &cobra.Command{
 var (
 	serverRestartPort   int
 	serverRestartDaemon bool
+
+	serverRestartRotateToken bool
 )
 
 func init() {
 	serverRestartCmd.Flags().IntVarP(&serverRestartPort, "port", "p", 0, "Restart on a different port (remembered for the next start)")
 	serverRestartCmd.Flags().BoolVar(&serverRestartDaemon, "daemon", false, "Keep running after SSH logout (default: keep current mode)")
+	serverRestartCmd.Flags().BoolVar(&serverRestartRotateToken, "rotate-token", false, "Replace the dashboard token")
 }

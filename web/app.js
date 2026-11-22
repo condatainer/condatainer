@@ -11,6 +11,33 @@ function jsArg(v) {
   return escHtml(JSON.stringify(String(v == null ? '' : v)));
 }
 
+// goURL is the link a click on a helper link follows. The dashboard signs the
+// browser in to the helper's own origin and redirects there. Other links stay as they are.
+function goURL(url) {
+  try {
+    if (new URL(url).hostname.endsWith('.localhost')) return 'go?url=' + encodeURIComponent(url);
+  } catch { /* not a URL: leave it */ }
+  return url;
+}
+
+// showSignedOut tells the user the server no longer accepts this browser's sign-in.
+function showSignedOut() {
+  if (document.getElementById('signed-out')) return;
+  const bar = document.createElement('div');
+  bar.id = 'signed-out';
+  bar.className = 'signed-out';
+  bar.textContent = 'Signed out. Run `condatainer server status` on the login node, then open the link it prints.';
+  document.body.prepend(bar);
+}
+
+// Every call to the server goes through here, so any 401 shows the sign-in line.
+const _fetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+  const res = await _fetch(...args);
+  if (res.status === 401) showSignedOut();
+  return res;
+};
+
 // A node name up to its first dot, for display. An IPv4 address stays whole.
 function shortNode(node) {
   if (!node || /^[\d.]+$/.test(node)) return node || '';

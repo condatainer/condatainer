@@ -5,7 +5,7 @@ function appendMsgText(text, container) {
   while ((m = urlRe.exec(text)) !== null) {
     if (m.index > last) container.appendChild(document.createTextNode(text.slice(last, m.index)));
     const a = document.createElement('a');
-    a.href = m[0]; a.textContent = m[0]; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.href = goURL(m[0]); a.textContent = m[0]; a.target = '_blank'; a.rel = 'noopener noreferrer';
     container.appendChild(a);
     last = m.index + m[0].length;
   }
@@ -117,12 +117,12 @@ function jobCardHTML(j, stableJobIds) {
       (lastMsg ? '<div class="jc-lastmsg">"' + escHtml(lastMsg) + '"</div>' : '') +
       (url
         ? '<div class="jc-access" onclick="event.stopPropagation()">' +
-            '<a class="jc-link" href="' + escHtml(url) + '" target="_blank" title="' + escHtml(url) + '">' +
+            '<a class="jc-link" href="' + escHtml(goURL(url)) + '" target="_blank" title="' + escHtml(url) + '">' +
               '<span class="jc-link-text">' + escHtml(url) + '</span><span class="jc-link-ext">↗</span>' +
             '</a>' +
             '<button class="btn btn-sm jc-icon-btn" onclick="copyStr(' + jsArg(url) + ',this)" title="Copy URL">' + iconSvg('content_copy') + '</button>' +
             (stableURL
-              ? '<a class="btn btn-sm jc-icon-btn" href="' + escHtml(stableURL) + '" target="_blank" title="' + escHtml(stableURL) + '">' + iconSvg('link_2') + '</a>'
+              ? '<a class="btn btn-sm jc-icon-btn" href="' + escHtml(goURL(stableURL)) + '" target="_blank" title="' + escHtml(stableURL) + '">' + iconSvg('link_2') + '</a>'
               : '') +
           '</div>'
         : '') +
@@ -283,7 +283,7 @@ function renderDetail(job) {
   }
   // Access
   const url = job.access_url || job.external_url;
-  if (url) meta += '<span class="d-key">URL</span><span class="d-val"><a href="' + escHtml(url) + '" target="_blank">' + escHtml(url) + '</a></span>';
+  if (url) meta += '<span class="d-key">URL</span><span class="d-val"><a href="' + escHtml(goURL(url)) + '" target="_blank">' + escHtml(url) + '</a></span>';
   gid('d-meta').innerHTML = meta;
 
   // Resources

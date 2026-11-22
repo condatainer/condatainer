@@ -578,3 +578,6 @@ code{font-family:var(--mono);}
 /* Room for the absolutely-positioned combo dropdowns (max-height 160px). */
 #oc-detail{min-height:340px;}
 #oc-detail .field{margin-bottom:12px;}
+
+/* Shown when the server answers 401: this browser is no longer signed in. Same tint as .ov-notice.error. */
+.signed-out{position:fixed;top:0;left:0;right:0;z-index:1000;padding:10px 16px;background:color-mix(in srgb,var(--danger) 7%,var(--surface));border-bottom:1px solid color-mix(in srgb,var(--danger) 25%,transparent);color:var(--danger);font-size:13px;text-align:center;-webkit-user-select:text;user-select:text;}

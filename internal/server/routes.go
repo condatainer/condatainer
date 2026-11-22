@@ -36,6 +36,9 @@ func registerRoutes(mux *http.ServeMux, s *srv) {
 		w.Write(data) //nolint:errcheck
 	})
 
+	// A click on a helper link
+	mux.HandleFunc("/go", s.handleGo)
+
 	// REST API
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/env/check", s.handleEnvCheck)

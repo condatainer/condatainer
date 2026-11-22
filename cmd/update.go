@@ -29,11 +29,9 @@ var updateCmd = &cobra.Command{
   micromamba: the standalone micromamba binary.
   With no name, both are installed or updated.
   Writes to $CNT_ROOT/libexec, or $CNT_LIBEXEC when set.`,
-	Example: `  condatainer update                          # Refresh recipe and helper caches
-  # Install or update apptainer and micromamba
-  condatainer update --libexec
-  condatainer update --libexec apptainer      # Install or update apptainer only
-  # A specific version
+	Example: `  condatainer update                          # Refresh recipes and helpers
+  condatainer update --libexec                # Apptainer and micromamba
+  condatainer update --libexec apptainer      # Apptainer only
   condatainer update --libexec apptainer@1.5.4
   condatainer update --libexec apptainer@1.5  # The newest 1.5.x`,
 	Args: func(cmd *cobra.Command, args []string) error {

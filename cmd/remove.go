@@ -34,7 +34,6 @@ var removeCmd = &cobra.Command{
 - It asks before removing, and exits with an error if it cannot remove.`,
 	Example: `  condatainer rm cellranger/9.0.1  # One version
   condatainer rm cellranger        # Every version of cellranger
-  # Several overlays
   condatainer rm cellranger/9.0.1 cellranger/8.0.1
   condatainer rm cellranger 9      # AND search (multiple terms)
   condatainer rm 'cell*'           # Wildcard`,

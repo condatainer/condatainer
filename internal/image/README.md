@@ -28,7 +28,12 @@ File operations on overlay images: create, resize, chown, check, lock, read a pa
 - Without `--fakeroot`, a root-owned `upper/` fails to mount with "setup of overlay upper dir failed: ... is not writable: permission denied".
   - `chown` fixes it by giving the tree to the current user.
 - `chown` rewrites the owner of `upper/`, `work/` and `work/work`, and of everything under `upper/`.
-- The owner of `upper/` also tells whether `--fakeroot` is turned on automatically.
+- A writable mount depends on the owner of `upper/` and `work/`.
+  - The current user: it mounts.
+  - Root: it mounts with `--fakeroot`, which is turned on automatically.
+  - Another uid: it mounts with `--fakeroot` only on a host where the user has a subuid range. Otherwise `chown` is the fix.
+- A file below `upper/` with another owner is read by its permission bits.
+  - A private file cannot be read, unless `--fakeroot` runs on a host with a subuid range.
 - A `.sqf` is a read-only overlay as it stands.
   - Apptainer mounts it with `squashfuse_ll -o`, which overrides the archive's inner uid and gid.
   - So it has none of the `.img` ownership problem, and it cannot be written.

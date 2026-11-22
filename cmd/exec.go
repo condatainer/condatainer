@@ -34,16 +34,10 @@ var execCmd = &execCommand{
 
 - All positional arguments form the command (default: bash).
 - Extra Apptainer flags must use --flag=value format (no space).`,
-		Example: `  # Run samtools command with overlay
-  condatainer exec -o samtools/1.22 samtools view file.bam
-
-  # Use writable .img overlay
+		Example: `  condatainer exec -o samtools/1.22 samtools view file.bam
   condatainer exec -w -o env.img
-
-  # Set environment variables
   condatainer exec --env MYVAR=value -o samtools/1.22 bash
-
-  # Pass apptainer flags (use --flag=value format)
+  # Apptainer flags take the --flag=value form
   condatainer exec --nv --home=/custom -o samtools/1.22 python gpu_script.py`,
 		RunE: runExec,
 	},

@@ -14,7 +14,9 @@ Ephemeral container execution: the container setup pipeline plus Apptainer.
 
 - There is no `ApptainerBin` field. The caller cannot choose the binary.
 - It is decided from the final `Fakeroot` value, which is why it is resolved after the root and fakeroot are settled.
-- Fakeroot is enabled automatically for a writable `.img` overlay.
+- Fakeroot is enabled automatically for a writable `.img` whose files belong to root.
+- A writable `.img` whose files belong to another user is refused before the launch.
+  - Fakeroot runs commands as uid 0, and some tools behave differently as root. It writes files of another uid only where the user has a subuid range, which an HPC cluster rarely gives.
 
 ## Locks
 

@@ -181,66 +181,32 @@ func (s *Stats) InodeUsage() (percent float64) {
 	return (float64(usedInodes) / float64(s.TotalInodes)) * 100.0
 }
 
-// UIDStatus represents the result of InspectImageUIDStatus.
-type UIDStatus int
-
-const (
-	UIDStatusUnknown UIDStatus = iota
-	// UIDStatusRoot indicates the 'upper' directory is owned by root (UID 0).
-	UIDStatusRoot
-	// UIDStatusCurrentUser indicates it's owned by the current user.
-	UIDStatusCurrentUser
-	// UIDStatusDifferentUser indicates it's owned by a different user.
-	UIDStatusDifferentUser
-)
-
-// InspectImageUIDStatus checks the ownership of the 'upper' directory inside an ext3/4 image. It decides whether --fakeroot is enabled automatically.
-//   - UIDStatusRoot: owned by root (UID 0).
-//   - UIDStatusCurrentUser: owned by the current user.
-//   - UIDStatusDifferentUser: owned by a different user.
-//   - UIDStatusUnknown: the check failed, or it is not an image file.
-func InspectImageUIDStatus(imgPath string) UIDStatus {
-	// Check if debugfs is available
+// ImageOwnerUID reads the owner of the 'upper' directory inside an ext3/4 image, and reports whether it could.
+//   - It reads the image with debugfs and never mounts it.
+//   - It fails when debugfs is missing, the file is not an ext3/4 image, or the owner is not in the output.
+func ImageOwnerUID(imgPath string) (uid int, ok bool) {
 	debugfsPath, err := toolpath.Resolve("debugfs")
 	if err != nil {
-		return UIDStatusUnknown // debugfs not found
+		return 0, false
 	}
-
-	// Use debugfs to check the UID of the 'upper' directory
-	cmd := exec.Command(debugfsPath, "-R", "stat upper", imgPath)
-	output, err := cmd.CombinedOutput()
+	output, err := exec.Command(debugfsPath, "-R", "stat upper", imgPath).CombinedOutput()
 	if err != nil {
-		// Failed to execute debugfs (might not be an ext3/4 image)
-		return UIDStatusUnknown
+		return 0, false
 	}
-
-	// Parse the output to extract UID
-	// Expected format: "User:  1000   Group:  1000"
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "User:") {
-			parts := strings.Fields(line)
-			// Format is typically: "User:  <uid>  Group:  <gid>"
-			if len(parts) >= 2 {
-				uidStr := parts[1]
-				uid, err := strconv.Atoi(uidStr)
-				if err != nil {
-					return UIDStatusUnknown // Failed to parse UID
-				}
-
-				// Compare with current user's UID
-				currentUID := os.Getuid()
-				switch uid {
-				case 0:
-					return UIDStatusRoot
-				case currentUID:
-					return UIDStatusCurrentUser
-				default:
-					return UIDStatusDifferentUser
-				}
-			}
+	// debugfs prints "User:  <uid>   Group:  <gid>".
+	for _, line := range strings.Split(string(output), "\n") {
+		if !strings.Contains(line, "User:") {
+			continue
 		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		uid, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return 0, false
+		}
+		return uid, true
 	}
-
-	return UIDStatusUnknown // UID information not found in output
+	return 0, false
 }

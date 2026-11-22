@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -37,15 +38,17 @@ var eCmd = &cobra.Command{
 	Long: `Shortcut for ` + "`exec`" + ` with overlays given as arguments, writable by default.
 
 - Overlays and flags go before --, the command goes after it.
-- Loads env.img from the current directory unless a .img is given or -n is set.
-- If only env.sqf exists there, it is loaded instead, read-only.
-- Extra Apptainer flags must use --flag=value format (no space).`,
-	Example: `  condatainer e                              # Load env.img if present, run bash
-  condatainer e testing.img                  # Use a specific writable overlay
-  condatainer e samtools/1.22 bcftools/1.20  # Multiple overlays
-  condatainer e samtools/1.22 -- samtools    # Run a command
-  # Pass Apptainer flags
-  condatainer e --home=/custom samtools/1.22`,
+- Loads environment overlay from the current directory unless -n is set.
+- Extra Apptainer flags must use --flag=value format (no space).
+
+The environment overlay is the first of these in the current directory:
+  1. env-$USER.img, else env.img, with its env.sqf.
+  2. env.sqf alone, when there is no .img.`,
+	Example: `  condatainer e                               # Load env.img if present
+  condatainer e testing.img
+  condatainer e samtools/1.22 bcftools/1.20
+  condatainer e samtools/1.22 -- samtools     # Run a command
+  condatainer e --home=/custom samtools/1.22  # Pass Apptainer flags`,
 	SilenceUsage: true,
 	RunE:         runE,
 }
@@ -95,51 +98,11 @@ func runE(cmd *cobra.Command, args []string) error {
 	// Auto-load env.img if not disabled and no .img in overlays.
 	// Reported after Project detection
 	var announceAutoload func()
-	if !eNoAutoload {
-		hasImgOverlay := slices.ContainsFunc(overlays, utils.IsImg)
-		if !hasImgOverlay {
-			if pwd, err := os.Getwd(); err == nil {
-				switch candidate := utils.FindEnvOverlay("", pwd); {
-				case candidate != "":
-					err := image.CheckAvailable(candidate, !eReadOnly)
-					switch {
-					case errors.Is(err, image.ErrProtected):
-						announceAutoload = func() {
-							utils.PrintWarning("%v; running without it (-r mounts it read-only)", err)
-						}
-					case errors.Is(err, image.ErrInUse):
-						announceAutoload = func() {
-							utils.PrintWarning("%s is in use, running without it", filepath.Base(candidate))
-						}
-					case err != nil:
-						announceAutoload = func() {
-							utils.PrintWarning("%v; running without it", err)
-						}
-					default:
-						if lookup := container.LookupSnapshot(candidate); lookup.Path != "" {
-							imgName, sqfName := filepath.Base(candidate), filepath.Base(lookup.Path)
-							announceAutoload = func() {
-								utils.PrintNote("Autoload environment overlay %s with %s", imgName, sqfName)
-							}
-							overlays = append(overlays, candidate, lookup.Path)
-						} else {
-							imgName := filepath.Base(candidate)
-							announceAutoload = func() {
-								utils.PrintNote("Autoload environment overlay %s", imgName)
-							}
-							overlays = append(overlays, candidate)
-						}
-					}
-				default:
-					if snapshot := helper.FindEnvSnapshot(pwd); snapshot != "" {
-						snapshotName := filepath.Base(snapshot)
-						announceAutoload = func() {
-							utils.PrintNote("Autoload snapshot %s", snapshotName)
-						}
-						overlays = append(overlays, snapshot)
-					}
-				}
-			}
+	if !eNoAutoload && !container.NamesEnvironment(overlays) {
+		if pwd, err := os.Getwd(); err == nil {
+			var autoloaded []string
+			autoloaded, announceAutoload = autoloadEnv(pwd, eReadOnly)
+			overlays = append(overlays, autoloaded...)
 		}
 	}
 
@@ -203,6 +166,59 @@ func runE(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return nil
+}
+
+// autoloadEnv picks the environment overlays in dir for a run that named no .img, and the message to print once the run is set up.
+//   - An env.img that can be locked is loaded with its paired env.sqf.
+//   - An env.img that cannot be used loads nothing, and neither does its env.sqf. The snapshot alone is an older environment, not this one.
+//   - With no env.img, an env.sqf in dir is loaded read-only.
+func autoloadEnv(dir string, readOnly bool) ([]string, func()) {
+	candidate := utils.FindEnvOverlay("", dir)
+	if candidate == "" {
+		snapshot := helper.FindEnvSnapshot(dir)
+		if snapshot == "" {
+			return nil, nil
+		}
+		return []string{snapshot}, func() {
+			utils.PrintNote("Autoload snapshot %s", filepath.Base(snapshot))
+		}
+	}
+
+	imgName := filepath.Base(candidate)
+	snapshot := container.LookupSnapshot(candidate).Path
+	err := image.CheckAvailable(candidate, !readOnly)
+	switch {
+	case err == nil && snapshot != "":
+		return []string{candidate, snapshot}, func() {
+			utils.PrintNote("Autoload environment overlay %s with %s", imgName, filepath.Base(snapshot))
+		}
+	case err == nil:
+		return []string{candidate}, func() {
+			utils.PrintNote("Autoload environment overlay %s", imgName)
+		}
+	}
+
+	reason := err.Error()
+	if errors.Is(err, image.ErrInUse) {
+		reason = imgName + " is in use"
+	}
+	hint := unavailableHint(candidate, snapshot, readOnly)
+	return nil, func() {
+		utils.PrintWarning("%s; running without it%s", reason, hint)
+	}
+}
+
+// unavailableHint names what the user can run when the env.img cannot be opened, or "" when nothing would load.
+//   - -r opens an env.img that is write-protected or held only by readers.
+//   - Naming the env.sqf opens the snapshot alone, read-only.
+func unavailableHint(img, snapshot string, readOnly bool) string {
+	switch {
+	case !readOnly && image.CheckAvailable(img, false) == nil:
+		return " (-r mounts it read-only)"
+	case snapshot != "":
+		return fmt.Sprintf(" (e %s loads the snapshot read-only)", filepath.Base(snapshot))
+	}
+	return ""
 }
 
 func parseEArgs(cmd *cobra.Command, args []string) (overlays, commands, apptainerFlags []string, err error) {

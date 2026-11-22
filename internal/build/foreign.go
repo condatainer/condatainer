@@ -82,7 +82,9 @@ func FromForeignRoot(ctx context.Context, targetPrefix, source, imagesDir string
 		update:      update,
 		buildType:   BuildTypeDef,
 		foreignRoot: &foreignRoot{path: source, sandbox: sandbox, boot: boot, digest: digest},
+		description: applyOptions(opts).description,
 	}
+	base.overrideDescription()
 	if err := base.clearStaleLock(ctx); err != nil {
 		return nil, err
 	}

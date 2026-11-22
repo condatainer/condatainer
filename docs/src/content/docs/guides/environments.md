@@ -223,7 +223,8 @@ A writable `.img` overlay consists of two internal directories:
 **File Ownership:** The `upper` directory belong to the User ID (UID) of the person who created them.
 - Normally, you retain your own UID inside the container, meaning you own the files you create.
 - If you use the `--fakeroot` flag, you appear as `root` (UID 0) inside the container. And the `upper`/`work` need to be owned by `root`
-- If you attempt to load a writable overlay that contains files owned by a different UID or GID, you will encounter permission errors. See [Fix Ownership](#fix-ownership).
+- An overlay whose files are owned by `root` is opened with fakeroot automatically.
+- An overlay whose files are owned by another user ID will not open. Fix it with `overlay chown`. See [Fix Ownership](#fix-ownership).
 
 **Why `.sqf` is different:**
 When CondaTainer creates a read-only `.sqf` file, it stores every file internally as owned by `root` (UID 0 / GID 0). During running, Apptainer will call `squashfuse_ll`, which maps these files to the user running the container.
@@ -249,10 +250,11 @@ condatainer e
 - Everyone shares the same base read-only software without ownership conflicts.
 - `env-<user>.img` will pair with `env.sqf`.
 - If `.img` is missing, `condatainer e` will load the shared `env.sqf`.
+- `condatainer e env.sqf` opens that snapshot alone, read-only.
 
 ### Fix Ownership
 
-Files owned by another user ID make a writable overlay fail with permission errors. `overlay chown` changes the owner without mounting:
+A writable overlay whose files are owned by another user ID will not open. `overlay chown` changes the owner without mounting:
 
 ```bash
 condatainer overlay chown env.img                    # Everything owned by you

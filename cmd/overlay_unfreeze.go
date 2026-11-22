@@ -28,10 +28,9 @@ var overlayUnfreezeCmd = &cobra.Command{
 	Short: "Rebuild a writable overlay from a snapshot",
 	Long:  overlayUnfreezeHelp,
 	Args:  cobra.RangeArgs(1, 2),
-	Example: `  condatainer overlay unfreeze env.sqf             # env.img beside it
-  condatainer overlay unfreeze ./overlays/env.sqf  # ./overlays/env.img
-  # That path, with room to install more
-  condatainer overlay unfreeze env.sqf dev.img -s 40G`,
+	Example: `  condatainer overlay unfreeze env.sqf                 # env.img beside it
+  condatainer overlay unfreeze ./overlays/env.sqf      # ./overlays/env.img
+  condatainer overlay unfreeze env.sqf dev.img -s 40G  # dev.img, 40G`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
 		artifact := args[0]
@@ -112,14 +111,10 @@ func resolveUnfreezeTarget(artifact, dest string) (string, error) {
 	return abs, nil
 }
 
-// reportUnfreeze says what came back and, more importantly, what the result is
-// not. "I unfroze it, so the project now uses it" is the wrong mental model and
-// nothing else will correct it.
+// reportUnfreeze says what came back.
 func reportUnfreeze(res freeze.UnfreezeResult) {
 	utils.PrintMessage("Unfroze %s → %s (%d MB payload, %d entries, in %d MB)",
 		res.From, res.Path, res.PayloadMB, res.Entries, res.SizeMB)
-	utils.PrintWarning("This is a new development line. A writable overlay has no identity: it cannot be pinned, and it cannot be published.")
-	utils.PrintWarning("A project pinning %s still resolves that overlay. Freeze this one again when it is worth keeping.", res.From)
 }
 
 func init() {

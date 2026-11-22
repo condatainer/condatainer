@@ -38,6 +38,7 @@ var (
 	createNoPrebuilt bool
 	createLayer      string
 	createDryRun     bool
+	createDesc       string
 	createJSON       bool
 
 	// createFlagSet is createCmd.Flags(), held here so createJobFlags does not refer to createCmd.
@@ -62,6 +63,7 @@ const jobRepeats = "repeated"
 var createJobRules = map[string]string{
 	"source": jobRepeats, "layer": jobRepeats, "channel": jobRepeats,
 	"block-size": jobRepeats, "data-block-size": jobRepeats,
+	"desc": "the build it describes repeats it",
 	"name": "the job builds by target", "prefix": "the job builds by target",
 	"file": "the job builds by target", "from": "the job builds by target",
 	"update": "the command builder adds it", "store": "the command builder adds it",
@@ -94,19 +96,18 @@ var createCmd = &cobra.Command{
 	Short:   "Create a read-only SquashFS overlay",
 	Long: `Create a read-only SquashFS overlay.
 
+--desc sets the description of the resulting overlay.
+  It takes one Conda package, or --name, --prefix or --file.
+  It does not take a recipe name, such as orad/2.7.0.
+
 --dry-run shows what would be built, pulled or submitted, and does none of it.
 Exits with code 3 if build jobs were submitted to a scheduler.`,
-	Example: `  # From a recipe
-  condatainer create orad/2.7.0
-  # From a recipe in the lab source
-  condatainer create --source lab star/2.7.11b
-  # Conda packages, named nvim
-  condatainer create -n nvim nvim nodejs
-  # Conda packages at a custom path
+	Example: `  condatainer create samtools/1.22              # From Conda
+  condatainer create orad/2.7.0                 # From a recipe source
+  condatainer create --source lab star/2.7.11b  # From the lab source
+  condatainer create -n nvim nvim nodejs        # Several packages, one overlay
   condatainer create matplotlib pandas -p /path
-  # From a Conda file
   condatainer create -f environment.yml -p myenv
-  # From a container image
   condatainer create --from docker://ubuntu:22.04 -p ubuntu`,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		return config.SelectSources(createSources)
@@ -122,6 +123,10 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 		}
 		if createJSON && !createDryRun {
 			ExitWithError("create prints JSON only with --dry-run")
+		}
+		createDesc = strings.TrimSpace(createDesc)
+		if strings.ContainsAny(createDesc, "\r\n") {
+			ExitWithError("--desc must be one line")
 		}
 		// A dry run plans without asking a recipe's questions.
 		if createDryRun {
@@ -155,6 +160,9 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 		}
 		if createPrefix != "" && createFile == "" && len(args) == 0 && createFrom == "" {
 			ExitWithError("--prefix requires either packages, --file, or --from to be specified.")
+		}
+		if createDesc != "" && createName == "" && createPrefix == "" && len(args) > 1 {
+			ExitWithError("--desc describes one overlay: give one name, or --name or --prefix.")
 		}
 
 		// 2. Apptainer runs every build, and what a build makes is mounted to use,
@@ -221,6 +229,7 @@ func init() {
 	f.StringVarP(&createName, "name", "n", "", "Custom name for the overlay (with --prefix: the name recorded in it)")
 	f.StringVarP(&createPrefix, "prefix", "p", "", "Custom prefix path for the overlay")
 	f.StringVarP(&createFile, "file", "f", "", "Path to definition file (.yaml, .txt, .sh, .def, .sif, or a sandbox dir)")
+	f.StringVar(&createDesc, "desc", "", "Description of the overlay (Conda package, --name or --prefix)")
 	f.StringVar(&createFrom, "from", "", "Build from an external image URI (e.g., docker://ubuntu:22.04)")
 	settings.AddFlag(f, "build.block_size", "block-size", settings.Usage("SquashFS block size of all overlays except data (4k to 1m, e.g. 256k)"))
 	settings.AddFlag(f, "build.data_block_size", "data-block-size", settings.Usage("SquashFS block size of data overlays (4k to 1m, e.g. 512k)"))
@@ -593,6 +602,12 @@ func runCreatePackages(ctx context.Context, packages []string) {
 		if err != nil {
 			ExitWithError("Failed to create build object for %s: %v", pkg, err)
 		}
+		if createDesc != "" {
+			if bo.BuildType() != build.BuildTypeConda && !bo.IsInstalled() {
+				ExitWithError("--desc does not take a recipe name (%s). It takes a Conda package, --name, --prefix or --file.", pkg)
+			}
+			bo.SetDescription(createDesc)
+		}
 		applyStoreOverflow(bo)
 		utils.PrintDebug("[CREATE] BuildObject created:\n%s", bo)
 		buildObjects = append(buildObjects, bo)
@@ -681,13 +696,18 @@ func checkImageDirPrefix(prefix, name string) error {
 	return nil
 }
 
-// prefixBuildOptions names the artifact --name when --prefix places it. Without
-// --prefix the file is named for the artifact already.
-func prefixBuildOptions() []build.Option {
-	if createName == "" || createPrefix == "" {
-		return nil
+// sourceBuildOptions are the build options the flags give one overlay: --desc,
+// and --name when --prefix places the file. Without --prefix the file is named
+// for the artifact already.
+func sourceBuildOptions() []build.Option {
+	var opts []build.Option
+	if createName != "" && createPrefix != "" {
+		opts = append(opts, build.WithName(createName))
 	}
-	return []build.Option{build.WithName(createName)}
+	if createDesc != "" {
+		opts = append(opts, build.WithDescription(createDesc))
+	}
+	return opts
 }
 
 // prefixJobArgs are the create arguments that rebuild a --prefix script.
@@ -724,7 +744,7 @@ func isForeignRoot(path string) bool {
 // buildForeignSource imports a .sif or sandbox directory into targetPrefix,
 // exiting on failure. outputDir holds the image and its scratch space.
 func buildForeignSource(ctx context.Context, targetPrefix, source, outputDir string) {
-	bo, err := build.FromForeignRoot(ctx, targetPrefix, source, outputDir, createUpdate, prefixBuildOptions()...)
+	bo, err := build.FromForeignRoot(ctx, targetPrefix, source, outputDir, createUpdate, sourceBuildOptions()...)
 	if err != nil {
 		ExitWithError("Failed to import %s: %v", source, err)
 	}
@@ -758,7 +778,7 @@ func applyStoreOverflow(bo *build.BuildObject) {
 // on failure. outputDir holds the image and its scratch space. jobArgs are the
 // create arguments that rebuild it, for a script that a scheduler job is to run.
 func buildExternalSource(ctx context.Context, targetPrefix, source string, isApptainer bool, outputDir string, jobArgs []string) {
-	bo, err := build.FromExternalSource(ctx, targetPrefix, source, isApptainer, outputDir, createUpdate, prefixBuildOptions()...)
+	bo, err := build.FromExternalSource(ctx, targetPrefix, source, isApptainer, outputDir, createUpdate, sourceBuildOptions()...)
 	if err != nil {
 		ExitWithError("Failed to create build object from %s: %v", source, err)
 	}
@@ -842,7 +862,7 @@ func runCreateWithName(ctx context.Context, packages []string) {
 	}
 
 	// Create CondaBuildObject using the new factory function
-	bo, err := build.NewCondaObjectWithSource(normalizedName, buildSource, imagesDir, createUpdate)
+	bo, err := build.NewCondaObjectWithSource(normalizedName, buildSource, imagesDir, createUpdate, sourceBuildOptions()...)
 	if err != nil {
 		ExitWithError("Failed to create build object: %v", err)
 	}
@@ -875,7 +895,7 @@ func runCreateWithPrefix(ctx context.Context) {
 	if utils.IsCondaFile(createFile) {
 		// Conda env/spec file - use NewCondaObjectWithSource
 		absFile, _ := filepath.Abs(createFile)
-		bo, err := build.NewCondaObjectWithSource(filepath.Base(absPrefix), absFile, outputDir, createUpdate, prefixBuildOptions()...)
+		bo, err := build.NewCondaObjectWithSource(filepath.Base(absPrefix), absFile, outputDir, createUpdate, sourceBuildOptions()...)
 		if err != nil {
 			ExitWithError("Failed to create build object: %v", err)
 		}
@@ -908,7 +928,7 @@ func runCreateWithPrefixAndPackages(ctx context.Context, packages []string) {
 	baseName := filepath.Base(absPrefix)
 	buildSource := strings.Join(packages, ",")
 
-	bo, err := build.NewCondaObjectWithSource(baseName, buildSource, outputDir, createUpdate, prefixBuildOptions()...)
+	bo, err := build.NewCondaObjectWithSource(baseName, buildSource, outputDir, createUpdate, sourceBuildOptions()...)
 	if err != nil {
 		ExitWithError("Failed to create build object: %v", err)
 	}

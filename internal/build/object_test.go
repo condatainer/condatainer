@@ -388,3 +388,73 @@ func TestParseScriptMetadata_ResourceHeaders(t *testing.T) {
 		t.Fatalf("ncpus=%d err=%v, want 8 and no error", b.effectiveNcpus(), err)
 	}
 }
+
+// A description comes from the file's own #DESC:, and WithDescription replaces
+// it. A package list has no file to read one from.
+func TestDescriptionOfASourceBuild(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, text string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	yml := write("env.yml", "#DESC: RNA-seq tools\nname: rnaseq\ndependencies:\n  - salmon\n")
+	bare := write("bare.yml", "name: bare\ndependencies:\n  - salmon\n")
+	sh := write("tool.sh", "#!/usr/bin/env bash\n#DESC: From the script\necho hi\n")
+
+	cases := []struct {
+		name  string
+		build func(opts ...Option) (*BuildObject, error)
+		opts  []Option
+		want  string
+	}{
+		{"yml reads its #DESC:", func(o ...Option) (*BuildObject, error) {
+			return NewCondaObjectWithSource("rnaseq", yml, dir, false, o...)
+		}, nil, "RNA-seq tools"},
+		{"yml without #DESC:", func(o ...Option) (*BuildObject, error) {
+			return NewCondaObjectWithSource("bare", bare, dir, false, o...)
+		}, nil, ""},
+		{"option replaces #DESC: in a yml", func(o ...Option) (*BuildObject, error) {
+			return NewCondaObjectWithSource("rnaseq", yml, dir, false, o...)
+		}, []Option{WithDescription("Mine")}, "Mine"},
+		{"option describes a package list", func(o ...Option) (*BuildObject, error) {
+			return NewCondaObjectWithSource("nvim", "nvim,nodejs", dir, false, o...)
+		}, []Option{WithDescription("Editor")}, "Editor"},
+		{"option replaces #DESC: in a script", func(o ...Option) (*BuildObject, error) {
+			return FromExternalSource(t.Context(), filepath.Join(dir, "tool"), sh, false, dir, false, o...)
+		}, []Option{WithDescription("Mine")}, "Mine"},
+		{"script keeps its #DESC:", func(o ...Option) (*BuildObject, error) {
+			return FromExternalSource(t.Context(), filepath.Join(dir, "tool"), sh, false, dir, false, o...)
+		}, nil, "From the script"},
+	}
+	for _, tc := range cases {
+		b, err := tc.build(tc.opts...)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := b.spec.Image.Description; got != tc.want {
+			t.Errorf("%s: description = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A described build takes the user's description, and its scheduler job repeats
+// it.
+func TestSetDescription(t *testing.T) {
+	b, err := NewCondaObjectWithSource("nvim", "nvim,nodejs", t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(b.jobTarget(), " "); got != "nvim" {
+		t.Errorf("job target without a description = %q, want the name alone", got)
+	}
+	b.SetDescription("Editor")
+	if got := b.spec.Image.Description; got != "Editor" {
+		t.Errorf("description = %q, want Editor", got)
+	}
+	if got := strings.Join(b.jobTarget(), " "); got != "nvim --desc Editor" {
+		t.Errorf("job target = %q, want the name and --desc", got)
+	}
+}

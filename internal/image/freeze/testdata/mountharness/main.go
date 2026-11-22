@@ -1,13 +1,12 @@
 // Command mountharness is a test-only stand-in for the condatainer binary,
 // used by internal/image/freeze's mount tests. MountedRun re-execs
-// os.Executable() into the hidden _mount_sentinel command; the `go test`
+// os.Executable() into the hidden _mount_job command; the `go test`
 // binary can't play that role since it has no cmd/cobra dispatch at all, so
 // tests point MountedRun at this binary instead.
 //
 // Usage:
 //
-//	mountharness _mount_sentinel <fuseBin> <mnt> -- [fuseArgs...]   see freeze.RunSentinel; work comes from $CNT_MOUNT_WORK
-//	mountharness _mount_exec -- <bin> [args...]                  see freeze.ExecWithoutDACOverride
+//	mountharness _mount_job <spec>                               see freeze.RunJob
 //	mountharness _payload_key <dir> <base> <workers>             prints the payload key of dir, as the hidden command does
 //	mountharness drive <fuseBin> <sqf> <mnt> <work>              calls freeze.MountedRun directly and blocks until it returns
 package main
@@ -16,7 +15,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 
 	"github.com/condatainer/condatainer/internal/artifact/key"
 	"github.com/condatainer/condatainer/internal/image/freeze"
@@ -25,29 +26,20 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fail("usage: mountharness _mount_sentinel <fuseBin> <mnt> -- [fuseArgs...] | drive <fuseBin> <sqf> <mnt> <work>")
+		fail("usage: mountharness _mount_job <spec> | _payload_key <dir> <base> <workers> | drive <fuseBin> <sqf> <mnt> <work>")
 	}
 
 	switch os.Args[1] {
-	case "_mount_sentinel":
-		if len(os.Args) < 4 {
-			fail("usage: mountharness _mount_sentinel <fuseBin> <mnt> -- [fuseArgs...]")
+	case "_mount_job":
+		if len(os.Args) != 3 {
+			fail("usage: mountharness _mount_job <spec>")
 		}
-		fuseBin, mnt := os.Args[2], os.Args[3]
-		fuseArgs := os.Args[4:]
-		// MountedRun inserts "--" ahead of fuseArgs so cobra's real
-		// _mount_sentinel won't parse them as its own flags; mirror that here.
-		if len(fuseArgs) > 0 && fuseArgs[0] == "--" {
-			fuseArgs = fuseArgs[1:]
-		}
-		if err := freeze.RunSentinel(fuseBin, mnt, os.Getenv(freeze.EnvSentinelWork), fuseArgs); err != nil {
-			fail("%v", err)
-		}
-	case "_mount_exec":
-		if len(os.Args) < 4 || os.Args[2] != "--" {
-			fail("usage: mountharness _mount_exec -- <bin> [args...]")
-		}
-		if err := freeze.ExecWithoutDACOverride(os.Args[3], os.Args[4:]); err != nil {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+		defer stop()
+		if err := freeze.RunJob(ctx, os.Args[2]); err != nil {
+			if code, ok := freeze.JobExitCode(err); ok {
+				os.Exit(code)
+			}
 			fail("%v", err)
 		}
 	case "_payload_key":
@@ -72,7 +64,8 @@ func main() {
 			fail("usage: mountharness drive <fuseBin> <sqf> <mnt> <work>")
 		}
 		io := execpkg.IO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
-		if err := freeze.MountedRun(context.Background(), os.Args[2], []string{os.Args[3]}, os.Args[4], os.Args[5], io); err != nil {
+		mounts := []freeze.Mount{{Bin: os.Args[2], Args: []string{os.Args[3]}, Path: os.Args[4]}}
+		if err := freeze.MountedRun(context.Background(), mounts, []string{os.Args[3]}, os.Args[5], io); err != nil {
 			fail("%v", err)
 		}
 	default:

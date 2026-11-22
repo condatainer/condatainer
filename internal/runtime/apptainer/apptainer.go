@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -25,10 +24,11 @@ import (
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
-// Bin is one resolved apptainer (or singularity) binary. A launch carries the
+// Bin is one resolved apptainer binary. A launch carries the
 // Bin its caller resolved, so nothing about which binary runs is package state.
 type Bin struct {
 	Path string
+	Env  []string // Added to the environment of every launch, ahead of the launch's own
 }
 
 // ErrNeedsHost reports an action that needs the host's apptainer: a container
@@ -38,24 +38,9 @@ var ErrNeedsHost = errors.New("must run on the host, not inside a container")
 // insideContainer is config.IsInsideContainer, replaceable by tests.
 var insideContainer = config.IsInsideContainer
 
-// last is the Bin the latest resolver returned, kept only so Current can report
-// it: a build runs its container through exec.Run, which does not hand the Bin back.
-var (
-	lastMu sync.Mutex
-	last   Bin
-)
-
-func remember(b Bin) Bin {
-	lastMu.Lock()
-	last = b
-	lastMu.Unlock()
-	return b
-}
-
-// systemBin returns the host/module apptainer: host_apptainer, which
-// startup filled from PATH when unset.
-func systemBin() (Bin, error) {
-	path := toolpath.SystemApptainer()
+// hostBin returns the host_apptainer, which is the host's only apptainer: none on PATH is used.
+func hostBin() (Bin, error) {
+	path := toolpath.HostApptainer()
 	if path == "" {
 		return Bin{}, &ApptainerNotFoundError{}
 	}
@@ -69,131 +54,126 @@ func systemBin() (Bin, error) {
 // unusable words why no apptainer could be used, for where this process runs.
 // A container cannot install one, so it is told how to get one at launch.
 func unusable(err error) error {
-	var missing *ApptainerNotFoundError
-	found := !errors.As(err, &missing)
 	if insideContainer() {
-		if !found {
-			return errors.New("this container has no apptainer; start it again with `nested_run` enabled (`condatainer config set nested_run true`), which binds the apptainer installed in libexec")
-		}
-		return fmt.Errorf("the apptainer in this container is unusable: %w; start it again with `nested_run` enabled", err)
+		return errors.New("this container has no apptainer; install the toolchain with `condatainer update --libexec` on the host, then start the container again")
 	}
-	return fmt.Errorf("%w; install one with `condatainer update --libexec apptainer`", err)
-}
-
-// Normal returns the apptainer for an ordinary launch: the one installed in
-// libexec, else the system/module one, which must be apptainer >= 1.4.
-func Normal() (Bin, error) {
-	if path, ok := libexec.ApptainerPath(); ok {
-		return remember(Bin{Path: path}), nil
-	}
-	bin, err := systemBin()
 	if err == nil {
-		err = bin.requireZstd("exec")
+		err = &ApptainerNotFoundError{}
 	}
-	if err != nil {
-		return Bin{}, unusable(err)
-	}
-	return remember(bin), nil
+	return fmt.Errorf("no apptainer is available (%w); install one with `condatainer update --libexec`, or set host_apptainer", err)
 }
 
-// Fakeroot returns the apptainer for a fakeroot exec: Normal's, refused inside
-// a container, where a fakeroot namespace cannot be created.
-func Fakeroot() (Bin, error) {
-	if insideContainer() {
-		return Bin{}, fmt.Errorf("fakeroot exec %w", ErrNeedsHost)
-	}
-	return Normal()
-}
+// ErrHostApptainerUnusable reports a host_apptainer that is set but cannot be run.
+// It is never replaced by the toolchain's apptainer, since which one runs is the user's choice.
+var ErrHostApptainerUnusable = errors.New("host_apptainer is not usable")
 
-// ForBuild returns the apptainer for a .def build: the configured host_apptainer,
-// else the one installed in libexec, else the first on PATH. There is no version
-// check, since the output is a sandbox and no zstd overlay is mounted during the build.
-func ForBuild() (Bin, error) {
-	if insideContainer() {
-		return Bin{}, fmt.Errorf("a definition build %w", ErrNeedsHost)
-	}
-	if toolpath.HostApptainer() == "" {
-		if path, ok := libexec.ApptainerPath(); ok {
-			return remember(Bin{Path: path}), nil
+// Where an apptainer comes from, as Selected names it.
+const (
+	SourceHost      = "host_apptainer"
+	SourceToolchain = "toolchain"
+)
+
+// Selected returns the apptainer a launch would use and where it comes from, or "" when there is none.
+//   - It is the host_apptainer when set, else the one installed in libexec. A host_apptainer that cannot be run selects none.
+//   - Inside a container only libexec's is used, since the host's cannot be assumed to be there or configured.
+//   - It runs nothing, so it does not check the version or the fakeroot.
+func Selected() (path, source string) {
+	if !insideContainer() {
+		if host := toolpath.HostApptainer(); host != "" {
+			return host, SourceHost
+		}
+		if toolpath.InvalidHostApptainer() != "" {
+			return "", ""
 		}
 	}
-	bin, err := systemBin()
+	if path, ok := libexec.ApptainerPath(); ok {
+		return path, SourceToolchain
+	}
+	return "", ""
+}
+
+// Need is what a launch asks of its apptainer.
+type Need struct {
+	Fakeroot bool // The launch uses --fakeroot
+	Overlays bool // The launch mounts condatainer's overlays, which are zstd-compressed
+}
+
+// Resolve returns the apptainer Selected names, checked for the launch's need.
+//   - Overlays refuses a host apptainer below the zstd floor.
+//   - Fakeroot is refused inside a container with ErrNeedsHost.
+//     A non-setuid host apptainer that ships its own fakeroot is replaced by libexec's, when installed, with a warning.
+//     The toolchain's fakeroot goes first on PATH, carried in Bin.Env.
+func Resolve(need Need) (Bin, error) {
+	if need.Fakeroot && insideContainer() {
+		return Bin{}, fmt.Errorf("--fakeroot and definition builds %w", ErrNeedsHost)
+	}
+	if bad := toolpath.InvalidHostApptainer(); bad != "" && !insideContainer() {
+		return Bin{}, fmt.Errorf("%w: %q is not an executable file or a command on PATH. Fix it, or remove it with `condatainer config remove host_apptainer`", ErrHostApptainerUnusable, bad)
+	}
+	path, source := Selected()
+	switch source {
+	case "":
+		return Bin{}, unusable(nil)
+	case SourceToolchain:
+		return withFakeroot(Bin{Path: path}, need), nil
+	}
+	bin, err := hostBin()
 	if err != nil {
 		return Bin{}, unusable(err)
 	}
-	return remember(bin), nil
+	if libexecPath, ok := libexec.ApptainerPath(); ok && need.Fakeroot && bin.shipsOwnFakeroot() {
+		warnOwnFakeroot(bin.Path)
+		return withFakeroot(Bin{Path: libexecPath}, need), nil
+	}
+	if need.Overlays {
+		if err := bin.requireZstd("exec"); err != nil {
+			return Bin{}, unusable(err)
+		}
+	}
+	return withFakeroot(bin, need), nil
 }
 
-// CheckWritableImg refuses a writable .img mount when the fuse2fs found for it
+// fuse2fsProblem is replaceable by tests.
+var fuse2fsProblem = toolpath.Fuse2fsProblem
+
+// CheckWritableImg refuses a writable .img mount when the fuse2fs the apptainer would mount with
 // would corrupt the image, and says how to get one that does not.
-// The apptainer installed in libexec mounts with the fuse2fs beside it, which is not checked.
+//   - The apptainer installed in libexec mounts with the fuse2fs beside it, which is not checked.
+//   - Any other apptainer takes the fuse2fs in its own tool directory, else on PATH.
 func (b Bin) CheckWritableImg() error {
-	if path, ok := libexec.ApptainerPath(); ok && path == b.Path {
+	installed, ok := libexec.ApptainerPath()
+	if ok && installed == b.Path {
 		return nil
 	}
-	path, err := toolpath.Resolve("fuse2fs")
+	path, err := toolpath.ResolveFor(b.Path, "fuse2fs")
 	if err != nil {
 		return nil // Apptainer reports a missing fuse2fs itself
 	}
-	problem := toolpath.Fuse2fsProblem(path)
+	problem := fuse2fsProblem(path)
 	if problem == "" {
 		return nil
 	}
-	if insideContainer() {
-		return errors.New(problem)
+	if ok {
+		return fmt.Errorf("%s. Unset host_apptainer to use the toolchain's apptainer, which ships a fixed fuse2fs", problem)
 	}
-	return fmt.Errorf("%s. Run `condatainer update --libexec apptainer` to install a fixed version", problem)
+	return fmt.Errorf("%s. Run `condatainer update --libexec`, then unset host_apptainer, to use the toolchain's apptainer, which ships a fixed fuse2fs", problem)
 }
 
-// requireZstd refuses singularity and an apptainer that cannot mount
+// requireZstd refuses an apptainer that cannot mount
 // condatainer's zstd-compressed overlays. what names the caller in the message.
 func (b Bin) requireZstd(what string) error {
-	if b.IsSingularity() {
-		return fmt.Errorf("%s needs apptainer, not singularity, to mount zstd-compressed overlays", what)
-	}
 	version, err := b.Version()
 	if err != nil {
-		return fmt.Errorf("could not determine the system apptainer's version: %w", err)
+		return fmt.Errorf("could not determine the version of %s: %w", b.Path, err)
 	}
 	if !CheckZstdSupport(version) {
-		return fmt.Errorf("%s needs apptainer >= 1.4 to mount zstd-compressed overlays; the system apptainer is %s", what, version)
+		return fmt.Errorf("%s needs apptainer >= 1.4 to mount zstd-compressed overlays; %s is %s", what, b.Path, version)
 	}
 	return nil
 }
 
-// ErrNotResolved reports that no apptainer binary has been resolved yet.
+// ErrNotResolved reports a launch given no apptainer binary.
 var ErrNotResolved = errors.New("no apptainer binary has been resolved yet")
-
-// Current reports the implementation and version of the binary the latest
-// resolver returned, performing no resolution of its own. A caller that already
-// resolved one to launch a container reads the result back through this rather
-// than deciding it again.
-func Current() (implementation, version string, err error) {
-	lastMu.Lock()
-	bin := last
-	lastMu.Unlock()
-	if bin.Path == "" {
-		return "", "", ErrNotResolved
-	}
-	version, err = bin.Version()
-	return bin.Implementation(), version, err
-}
-
-// IsSingularity returns true if the binary is Singularity (not Apptainer).
-// Singularity defaults to gzip compression for SquashFS images.
-func (b Bin) IsSingularity() bool {
-	return strings.Contains(strings.ToLower(filepath.Base(b.Path)), "singularity")
-}
-
-// Implementation returns the compatible implementation name. The manifest needs
-// this beside the version because Apptainer and Singularity can use overlapping
-// version numbers.
-func (b Bin) Implementation() string {
-	if b.IsSingularity() {
-		return "singularity"
-	}
-	return "apptainer"
-}
 
 // versions caches each binary's version for the process, by path.
 var versions sync.Map
@@ -299,7 +279,7 @@ func runApptainerWithOutput(ctx context.Context, bin Bin, op string, imagePath s
 		env = kept
 	}
 
-	cmd.Env = append(env, procEnv...)
+	cmd.Env = append(append(env, bin.Env...), procEnv...)
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	var stdoutWriter, stderrWriter io.Writer
@@ -348,7 +328,7 @@ func runApptainerWithOutput(ctx context.Context, bin Bin, op string, imagePath s
 	err := cmd.Run()
 	if err != nil {
 		fullCmd := fmt.Sprintf("%s %s", bin.Path, strings.Join(args, " "))
-		return &ApptainerError{
+		failure := &ApptainerError{
 			Op:         op,
 			Cmd:        fullCmd,
 			Path:       imagePath,
@@ -356,6 +336,10 @@ func runApptainerWithOutput(ctx context.Context, bin Bin, op string, imagePath s
 			HideOutput: !capture,
 			BaseErr:    err,
 		}
+		if (op == "exec" || op == "build") && refusedLaunch(bin, failure) {
+			return blockedError(bin)
+		}
+		return failure
 	}
 	return nil
 }

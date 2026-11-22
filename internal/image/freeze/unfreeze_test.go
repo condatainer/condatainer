@@ -119,6 +119,7 @@ func TestUnfreezeOwnsThePayload(t *testing.T) {
 	t.Parallel()
 	img := newImage(t, "cd upper\nmkdir cnt_env")
 	writeInto(t, img, "/upper/cnt_env", "f", "x\n")
+	writeInto(t, img, "/upper/cnt_env", ".wh.gone", "")
 
 	res := unfreezeInto(t, freezeImage(t, img).Path, UnfreezeOptions{})
 	out, err := exec.Command(hostTool(t, "debugfs"), "-R", "ls -l /upper/cnt_env", res.Path).Output()
@@ -127,11 +128,11 @@ func TestUnfreezeOwnsThePayload(t *testing.T) {
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		f := strings.Fields(line)
-		if len(f) < 4 || f[len(f)-1] == "." || f[len(f)-1] == ".." {
+		if len(f) < 5 || f[len(f)-1] == "." || f[len(f)-1] == ".." {
 			continue
 		}
-		if f[3] != strconv.Itoa(os.Getuid()) {
-			t.Errorf("payload entry %q is owned by uid %s, not %d", f[len(f)-1], f[3], os.Getuid())
+		if f[3] != strconv.Itoa(os.Getuid()) || f[4] != strconv.Itoa(os.Getgid()) {
+			t.Errorf("payload entry %q is owned by %s:%s, not %d:%d", f[len(f)-1], f[3], f[4], os.Getuid(), os.Getgid())
 		}
 	}
 }

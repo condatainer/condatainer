@@ -45,8 +45,8 @@ File operations on overlay images: create, resize, chown, check, lock, read a pa
   - The pack is one mostly sequential pass, so it writes straight to the destination with no local copy of the image.
 - The pack writes `<name>.partial`, locked, and renames it on success.
   - A failed or concurrent create never shows at the destination.
-- A root-owned image is packed in a root-mapped user namespace, not chowned afterward.
-  - A chown pass costs several times the pack. It stays as the fallback.
+- An owner other than the caller's is applied after the pack with `ChownRecursively`, on the unmounted image.
+  - It runs only when the owner differs, since the pass costs several times the pack.
 - The size limit is checked after the install, because the payload is unknown before it.
 - `Resize` takes the same `sparse` choice and allocates by default.
 - A non-sparse image is allocated before `mke2fs` runs, which is called with `-E nodiscard`.
@@ -60,9 +60,10 @@ File operations on overlay images: create, resize, chown, check, lock, read a pa
 
 - Every call to `debugfs`, `e2fsck`, `tune2fs`, `mke2fs`, `resize2fs`, `fuse2fs`, `mksquashfs`, `unsquashfs` and `squashfuse` goes through `toolpath.Resolve`.
   - A bare name in `exec.Command` is `PATH`-only with no fallback.
-- e2fsprogs is host-only and never provisioned into libexec. It is on practically every Linux host, so bundling it would duplicate it.
-- `fuse2fs` has no source condatainer can bundle either. It is a documented prerequisite.
-- `dd`, `fallocate` and `unshare` are excluded. They are core-OS tools more universal than e2fsprogs.
+- The libexec bundle ships the e2fsprogs tools and `fuse2fs`, and `toolpath.Resolve` takes libexec's copy first, else the host's.
+  - Hosts differ, and an old `fuse2fs` on libfuse 3 corrupts a rewritten file, so a run uses the bundle's.
+  - A host apptainer mounts with its own `fuse2fs`, so a writable mount through it is checked first.
+- `dd` and `fallocate` are excluded. They are core-OS tools more universal than e2fsprogs.
 - Finding a tool is `internal/toolpath`'s job, not this package's. `internal/conda` needs the same lookup and is not under `internal/image`.
 - What stays in `tool` is interpreting an archive read: the failure hint text and the `ErrFileNotFound`, `ErrUnreadable` and `ErrCorrupt` sentinels.
 

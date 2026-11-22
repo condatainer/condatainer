@@ -42,7 +42,7 @@ type UnfreezeOptions struct {
 	Target string
 	// SizeMB is the image size; zero derives it from the payload plus headroom.
 	SizeMB int
-	// UID and GID own the result, fixed up after the build — see buildImage.
+	// UID and GID own the result.
 	UID, GID int
 	// Sparse allocates on write rather than up front.
 	Sparse bool
@@ -68,7 +68,7 @@ type UnfreezeResult struct {
 // Unfreeze turns a frozen environment back into a writable overlay.
 //   - The image is built straight from the mounted artifact, so the payload is never staged.
 //   - mke2fs records the whiteout device nodes an unprivileged unsquashfs cannot create.
-//   - Ownership is fixed afterward with a plain chown pass, since the mount cannot report another owner (see buildImage).
+//   - The mount reports the owner's uid and gid, so the payload is recorded with them. An owner other than the caller's needs a chown pass.
 func Unfreeze(ctx context.Context, opts UnfreezeOptions) (UnfreezeResult, error) {
 	log := logging.FromContext(ctx)
 
@@ -204,10 +204,10 @@ func archiveSize(ctx context.Context, sqf string) (sizeMB, entries int, err erro
 	return int(bytesUsed/(1024*1024)) + 1, entries, nil
 }
 
-// buildImage creates the ext3 image with the artifact mounted as its payload, then fixes ownership.
+// buildImage creates the ext3 image with the artifact mounted as its payload.
 //   - The inode count comes from the payload, not mke2fs's one-per-16KB ratio, which a conda prefix exhausts with space to spare.
-//   - The namespace maps only uid 0, so the payload lands root-owned.
-//   - ChownRecursively repairs it on the plain host.
+//   - squashfuse reports the owner's uid and gid, so mke2fs records them. The skeleton directories belong to the caller.
+//   - An owner other than the caller's is applied afterward with ChownRecursively.
 func buildImage(ctx context.Context, opts UnfreezeOptions, artifact, target, stage string, sizeMB, entries int) error {
 	squashfuse, err := FindSquashfuse()
 	if err != nil {
@@ -230,9 +230,14 @@ func buildImage(ctx context.Context, opts UnfreezeOptions, artifact, target, sta
 	}
 	script += "mke2fs " + strings.Join(args, " ") + "\n"
 
-	if err := MountedRun(ctx, squashfuse, []string{artifact}, upper, script, execpkg.IOFromContext(ctx)); err != nil {
+	owner := []string{"-o", fmt.Sprintf("uid=%d", opts.UID), "-o", fmt.Sprintf("gid=%d", opts.GID)}
+	mounts := []Mount{{Bin: squashfuse, Args: append(owner, artifact), Path: upper}}
+	if err := MountedRun(ctx, mounts, []string{artifact, stage, target}, script, execpkg.IOFromContext(ctx)); err != nil {
 		os.Remove(target)
 		return fmt.Errorf("build %s: %w", target, err)
+	}
+	if opts.UID == os.Getuid() && opts.GID == os.Getgid() {
+		return nil
 	}
 	if err := ext3.ChownRecursively(ctx, target, opts.UID, opts.GID, "/"); err != nil {
 		os.Remove(target)

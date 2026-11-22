@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/testenv"
 )
@@ -16,20 +17,22 @@ import (
 // testHarnessPath is the compiled testdata/mountharness binary, built once
 // in TestMain and used for the rest of this file: MountedRun (called by
 // nearly every test in this package, directly or via Pack/Unfreeze) re-execs
-// os.Executable() into the hidden _mount_sentinel command, and the `go test`
+// os.Executable() into the hidden _mount_job command, and the `go test`
 // binary can't play that role since it has no cmd/cobra dispatch at all.
 var testHarnessPath string
 
 func TestMain(m *testing.M) {
-	if _, err := exec.LookPath("unshare"); err == nil {
-		if bin, err := buildMountHarness(); err != nil {
-			fmt.Fprintln(os.Stderr, "building test harness:", err)
-		} else {
-			testHarnessPath = bin
-			executablePath = func() (string, error) { return bin, nil }
-		}
+	if bin, err := buildMountHarness(); err != nil {
+		fmt.Fprintln(os.Stderr, "building test harness:", err)
+	} else {
+		testHarnessPath = bin
+		executablePath = func() (string, error) { return bin, nil }
 	}
 	cleanup := testenv.Isolate()
+	// Isolate clears every CNT_* variable, so the apptainer on PATH is named again here.
+	if dir := toolchainOfApptainerOnPath(); dir != "" {
+		os.Setenv("CNT_LIBEXEC", dir)
+	}
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
@@ -88,16 +91,40 @@ func waitFor(limit time.Duration, cond func() bool) bool {
 	return true
 }
 
+// toolchainOfApptainerOnPath is the toolchain directory of the apptainer on PATH, or "" when it is not in one.
+func toolchainOfApptainerOnPath() string {
+	path, err := exec.LookPath("apptainer")
+	if err != nil {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	dir := filepath.Dir(filepath.Dir(path))
+	if _, err := os.Stat(filepath.Join(dir, "MANIFEST.json")); err != nil {
+		return ""
+	}
+	return dir
+}
+
+// requireJob skips the test unless the harness was built and an apptainer can run the job.
+func requireJob(t *testing.T) {
+	t.Helper()
+	if testHarnessPath == "" {
+		t.Skip("test harness was not built")
+	}
+	if _, err := apptainer.Resolve(apptainer.Need{Overlays: true}); err != nil {
+		t.Skipf("no apptainer available: %v", err)
+	}
+}
+
 // A ctx cancelled while work is still running must not leave the FUSE
-// process behind: the sentinel joins bash/FUSE into its own process group
-// specifically so Cancel can kill all of it, not just the sentinel itself.
+// process behind: Cancel kills the whole process group of the job's command.
 func TestMountedRunCancelKillsFuseProcess(t *testing.T) {
+	requireJob(t)
 	squashfuse, err := FindSquashfuse()
 	if err != nil {
 		t.Skip("no squashfuse available")
-	}
-	if testHarnessPath == "" {
-		t.Skip("unshare not available (test harness was not built)")
 	}
 
 	sqf, mnt := buildTestSqf(t)
@@ -105,7 +132,7 @@ func TestMountedRunCancelKillsFuseProcess(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		done <- MountedRun(ctx, squashfuse, []string{sqf}, mnt, "sleep 30", execpkg.IO{})
+		done <- MountedRun(ctx, []Mount{{Bin: squashfuse, Args: []string{sqf}, Path: mnt}}, []string{sqf}, "sleep 30", execpkg.IO{})
 	}()
 
 	// Cancel mid-"work", once the mount is up.
@@ -129,16 +156,13 @@ func TestMountedRunCancelKillsFuseProcess(t *testing.T) {
 
 // If the process that called MountedRun dies abruptly (SIGKILL, standing in
 // for a crash or an OOM-kill) with no chance to run cmd.Cancel at all, the
-// FUSE process must still not be left behind. This is exactly the gap
-// Pdeathsig can't close directly on the namespaced process (entering the
-// user namespace clears it) -- RunSentinel exists to close it one process
-// out instead.
+// FUSE process must still not be left behind. Pdeathsig cannot be set on the
+// apptainer itself, which drops it on entering its namespace, so the job's
+// command is one process out and stops the apptainer when it is signalled.
 func TestMountedRunSurvivesAbruptDeath(t *testing.T) {
+	requireJob(t)
 	if _, err := FindSquashfuse(); err != nil {
 		t.Skip("no squashfuse available")
-	}
-	if testHarnessPath == "" {
-		t.Skip("unshare not available (test harness was not built)")
 	}
 
 	sqf, mnt := buildTestSqf(t)
@@ -165,7 +189,7 @@ func TestMountedRunSurvivesAbruptDeath(t *testing.T) {
 	}
 	driver.Wait() //nolint:errcheck
 
-	// The kernel delivers Pdeathsig to the sentinel, which runs the group kill.
+	// The kernel delivers Pdeathsig to the job's command, which stops the apptainer.
 	if !waitFor(5*time.Second, func() bool { return !fuseRunning(sqf) }) {
 		exec.Command("pkill", "-KILL", "-f", "squashfuse.*"+sqf).Run() //nolint:errcheck
 		t.Errorf("FUSE process for %s survived the driver's abrupt death (driver pid %d)", sqf, driverPid)

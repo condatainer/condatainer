@@ -44,9 +44,9 @@ type PackOptions struct {
 
 // Pack writes the overlay's upper/ layer to a SquashFS artifact, translating whiteouts.
 //   - It returns the tools it resolved, captured where each is resolved.
-//   - Default route: the payload is read through a fuse2fs mount in a private unprivileged namespace, so nothing is copied.
+//   - Default route: the payload is read through a fuse2fs mount in an apptainer job, so nothing is copied.
 //   - The image is made read-only meanwhile, because fuse2fs decides by permission bits, not -o ro.
-//   - The FUSE server runs without the capabilities that skip permission checks, so that bit holds for the namespace root too.
+//   - The job holds no capability that skips permission checks, so that bit holds in it too.
 //   - With StageDir it reads an earlier copy instead: faster, and the payload takes twice the disk.
 //   - Both routes give the same archive.
 //   - With Snapshot set the image is packed layered over that snapshot (see packStacked).
@@ -117,7 +117,8 @@ func Pack(ctx context.Context, opts PackOptions, entries []Entry, tr Translation
 		upper = mnt
 		route = "mount"
 		mount = func(work string) error {
-			return MountedRun(ctx, fuse2fs, []string{"-o", "ro", img}, mnt, work, execpkg.IOFromContext(ctx))
+			return MountedRun(ctx, []Mount{fuse2fsMount(fuse2fs, img, mnt)},
+				[]string{img, stage, target, mksquashfsBin}, work, execpkg.IOFromContext(ctx))
 		}
 	}
 	upper = filepath.Join(upper, UpperDir)
@@ -315,5 +316,17 @@ func packScript(sources []string, target string, translation []string, opts Pack
 	if opts.CompressArgs != "" {
 		args = append(args, opts.CompressArgs)
 	}
-	return fmt.Sprintf("trap 'exit 130' INT TERM\n%s %s\n", mksquashfsBin, strings.Join(args, " "))
+	// mksquashfs packs a file it cannot read as an empty one and still exits 0, so its messages are read.
+	return fmt.Sprintf(`trap 'exit 130' INT TERM
+errs=$(mktemp)
+trap 'rm -f "$errs"' EXIT
+rc=0
+%s %s 2>"$errs" || rc=$?
+cat "$errs" >&2
+if grep -q 'creating empty file' "$errs"; then
+	echo "a file could not be read, so it was packed empty" >&2
+	exit 1
+fi
+exit $rc
+`, mksquashfsBin, strings.Join(args, " "))
 }

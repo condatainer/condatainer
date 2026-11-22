@@ -18,7 +18,8 @@ The one place that decides which binary runs for an external host tool. Nothing 
 - This package decides.
   - The provisioned copy comes first. It is required, so it wins even over a same-named binary on `PATH`.
   - Then every `PATH` entry.
-  - Then the tools bundled with the host apptainer, read from `apptainer buildcfg` once per process.
+  - Then the tools bundled with the `host_apptainer`, when one is set, read from `apptainer buildcfg` once per process.
+- `ResolveFor` finds a tool as one apptainer would: its own tool directory, then `PATH`, then the FHS directories. It never uses libexec's copy, since a host apptainer does not.
   - Then the FHS directories.
 - A host `mksquashfs` or `unsquashfs` below squashfs-tools 4.4 is skipped, with the reason kept for the error. A good copy later in the order can still win.
 - Nothing is special-cased. A name libexec does not provide, such as `rsync`, is simply not found there and falls through.

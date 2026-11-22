@@ -30,7 +30,7 @@ The installer:
 
 1. Creates `bin/` in the directory and downloads `condatainer` into it.
 2. Generates the group's `config.yaml`.
-3. Downloads the toolchain into `libexec/`: Apptainer with the tools it uses, and Micromamba. Asks first.
+3. Downloads the toolchain into `libexec/`: Apptainer with the tools it uses, and Micromamba.
 4. Offers to set up your own shell. You are a member too, so say yes.
 
 ## 3. Add members

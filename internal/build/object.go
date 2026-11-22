@@ -21,6 +21,7 @@ import (
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image/producer"
 	"github.com/condatainer/condatainer/internal/logging"
+	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -144,6 +145,8 @@ type BuildObject struct {
 	depImagePaths      map[string]string
 	provenanceComplete *bool
 	buildTools         meta.BuildTools
+	// apptainerBin is the apptainer the build's container step ran under, kept for the tools it records.
+	apptainerBin apptainer.Bin
 
 	// foreignRoot is set only by FromForeignRoot: a .sif or sandbox directory
 	// condatainer did not build, packed by buildForeign instead of buildDef.

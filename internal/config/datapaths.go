@@ -171,6 +171,7 @@ func detectRootDir() string {
 
 // isNonRootParent returns true for standard user/system directories that should
 // not be treated as an installation root.
+// ContainerRoot is one: the executable is bound into a container under it, so it says nothing about a root.
 func isNonRootParent(dir string) bool {
 	home, _ := utils.RealHome()
 	excludedParents := []string{
@@ -180,6 +181,7 @@ func isNonRootParent(dir string) bool {
 		"/usr/local",
 		"/opt",
 		"/",
+		ContainerRoot,
 	}
 	return slices.Contains(excludedParents, dir)
 }

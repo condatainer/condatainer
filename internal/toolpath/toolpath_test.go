@@ -160,13 +160,10 @@ func writeScript(t *testing.T, dir, name, body string) string {
 	return p
 }
 
-// noHostApptainer keeps the host's own apptainer out of a test's search.
+// noHostApptainer keeps a host apptainer out of a test's search.
 func noHostApptainer(t *testing.T) {
 	t.Helper()
 	settingstest.Override(t, "host_apptainer", filepath.Join(t.TempDir(), "no-apptainer"))
-	prev := apptainerOnPath
-	apptainerOnPath = func() string { return "" }
-	t.Cleanup(func() { apptainerOnPath = prev })
 }
 
 // A host mksquashfs below the version floor is skipped, and the error says why.
@@ -364,5 +361,54 @@ func TestRememberComputesOnceAndNotErrors(t *testing.T) {
 	}
 	if runs != 3 {
 		t.Errorf("a failure was stored: compute ran %d times in total, want 3", runs)
+	}
+}
+
+// ResolveFor looks where the apptainer would: its own tool directory first, then PATH, and never libexec's copy.
+func TestResolveForPrefersTheApptainersToolDirectory(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("PATH/exec-bit semantics are POSIX-specific")
+	}
+	libexecDir := t.TempDir()
+	t.Setenv("CNT_LIBEXEC", libexecDir)
+	writeScript(t, libexecDir, "micromamba", "")
+	if err := os.MkdirAll(filepath.Join(libexecDir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeScript(t, filepath.Join(libexecDir, "bin"), "fuse2fs", "")
+
+	root := t.TempDir()
+	tools := filepath.Join(root, "libexec", "apptainer", "bin")
+	if err := os.MkdirAll(tools, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	apptainer := writeScript(t, root, "apptainer", `case "$1" in buildcfg) echo LIBEXECDIR=`+filepath.Join(root, "libexec")+` ;; esac`)
+	onPath := t.TempDir()
+	pathCopy := writeScript(t, onPath, "fuse2fs", "")
+	t.Setenv("PATH", onPath)
+
+	if got, err := ResolveFor(apptainer, "fuse2fs"); err != nil || got != pathCopy {
+		t.Fatalf("with no copy of its own ResolveFor = %q, %v; want the PATH copy %q", got, err, pathCopy)
+	}
+	own := writeScript(t, tools, "fuse2fs", "")
+	if got, err := ResolveFor(apptainer, "fuse2fs"); err != nil || got != own {
+		t.Errorf("ResolveFor = %q, %v; want the apptainer's own copy %q", got, err, own)
+	}
+	if _, err := ResolveFor(apptainer, "no-such-tool"); !errors.Is(err, ErrToolMissing) {
+		t.Errorf("a missing tool: err = %v, want ErrToolMissing", err)
+	}
+}
+
+// A host_apptainer given as a bare command name is the path it names on PATH when asked, and the key shows that path.
+func TestHostApptainerResolvesABareName(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("PATH/exec-bit semantics are POSIX-specific")
+	}
+	dir := t.TempDir()
+	path := writeScript(t, dir, "my-apptainer", "")
+	t.Setenv("PATH", dir)
+	settingstest.Override(t, "host_apptainer", "my-apptainer")
+	if got := HostApptainer(); got != path {
+		t.Errorf("HostApptainer = %q, want %q", got, path)
 	}
 }

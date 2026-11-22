@@ -246,3 +246,19 @@ func TestLayerNote(t *testing.T) {
 		}
 	}
 }
+
+// The directory a container binds the executable into is no root, and neither are the standard parents.
+func TestIsNonRootParent(t *testing.T) {
+	for dir, want := range map[string]bool{
+		ContainerRoot:      true,
+		"/":                true,
+		"/usr":             true,
+		"/opt":             true,
+		"/opt/condatainer": false,
+		"/condatainer":     false,
+	} {
+		if got := isNonRootParent(dir); got != want {
+			t.Errorf("isNonRootParent(%q) = %v, want %v", dir, got, want)
+		}
+	}
+}

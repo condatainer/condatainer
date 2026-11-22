@@ -17,7 +17,7 @@ const maxRecordedToolVersion = 256
 
 // captureCommonBuildTools records the worker-side implementations shared by every build.
 //   - It runs after the skip check, so an existing image is never relabelled.
-//   - Apptainer is read back through apptainer.Current(), never resolved again: the binary this build's container step needed is already decided, and re-resolving could record a different one than ran.
+//   - Apptainer is the one the build's container step ran under, kept in apptainerBin, never resolved again.
 func (b *BuildObject) captureCommonBuildTools(ctx context.Context) {
 	log := logging.FromContext(ctx)
 
@@ -28,7 +28,7 @@ func (b *BuildObject) captureCommonBuildTools(ctx context.Context) {
 	}
 	b.buildTools.Condatainer = meta.Tool{Version: version}
 
-	implementation, rawVersion, err := apptainer.Current()
+	rawVersion, err := b.apptainerVersion()
 	if err != nil {
 		b.buildTools.Apptainer = meta.Tool{Name: "apptainer", Version: meta.Unrecorded}
 		log.Warn("Could not identify Apptainer version", "name", b.spec.Image.Name, "err", err)
@@ -38,7 +38,7 @@ func (b *BuildObject) captureCommonBuildTools(ctx context.Context) {
 		version = meta.Unrecorded
 		log.Warn("Could not record Apptainer version", "name", b.spec.Image.Name)
 	}
-	b.buildTools.Apptainer = meta.Tool{Name: implementation, Version: version}
+	b.buildTools.Apptainer = meta.Tool{Name: "apptainer", Version: version}
 }
 
 // captureMicromambaVersion runs the self-provisioned Micromamba's own
@@ -105,3 +105,11 @@ func normalizedToolVersion(raw string) (string, bool) {
 }
 
 var errEmptyToolVersion = errors.New("version command returned no usable version")
+
+// apptainerVersion is the version of the apptainer this build ran under, or an error when no container step ran.
+func (b *BuildObject) apptainerVersion() (string, error) {
+	if b.apptainerBin.Path == "" {
+		return "", apptainer.ErrNotResolved
+	}
+	return b.apptainerBin.Version()
+}

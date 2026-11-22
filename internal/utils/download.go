@@ -13,12 +13,37 @@ import (
 	"time"
 )
 
-// DownloadFile downloads a file from url to destPath.
-// The download is cancelled if ctx is cancelled.
-func DownloadFile(ctx context.Context, url, destPath string) error {
-	client := &http.Client{
-		Timeout: 5 * time.Minute,
+// downloadIdle is how long a download may receive no data before it fails.
+var downloadIdle = time.Minute
+
+// idleReader restarts timer on every read, so only a stalled transfer lets it fire.
+type idleReader struct {
+	r     io.Reader
+	timer *time.Timer
+}
+
+func (i idleReader) Read(p []byte) (int, error) {
+	n, err := i.r.Read(p)
+	if n > 0 {
+		i.timer.Reset(downloadIdle)
 	}
+	return n, err
+}
+
+// DownloadFile downloads a file from url to destPath.
+//   - The download is cancelled if ctx is cancelled.
+//   - There is no limit on its total time. It fails when the server sends no data for downloadIdle.
+func DownloadFile(ctx context.Context, url, destPath string) error {
+	parent := ctx
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	idle := time.AfterFunc(downloadIdle, cancel)
+	defer idle.Stop()
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = downloadIdle
+	client := &http.Client{Transport: transport}
+	defer transport.CloseIdleConnections()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -26,7 +51,7 @@ func DownloadFile(ctx context.Context, url, destPath string) error {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to fetch %s: %w", url, err)
+		return downloadError(parent, ctx, fmt.Errorf("failed to fetch %s: %w", url, err))
 	}
 	defer resp.Body.Close()
 
@@ -41,13 +66,13 @@ func DownloadFile(ctx context.Context, url, destPath string) error {
 	}
 
 	// A shared filesystem reports a failed write at close, so its error counts.
-	_, err = io.Copy(file, resp.Body)
+	_, err = io.Copy(file, idleReader{r: resp.Body, timer: idle})
 	if closeErr := file.Close(); err == nil {
 		err = closeErr
 	}
 	if err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("failed to write file: %w", err)
+		return downloadError(parent, ctx, fmt.Errorf("failed to write file: %w", err))
 	}
 
 	if err := os.Rename(tmpPath, destPath); err != nil {
@@ -58,6 +83,14 @@ func DownloadFile(ctx context.Context, url, destPath string) error {
 	ShareWithParentGroup(destPath)
 
 	return nil
+}
+
+// downloadError names a stall when the idle timer, not the caller, ended the download.
+func downloadError(parent, ctx context.Context, err error) error {
+	if parent.Err() == nil && ctx.Err() != nil {
+		return fmt.Errorf("no data received for %s: %w", downloadIdle, err)
+	}
+	return err
 }
 
 // FetchCondaSummary queries the anaconda.org API for a package summary.

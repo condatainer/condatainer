@@ -433,9 +433,8 @@ func TestIsRootEligibleAcceptsAForeignSif(t *testing.T) {
 	}
 }
 
-// libexec/ is bound for nested running with no conda environment mounted, and
-// only when asked.
-func TestSetupBindsLibexecOnlyForNestedRunning(t *testing.T) {
+// libexec/ is bound at BoundLibexecDir whenever it is installed, with no conda environment mounted too.
+func TestSetupBindsLibexecWithNoEnvironment(t *testing.T) {
 	// A bound temp dir would cover a libexec made under t.TempDir() and the
 	// bind would be deduplicated away.
 	for _, env := range append(tmpDirEnvVars, "SLURM_TMPDIR", "PBS_TMPDIR", "LSF_TMPDIR") {
@@ -454,22 +453,27 @@ func TestSetupBindsLibexecOnlyForNestedRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	res, err := Setup(SetupConfig{})
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if !slices.Contains(res.EnvList, "CNT_LIBEXEC="+BoundLibexecDir) {
+		t.Errorf("the container is not told where the toolchain is: %v", res.EnvList)
+	}
+
 	bound := func(cfg SetupConfig) bool {
 		res, err := Setup(cfg)
 		if err != nil {
 			t.Fatalf("Setup: %v", err)
 		}
 		for _, p := range res.BindPaths {
-			if strings.Contains(p, real) {
+			if p == real+":"+BoundLibexecDir {
 				return true
 			}
 		}
 		return false
 	}
-	if bound(SetupConfig{}) {
-		t.Error("libexec bound with no environment and no nested running")
-	}
-	if !bound(SetupConfig{BindLibexec: true}) {
-		t.Error("libexec not bound for nested running")
+	if !bound(SetupConfig{}) {
+		t.Error("libexec not bound at its fixed path with no environment mounted")
 	}
 }

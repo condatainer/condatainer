@@ -36,7 +36,7 @@ var toolDirs = []string{"bin", filepath.Join("lib", "apptainer", "bin")}
 // toolchain is not provisioned. Condatainer never auto-provisions on its own — an
 // ordinary exec/run or a build must never trigger a first-time download — so
 // every message directs the user to the one command that does.
-var ErrNotProvisioned = errors.New("the self-provisioned toolchain is not installed; run `condatainer update --libexec` first")
+var ErrNotProvisioned = errors.New("the self-provisioned toolchain is not installed; run `condatainer update --libexec` on the host first")
 
 // providedBy names the package that installs the binary called name, or "".
 func providedBy(name string) string {
@@ -55,9 +55,17 @@ func providedBy(name string) string {
 //   - It sits inside a double-quoted shell echo, where a backtick would attempt command substitution.
 func NotProvisionedMessage(name string) string {
 	if p := providedBy(name); p != "" {
-		return fmt.Sprintf("%s not found; run 'condatainer update --libexec %s' to install it", name, p)
+		return fmt.Sprintf("%s not found; run 'condatainer update --libexec %s'%s to install it", name, p, onTheHost())
 	}
 	return name + " not found"
+}
+
+// onTheHost is the words that say where to run the update: inside a container the update is refused, so it is run on the host.
+func onTheHost() string {
+	if config.IsInsideContainer() {
+		return " on the host"
+	}
+	return ""
 }
 
 // NotInstalledError is what a container-bound caller returns when name is not
@@ -71,7 +79,7 @@ func NotInstalledError(name string) error {
 	if p == "" {
 		return fmt.Errorf("%s is not part of the self-provisioned toolchain", name)
 	}
-	return fmt.Errorf("%s is not installed in the self-provisioned toolchain; run `condatainer update --libexec %s`", name, p)
+	return fmt.Errorf("%s is not installed in the self-provisioned toolchain; run `condatainer update --libexec %s`%s", name, p, onTheHost())
 }
 
 // isProvisioned reports whether dir holds an installed micromamba or bundle.

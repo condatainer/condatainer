@@ -34,7 +34,7 @@ const overlayInfoHelp = `Show details about an installed overlay or a local over
 - SquashFS (.sqf): compression details, inode count, block size, mount path
 - ext3 (.img): filesystem stats, disk/inode usage, block size, ownership
 
---validate (.sqf only) needs squashfuse and unshare.
+--validate (.sqf only) needs squashfuse and apptainer.
 - A Conda or definition build has no payload key; its other keys are checked.`
 
 // overlayInfoExample is the example block for 'info'.

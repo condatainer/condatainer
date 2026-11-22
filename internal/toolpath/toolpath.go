@@ -117,19 +117,24 @@ var bundled sync.Map
 // (mksquashfs, unsquashfs, squashfuse_ll, fuse2fs, ...), or nothing when no
 // host apptainer is configured or it will not say where they are.
 func bundledDirs() []string {
-	bin := SystemApptainer()
+	bin := HostApptainer()
 	if bin == "" {
-		bin = "apptainer"
+		return nil
 	}
+	if dir := toolDirOf(bin); dir != "" {
+		return []string{dir}
+	}
+	return nil
+}
+
+// toolDirOf returns the directory of tools the apptainer at bin ships, from `apptainer buildcfg`, or "" when it will not say.
+func toolDirOf(bin string) string {
 	path, err := exec.LookPath(bin)
 	if err != nil {
-		return nil
+		return ""
 	}
 	if cached, ok := bundled.Load(path); ok {
-		if dir := cached.(string); dir != "" {
-			return []string{dir}
-		}
-		return nil
+		return cached.(string)
 	}
 	dir, ok := cacheGet("bundled", path)
 	if !ok {
@@ -146,10 +151,28 @@ func bundledDirs() []string {
 		cachePut("bundled", path, dir)
 	}
 	bundled.Store(path, dir)
-	if dir != "" {
-		return []string{dir}
+	return dir
+}
+
+// ResolveFor finds name as the apptainer at bin would: its own tool directory, then PATH, then the FHS directories.
+//   - The toolchain's copy is not consulted, since a host apptainer does not use it.
+//   - No version floor applies.
+func ResolveFor(bin, name string) (string, error) {
+	var dirs []string
+	if dir := toolDirOf(bin); dir != "" {
+		dirs = append(dirs, dir)
 	}
-	return nil
+	dirs = append(dirs, filepath.SplitList(os.Getenv("PATH"))...)
+	dirs = append(dirs, fhsFallbackDirs...)
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		if p := filepath.Join(dir, name); isExecutable(p) {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("%w: %s", ErrToolMissing, NotFoundMessage(name))
 }
 
 // NotFoundMessage explains why name could not be resolved, using libexec's wording.

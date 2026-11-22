@@ -11,7 +11,7 @@ A **site install** provides CondaTainer cluster-wide to all users from a central
 ## Prerequisites
 
 Before installing CondaTainer cluster-wide, ensure that the compute and login nodes satisfy:
-- **Unprivileged user namespaces:** Required by container runtimes for unprivileged execution.
+- **Unprivileged user namespaces:** Required by container runtimes for unprivileged execution. Ubuntu 24.04 and later blocks them by default, see [Ubuntu 24.04 and later](#ubuntu-2404-and-later).
 - **FUSE support:** The `/dev/fuse` device must be available with read/write permissions for unprivileged users.
 
 ## 1. Run the Site Installer
@@ -34,6 +34,33 @@ The `chmod` keeps the configuration readable by everyone. It is needed only with
 Do not set `-p /usr` or `-p /usr/local`. CondaTainer treats its installation directory as both a binary home and a shared overlay repository (`cnt-root`). Install into a dedicated directory like `/opt/condatainer` or `/shared/software/condatainer`.
 :::
 
+## Ubuntu 24.04 and later
+
+These versions block user namespaces for programs with no AppArmor profile, so the Apptainer in the toolchain is refused. Check with `sysctl kernel.apparmor_restrict_unprivileged_userns`. A value of `1` means it is blocked.
+
+Allow that one Apptainer with a profile. As root, write the profile with the real path of the toolchain directory, then load it:
+
+```bash
+cat > /etc/apparmor.d/condatainer-apptainer <<'EOF'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile condatainer-apptainer /opt/condatainer/libexec/{bin/apptainer,lib/apptainer/bin/starter} flags=(unconfined) {
+  userns,
+
+  include if exists <local/condatainer-apptainer>
+}
+EOF
+apparmor_parser -r /etc/apparmor.d/condatainer-apptainer
+```
+
+- Write the real path, with no symlinks. The error message names the path that was refused.
+- Do this on every node that runs containers.
+- The profile names paths, so `update --libexec` does not change it.
+- Keep `flags=(unconfined)`. Without it the profile confines the program, and it fails before it starts.
+- The profile allows user namespaces for that Apptainer and the programs it starts. Other programs stay restricted.
+- The other way is `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`. It lifts the restriction for every program on the machine.
+
 ## 2. Configure Cluster Defaults
 
 Global defaults for all users are stored in the installation directory's `config.yaml`.
@@ -47,11 +74,15 @@ condatainer config list --origin
 # Example: Set default scheduler or default distro cluster-wide
 condatainer config set default_distro ubuntu24 -l r
 
-# Example: Delegate .def builds to the host or site Apptainer module
+# Example: Use the site Apptainer instead of the toolchain's
 condatainer config set host_apptainer /usr/bin/apptainer -l r
 ```
 
-If cluster provides a curated Apptainer or Singularity installation (or module), setting `host_apptainer` ensures `.def` builds use the site's native container binary rather than the unprivileged binary in `libexec/`.
+If the cluster provides a curated Apptainer installation (or module), setting `host_apptainer` makes it run containers and build `.def` files in place of the unprivileged binary in `libexec/`. Unset, no Apptainer outside `libexec/` is used.
+
+- It must be Apptainer 1.4 or newer.
+- A build uses the fakeroot from `libexec/`, which runs in images of any age.
+- A non-setuid Apptainer that ships its own fakeroot cannot take it, so its builds use the one in `libexec/` and print a warning.
 
 Individual users can override any site setting in their own `~/.config/condatainer/config.yaml`.
 

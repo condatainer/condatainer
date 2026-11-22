@@ -194,6 +194,11 @@ func installMicromamba(ctx context.Context, target, version string, force bool) 
 	next, sum := dest+".new", dest+".sha256"
 	defer os.Remove(next) //nolint:errcheck
 	defer os.Remove(sum)  //nolint:errcheck
+	if tag != "" {
+		utils.PrintMessage("Downloading micromamba %s ...", strings.TrimPrefix(tag, "v"))
+	} else {
+		utils.PrintMessage("Downloading micromamba ...")
+	}
 	if err := utils.DownloadFile(ctx, base+asset, next); err != nil {
 		return fmt.Errorf("failed to download micromamba: %w", err)
 	}
@@ -207,7 +212,13 @@ func installMicromamba(ctx context.Context, target, version string, force bool) 
 		return err
 	}
 	utils.ShareWithParentGroup(next)
-	return os.Rename(next, dest)
+	if err := os.Rename(next, dest); err != nil {
+		return err
+	}
+	if v := binaryVersion(dest, PackageMicromamba); v != "" {
+		utils.PrintMessage("Installed micromamba %s.", v)
+	}
+	return nil
 }
 
 // micromambaAssetName maps the running OS/arch to the standalone release

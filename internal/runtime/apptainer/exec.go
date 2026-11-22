@@ -122,10 +122,7 @@ func envPrefixed(bin Bin, settings []string) []string {
 	if len(settings) == 0 {
 		return nil
 	}
-	prefix := "APPTAINERENV_"
-	if bin.IsSingularity() {
-		prefix = "SINGULARITYENV_"
-	}
+	const prefix = "APPTAINERENV_"
 	out := make([]string, 0, len(settings))
 	for _, setting := range settings {
 		key, value, ok := strings.Cut(setting, "=")

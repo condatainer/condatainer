@@ -36,7 +36,6 @@ type SetupConfig struct {
 	Fakeroot       bool     // Whether to use fakeroot
 	ApptainerFlags []string // Additional apptainer flags to pass through
 	GpuRequested   bool     // A script explicitly requires a GPU; forces detection past autoload_gpu:false
-	BindLibexec    bool     // Bind the libexec toolchain even with no conda environment mounted
 }
 
 // SetupResult contains all the processed configuration ready for container execution
@@ -143,15 +142,10 @@ func Setup(cfg SetupConfig) (*SetupResult, error) {
 	if len(cfg.BindPaths) > 0 {
 		bindPaths = append(bindPaths, cfg.BindPaths...)
 	}
-	// A mounted conda env needs micromamba reachable in-container (mm/env
-	// commands resolve it via toolpath.Resolve, internal/conda/environment.go)
-	// — bound when one is mounted, matching buildEnvironment's own
-	// envMounted-gated CNT_CONDA_ROOT block below — and nested running binds it
-	// for the apptainer installed there.
-	if envMounted || cfg.BindLibexec {
-		if dir, ok := libexec.Dir(); ok {
-			bindPaths = append(bindPaths, dir)
-		}
+	// The toolchain is bound whole at BoundLibexecDir, so a program inside the
+	// container reaches the micromamba and the apptainer installed there.
+	if dir, ok := libexec.Dir(); ok {
+		bindPaths = append(bindPaths, dir+":"+BoundLibexecDir)
 	}
 	bindPaths = DeduplicateBindPaths(bindPaths)
 
@@ -271,6 +265,11 @@ func buildEnvironment(overlays []string, lastImg string, envMounted bool, cfg Se
 
 	if v := nestedRootEnv(os.Getenv("CNT_ROOT"), config.GetRootDir()); v != "" {
 		envList = append(envList, v)
+	}
+	// A condatainer inside is told where the toolchain is bound, since a
+	// per-user install has no root for it to find the toolchain from.
+	if _, ok := libexec.Dir(); ok {
+		envList = append(envList, "CNT_LIBEXEC="+BoundLibexecDir)
 	}
 
 	// Prepare environment notes for display

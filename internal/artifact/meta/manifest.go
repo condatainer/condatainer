@@ -156,10 +156,8 @@ type Build struct {
 }
 
 // BuildTools are the tools Condatainer directly used for a build. Apptainer
-// names the compatible tool family; Tool.Name distinguishes an actual
-// Apptainer binary from the supported Singularity fallback. Mksquashfs, Fuse2fs
-// and FuseOverlayfs carry no Name: unlike Apptainer/Singularity, there is only
-// one implementation of each.
+// records its Name. Mksquashfs, Fuse2fs and FuseOverlayfs carry none, since
+// there is only one implementation of each.
 type BuildTools struct {
 	Condatainer   Tool `json:"condatainer,omitzero"`
 	Apptainer     Tool `json:"apptainer,omitzero"`
@@ -176,8 +174,8 @@ func (t BuildTools) Empty() bool {
 }
 
 // Tool is one directly used build implementation. Name is omitted when the
-// enclosing field already identifies it; it is set for Apptainer because the
-// configured binary may instead be Singularity.
+// enclosing field already identifies it; Apptainer sets it. A recorded
+// "singularity" is still read and shown.
 type Tool struct {
 	Name    string `json:"name,omitempty"`
 	Version string `json:"version"`

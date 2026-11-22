@@ -85,9 +85,6 @@ func (b *BuildObject) buildConda(ctx context.Context) error {
 		b.Cleanup(true)
 		return err
 	}
-	// After the recipe's container has run, so the apptainer resolver has
-	// already decided which binary that used and captureCommonBuildTools can
-	// read it back rather than resolving a possibly different one.
 	b.captureCommonBuildTools(ctx)
 	b.captureMicromambaVersion(ctx)
 
@@ -336,7 +333,9 @@ func (b *BuildObject) installConda(ctx context.Context) error {
 	done := watchContext(ctx, "conda install")
 	defer close(done)
 
-	if err := exec.Run(ctx, opts, exec.IOFromContext(ctx)); err != nil {
+	bin, err := exec.RunWithBin(ctx, opts, exec.IOFromContext(ctx))
+	b.apptainerBin = bin
+	if err != nil {
 		if isCancelledByUser(err) {
 			return ErrBuildCancelled
 		}

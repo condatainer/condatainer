@@ -823,16 +823,8 @@ func runLocally(ctx context.Context, contentScript string, overlays []string, sp
 	rs := effectiveResourceSpec(specs)
 	gpuRequested := rs.Gpu != nil && rs.Gpu.Count > 0
 
-	// Resolved here, at the real launch, so a submitted job binds libexec
-	// from the node it actually runs on.
-	bindLibexec, err := nestedRun()
-	if err != nil {
-		return err
-	}
-
 	options := execpkg.Options{
 		Overlays:     overlays,
-		BindLibexec:  bindLibexec,
 		Command:      command,
 		WritableImg:  runWritableImg,
 		EnvSettings:  append(resourceEnvSettings(specs), runEnvSettings...),
@@ -1021,10 +1013,6 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 	}
 
 	printDryRunSlots(ctx, contentScript, projectRun != nil)
-
-	if nested := describeNested(); nested != "" {
-		fmt.Printf("Nested run: %s\n", nested)
-	}
 
 	// Scheduler specs
 	if specs != nil && specs.Spec == nil && specs.HasDirectives {

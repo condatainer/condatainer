@@ -19,7 +19,7 @@ func newStoreValidateCmd() *cobra.Command {
 
 - Give a name to check only its builds.
 - It prints one line per entry, and fails if any entry does not match.
-- --payload needs squashfuse and unshare.
+- --payload needs squashfuse and apptainer.
 - Conda and definition builds have no payload key, so --payload skips them.`,
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,

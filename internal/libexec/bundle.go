@@ -33,13 +33,16 @@ type release struct {
 	Assets []struct {
 		Name string `json:"name"`
 		URL  string `json:"browser_download_url"`
+		Size int64  `json:"size"`
 	} `json:"assets"`
 }
 
 // manifest lists every file of an installed bundle, so a later update replaces exactly those.
 type manifest struct {
-	Apptainer string                   `json:"apptainer"`
-	Files     map[string]manifestEntry `json:"files"`
+	Apptainer string `json:"apptainer"`
+	// Archive is the sha256 of the archive the bundle came from, set by the installer.
+	Archive string                   `json:"archive,omitempty"`
+	Files   map[string]manifestEntry `json:"files"`
 }
 
 type manifestEntry struct {
@@ -63,7 +66,8 @@ func bundleArch() (string, error) {
 
 // installBundle downloads the bundle for this architecture, checks it and
 // installs it into target. version is empty for the newest release, or a full or partial version.
-//   - An installed bundle of the release's Apptainer version is kept unless force is set.
+//   - An installed bundle is kept unless force is set, when it has the release's Apptainer version and the same archive.
+//     A bundle installed with no recorded archive is kept on its version alone.
 //   - The archive is checked against its published sha256 before anything is unpacked.
 //   - It is unpacked into target/.staging and checked against the version floors before any installed file changes.
 //   - Files of the previous bundle that the new one lacks are removed, and every other file in target is left alone.
@@ -78,10 +82,6 @@ func installBundle(ctx context.Context, target, version string, force bool) erro
 	}
 	apptainerVersion := strings.TrimPrefix(rel.Tag, "v")
 	previous, _ := readManifest(target)
-	if !force && previous.Apptainer == apptainerVersion {
-		utils.PrintMessage("apptainer %s is already installed. Use --force to reinstall.", apptainerVersion)
-		return nil
-	}
 	archive := fmt.Sprintf("libexec-%s-linux-%s.tar.gz", apptainerVersion, arch)
 	archiveURL, sumURL := rel.assetURL(archive), rel.assetURL(archive+".sha256")
 	if archiveURL == "" || sumURL == "" {
@@ -99,11 +99,24 @@ func installBundle(ctx context.Context, target, version string, force bool) erro
 
 	archivePath := filepath.Join(staging, archive)
 	sumPath := archivePath + ".sha256"
-	if err := utils.DownloadFile(ctx, archiveURL, archivePath); err != nil {
-		return fmt.Errorf("failed to download %s: %w", archive, err)
-	}
 	if err := utils.DownloadFile(ctx, sumURL, sumPath); err != nil {
 		return fmt.Errorf("failed to download %s.sha256: %w", archive, err)
+	}
+	digest, err := readDigest(sumPath)
+	if err != nil {
+		return err
+	}
+	if !force && previous.Apptainer == apptainerVersion && (previous.Archive == "" || previous.Archive == digest) {
+		utils.PrintMessage("apptainer %s is already installed. Use --force to reinstall.", apptainerVersion)
+		return nil
+	}
+	if size := rel.assetSize(archive); size > 0 {
+		utils.PrintMessage("Downloading apptainer %s (%s) ...", apptainerVersion, utils.FormatSize(size))
+	} else {
+		utils.PrintMessage("Downloading apptainer %s ...", apptainerVersion)
+	}
+	if err := utils.DownloadFile(ctx, archiveURL, archivePath); err != nil {
+		return fmt.Errorf("failed to download %s: %w", archive, err)
 	}
 	if err := verifyChecksum(archivePath, sumPath); err != nil {
 		return err
@@ -117,13 +130,21 @@ func installBundle(ctx context.Context, target, version string, force bool) erro
 	if err != nil {
 		return fmt.Errorf("the bundle has no usable %s: %w", manifestName, err)
 	}
+	next.Archive = strings.ToLower(digest)
+	if err := writeManifest(tree, next); err != nil {
+		return err
+	}
 	for _, name := range []string{"apptainer", "mksquashfs", "unsquashfs"} {
 		if err := CheckFloor(ctx, filepath.Join(tree, "bin", name), name); err != nil {
 			return fmt.Errorf("the bundle %s failed its check: %w", rel.Tag, err)
 		}
 	}
 
-	return replaceFiles(target, tree, previous, next)
+	if err := replaceFiles(target, tree, previous, next); err != nil {
+		return err
+	}
+	utils.PrintMessage("Installed apptainer %s.", apptainerVersion)
+	return nil
 }
 
 // assetURL returns the download URL of the release asset called name, or "".
@@ -134,6 +155,16 @@ func (r release) assetURL(name string) string {
 		}
 	}
 	return ""
+}
+
+// assetSize returns the size in bytes of the release asset called name, or 0 when it is not known.
+func (r release) assetSize(name string) int64 {
+	for _, a := range r.Assets {
+		if a.Name == name {
+			return a.Size
+		}
+	}
+	return 0
 }
 
 // fetchRelease reads the description of the bundle release: the newest for an empty version,
@@ -164,15 +195,24 @@ func fetchRelease(ctx context.Context, version string) (release, error) {
 	return rels[slices.Index(tags, tag)], nil
 }
 
-// verifyChecksum checks archive against the first field of the sha256 file beside it.
-func verifyChecksum(archive, sumFile string) error {
+// readDigest returns the first field of a sha256 file.
+func readDigest(sumFile string) (string, error) {
 	data, err := os.ReadFile(sumFile)
 	if err != nil {
-		return err
+		return "", err
 	}
 	fields := strings.Fields(string(data))
 	if len(fields) == 0 {
-		return fmt.Errorf("%s is empty", filepath.Base(sumFile))
+		return "", fmt.Errorf("%s is empty", filepath.Base(sumFile))
+	}
+	return strings.ToLower(fields[0]), nil
+}
+
+// verifyChecksum checks archive against the first field of the sha256 file beside it.
+func verifyChecksum(archive, sumFile string) error {
+	want, err := readDigest(sumFile)
+	if err != nil {
+		return err
 	}
 	f, err := os.Open(archive)
 	if err != nil {
@@ -183,8 +223,8 @@ func verifyChecksum(archive, sumFile string) error {
 	if _, err := io.Copy(h, f); err != nil {
 		return err
 	}
-	if got := hex.EncodeToString(h.Sum(nil)); !strings.EqualFold(got, fields[0]) {
-		return fmt.Errorf("the download of %s is corrupt: sha256 %s, expected %s", filepath.Base(archive), got, fields[0])
+	if got := hex.EncodeToString(h.Sum(nil)); got != want {
+		return fmt.Errorf("the download of %s is corrupt: sha256 %s, expected %s", filepath.Base(archive), got, want)
 	}
 	return nil
 }
@@ -300,6 +340,15 @@ func readManifest(dir string) (manifest, error) {
 		return m, err
 	}
 	return m, nil
+}
+
+// writeManifest writes m as dir's MANIFEST.json.
+func writeManifest(dir string, m manifest) error {
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, manifestName), append(data, '\n'), 0o644)
 }
 
 // replaceFiles moves the unpacked tree into target.

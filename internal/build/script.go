@@ -131,9 +131,6 @@ func (b *BuildObject) buildScript(ctx context.Context, buildDeps bool) error {
 		b.Cleanup(true)
 		return err
 	}
-	// After the recipe's container has run, so the apptainer resolver has
-	// already decided which binary that used and captureCommonBuildTools can
-	// read it back rather than resolving a possibly different one.
 	b.captureCommonBuildTools(ctx)
 
 	// After the build, so every dependency it needed is installed and can be
@@ -337,7 +334,9 @@ func (b *BuildObject) runBuildScript(ctx context.Context) error {
 	if ioStreams.IsZero() {
 		ioStreams = execpkg.IOFromContext(ctx)
 	}
-	if err := execpkg.Run(ctx, opts, ioStreams); err != nil {
+	bin, err := execpkg.RunWithBin(ctx, opts, ioStreams)
+	b.apptainerBin = bin
+	if err != nil {
 		if isCancelledByUser(err) {
 			return ErrBuildCancelled
 		}

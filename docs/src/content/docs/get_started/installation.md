@@ -17,7 +17,7 @@ description: Install CondaTainer for personal use on Linux.
 curl -fsSL https://install.condatainer.org | bash
 ```
 
-The script asks where to install, whether to set up your shell, and whether to download the toolchain.
+The script asks where to install and whether to set up your shell. It also downloads Apptainer and the other tools CondaTainer needs, into `libexec`.
 
 :::note
 To install for a group or a whole cluster, see [Group install](../deployment/group_install.md) or [Site install](../deployment/site_install.md).
@@ -44,18 +44,21 @@ condatainer shell init # Host only
 
 ## Adjust configurations
 
-CondaTainer needs Apptainer, Micromamba and other tools. They are downloaded into `libexec`. If that was skipped or failed, download them later:
+CondaTainer needs Apptainer, Micromamba and other tools. They are downloaded into `libexec`. If the download failed, run it again:
 
 ```bash
 condatainer update --libexec
 ```
 
-To build from Singularity `.def` files with the host's Apptainer instead:
+To use the host's Apptainer instead of the one downloaded into `libexec`:
 
 ```bash
 module load apptainer/1.5
 condatainer config set host_apptainer "$(command -v apptainer)"
 ```
+
+- It must be Apptainer 1.4 or newer.
+- Without this setting, CondaTainer uses the Apptainer in `libexec`.
 
 ## Uninstall
 

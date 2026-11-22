@@ -12,7 +12,6 @@ import (
 
 	"github.com/condatainer/condatainer/cmd/internal/clilog"
 	"github.com/condatainer/condatainer/internal/config"
-	"github.com/condatainer/condatainer/internal/libexec"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
@@ -112,19 +111,19 @@ var rootCmd = &cobra.Command{
 		// Step 4: Replace HOME when home_override is set
 		config.ApplyHomeOverride()
 
-		// Warn if no apptainer is accessible, unless the toolchain has its own or
-		// this is already inside a container, where none is reachable. Skip for
-		// all `config` commands so users can inspect and repair config without
+		// Warn if the host_apptainer cannot be run, or no apptainer is selected: no
+		// host_apptainer and none installed in libexec. Skipped inside a container, where none is reachable, and for all
+		// `config` commands so users can inspect and repair config without
 		// seeing contradictory warnings.
 		isConfigCommand := strings.HasPrefix(cmd.CommandPath(), "condatainer config")
 		hostOnly := isHostOnlyCommand(cmd)
 		warnApptainer := !isCompleteRequest && !isConfigCommand && !hostOnly && !config.IsInsideContainer()
-		if bad := toolpath.InvalidSystemApptainer(); bad != "" && warnApptainer {
-			utils.PrintWarning("The host_apptainer setting %q is not usable, so it is ignored.", bad)
-		}
-		if warnApptainer && !libexec.Installed("apptainer") && !utils.ValidateBinary(toolpath.SystemApptainer()) {
+		if bad := toolpath.InvalidHostApptainer(); bad != "" && warnApptainer {
+			utils.PrintWarning("The host_apptainer setting %q is not usable.", bad)
+			utils.PrintHint("Fix the path, or run `condatainer config remove host_apptainer`.")
+		} else if _, source := apptainer.Selected(); warnApptainer && source == "" {
 			utils.PrintWarning("Apptainer not accessible.")
-			utils.PrintHint("Run `condatainer update --libexec apptainer`.")
+			utils.PrintHint("Run `condatainer update --libexec`, or set host_apptainer.")
 		}
 
 		// Everything past config management, the registry and the host-only
@@ -147,7 +146,11 @@ var rootCmd = &cobra.Command{
 			} else {
 				utils.PrintDebug("Base Image: %v", err)
 			}
-			utils.PrintDebug("Apptainer Binary: %s", toolpath.SystemApptainer())
+			if path, source := apptainer.Selected(); source != "" {
+				utils.PrintDebug("Apptainer Binary: %s (%s)", path, source)
+			} else {
+				utils.PrintDebug("Apptainer Binary: none (set host_apptainer, or run `condatainer update --libexec`)")
+			}
 			if scheduler.Bin() != "" {
 				utils.PrintDebug("Scheduler Binary: %s", scheduler.Bin())
 			}

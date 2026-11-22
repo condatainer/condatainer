@@ -355,7 +355,7 @@ func runHelperRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check apptainer is available.
-	if _, err := apptainer.Normal(); err != nil {
+	if _, err := apptainer.Resolve(apptainer.Need{Overlays: true}); err != nil {
 		cmd.SilenceUsage = true
 		ExitWithError("apptainer is required to run helper scripts: %v", err)
 	}

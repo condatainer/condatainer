@@ -6,6 +6,7 @@ func TestInternalCommandsAreTheOnesUnderAnUnderscoreName(t *testing.T) {
 	for path, want := range map[string][]string{
 		"_helper pick-port": {"_helper", "pick-port"},
 		"_server_daemon":    {"_server_daemon"},
+		"_mount_job":        {"_mount_job"},
 		"list":              {"list"},
 		"helper run":        {"helper", "run"},
 	} {

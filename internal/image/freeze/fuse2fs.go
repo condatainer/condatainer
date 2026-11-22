@@ -3,6 +3,8 @@ package freeze
 import (
 	"errors"
 	"fmt"
+	"os/exec"
+	"strings"
 
 	"github.com/condatainer/condatainer/internal/toolpath"
 )
@@ -39,10 +41,21 @@ func findFuse2fs() (string, error) {
 }
 
 // FindFuseOverlayfs locates the fuse-overlayfs that layers an image over its
-// snapshot. A missing one is fixed by `condatainer update --libexec apptainer`.
+// snapshot. A missing one is fixed by `condatainer update --libexec apptainer`, run on the host.
 func FindFuseOverlayfs() (string, error) {
 	if p, err := toolpath.Resolve("fuse-overlayfs"); err == nil {
 		return p, nil
 	}
 	return "", fmt.Errorf("%w: %s", ErrNoFuseOverlayfs, toolpath.NotFoundMessage("fuse-overlayfs"))
+}
+
+// fuse2fsMount is the read-only mount of an overlay image at path.
+//   - fuse2fs checks permissions as the user who mounted it. A job runs as that user, so it would refuse a file whose owner is another uid and whose mode excludes everyone else.
+//   - With -o fakeroot it checks as root, and every file reads. A fuse2fs without the option is mounted without it, and the pack refuses a file it could not read.
+func fuse2fsMount(bin, img, path string) Mount {
+	args := []string{"-o", "ro"}
+	if help, _ := exec.Command(bin, "-h").CombinedOutput(); strings.Contains(string(help), "-o fakeroot") {
+		args = append(args, "-o", "fakeroot")
+	}
+	return Mount{Bin: bin, Args: append(args, img), Path: path}
 }

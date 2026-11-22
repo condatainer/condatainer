@@ -10,7 +10,11 @@ The self-provisioned toolchain: one directory holding micromamba and the Apptain
 - A conda or script build installs `micromamba` alone when none is installed.
 - A script build can call its `micromamba`, appended to `PATH` so anything the base provides wins.
   - That is a convenience, not an input. The version is not recorded, and a recipe is identified by its text.
-- Nothing is installed automatically. An ordinary `exec`, `run` or build never triggers a first-time download.
+- Apptainer is never installed automatically. An `exec`, `run` or build with none is refused, and the message names `update --libexec`.
+  - `micromamba` is the one exception, as above.
+- The installer downloads the bundle. A host apptainer still needs its fakeroot for a `.def` build.
+  - The bundle is built on el8, so its fakeroot daemon and library need only glibc 2.14.
+  - A host's fakeroot is built for the host's glibc, and an older image cannot load it.
 
 ## Why a bundle
 
@@ -24,7 +28,8 @@ The self-provisioned toolchain: one directory holding micromamba and the Apptain
   - It belongs to the install, like the Apptainer binary. No other layer can shadow it.
   - With no root, it falls back to the user data directory.
 - `CNT_LIBEXEC` is a variable only, with no config key, so no config layer can move it.
-- A container binds the directory whole, at its real path.
+- A container binds the directory whole, at `/.condatainer/libexec`, and `CNT_LIBEXEC` names it there.
+  - The bundle is relocatable, so it runs from that path.
 - The name is `libexec`, not `tools`. "Tool" already means other things here. `libexec` is the FHS term for executables invoked by other programs.
 - The directory counts as installed when it has `bin/micromamba` or `MANIFEST.json`. Either one alone is a valid toolchain.
 
@@ -40,10 +45,20 @@ The self-provisioned toolchain: one directory holding micromamba and the Apptain
   - A file of the previous bundle that the new one lacks is removed.
   - A file the manifest never listed is left alone, including `bin/micromamba`.
   - A running process keeps its old inode when a file is renamed over it.
+- A download prints one line before it starts, with the size when the release lists it, and one when the package is installed.
+  - It has no limit on its total time. It fails when no data arrives for a minute, so a slow link finishes and a stalled one does not hang.
 - A package already at the version to install is left alone, and `--force` reinstalls it.
+  - A release is named by its Apptainer version alone, so the bundle also compares the archive's sha256, recorded in `MANIFEST.json`.
+  - A rebuilt archive of the same version is installed. A bundle with no recorded archive is kept on its version.
 - A failed update leaves the previous manifest. Running it again repairs the install. There is no rollback copy.
 - **Micromamba.** The standalone release for this platform is downloaded and checked beside `bin/micromamba`, then renamed over it.
 - A directory holding anything else is refused, never written into, so a mistyped `CNT_LIBEXEC` loses nothing.
+
+## AppArmor
+
+- The bundle's apptainer is not setuid, so Ubuntu 24.04 and later refuses it a user namespace until an admin allows its path.
+- The profile names `bin/apptainer` and `lib/apptainer/bin/starter`, so an update does not change it.
+- A per-user install has a path per user, so a profile is not a fit for it.
 
 ## Choosing a version
 

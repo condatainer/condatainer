@@ -102,14 +102,16 @@ See [Fix Ownership](../guides/environments.md#fix-ownership).
 ## Cannot mount for writing
 
 ```text
-cannot mount env.img for writing: fuse2fs 1.47.1 (/usr/bin/fuse2fs) has a bug that silently corrupts a file overwritten with shorter content. Run `condatainer update --libexec apptainer` to install a fixed version.
+cannot mount env.img for writing: fuse2fs 1.47.1 (/usr/bin/fuse2fs) has a bug that silently corrupts a file overwritten with shorter content. Unset host_apptainer to use the toolchain's apptainer, which ships a fixed fuse2fs
 ```
 
-On a login node, outside any container:
+The Apptainer set as `host_apptainer` mounts with its own `fuse2fs`, and that one is affected. Use the toolchain's Apptainer, which ships a fixed one:
 
 ```bash
-condatainer update --libexec apptainer
+condatainer config remove host_apptainer
 ```
+
+If the toolchain is not installed yet, run `condatainer update --libexec` first.
 
 ### Why it is refused
 

@@ -45,7 +45,7 @@ The modulefile adds the versioned `bin/` to `PATH` and points CondaTainer to the
 | `PATH` | Prepends `/apps/condatainer/<version>/bin` |
 | `CNT_ROOT` | Points to the persistent shared install directory. |
 | `CNT_LIBEXEC` | Points to the toolchain (`/apps/condatainer/<version>/libexec`). |
-| `CNT_CONFIG_HOST_APPTAINER` | *(Optional)* Full path to the host `apptainer` for `.def` builds. |
+| `CNT_CONFIG_HOST_APPTAINER` | *(Optional)* Full path to the host `apptainer` (1.4 or newer), used instead of the toolchain's. |
 
 ### Modulefile Templates
 
@@ -62,9 +62,9 @@ prepend_path("PATH", pathJoin(base, "bin"))
 setenv("CNT_ROOT", "/shared/condatainer")
 setenv("CNT_LIBEXEC", pathJoin(base, "libexec"))
 
--- Optional: Use the site's native Apptainer for .def builds
--- setenv("CNT_CONFIG_HOST_APPTAINER", "/apps/apptainer/1.3.0/bin/apptainer")
--- depends_on("apptainer/1.3.0")
+-- Optional: Use the site's native Apptainer
+-- setenv("CNT_CONFIG_HOST_APPTAINER", "/apps/apptainer/1.4.5/bin/apptainer")
+-- depends_on("apptainer/1.4.5")
 ```
 
 **Environment Modules (Tcl)**
@@ -79,16 +79,16 @@ prepend-path PATH "$base/bin"
 setenv CNT_ROOT "/shared/condatainer"
 setenv CNT_LIBEXEC "$base/libexec"
 
-## Optional: Use the site's native Apptainer for .def builds
-# setenv CNT_CONFIG_HOST_APPTAINER "/apps/apptainer/1.3.0/bin/apptainer"
-# module load apptainer/1.3.0
+## Optional: Use the site's native Apptainer
+# setenv CNT_CONFIG_HOST_APPTAINER "/apps/apptainer/1.4.5/bin/apptainer"
+# module load apptainer/1.4.5
 ```
 
-### Delegating `.def` Builds to Host Apptainer
+### Using the Host Apptainer
 
-CondaTainer uses two Apptainer binaries for different purposes:
-1. **Toolchain Apptainer (`libexec/`):** The unprivileged internal binary used to run containers and mount overlay filesystems.
-2. **Host Apptainer (`host_apptainer`):** The system or module binary used when compiling OS overlays from definition files (`.def`), which may require setuid or privileged capabilities.
+CondaTainer uses one of two Apptainer binaries:
+1. **Toolchain Apptainer (`libexec/`):** The unprivileged internal binary. It is used when `host_apptainer` is unset.
+2. **Host Apptainer (`host_apptainer`):** The system or module binary. When set, it runs containers and builds `.def` files outside a container. It must be Apptainer 1.4 or newer, because older versions cannot mount CondaTainer's images.
 
 If the site provides an Apptainer module with specific optimizations, site bind paths, or setuid helpers, set `CNT_CONFIG_HOST_APPTAINER` to point to that binary, and declare a module dependency (`depends_on` in Lmod or `module load` in Tcl) to ensure its environment is active.
 
@@ -113,10 +113,15 @@ condatainer config set default_distro ubuntu24 -l r
 
 CondaTainer's runtime dependencies (Apptainer, FUSE helpers, and `micromamba`) live in `libexec/`.
 
-Download the prebuilt toolchain package or release corresponding to your architecture from the [condatainer/libexec](https://github.com/condatainer/libexec) repository, and unpack it into `/apps/condatainer/<version>/libexec`:
+Download it with the module's own command, from a host with network access:
+
+```bash
+CNT_LIBEXEC=/apps/condatainer/<version>/libexec condatainer update --libexec
+```
+
+Without network access on that host, download the archive for your architecture from the [condatainer/libexec](https://github.com/condatainer/libexec/releases) releases elsewhere and unpack it:
 
 ```bash
 mkdir -p /apps/condatainer/<version>/libexec
-# Unpack the downloaded libexec bundle for your architecture
-tar -xzf libexec-<arch>.tar.gz -C /apps/condatainer/<version>/libexec
+tar -xzf libexec-<version>-linux-<arch>.tar.gz -C /apps/condatainer/<version>/libexec
 ```

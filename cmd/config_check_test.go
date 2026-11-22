@@ -39,7 +39,7 @@ func TestCheckReportsUnknownBadAndUnrunnable(t *testing.T) {
   ncpu: 0
   ncpus: 4
   mem: 8g
-nested_run: maybe
+autoload_gpu: maybe
 host_apptainer: /nonexistent/apptainer
 sources:
   - lab: /x
@@ -48,7 +48,7 @@ sources:
 	for _, want := range []string{
 		`config.yaml:3 unknown key "build.ncpus"`,
 		"config.yaml:2 build.ncpu: 0 is below the minimum 1",
-		"config.yaml:5 nested_run:",
+		"config.yaml:5 autoload_gpu:",
 		"config.yaml:6 host_apptainer /nonexistent/apptainer:",
 	} {
 		if !strings.Contains(got, want) {

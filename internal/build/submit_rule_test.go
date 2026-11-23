@@ -6,26 +6,73 @@ import (
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/artifact"
+	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
-// always_submit_data sends a data build to the scheduler without directives; an
-// app build is not sent, and a build made from packages or a file never is,
-// because a job re-runs `create <name>` and could not reproduce it.
-func TestAlwaysSubmitDataAppliesToNamedDataBuildsOnly(t *testing.T) {
-	settingstest.Override(t, "build.always_submit_data", "true")
-
+// build.always_submit sends a build of a listed kind to the scheduler without
+// directives. A build a job cannot reproduce, one made from packages or a file,
+// never is, because a job re-runs `create <name>`.
+func TestAlwaysSubmitSendsTheListedKindsOnly(t *testing.T) {
 	named := func(typ artifact.Type) *BuildObject {
 		return &BuildObject{submitJob: true, spec: Spec{Image: ImageSpec{Name: "demo/1", Type: typ}}}
 	}
-	if !named(artifact.TypeData).RequiresScheduler() {
-		t.Error("a named data build is not submitted under always_submit_data")
-	}
-	if named(artifact.TypeApp).RequiresScheduler() {
-		t.Error("an app build is submitted under always_submit_data")
+	for name, tc := range map[string]struct {
+		listed        []string
+		os, app, data bool
+	}{
+		"nothing listed": {nil, false, false, false},
+		"data":           {[]string{"data"}, false, false, true},
+		"app":            {[]string{"app"}, false, true, false},
+		"os":             {[]string{"os"}, true, false, false},
+		"app and data":   {[]string{"app", "data"}, false, true, true},
+		"all":            {[]string{"all"}, true, true, true},
+	} {
+		settingstest.OverrideList(t, "build.always_submit", tc.listed...)
+		for typ, want := range map[artifact.Type]bool{artifact.TypeOS: tc.os, artifact.TypeApp: tc.app, artifact.TypeData: tc.data} {
+			if got := named(typ).RequiresScheduler(); got != want {
+				t.Errorf("%s: a named %s build is submitted = %v, want %v", name, typ, got, want)
+			}
+		}
 	}
 
+	settingstest.OverrideList(t, "build.always_submit", "all")
+	if (&BuildObject{spec: Spec{Image: ImageSpec{Name: "demo/1", Type: artifact.TypeData}}}).RequiresScheduler() {
+		t.Error("a build with no job arguments is submitted under all")
+	}
+}
+
+func TestValidateSubmitKindTakesABuildKindOrAll(t *testing.T) {
+	for _, kind := range []string{"data", "app", "os", "all"} {
+		if err := validateSubmitKind(kind); err != nil {
+			t.Errorf("%q refused: %v", kind, err)
+		}
+	}
+	for _, kind := range []string{"", "env", "apps", "none"} {
+		if validateSubmitKind(kind) == nil {
+			t.Errorf("%q accepted", kind)
+		}
+	}
+}
+
+// A job starts where it was submitted from, unless the recipe names a directory.
+func TestUseSubmitDirKeepsTheRecipesOwnDirectory(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	specs := &scheduler.ScriptSpecs{}
+	useSubmitDir(specs)
+	if specs.Control.WorkDir != wd {
+		t.Errorf("WorkDir = %q, want the working directory %q", specs.Control.WorkDir, wd)
+	}
+	named := &scheduler.ScriptSpecs{}
+	named.Control.WorkDir = "/data/work"
+	useSubmitDir(named)
+	if named.Control.WorkDir != "/data/work" {
+		t.Errorf("WorkDir = %q, the recipe's own was replaced", named.Control.WorkDir)
+	}
 }
 
 // An external shell script with directives is submitted once the arguments that

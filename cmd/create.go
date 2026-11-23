@@ -57,7 +57,7 @@ var (
 	// buildFlagNames is the set of flags shown under "Build Flags:" in help.
 	buildFlagNames = map[string]bool{
 		"block-size":      true,
-		"data-block-size": true, "always-submit-data": true, "no-submit": true, "store": true, "no-prebuilt": true,
+		"data-block-size": true, "always-submit": true, "no-submit": true, "store": true, "no-prebuilt": true,
 	}
 )
 
@@ -74,14 +74,14 @@ var createJobRules = map[string]string{
 	"name": "the job builds by target", "prefix": "the job builds by target",
 	"file": "the job builds by target", "from": "the job builds by target",
 	"update": "the command builder adds it", "store": "the command builder adds it",
-	"no-prebuilt":        "the command builder adds it",
-	"no-submit":          "the job is the submission",
-	"dry-run":            "a dry run submits no job",
-	"json":               "output format of this run",
-	"always-submit-data": "decides whether to submit, not what is built",
-	"needed-by":          "the job builds by target",
-	"latest":             "the job builds by target",
-	"no-project":         "the job builds by target",
+	"no-prebuilt":   "the command builder adds it",
+	"no-submit":     "the job is the submission",
+	"dry-run":       "a dry run submits no job",
+	"json":          "output format of this run",
+	"always-submit": "decides whether to submit, not what is built",
+	"needed-by":     "the job builds by target",
+	"latest":        "the job builds by target",
+	"no-project":    "the job builds by target",
 }
 
 // createJobFlags are the flags a submitted build has to repeat: the node re-runs
@@ -226,7 +226,7 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 			}
 		}
 
-		// 7b. Handle --always-submit-data
+		// 7b. Handle --no-prebuilt
 		if createNoPrebuilt {
 			config.Global.SkipPrebuilt = true
 		}
@@ -282,7 +282,7 @@ func init() {
 	f.BoolVar(&createLatest, "latest", false, "Take the newest version, not an installed one")
 	f.BoolVar(&noProjectRequested, "no-project", false, "Ignore the project: its lock, root and distro")
 	jsonFlag(f, &createJSON)
-	settings.AddSwitch(f, "build.always_submit_data", "always-submit-data", "true", settings.Usage("Submit data builds as scheduler jobs, even without directives"))
+	settings.AddFlag(f, "build.always_submit", "always-submit", settings.Usage("Always submit this kind of build as a job: data, app, os or all"))
 	settings.AddSwitch(f, "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))
 
 	for _, opt := range build.CompressOptions {

@@ -357,14 +357,14 @@ func (b *BuildObject) setCondaSpec() {
 }
 
 // RequiresScheduler reports whether this build goes to the scheduler: submission
-// is enabled and the recipe carries directives, or it is data and
-// build.always_submit_data is set.
+// is enabled and the recipe carries directives, or its kind is one
+// build.always_submit names.
 func (b *BuildObject) RequiresScheduler() bool {
 	if !b.submitJob {
 		return false
 	}
 	return scheduler.HasSchedulerSpecs(b.scriptSpecs) ||
-		(AlwaysSubmitData() && b.spec.Image.Type == artifact.TypeData)
+		AlwaysSubmit(b.spec.Image.Type)
 }
 
 // BuildLockInfo holds metadata stored inside a build lock file.

@@ -114,10 +114,13 @@ Builds overlay images from Conda packages, recipes or Apptainer definitions.
 - A dependency that is neither installed nor planned leaves the node undecided. It looks when it builds.
 - The base is resolved for every script and Conda build before any node runs, because a scheduler job cannot build one on the node.
 - A pull is always local.
-- A build goes to the scheduler when its recipe asks for resources, or when it is `data` and `build.always_submit_data` is set.
+- A build goes to the scheduler when its recipe asks for resources, or when its kind is one `build.always_submit` lists. The list takes `data`, `app`, `os` or `all`, and is empty by default.
+  - A build is decided by its own kind. A build with a dependency that is a job is a job too, queued behind it, because every foreground build runs before any job is submitted.
+  - A dependency that is not a job is built in the foreground first. A pulled build is never a job.
 - A recipe asks for them with `#NCPU:`, `#MEM:`, `#TIME:` and `#GPU:`, or with scheduler directives. One source is read, as for a run script.
 - A build ignores the container headers, which mean nothing to it, and writes its own logs.
 - A build job's partition and account come from `build.partition` and `build.account`, then `scheduler.partition` and `scheduler.account`, then the scheduler's own default. A recipe's own are ignored, so one recipe runs on any cluster. Restore jobs follow the same order.
+- A job starts in the directory `create` was run from, as a foreground build does. A recipe's own working directory wins. PBS would otherwise start it in `$HOME`.
 - A job re-runs `create` from the name, so only a build that command can reproduce is submitted: a catalog name or an external shell script. Conda from packages or a file, a definition and an import run locally.
 - Flags that change what is built or where it lands travel with the job. Submission flags do not.
 

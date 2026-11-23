@@ -566,6 +566,7 @@ type createSolved struct {
 // solveCreate resolves a create argument to one concrete module: catalog.SolveName, then anaconda.org's package index, so "r", "rstudio-server" and a bare or partial Conda name like "openjdk/17" each land on one version.
 //   - A bare or partial name resolves to the newest installed version it admits, and to the newest anywhere only when none is installed. latest skips the installed ones.
 //   - A name that landed on an installed version carries the newer version the recipe sources offer, if there is one. Conda is not asked.
+//   - A template's index key that is not a module name is returned as the key, for the variant prompt that follows.
 //   - A channel-annotated or fully qualified name that resolves nowhere is returned unchanged for the normal Conda fallback.
 func solveCreate(ctx context.Context, nameVersion string, latest bool) (createSolved, error) {
 	normalized := utils.NormalizeModule(nameVersion)
@@ -581,7 +582,7 @@ func solveCreate(ctx context.Context, nameVersion string, latest bool) (createSo
 		have = build.InstalledVersions(nil)
 	}
 	distro := projectDefaultDistro()
-	if res, found, err := cat.SolveName(ctx, have, distro, normalized); err == nil && found {
+	if res, found, err := cat.SolveNameOrFamily(ctx, have, distro, normalized); err == nil && found {
 		solved := createSolved{Name: res.Name, Expanded: res.Name != normalized}
 		if res.Installed != "" && solved.Expanded {
 			solved.Newer = newerVersion(ctx, cat, distro, normalized, res.Name)

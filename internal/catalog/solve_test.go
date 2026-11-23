@@ -26,6 +26,10 @@ func solveSource(t *testing.T) Catalog {
 	write("recipes/ubuntu24/xfce4.def", "#DESC:XFCE4\n")
 	write("recipes/openjdk/17.0.15", "#DESC:OpenJDK 17.0.15\n")
 	write("recipes/openjdk/17.0.18", "#DESC:OpenJDK 17.0.18\n")
+	write("recipes/vendor", "#DESC:Vendor {version}\n#TARGET:vendor/{version}\n#PH:version:1.0,2.0\n")
+	write("recipes/vendor-template", "#DESC:Vendor {version}\n#TARGET:vendor/{version}\n#PH:version:1.0,2.0\n")
+	write("recipes/grch38/gtf-gencode-template", "#DESC:GTF {version}\n#TARGET:grch38/gtf/gencode/{version}\n#PH:version:45,46\n")
+	write("recipes/ubuntu24/tool-template.def", "#DESC:Tool {version}\n#TARGET:ubuntu24/tool/{version}\n#PH:version:1.0,2.0\n")
 	write("recipes/cellranger/9.0.1", "#DESC:cellranger\n")
 
 	cat, err := Open(t.Context(), []Spec{{Name: "local", Base: root}}, Cache{})
@@ -44,6 +48,38 @@ func TestSolveNameExact(t *testing.T) {
 	}
 	if res.Name != "cellranger/9.0.1" || res.Entry == nil {
 		t.Errorf("res = %+v, want the exact entry", res)
+	}
+}
+
+// A template's own key is a family: SolveName does not find it, and SolveNameOrFamily returns it as one.
+func TestSolveNameOrFamilyReturnsTemplateKey(t *testing.T) {
+	cat := solveSource(t)
+
+	for _, raw := range []string{"vendor-template", "tool-template", "grch38/gtf-gencode-template"} {
+		if _, found, _ := cat.SolveName(t.Context(), nil, "ubuntu24", raw); found {
+			t.Errorf("SolveName(%q) found a family", raw)
+		}
+	}
+
+	for raw, want := range map[string]string{
+		"vendor-template":             "vendor-template",
+		"tool-template":               "ubuntu24/tool-template",
+		"grch38/gtf-gencode-template": "grch38/gtf-gencode-template",
+	} {
+		res, found, err := cat.SolveNameOrFamily(t.Context(), nil, "ubuntu24", raw)
+		if err != nil || !found || !res.IsFamily() || res.Name != want {
+			t.Errorf("SolveNameOrFamily(%q) = %+v found=%v err=%v, want family %s", raw, res, found, err, want)
+		}
+	}
+
+	// A key that is its target's own name is a module: it takes the newest version.
+	res, found, err := cat.SolveNameOrFamily(t.Context(), nil, "ubuntu24", "vendor")
+	if err != nil || !found || res.IsFamily() || res.Name != "vendor/2.0" {
+		t.Errorf("SolveNameOrFamily(vendor) = %+v found=%v err=%v, want vendor/2.0", res, found, err)
+	}
+
+	if _, found, _ := cat.SolveNameOrFamily(t.Context(), nil, "ubuntu24", "no-such-thing"); found {
+		t.Error("an unknown name was found")
 	}
 }
 

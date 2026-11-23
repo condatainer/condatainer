@@ -98,13 +98,12 @@ function hmRender() {
     html += '<div class="oc-group-hdr">' + escHtml(g.layer) + '</div>';
     for (const s of rows) {
       const i = _hmShownInstalled.push({ layer: g.layer, script: s }) - 1;
-      const state = s.newer ? 'newer' : (s.added ? 'added' : '');
       html += '<div class="modal-row">' +
         '<span class="modal-row-name"><span class="oc-row-name">' + escHtml(s.name) + '</span>' +
           (s.description ? '<span class="oc-description">' + escHtml(s.description) + '</span>' : '') + '</span>' +
-        '<span class="modal-row-size">' + _hmBadge(state) +
-          (s.hidden_by ? ' <span class="badge badge-grey" title="' + escHtml(s.hidden_by) + '">hidden</span>' : '') + '</span>' +
-        (s.newer ? '<button class="btn btn-sm" onclick="hmUpgrade(' + i + ')">Upgrade</button>' : '') +
+        '<span class="modal-row-size">' +
+          (s.hidden_by ? '<span class="badge badge-grey" title="' + escHtml(s.hidden_by) + '">hidden</span>' : '') + '</span>' +
+        (s.newer ? '<button class="btn btn-sm btn-primary" onclick="hmUpgrade(' + i + ')">Upgrade</button>' : '') +
         (s.added ? '<button class="btn btn-sm btn-flat btn-icon btn-icon-danger" title="Remove" onclick="hmRemove(' + i + ')">' + iconSvg('delete') + '</button>' : '') +
       '</div>';
     }

@@ -13,9 +13,6 @@ import (
 // standingProject reports the project the caller is standing in, or nil when
 // there is none or --no-project was given.
 func standingProject() (*project.Standing, error) {
-	if noProjectRequested {
-		return nil, nil
-	}
 	standing, err := standingProjectHere()
 	if err != nil || standing == nil {
 		return nil, err
@@ -52,8 +49,7 @@ func projectDefaultDistro() string {
 }
 
 // completionProject reads the standing project's lock once, for completion: the distro bare names expand under, and the names the project pins.
-//   - Outside a project, or when its lock does not load, the distro is the configured default and nothing is pinned.
-//   - `--no-project` leaves the pins out. The distro stays the project's, as in projectDefaultDistro.
+//   - Outside a project, with `--no-project`, or when its lock does not load, the distro is the configured default and nothing is pinned.
 //   - Only `name/version` keys are pinned names. The root (`base:`), a path pin and a version constraint are not, and neither is a key with no version.
 func completionProject() (distro string, pinned []string) {
 	standing, err := standingProjectHere()
@@ -61,9 +57,6 @@ func completionProject() (distro string, pinned []string) {
 		return config.ResolvedDefaultDistro(), nil
 	}
 	distro = standing.DefaultDistro()
-	if noProjectRequested {
-		return distro, nil
-	}
 	for key := range standing.Lock.Pins {
 		if key == lock.BaseKey || strings.HasPrefix(key, lock.PathPrefix) {
 			continue
@@ -91,9 +84,6 @@ func projectSelectedDistro() string {
 //   - It returns "" and no error otherwise, so ensureRootBaseImage falls through to the configured default.
 //   - It is strict, unlike projectOverlays: an unresolved pin refuses naming `project restore`, never falling back to the machine's default_distro.
 func projectBaseImage(ctx context.Context) (string, error) {
-	if noProjectRequested {
-		return "", nil
-	}
 	standing, err := standingProjectHere()
 	if err != nil || standing == nil {
 		return "", err

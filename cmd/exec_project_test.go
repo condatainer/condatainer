@@ -226,6 +226,31 @@ func TestProjectDefaultDistroFallsBackToConfig(t *testing.T) {
 	}
 }
 
+// --no-project is a caller outside any project, so a project's selected distro
+// does not decide what a bare name expands under.
+func TestNoProjectUsesTheConfiguredDistro(t *testing.T) {
+	settingstest.Override(t, "default_distro", "ubuntu24")
+	root := newProject(t)
+	base := vendorArtifact(t, root, "rocky9/base", "echo base\n")
+	l := lock.New()
+	l.Pins[lock.BaseKey] = pinOf(base)
+	if err := lock.Publish(root, l); err != nil {
+		t.Fatal(err)
+	}
+	if got := projectDefaultDistro(); got != "rocky9" {
+		t.Fatalf("distro = %q, want the project's rocky9", got)
+	}
+
+	noProjectRequested = true
+	t.Cleanup(func() { noProjectRequested = false })
+	if got := projectDefaultDistro(); got != "ubuntu24" {
+		t.Errorf("--no-project distro = %q, want the configured ubuntu24", got)
+	}
+	if standing, err := standingProjectHere(); err != nil || standing != nil {
+		t.Errorf("--no-project still stands in a project: %v, %v", standing, err)
+	}
+}
+
 func TestSplitOverlayModeSeparatesTheMountMode(t *testing.T) {
 	for _, tc := range []struct{ in, value, suffix string }{
 		{"env.img:rw", "env.img", ":rw"},
@@ -302,8 +327,12 @@ func TestCompletionProjectReadsThePinnedNames(t *testing.T) {
 
 	noProjectRequested = true
 	t.Cleanup(func() { noProjectRequested = false })
-	if _, pinned := completionProject(); len(pinned) != 0 {
+	distro, pinned = completionProject()
+	if len(pinned) != 0 {
 		t.Errorf("--no-project still offered %v", pinned)
+	}
+	if distro != "ubuntu24" {
+		t.Errorf("--no-project distro = %q, want the configured ubuntu24", distro)
 	}
 }
 

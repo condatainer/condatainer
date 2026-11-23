@@ -144,7 +144,7 @@ func PrintRunFlags(w io.Writer, spec *scheduler.ResourceSpec) {
 	fmt.Fprintln(w, "  -p, --partition   Partition/queue")
 	fmt.Fprintln(w, "      --exclude-nodes <a,b>  Nodes the job must not run on (empty for none)")
 	fmt.Fprintln(w, "      --new         Skip reuse prompt, force new instance")
-	fmt.Fprintln(w, "      --no-project  Ignore the project lock")
+	fmt.Fprintln(w, "      --no-project  Ignore the project: its lock, root and distro")
 	fmt.Fprintln(w, "      --wait        Stay attached until the app is ready")
 }
 

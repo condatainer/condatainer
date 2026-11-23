@@ -12,10 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// noProjectRequested is set by --no-project on exec, e, run, and check. It
+// noProjectRequested is set by --no-project on exec, e, run, and create. It
 // makes every project-aware resolution in the invocation behave as if no
-// project were found, regardless of what standing there would otherwise
-// resolve.
+// project were found: the lock, the pins, the root and the distro are the
+// machine's, regardless of what standing there would otherwise resolve.
 var noProjectRequested bool
 
 // projectAnnounced tracks whether this invocation has already told the user
@@ -49,7 +49,7 @@ func announceProjectMarked(root, remark string) {
 // applyProjectFlag with dir's value first thing in the command's RunE.
 func RegisterProjectFlags(cmd *cobra.Command, dir *string) {
 	cmd.Flags().StringVar(dir, "project", "", "Project root (default: the nearest project above the current directory)")
-	cmd.Flags().BoolVar(&noProjectRequested, "no-project", false, "Ignore the project lock")
+	cmd.Flags().BoolVar(&noProjectRequested, "no-project", false, "Ignore the project: its lock, root and distro")
 }
 
 // projectRootFlag is the project root named by --project, or "" when the project is the nearest one above the current directory.
@@ -76,8 +76,11 @@ func applyProjectFlag(dir string) error {
 	return nil
 }
 
-// standingProjectHere is the project a run-family command works in: the one --project names, else the nearest one at or above the current directory. It is nil when there is none.
+// standingProjectHere is the project a run-family command works in: the one --project names, else the nearest one at or above the current directory. It is nil when there is none, and with --no-project.
 func standingProjectHere() (*project.Standing, error) {
+	if noProjectRequested {
+		return nil, nil
+	}
 	if projectRootFlag != "" {
 		return project.StandingAtRoot(projectRootFlag)
 	}

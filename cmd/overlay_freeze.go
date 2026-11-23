@@ -3,9 +3,11 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/condatainer/condatainer/internal/build"
 	"github.com/condatainer/condatainer/internal/config"
@@ -21,7 +23,7 @@ import (
 var (
 	freezeDescription string
 	freezeUseTmp      bool
-	freezeKeep        bool
+	freezeBackup      string
 )
 
 const overlayFreezeHelp = `Pack a writable overlay into an immutable snapshot.
@@ -32,7 +34,11 @@ const overlayFreezeHelp = `Pack a writable overlay into an immutable snapshot.
 
 Destination:
 - By default the snapshot is <name>.sqf beside the .img, which is removed.
-- --keep, or an explicit destination, keeps the .img.
+- An explicit destination leaves the .img where it is.
+
+Backup:
+- --backup PREFIX renames the .img to PREFIX.img instead of removing it.
+- A paired snapshot that the freeze replaces is kept as PREFIX.sqf.
 
 Per-user overlays:
 - Freezing env-<user>.img writes env.sqf, as a shared env.img does.
@@ -46,14 +52,12 @@ var overlayFreezeCmd = &cobra.Command{
 	Args:  cobra.RangeArgs(1, 2),
 	Example: `  # env.sqf beside it, env.img removed
   condatainer overlay freeze env.img
-  # env.sqf beside it, env.img kept
-  condatainer overlay freeze env.img --keep
+  # env.sqf beside it, env.img renamed backup/env-v1.img
+  condatainer overlay freeze env.img --backup backup/env-v1
   # env.sqf, replacing the shared one
   condatainer overlay freeze env-alice.img
-  # That path, env.img kept
-  condatainer overlay freeze env.img ./overlays/env.sqf
-  # Smaller file, slower to pack
-  condatainer overlay freeze env.img --zstd-high`,
+  # That path, env.img left where it is
+  condatainer overlay freeze env.img ./overlays/env.sqf`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
 		source := args[0]
@@ -109,6 +113,14 @@ var overlayFreezeCmd = &cobra.Command{
 			}
 		}
 
+		plan, err := planFreezeBackup(source, dest, freezeBackup, cmd.Flags().Changed("backup"))
+		if err != nil {
+			ExitWithError("%v", err)
+		}
+		if err := checkFreezeSource(source, target, dest, plan); err != nil {
+			ExitWithError("%v", err)
+		}
+
 		// An .img that continues from a snapshot holds only what changed since, so
 		// the artifact is the .img layered over that snapshot: self-contained
 		// whether it replaces the snapshot or goes to an explicit destination.
@@ -139,8 +151,20 @@ var overlayFreezeCmd = &cobra.Command{
 			}
 			ExitWithError("%v", freezeErr)
 		}
+		// The old snapshot gets its backup name once the pack has succeeded. It
+		// keeps its own name until the rename below replaces it, so no reader
+		// finds the slot empty, and a failure here changes nothing.
+		if plan.sqf != "" {
+			if err := linkOrCopy(paired, plan.sqf); err != nil {
+				os.Remove(prepared) //nolint:errcheck
+				ExitWithError("cannot keep %s as %s: %v; nothing was changed", paired, plan.sqf, err)
+			}
+		}
 		if err := os.Rename(prepared, target); err != nil {
 			os.Remove(prepared) //nolint:errcheck
+			if plan.sqf != "" {
+				os.Remove(plan.sqf) //nolint:errcheck
+			}
 			ExitWithError("failed to install %s: %v", target, err)
 		}
 		res.Path = target
@@ -148,12 +172,11 @@ var overlayFreezeCmd = &cobra.Command{
 		// The .env sidecar's vars are already folded into the artifact's
 		// runtime.json by the pack, so its purpose is served once frozen: it
 		// follows the .img's own fate, one rule rather than a separate decision.
-		removed := dest == "" && !freezeKeep
-		if removed {
-			os.Remove(source)          //nolint:errcheck
-			os.Remove(source + ".env") //nolint:errcheck
+		removed, err := retireFreezeSource(source, dest, plan)
+		if err != nil {
+			ExitWithError("frozen to %s, but %v", target, err)
 		}
-		reportFreeze(res, source, removed)
+		reportFreeze(res, source, removed, plan)
 	},
 }
 
@@ -206,6 +229,135 @@ func resolveFreezeTarget(source, dest string) (string, error) {
 	return abs, nil
 }
 
+// freezeBackupPlan is what --backup keeps: the .img, and the snapshot the freeze
+// replaces when there is one. Both are empty without --backup.
+type freezeBackupPlan struct{ img, sqf string }
+
+// planFreezeBackup places the backup files. A name with no directory puts them
+// beside source, and one with a directory puts them there. The name is always
+// given, never only a directory. The .img keeps its extension. The snapshot
+// is kept, under the name that pairs with the backup .img, only when the
+// freeze replaces one, which is a bare freeze of an .img with a paired snapshot.
+// The directory must exist.
+func planFreezeBackup(source, dest, name string, given bool) (freezeBackupPlan, error) {
+	if !given {
+		return freezeBackupPlan{}, nil
+	}
+	ext := filepath.Ext(source)
+	dir, base := filepath.Split(name)
+	if base == "" || base == "." || base == ".." || utils.IsImg(base) || utils.IsSqf(base) {
+		return freezeBackupPlan{}, fmt.Errorf("--backup %q is not a prefix: give one with no extension, after the directory if any", name)
+	}
+	if dir == "" {
+		dir = filepath.Dir(source)
+	} else if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return freezeBackupPlan{}, fmt.Errorf("%s does not exist; create it or choose another prefix", dir)
+	}
+	plan := freezeBackupPlan{img: filepath.Join(dir, base+ext)}
+	if container.PairsWith(plan.img, container.SnapshotPath(source)) {
+		return freezeBackupPlan{}, fmt.Errorf("--backup %q would pair with the snapshot %s; choose another prefix", name, container.SnapshotPath(source))
+	}
+	if dest == "" && container.LookupSnapshot(source).Path != "" {
+		plan.sqf = container.SnapshotPath(plan.img)
+	}
+	return plan, nil
+}
+
+// linkOrCopy gives src a second name at dst without copying, and copies it when
+// the filesystem cannot link. An existing dst is never replaced.
+func linkOrCopy(src, dst string) error {
+	err := os.Link(src, dst)
+	if err == nil || errors.Is(err, os.ErrExist) {
+		return err
+	}
+	return copyFile(src, dst)
+}
+
+// moveFile renames src to dst, and copies then removes src when they are on
+// different filesystems. src is left in place if the copy fails.
+func moveFile(src, dst string) error {
+	err := os.Rename(src, dst)
+	if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	if err := copyFile(src, dst); err != nil {
+		return err
+	}
+	return os.Remove(src)
+}
+
+// copyFile writes src to dst through a .part file renamed into place, so dst is
+// never half written. An existing dst is not replaced.
+func copyFile(src, dst string) error {
+	if utils.FileExists(dst) {
+		return fmt.Errorf("%s: %w", dst, os.ErrExist)
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close() //nolint:errcheck
+	if info, err := in.Stat(); err == nil {
+		utils.PrintMessage("Copying %s to %s (%s)", src, dst, utils.FormatSize(info.Size()))
+	}
+	part := dst + producer.PreparedSuffix
+	out, err := utils.CreateFileWritable(part)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	if err == nil {
+		err = out.Sync()
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(part, dst)
+	}
+	if err != nil {
+		os.Remove(part) //nolint:errcheck
+	}
+	return err
+}
+
+// checkFreezeSource refuses, before the pack, a freeze that would leave the .img
+// layered over the snapshot that already holds it, or write over a backup.
+func checkFreezeSource(source, target, dest string, plan freezeBackupPlan) error {
+	if plan.img == "" {
+		if dest != "" && container.PairsWith(source, target) {
+			return fmt.Errorf("%s would stay beside %s and layer over it again; pass --backup to rename it, or choose another destination", source, target)
+		}
+		return nil
+	}
+	for _, name := range []string{plan.img, plan.img + ".env", plan.sqf} {
+		if name != "" && utils.FileExists(name) {
+			return fmt.Errorf("%s already exists; move it aside or choose another prefix", name)
+		}
+	}
+	return nil
+}
+
+// retireFreezeSource settles the .img and its .env sidecar once the snapshot is
+// installed. --backup renames them, a bare freeze removes them, and an explicit
+// destination leaves them. It reports whether they were removed.
+func retireFreezeSource(source, dest string, plan freezeBackupPlan) (removed bool, err error) {
+	switch {
+	case plan.img != "":
+		if err := moveFile(source, plan.img); err != nil {
+			return false, fmt.Errorf("moving %s to %s failed, and it is left in place: %w", source, plan.img, err)
+		}
+		if err := moveFile(source+".env", plan.img+".env"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("moving %s.env failed: %w", source, err)
+		}
+	case dest == "":
+		os.Remove(source)          //nolint:errcheck
+		os.Remove(source + ".env") //nolint:errcheck
+		return true, nil
+	}
+	return false, nil
+}
+
 // imagesDirContaining reports which images directory holds path, if any. An
 // images directory addresses artifacts by filename, and every frozen environment
 // is called env, so two would collide there.
@@ -225,10 +377,16 @@ func imagesDirContaining(path string) string {
 
 // reportFreeze prints what was produced. What the artifact contains is what
 // `info` is for, read back from the file itself.
-func reportFreeze(res freeze.Result, source string, removed bool) {
+func reportFreeze(res freeze.Result, source string, removed bool, plan freezeBackupPlan) {
 	utils.PrintSuccess("Frozen %s → %s", source, res.Path)
 	if removed {
 		utils.PrintMessage("  %s removed; the next overlay create starts fresh on top of the snapshot", source)
+	}
+	switch {
+	case plan.sqf != "":
+		utils.PrintMessage("  backup: %s and %s, the previous state as a pair", plan.img, plan.sqf)
+	case plan.img != "":
+		utils.PrintMessage("  backup: %s, the previous state", plan.img)
 	}
 	if n := res.Translation.Deletions(); n > 0 {
 		utils.PrintMessage("  carries %d deletion(s), translated from %s markers",
@@ -241,7 +399,7 @@ func init() {
 	f.StringVarP(&freezeDescription, "desc", "d", "", "Description recorded in the overlay")
 	settings.AddFlag(f, "build.block_size", "block-size", settings.Usage("SquashFS block size (default: build.block_size)"))
 	f.BoolVar(&freezeUseTmp, "use-tmp", false, "Pack from a temporary copy (faster; needs space for the whole overlay; not for an .img with a snapshot beside it)")
-	f.BoolVar(&freezeKeep, "keep", false, "Keep the source .img after a bare freeze (default: remove it)")
+	f.StringVar(&freezeBackup, "backup", "", "Rename the source .img, and keep its snapshot, as `PREFIX`")
 	for _, opt := range build.CompressOptions {
 		settings.AddSwitch(f, "build.compress_args", opt.Name, opt.Name, settings.Usage(opt.Description))
 	}

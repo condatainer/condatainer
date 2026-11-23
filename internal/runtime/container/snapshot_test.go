@@ -106,6 +106,44 @@ func TestLookupSnapshotBlockedByNonEnvFile(t *testing.T) {
 	}
 }
 
+// A backup keeps its .img and snapshot as a pair under the backup name, and the
+// pair does not touch the live one.
+func TestBackupPairIsSeparateFromTheLivePair(t *testing.T) {
+	requireSquashfsTools(t)
+	t.Setenv("USER", "alice")
+	dir := t.TempDir()
+	for _, name := range []string{"env.sqf", "old.sqf"} {
+		packRuntimeSqf(t, filepath.Join(dir, name), envRuntime())
+	}
+	for img, want := range map[string]string{
+		"env-alice.img": "env.sqf",
+		"old.ext3":      "old.sqf",
+	} {
+		if got := LookupSnapshot(filepath.Join(dir, img)).Path; got != filepath.Join(dir, want) {
+			t.Errorf("%s pairs with %q, want %s", img, got, want)
+		}
+	}
+}
+
+// PairsWith is the name rule alone, so it needs no snapshot on disk. A backup
+// name selects no live snapshot.
+func TestPairsWithFollowsTheImageName(t *testing.T) {
+	t.Setenv("USER", "alice")
+	for name, want := range map[string]bool{
+		"env.ext3":       true,
+		"env-alice.img":  true,
+		"env-backup.img": false,
+		"other.img":      false,
+	} {
+		if got := PairsWith("/proj/"+name, "/proj/env.sqf"); got != want {
+			t.Errorf("PairsWith(%s) = %v, want %v", name, got, want)
+		}
+	}
+	if PairsWith("/proj/env.img", "/elsewhere/env.sqf") {
+		t.Error("a snapshot in another directory pairs")
+	}
+}
+
 func TestNamesEnvironment(t *testing.T) {
 	requireSquashfsTools(t)
 	dir := t.TempDir()

@@ -43,6 +43,13 @@ func SnapshotPath(imgPath string) string {
 	return filepath.Join(filepath.Dir(imgPath), snapshotStem(imgPath)+".sqf")
 }
 
+// PairsWith reports whether snapshot is the file imgPath autoloads as its lower layer.
+func PairsWith(imgPath, snapshot string) bool {
+	a, errA := filepath.Abs(SnapshotPath(imgPath))
+	b, errB := filepath.Abs(snapshot)
+	return errA == nil && errB == nil && a == b
+}
+
 // snapshotStem is an .img's basename with its extension and, if present, its
 // trailing "-<user>" suffix removed, so "rnaseq-alice.img" and "rnaseq.img"
 // share one snapshot.

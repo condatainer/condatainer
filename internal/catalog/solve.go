@@ -48,6 +48,40 @@ func (c Catalog) SolveName(ctx context.Context, have Have, distro, raw string) (
 	return c.SolveNameFor(ctx, have, have, distro, raw)
 }
 
+// IsFamily reports that the name is a template's own index key: it names a family of modules, and a variant must be chosen to get one.
+func (r Resolved) IsFamily() bool {
+	return r.Entry != nil && r.Entry.IsTemplate && len(r.Vars) == 0
+}
+
+// SolveNameOrFamily is SolveName that also reports a template's own index key, as a Resolved whose IsFamily is true.
+//   - A concrete module always wins: the key is tried only after SolveName, with and without distro, found nothing.
+//   - It serves a caller that can ask which variant is wanted. Every other caller takes SolveName, which never returns a family.
+func (c Catalog) SolveNameOrFamily(ctx context.Context, have Have, distro, raw string) (Resolved, bool, error) {
+	if res, found, err := c.SolveName(ctx, have, distro, raw); found || err != nil {
+		return res, found, err
+	}
+	normalized := utils.NormalizeModule(raw)
+	if normalized == "" || strings.Contains(normalized, "::") {
+		return Resolved{}, false, nil
+	}
+	if res, found, err := c.lookupFamily(ctx, normalized); found || err != nil {
+		return res, found, err
+	}
+	if distro != "" && strings.Count(normalized, "/") <= 1 {
+		return c.lookupFamily(ctx, distro+"/"+normalized)
+	}
+	return Resolved{}, false, nil
+}
+
+// lookupFamily resolves name as a template's index key.
+func (c Catalog) lookupFamily(ctx context.Context, name string) (Resolved, bool, error) {
+	m, found, err := c.Lookup(ctx, name)
+	if err != nil || !found || !m.Entry.IsTemplate || len(m.Vars) != 0 {
+		return Resolved{}, false, err
+	}
+	return Resolved{Name: utils.NormalizeModule(name), Entry: m.Entry, Source: m.Source}, true, nil
+}
+
 // SolveNameFor is SolveName with a second Have for the auto-fill steps.
 //   - have answers the exact check, so any installed name resolves as written.
 //   - family answers a bare or partial name, so it can leave out a version that a shorter name must never reach.

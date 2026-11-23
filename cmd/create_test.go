@@ -256,14 +256,21 @@ func TestResolvePrefix(t *testing.T) {
 }
 
 // A bare or partial name takes what is installed, and --latest takes the newest.
+// A template named as its target resolves to a version; any other template key stays as typed, for the variant prompt.
 func TestSolveCreateTakesAnInstalledVersionUnlessLatest(t *testing.T) {
 	root := t.TempDir()
-	for _, rel := range []string{"tool/1.0", "tool/1.2", "other/2.0"} {
+	for rel, body := range map[string]string{
+		"tool/1.0":        "#DESC:test\n",
+		"tool/1.2":        "#DESC:test\n",
+		"other/2.0":       "#DESC:test\n",
+		"vendor":          "#DESC:test\n#TARGET:vendor/{version}\n#PH:version:1.0,2.0\n",
+		"vendor-template": "#DESC:test\n#TARGET:vendor/{version}\n#PH:version:1.0,2.0\n",
+	} {
 		path := filepath.Join(root, "recipes", filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte("#DESC:test\n"), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -298,6 +305,8 @@ func TestSolveCreateTakesAnInstalledVersionUnlessLatest(t *testing.T) {
 		{"tool/1.0", false, "tool/1.0", "", false},
 		{"tool/1.0", true, "tool/1.0", "", false},
 		{"other", false, "other/2.0", "", true},
+		{"vendor", false, "vendor/2.0", "", true},
+		{"vendor-template", false, "vendor-template", "", false},
 	} {
 		got, err := solveCreate(context.Background(), tc.input, tc.latest)
 		if err != nil {

@@ -23,6 +23,9 @@ Resolves a module name to a recipe.
 - Installed beats a catalog lookup entirely. When `have` answers, the catalog is never consulted, so an overlay keeps resolving after its recipe moved or was dropped.
 - The caller picks the rule by what it passes as `have`. Lookups that use an overlay (`load`, `exec`, `run`, helper `#DEP:`) pass what is installed. `create` passes what is installed too, so a bare or partial name takes an installed version, and `--latest` passes nil for the newest.
   - A flag decides it, not the kind of tool: nothing in the catalog tells a CLI tool, where an installed version fits, from an editor, where the newest is wanted.
+- A template's own index key names a family, not a module. `SolveName` never returns one, so a caller that needs a module cannot mistake it for one.
+  - `SolveNameOrFamily` returns it, with `IsFamily` true, for a caller that can ask which variant is wanted. `create` is the one.
+  - A module always wins: the key is tried only after the module steps, with and without the distro, found nothing.
 - The newest app candidate is safe to pick, because an app's candidates are the same tool at different times.
 - An os candidate is only a template's own declared version list. Its second component names a different app, not a version.
 - Data gets no autofill. Sibling entries under `grch38/genome` are alternative sources, not versions, so comparing them would compare arbitrary strings.

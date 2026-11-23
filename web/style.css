@@ -414,8 +414,12 @@ input,button,select{font-family:inherit;font-size:inherit;}
    instead of wrapping rows onto multiple lines. */
 .file-list-wrap .data-table{table-layout:fixed;min-width:560px;} /* keeps ~200px for Name; below that the wrap scrolls horizontally */
 .file-list-wrap .data-table th{user-select:none;}
-#th-size{width:80px;}
-#th-modified{width:160px;} /* "YYYY-MM-DD HH:MM" with headroom for wider platform fonts (macOS) */
+#th-size{width:80px;}   /* the widths of Size, Modified, Permissions and Owner are set from their content by _fitPermCols; */
+#th-modified{width:130px;} /* these are what the columns have before the first listing */
+#file-tbody td{font-size:13px;} /* every row cell matches the folder tree */
+#file-tbody td.td-perm{font-family:var(--mono);}
+/* _fitPermCols removes a permission column that would squeeze Name. */
+.hide-mode .c-mode,.hide-owner .c-owner{display:none;}
 th.file-actions-cell{width:112px;} /* fits the 3 buttons of a folder row (star, download, ⋮) */
 #file-tbody td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .th-sort{cursor:pointer;user-select:none;}
@@ -428,10 +432,19 @@ th.file-actions-cell{width:112px;} /* fits the 3 buttons of a folder row (star, 
 .file-name:hover{text-decoration:underline;}
 .btn-ghost.starred{color:#e8a020;}
 .row-menu{position:fixed;z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 24px rgba(0,0,0,.25);min-width:160px;padding:4px;}
+.row-menu.flipped{display:flex;flex-direction:column-reverse;} /* opened upward: the first item sits at the bottom, nearest the pointer */
+.row-menu.flipped .row-menu-hdr{order:1;} /* the selection count stays at the top */
 .row-menu-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;white-space:nowrap;}
 .row-menu-item:hover{background:var(--hover);}
 .row-menu-item .icon{width:16px;height:16px;}
 .row-menu-hdr{padding:5px 10px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}
+.row-menu-icons{display:flex;justify-content:space-around;gap:2px;padding:2px;}
+.row-menu-icon{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;width:44px;height:44px;border:none;background:none;color:var(--text);border-radius:var(--radius-sm);cursor:pointer;}
+.row-menu-icon:hover{background:var(--hover);}
+.row-menu-icon .icon{width:18px;height:18px;}
+.row-menu-icon span{font-size:11px;line-height:1;color:var(--muted);}
+.row-menu-icon.starred span{color:inherit;}
+.row-menu-icon.starred{color:#e8a020;}
 .row-menu-sep{border-top:1px solid var(--border);margin:4px 2px;}
 .row-menu-danger{background:var(--danger);color:#fff;margin-top:2px;}
 .row-menu-danger:hover{opacity:.88;background:var(--danger);}

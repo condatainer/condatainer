@@ -1,5 +1,6 @@
 /* ── Files section ───────────────────────── */
 let _navController  = null; // AbortController for the in-flight navigateFiles request
+let _permShown = { mode: true, owner: true }; // which permission columns fit; set by _fitPermCols
 let showHiddenFiles = localStorage.getItem('showHiddenFiles') === 'true';
 if (showHiddenFiles) { const cb = gid('show-hidden-files'); if (cb) cb.checked = true; }
 
@@ -10,7 +11,7 @@ async function navigateFiles(path) {
   // listing a big directory on a network filesystem can take a while —
   // show feedback instead of a frozen listing (only when it's actually slow)
   const slowTimer = setTimeout(() => {
-    gid('file-tbody').innerHTML = '<tr><td colspan="4" class="td-empty">Loading…</td></tr>';
+    gid('file-tbody').innerHTML = '<tr><td colspan="' + _colCount() + '" class="td-empty">Loading…</td></tr>';
   }, 300);
   try {
     const r = await fetch(url, { signal: _navController.signal });
@@ -18,7 +19,7 @@ async function navigateFiles(path) {
       clearTimeout(slowTimer);
       const msg = (await r.text()).trim();
       gid('file-tbody').innerHTML =
-        '<tr><td colspan="4" class="td-error">' + escHtml(msg || 'Error loading path.') + '</td></tr>';
+        '<tr><td colspan="' + _colCount() + '" class="td-error">' + escHtml(msg || 'Error loading path.') + '</td></tr>';
       renderFileTree();
       updateBookmarkStarBtn();
       return;
@@ -48,7 +49,7 @@ async function navigateFiles(path) {
     clearTimeout(slowTimer);
     if (err.name === 'AbortError') return;
     gid('file-tbody').innerHTML =
-      '<tr><td colspan="4" class="td-error">Error loading path.</td></tr>';
+      '<tr><td colspan="' + _colCount() + '" class="td-error">Error loading path.</td></tr>';
   }
   renderFileTree();
   updateBookmarkStarBtn();
@@ -141,6 +142,31 @@ function _updateSortHeaders() {
   }
 }
 _updateSortHeaders(); // reflect the persisted sort in the headers before the first render
+
+// _permsTitle is the hover text of the permission cells: the bits per class,
+// the octal mode (with a leading digit for setuid, setgid or sticky), and the
+// owner and group names.
+function _permsTitle(e) {
+  if (!e.mode) return '';
+  const bits = e.mode.slice(1); // nine characters: user, group, other
+  let oct = '', special = 0;
+  for (let i = 0; i < 9; i += 3) {
+    const x = bits[i + 2];
+    oct += (bits[i] !== '-' ? 4 : 0) + (bits[i + 1] !== '-' ? 2 : 0) + ('xst'.includes(x) ? 1 : 0);
+    if ('sStT'.includes(x)) special += [4, 2, 1][i / 3];
+  }
+  if (special) oct = special + oct;
+  return 'user ' + bits.slice(0, 3) + '  group ' + bits.slice(3, 6) + '  other ' + bits.slice(6) +
+    ' (' + oct + ')\nowner: ' + (e.owner || '?') + '\ngroup: ' + (e.group || '?');
+}
+
+// _permCells renders the Permissions and Owner cells of a row.
+function _permCells(e) {
+  if (!e.mode) return '<td class="td-muted c-mode">—</td><td class="td-muted c-owner">—</td>';
+  const t = ' title="' + escHtml(_permsTitle(e)) + '"';
+  return '<td class="td-muted td-perm c-mode"' + t + '>' + escHtml(e.mode) + '</td>' +
+    '<td class="td-muted td-perm c-owner"' + t + '>' + escHtml((e.owner || '?') + ':' + (e.group || '?')) + '</td>';
+}
 
 function _sortEntries(entries) {
   const dir = fileSortAsc ? 1 : -1;
@@ -239,33 +265,46 @@ function toggleUploadMenu(ev) {
     mi('folder', 'Upload folder…', 'upload-dir-input'), 'upload');
 }
 
-// _menuHtml builds the dropdown items: the full per-item menu for a single
-// selection, bulk actions only for a multi-selection.
+// _menuHtml builds the dropdown: a row of icon buttons (star, copy, cut), then
+// the text items. Star toggles the bookmark of a single folder, so it shows
+// only there. A multi-selection gets bulk actions only.
 function _menuHtml(sel) {
   const mi = (icon, label, fn, cls) =>
     '<div class="row-menu-item' + (cls || '') + '" onclick="closeRowMenu();' + fn + '">' +
       iconSvg(icon) + ' ' + escHtml(label) + '</div>';
+  const ib = (icon, label, fn, filled, cls, short) =>
+    '<button class="row-menu-icon' + (cls || '') + '" aria-label="' + escHtml(label) +
+      '" onclick="closeRowMenu();' + fn + '">' + iconSvg(icon, null, filled) +
+      '<span>' + escHtml(short || label) + '</span></button>';
   const sep = '<div class="row-menu-sep"></div>';
-  const clip =
-    mi('content_cut', 'Cut', 'ctxCut()') +
-    mi('content_copy', 'Copy', 'ctxCopy()') +
-    (_clipboard ? mi('content_paste', 'Paste (' + _clipboard.entries.length + ')', 'ctxPaste()') : '');
+  const single = sel.length === 1 ? sel[0] : null;
+  const starred = single && single.is_dir && fileBookmarks.some(b => b.path === single.path);
+  const icons = '<div class="row-menu-icons">' +
+    (single && single.is_dir
+      ? ib('star', starred ? 'Remove bookmark' : 'Bookmark', 'ctxBookmark()', starred, starred ? ' starred' : '', 'Star')
+      : '') +
+    ib('content_copy', 'Copy', 'ctxCopy()') +
+    ib('content_cut', 'Cut', 'ctxCut()') +
+    '</div>';
+  const paste = _clipboard ? mi('content_paste', 'Paste (' + _clipboard.entries.length + ')', 'ctxPaste()') : '';
   const moveCopy =
     mi('folder', 'Move to…', 'ctxMoveTo()') +
     mi('content_copy', 'Copy to…', 'ctxCopyTo()');
   const refresh = sep + mi('refresh', 'Refresh', 'navigateFiles(currentPath)');
   const del = sep + mi('delete', 'Delete', 'ctxDelete()', ' row-menu-danger');
-  if (sel.length === 1) {
-    const e = sel[0];
-    return mi('download', e.is_dir ? 'Download as zip' : 'Download', 'ctxDownload()') + sep + clip + sep +
+  if (single) {
+    return icons + sep + mi('download', single.is_dir ? 'Download as zip' : 'Download', 'ctxDownload()') + paste + sep +
       mi('edit', 'Rename', 'ctxRename()') + moveCopy + refresh + del;
   }
-  return '<div class="row-menu-hdr">' + sel.length + ' selected</div>' +
-    mi('download', 'Download', 'ctxDownload()') + sep + clip + sep + moveCopy + refresh + del;
+  return '<div class="row-menu-hdr">' + sel.length + ' selected</div>' + icons + sep +
+    mi('download', 'Download', 'ctxDownload()') + paste + sep + moveCopy + refresh + del;
 }
 
 // _openMenuAt shows a dropdown with the given items at pos ({top,left} or
 // {top,right}), clamped to the viewport.
+//   - With no room below pos.top and room above, the menu opens upward with
+//     its bottom edge at pos.above (default pos.top) and its items reversed,
+//     so the first item is the one nearest the pointer.
 function _openMenuAt(pos, html, anchorPath) {
   const menu = document.createElement('div');
   menu.className = 'row-menu';
@@ -273,7 +312,14 @@ function _openMenuAt(pos, html, anchorPath) {
   menu.innerHTML = html;
   document.body.appendChild(menu); // append first so its size is measurable
   const r = menu.getBoundingClientRect();
-  menu.style.top = Math.max(4, Math.min(pos.top, window.innerHeight - r.height - 8)) + 'px';
+  const edge = 8;
+  const aboveY = pos.above != null ? pos.above : pos.top;
+  if (pos.top + r.height > window.innerHeight - edge && aboveY - r.height >= edge) {
+    menu.classList.add('flipped');
+    menu.style.bottom = (window.innerHeight - aboveY) + 'px';
+  } else {
+    menu.style.top = Math.max(4, Math.min(pos.top, window.innerHeight - r.height - edge)) + 'px';
+  }
   if (pos.left != null) menu.style.left = Math.max(4, Math.min(pos.left, window.innerWidth - r.width - 8)) + 'px';
   else menu.style.right = pos.right + 'px';
   _rowMenuEl = menu;
@@ -307,7 +353,7 @@ async function toggleRowMenu(ev, i) {
   if (reopening || !_menuTargetRow(i)) return; // clicking the same row's button again just closes it
   const rect = ev.currentTarget.getBoundingClientRect(); // before await: currentTarget nulls after the handler returns
   await _validateClipboard();
-  _openRowMenu({ top: rect.bottom + 4, right: window.innerWidth - rect.right }, e.path);
+  _openRowMenu({ top: rect.bottom + 4, above: rect.top - 4, right: window.innerWidth - rect.right }, e.path);
 }
 
 async function onRowContext(ev, i) {
@@ -439,6 +485,11 @@ function clearClipboard() {
   _renderClipboard();
 }
 
+// ctxBookmark toggles the bookmark of the selected folder.
+function ctxBookmark() {
+  const sel = _selectedEntries();
+  if (sel.length === 1 && sel[0].is_dir) toggleBookmark(sel[0].path);
+}
 function ctxCut()  { _setClipboard('cut'); }
 function ctxCopy() { _setClipboard('copy'); }
 // _setClipboard also mirrors the selected paths onto the OS clipboard as
@@ -686,6 +737,51 @@ document.addEventListener('click', e => {
 function rowDownload(ev, i) { ev.stopPropagation(); const e = _visEntries[i]; if (e) downloadEntry(e); }
 function rowBookmark(ev, i) { ev.stopPropagation(); const e = _visEntries[i]; if (e) toggleBookmark(e.path); }
 
+// minNameWidth is the room the Name column keeps before a permission column hides.
+const minNameWidth = 200;
+let _measureCtx = null;
+
+// _textWidth is the rendered width of text in a CSS font.
+function _textWidth(font, text) {
+  if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d');
+  _measureCtx.font = font;
+  return _measureCtx.measureText(text).width;
+}
+
+// _colCount is the number of columns the file table shows, for full-width rows.
+function _colCount() { return 4 + (_permShown.mode ? 1 : 0) + (_permShown.owner ? 1 : 0); }
+
+// _fitPermCols sizes the Size, Modified, Permissions and Owner columns to
+// their content and removes Owner, then Permissions, from the table while
+// Name would fall below minNameWidth.
+function _fitPermCols() {
+  const wrap = gid('file-list-wrap');
+  if (!wrap || !wrap.clientWidth) return;
+  const sans = getComputedStyle(document.body).fontFamily;
+  const mono = getComputedStyle(document.documentElement).getPropertyValue('--mono').trim();
+  const cell = '13px ' + sans, monoCell = '13px ' + mono;
+  // colWidth fits the widest of the header label and the cell texts, plus cell padding.
+  const colWidth = (id, label, texts, font, sortable) => {
+    const head = _textWidth('600 12px ' + sans, label.toUpperCase()) + label.length * 0.48 + (sortable ? 16 : 0);
+    const w = Math.ceil(Math.max(head, ...texts.map(t => _textWidth(font, t)))) + 21;
+    gid(id).style.width = w + 'px';
+    return w;
+  };
+  const files = _visEntries.filter(e => !e.is_dir);
+  const sizeW = colWidth('th-size', 'Size', ['—', ...files.map(e => fmtSize(e.size))], cell, true);
+  const modW  = colWidth('th-modified', 'Modified', _visEntries.map(e => fmtDate(e.modified_at)), cell, true);
+  const modeW = colWidth('th-mode', 'Permissions', ['drwxrwxrwx'], monoCell, false);
+  const ownerW = colWidth('th-owner', 'Owner', _visEntries.map(e => (e.owner || '?') + ':' + (e.group || '?')), monoCell, false);
+  const room = wrap.clientWidth - sizeW - modW - wrap.querySelector('th.file-actions-cell').offsetWidth - minNameWidth;
+  _permShown = { mode: room >= modeW, owner: room >= modeW + ownerW };
+  const table = wrap.querySelector('table');
+  table.classList.toggle('hide-mode', !_permShown.mode);
+  table.classList.toggle('hide-owner', !_permShown.owner);
+  const n = String(_colCount());
+  wrap.querySelectorAll('#file-tbody td[colspan]').forEach(td => td.setAttribute('colspan', n));
+}
+if (window.ResizeObserver) new ResizeObserver(_fitPermCols).observe(gid('file-list-wrap'));
+
 function renderFileListing(entries, truncated) {
   _lastEntries   = entries;
   _lastTruncated = truncated;
@@ -700,12 +796,12 @@ function renderFileListing(entries, truncated) {
   // drop selected paths no longer listed (deleted, renamed, or hidden)
   _selected = new Set(vis.filter(e => _selected.has(e.path)).map(e => e.path));
   if (!vis.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="td-empty">' +
+    tbody.innerHTML = '<tr><td colspan="' + _colCount() + '" class="td-empty">' +
       (terms.length ? 'No matches.' : 'Empty directory') + '</td></tr>';
     return;
   }
   const truncRow = truncated
-    ? '<tr><td colspan="4" class="td-warn">' +
+    ? '<tr><td colspan="' + _colCount() + '" class="td-warn">' +
       iconSvg('warning') + ' Showing first 2000 entries — use the path bar to navigate deeper.</td></tr>'
     : '';
   tbody.innerHTML = truncRow + vis.map((e, i) => {
@@ -713,7 +809,7 @@ function renderFileListing(entries, truncated) {
       ' onclick="onRowClick(event,' + i + ')" ondblclick="openEntry(' + i + ')"' +
       ' oncontextmenu="onRowContext(event,' + i + ')"';
     const nameCell = '<td><span class="file-name" onclick="event.stopPropagation();openEntry(' + i + ')"' +
-      ' title="' + (e.is_dir ? 'Open folder' : 'Open file') + '">' +
+      ' title="' + escHtml((e.is_dir ? 'Open folder' : 'Open file') + (e.mode ? '\n' + _permsTitle(e) : '')) + '">' +
       (e.is_dir ? iconSvg('folder', 'icon-folder', true) : iconSvg('draft')) + ' ' + escHtml(e.name) +
       '</span></td>';
     const dlTitle = e.is_dir ? 'Download as zip (symlinks inside the folder are skipped, not followed)' : 'Download';
@@ -726,15 +822,18 @@ function renderFileListing(entries, truncated) {
       return '<tr' + rowAttrs + '>' + nameCell +
         '<td class="td-muted">—</td>' +
         '<td class="td-muted">' + (e.modified_at ? fmtDate(e.modified_at) : '—') + '</td>' +
+        _permCells(e) +
         '<td class="file-actions-cell">' + bmBtn + dlBtn + moreBtn + '</td>' +
         '</tr>';
     }
     return '<tr' + rowAttrs + '>' + nameCell +
       '<td class="td-muted">' + fmtSize(e.size) + '</td>' +
       '<td class="td-muted">' + (e.modified_at ? fmtDate(e.modified_at) : '—') + '</td>' +
+      _permCells(e) +
       '<td class="file-actions-cell">' + dlBtn + moreBtn + '</td>' +
       '</tr>';
   }).join('');
+  _fitPermCols();
   _renderClipboard();
 }
 

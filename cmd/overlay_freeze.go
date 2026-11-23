@@ -22,7 +22,6 @@ import (
 
 var (
 	freezeDescription string
-	freezeUseTmp      bool
 	freezeBackup      string
 )
 
@@ -125,9 +124,6 @@ var overlayFreezeCmd = &cobra.Command{
 		// the artifact is the .img layered over that snapshot: self-contained
 		// whether it replaces the snapshot or goes to an explicit destination.
 		paired := container.LookupSnapshot(source).Path
-		if paired != "" && freezeUseTmp {
-			ExitWithError("--use-tmp cannot pack %s over its snapshot %s; freeze without it.", source, paired)
-		}
 
 		// Packed to a producer-private path first: a rename over an existing
 		// file is atomic, so a reader sees the old snapshot or the new one and
@@ -142,7 +138,6 @@ var overlayFreezeCmd = &cobra.Command{
 			Snapshot:     paired,
 			CompressArgs: compressArgs,
 			BlockSize:    blockSize,
-			UseTmp:       freezeUseTmp,
 			Processors:   build.DefaultSpec().CpusPerTask,
 		})
 		if freezeErr != nil {
@@ -398,7 +393,6 @@ func init() {
 	f := overlayFreezeCmd.Flags()
 	f.StringVarP(&freezeDescription, "desc", "d", "", "Description recorded in the overlay")
 	settings.AddFlag(f, "build.block_size", "block-size", settings.Usage("SquashFS block size (default: build.block_size)"))
-	f.BoolVar(&freezeUseTmp, "use-tmp", false, "Pack from a temporary copy (faster; needs space for the whole overlay; not for an .img with a snapshot beside it)")
 	f.StringVar(&freezeBackup, "backup", "", "Rename the source .img, and keep its snapshot, as `PREFIX`")
 	for _, opt := range build.CompressOptions {
 		settings.AddSwitch(f, "build.compress_args", opt.Name, opt.Name, settings.Usage(opt.Description))

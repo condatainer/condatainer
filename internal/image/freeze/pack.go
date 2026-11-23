@@ -33,10 +33,6 @@ type PackOptions struct {
 	CompressArgs string
 	BlockSize    string
 	Processors   int
-	// StageDir holds a copy of the payload made with rdump, laid out as the image
-	// is: stage/upper/... Set, the pack reads that copy and never mounts the
-	// image. Empty, it mounts.
-	StageDir string
 	// Snapshot is the frozen environment the image continues from. Set, the
 	// archive is the image layered over it and is self-contained.
 	Snapshot string
@@ -44,11 +40,9 @@ type PackOptions struct {
 
 // Pack writes the overlay's upper/ layer to a SquashFS artifact, translating whiteouts.
 //   - It returns the tools it resolved, captured where each is resolved.
-//   - Default route: the payload is read through a fuse2fs mount in an apptainer job, so nothing is copied.
+//   - The payload is read through a fuse2fs mount in an apptainer job, so nothing is copied.
 //   - The image is made read-only meanwhile, because fuse2fs decides by permission bits, not -o ro.
 //   - The job holds no capability that skips permission checks, so that bit holds in it too.
-//   - With StageDir it reads an earlier copy instead: faster, and the payload takes twice the disk.
-//   - Both routes give the same archive.
 //   - With Snapshot set the image is packed layered over that snapshot (see packStacked).
 func Pack(ctx context.Context, opts PackOptions, entries []Entry, tr Translation) (meta.BuildTools, error) {
 	log := logging.FromContext(ctx)
@@ -89,39 +83,25 @@ func Pack(ctx context.Context, opts PackOptions, entries []Entry, tr Translation
 	defer os.RemoveAll(stage)
 
 	if opts.Snapshot != "" {
-		if opts.StageDir != "" {
-			return meta.BuildTools{}, fmt.Errorf("an image cannot be frozen over its snapshot from a staged copy")
-		}
 		return packStacked(ctx, opts, img, target, stage, mksquashfsBin, tools, entries, tr)
 	}
 
-	upper := opts.StageDir
-	route := "staged copy"
-	var mount func(work string) error
-	if opts.StageDir == "" {
-		fuse2fs, err := findFuse2fs()
-		if err != nil {
-			return meta.BuildTools{}, err
-		}
-		tools.Fuse2fs = fuse2fsVersion(ctx, fuse2fs)
-		restore, err := protect(img)
-		if err != nil {
-			return meta.BuildTools{}, err
-		}
-		defer restore()
-
-		mnt := filepath.Join(stage, "mnt")
-		if err := os.MkdirAll(mnt, 0o755); err != nil {
-			return meta.BuildTools{}, fmt.Errorf("stage mountpoint: %w", err)
-		}
-		upper = mnt
-		route = "mount"
-		mount = func(work string) error {
-			return MountedRun(ctx, []Mount{fuse2fsMount(fuse2fs, img, mnt)},
-				[]string{img, stage, target, mksquashfsBin}, work, execpkg.IOFromContext(ctx))
-		}
+	fuse2fs, err := findFuse2fs()
+	if err != nil {
+		return meta.BuildTools{}, err
 	}
-	upper = filepath.Join(upper, UpperDir)
+	tools.Fuse2fs = fuse2fsVersion(ctx, fuse2fs)
+	restore, err := protect(img)
+	if err != nil {
+		return meta.BuildTools{}, err
+	}
+	defer restore()
+
+	mnt := filepath.Join(stage, "mnt")
+	if err := os.MkdirAll(mnt, 0o755); err != nil {
+		return meta.BuildTools{}, fmt.Errorf("stage mountpoint: %w", err)
+	}
+	upper := filepath.Join(mnt, UpperDir)
 
 	args, err := stageTranslation(stage, upper, tr)
 	if err != nil {
@@ -135,17 +115,11 @@ func Pack(ctx context.Context, opts PackOptions, entries []Entry, tr Translation
 
 	script := packScript(packSources, target, args, opts, mksquashfsBin)
 	log.Info("Packing snapshot",
-		"source", opts.Image, "target", opts.Target, "route", route,
+		"source", opts.Image, "target", opts.Target,
 		"roots", strings.Join(sources, " "), "deletions", tr.Deletions())
 
-	if mount != nil {
-		err = mount(script)
-	} else {
-		cmd := exec.CommandContext(ctx, "/bin/bash", "-c", script)
-		io := execpkg.IOFromContext(ctx)
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = io.Stdin, io.Stdout, io.Stderr
-		err = cmd.Run()
-	}
+	err = MountedRun(ctx, []Mount{fuse2fsMount(fuse2fs, img, mnt)},
+		[]string{img, stage, target, mksquashfsBin}, script, execpkg.IOFromContext(ctx))
 	if err != nil {
 		os.Remove(target)
 		return meta.BuildTools{}, fmt.Errorf("pack %s: %w", opts.Target, err)

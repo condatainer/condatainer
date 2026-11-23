@@ -42,10 +42,6 @@ type Options struct {
 	CompressArgs string
 	BlockSize    string
 	Processors   int
-	// UseTmp copies the payload to fast scratch and packs it from there instead
-	// of reading the image through a FUSE mount. It is faster and needs room for
-	// the payload a second time, so it is the caller's choice, never inferred.
-	UseTmp bool
 	// Snapshot is the frozen environment the image continues from. Set, the
 	// artifact is the image layered over it, so it holds both and is
 	// self-contained.
@@ -130,26 +126,12 @@ func Freeze(ctx context.Context, opts Options) (Result, error) {
 		BlockSize:    opts.BlockSize, Processors: opts.Processors,
 		Snapshot: opts.Snapshot,
 	}
-	packTr := tr
-	if opts.UseTmp && opts.Snapshot != "" {
-		return Result{}, fmt.Errorf("--use-tmp cannot pack an image over its snapshot")
-	}
-	if opts.UseTmp {
-		payload, err := stagePayload(ctx, opts.Image, scratch, payloadSizeMB(entries))
-		if err != nil {
-			return Result{}, err
-		}
-		defer os.RemoveAll(payload)
-		packOpts.StageDir = payload
-		// rdump left every char 0:0 whiteout behind; they have to be injected.
-		packTr = tr.ForCopy()
-	}
 
 	// The payload is packed first, on its own — before the manifest is built, so
 	// it can carry what Pack resolved to do it. Its identity is hashed from the
 	// finished archive, and only then can the manifest carrying that identity be
 	// written and appended — a manifest cannot describe the archive it is inside.
-	packTools, err := Pack(ctx, packOpts, entries, packTr)
+	packTools, err := Pack(ctx, packOpts, entries, tr)
 	if err != nil {
 		return Result{}, err
 	}
@@ -208,26 +190,6 @@ func Freeze(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Path: opts.Target, Identity: m.Keys.Identity, Manifest: m, Translation: tr}, nil
-}
-
-// stagePayload copies the overlay's upper/ to fast scratch for the copy route,
-// refusing before it starts if the space is not there.
-func stagePayload(ctx context.Context, img, scratch string, payloadMB int) (string, error) {
-	log := logging.FromContext(ctx)
-	if err := checkStageSpace(scratch, payloadMB); err != nil {
-		return "", err
-	}
-	dir, err := os.MkdirTemp(scratch, "cnt-freeze-payload-")
-	if err != nil {
-		return "", fmt.Errorf("stage payload: %w", err)
-	}
-	utils.WarnNetworkScratch(scratch, "freeze")
-	log.Info("Staging payload for the copy route", "dir", dir, "payload_mb", payloadMB)
-	if err := dumpUpper(ctx, img, dir); err != nil {
-		os.RemoveAll(dir)
-		return "", err
-	}
-	return dir, nil
 }
 
 // describe builds the manifest and runtime a frozen environment embeds. It

@@ -1,13 +1,16 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -122,8 +125,9 @@ func (s *srv) handleFS(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// idNames resolves uids and gids to names, looking each id up once per
-// listing. An id without a name stays numeric.
+// idNames resolves uids and gids to names and caches the result for the
+// listing. Lookups run without the lock, so slow ones overlap. An id without
+// a name stays numeric.
 type idNames struct {
 	mu     sync.Mutex
 	users  map[string]string
@@ -132,36 +136,51 @@ type idNames struct {
 
 func (n *idNames) user(uid uint32) string {
 	return n.resolve(n.users, uid, func(id string) (string, error) {
-		u, err := user.LookupId(id)
-		if err != nil {
-			return "", err
+		if u, err := user.LookupId(id); err == nil {
+			return u.Username, nil
 		}
-		return u.Username, nil
+		return getentName("passwd", id)
 	})
 }
 
 func (n *idNames) group(gid uint32) string {
 	return n.resolve(n.groups, gid, func(id string) (string, error) {
-		g, err := user.LookupGroupId(id)
-		if err != nil {
-			return "", err
+		if g, err := user.LookupGroupId(id); err == nil {
+			return g.Name, nil
 		}
-		return g.Name, nil
+		return getentName("group", id)
 	})
+}
+
+// getentName asks the host's name service (LDAP, sssd) for the name of id in
+// database db ("passwd" or "group"). The static binary reads only the local
+// files itself.
+func getentName(db, id string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "getent", db, id).Output()
+	if err != nil {
+		return "", err
+	}
+	name, _, _ := strings.Cut(string(out), ":")
+	return name, nil
 }
 
 func (n *idNames) resolve(cache map[string]string, id uint32, lookup func(string) (string, error)) string {
 	key := strconv.FormatUint(uint64(id), 10)
 	n.mu.Lock()
-	defer n.mu.Unlock()
-	if name, ok := cache[key]; ok {
+	name, ok := cache[key]
+	n.mu.Unlock()
+	if ok {
 		return name
 	}
 	name, err := lookup(key)
 	if err != nil || name == "" {
 		name = key
 	}
+	n.mu.Lock()
 	cache[key] = name
+	n.mu.Unlock()
 	return name
 }
 

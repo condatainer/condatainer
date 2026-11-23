@@ -150,14 +150,15 @@ rm -r cnt-lock src/overlay/r-collect.sqf env.sqf
 
 In typical development, you create overlays as needed and declare them with `#DEP:` in your scripts. 
 
-However, when starting from an existing set of scripts, `condatainer check` can scan the scripts and build missing overlays:
+However, when starting from an existing set of scripts, `condatainer create --needed-by` can scan the scripts and build missing overlays:
 
 ```bash
-condatainer check src/      # Check the overlays status
-condatainer check src/ -a   # Install missing overlays
+condatainer create --needed-by src/ --dry-run   # Show the missing overlays
+condatainer create --needed-by src/             # Install missing overlays
 ```
 
-- If you run `check -a` in a folder that already contains a `cnt-lock/`, the command will fail. This prevents accidental drift from locked versions. See [Lock the Project](#lock-the-project) below for how to update locked projects.
+- It reads the scripts directly in the folder, and skips build recipes. It lists the missing overlays and asks before it installs. Add `-y` to skip the question.
+- If you run it in a folder that already contains a `cnt-lock/`, the command will fail. This prevents accidental drift from locked versions. See [Lock the Project](#lock-the-project) below for how to update locked projects.
 - If a `#DEP:` points to a local `.sqf` file (like `r-collect.sqf`), CondaTainer builds it using the adjacent recipe file.
 
 Once the overlays are built, you can run the pipeline scripts just as we did in the example.
@@ -237,10 +238,10 @@ condatainer project ignore --remove old_scripts/
 
 If you modify `#DEP:` declarations in your scripts, run `condatainer project lock` again. It automatically adds pins for newly added dependencies and cleans up pins that are no longer referenced.
 
-When a project is locked, `condatainer check -a` is disabled to prevent accidental modifications. To add a tools in bulk, run `check` with `--no-project` first, and then re-lock:
+When a project is locked, `condatainer create --needed-by` is disabled to prevent accidental modifications. To add tools in bulk, run it with `--no-project` first, and then re-lock:
 
 ```bash
-condatainer check src/ -a --no-project
+condatainer create --needed-by src/ --no-project
 condatainer project lock
 ```
 

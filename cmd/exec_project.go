@@ -35,7 +35,7 @@ func projectOverlays(ctx context.Context, overlays []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return resolveOverlayValues(ctx, overlays, standing, false)
+	return resolveOverlayValues(ctx, overlays, standing)
 }
 
 // projectDefaultDistro reports the distro every bare-name alias expands

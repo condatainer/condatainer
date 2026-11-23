@@ -16,23 +16,22 @@ const (
 	EnvironmentFileName = "environment.yml"
 )
 
-// CanonicalExplicit re-emits `micromamba env export --explicit --no-md5` output: the @EXPLICIT marker, then one bare package URL per line, sorted, LF-terminated.
-//   - It is re-emitted, not stored as printed, so a Micromamba upgrade that reorders or re-spaces its output moves no key.
-//   - Sorting is safe. Conda does not depend on explicit-file order, so the result still works as a `micromamba install --file` input.
-//   - `sha256sum explicit.txt` reproduces the identity by hand.
-//   - A trailing #<md5> is dropped. It checksums the download, and the URL already pins channel, subdirectory, name, version and build string.
-func CanonicalExplicit(raw []byte) ([]byte, error) {
-	var (
-		urls   []string
-		marked bool
-	)
+// IsExplicit reports whether raw is an explicit spec: it holds the @EXPLICIT marker line.
+func IsExplicit(raw []byte) bool {
+	_, marked := scanExplicit(raw)
+	return marked
+}
+
+// scanExplicit reads the package URLs after the @EXPLICIT marker, and reports whether the marker was there.
+//   - Everything before the marker is generated commentary.
+//   - A comment line is skipped, and a trailing #<md5> is dropped.
+func scanExplicit(raw []byte) (urls []string, marked bool) {
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		if !marked {
-			// Everything before the marker is generated commentary.
 			marked = line == "@EXPLICIT"
 			continue
 		}
@@ -46,6 +45,16 @@ func CanonicalExplicit(raw []byte) ([]byte, error) {
 			urls = append(urls, line)
 		}
 	}
+	return urls, marked
+}
+
+// CanonicalExplicit re-emits `micromamba env export --explicit --no-md5` output: the @EXPLICIT marker, then one bare package URL per line, sorted, LF-terminated.
+//   - It is re-emitted, not stored as printed, so a Micromamba upgrade that reorders or re-spaces its output moves no key.
+//   - Sorting is safe. Conda does not depend on explicit-file order, so the result still works as a `micromamba install --file` input.
+//   - `sha256sum explicit.txt` reproduces the identity by hand.
+//   - A trailing #<md5> is dropped. It checksums the download, and the URL already pins channel, subdirectory, name, version and build string.
+func CanonicalExplicit(raw []byte) ([]byte, error) {
+	urls, marked := scanExplicit(raw)
 	if !marked {
 		return nil, fmt.Errorf("conda: export has no @EXPLICIT marker; not an explicit spec")
 	}

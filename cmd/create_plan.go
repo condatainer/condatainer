@@ -70,10 +70,12 @@ func printPlan(w io.Writer, steps []build.PlannedStep, dryRun bool) {
 // planContext is what a plan shows beyond the steps.
 //   - typed holds each name that was asked for, mapped to what was typed.
 //   - dir is the images directory. A file there is shown by name, any other by its path.
+//   - from maps a file's path to the source that builds it.
 type planContext struct {
 	typed  map[string]string
 	dir    string
 	update bool
+	from   map[string]string
 }
 
 // writePlan lays out the steps for w.
@@ -127,6 +129,9 @@ func planLines(steps []build.PlannedStep, pc planContext) (installed, block []st
 			}
 		} else if deps := dependents[s.Name]; len(deps) > 0 {
 			row.notes = append(row.notes, forNote(deps))
+		}
+		if src := pc.from[s.Path]; src != "" {
+			row.notes = append(row.notes, "from "+src)
 		}
 		if s.RequiresInput {
 			row.notes = append(row.notes, "requires input")

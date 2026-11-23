@@ -132,7 +132,7 @@ func planSlots(ctx context.Context, script string, values []string, inProject bo
 	var missing []string
 	var resolved []slot.Resolved
 	for i, m := range mounts {
-		if m.Path == "" || m.Unpinned && !utils.FileExists(m.Path) {
+		if slotMountMissing(m) {
 			if bound[i].Unlisted {
 				return nil, bound[i].Refusal("")
 			}
@@ -158,6 +158,11 @@ func planSlots(ctx context.Context, script string, values []string, inProject bo
 		return nil, err
 	}
 	return plan, nil
+}
+
+// slotMountMissing reports whether a slot's overlay is not installed: nothing answered it, or it is a file that is not there.
+func slotMountMissing(m project.Mount) bool {
+	return m.Path == "" || m.Unpinned && !utils.FileExists(m.Path)
 }
 
 // resolveSlotMounts resolves overlay names as `#DEP:` does, with nothing printed.

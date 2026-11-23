@@ -39,6 +39,7 @@ var (
 	createDryRun     bool
 	createDesc       string
 	createJSON       bool
+	createNeededBy   bool
 
 	// createFlagSet is createCmd.Flags(), held here so createJobFlags does not refer to createCmd.
 	createFlagSet *pflag.FlagSet
@@ -71,26 +72,31 @@ var createJobRules = map[string]string{
 	"dry-run":            "a dry run submits no job",
 	"json":               "output format of this run",
 	"always-submit-data": "decides whether to submit, not what is built",
+	"needed-by":          "the job builds by target",
+	"no-project":         "the job builds by target",
 }
 
 // createJobFlags are the flags a submitted build has to repeat: the node re-runs
 // create from the name alone, so anything that changes what is built or where it
 // lands has to travel with it. Submission and mode flags are left out — the job
 // is the submission, and it builds by name.
-func createJobFlags() []string {
+func createJobFlags() []string { return createJobFlagsFor(createLayer) }
+
+// createJobFlagsFor is createJobFlags for a build placed in layer, or "" for one a prefix places.
+func createJobFlagsFor(layer string) []string {
 	var flags []string
 	for _, source := range createSources {
 		flags = append(flags, "--source", source)
 	}
-	if createLayer != "" {
-		flags = append(flags, "--layer", createLayer)
+	if layer != "" {
+		flags = append(flags, "--layer", layer)
 	}
 	return append(flags, settings.ChangedFlags(createFlagSet,
 		"channels", "build.block_size", "build.data_block_size", "build.compress_args")...)
 }
 
 var createCmd = &cobra.Command{
-	Use:     "create [flags] [packages...]",
+	Use:     "create [flags] [packages... | scripts...]",
 	Aliases: []string{"install", "i"},
 	Short:   "Create a read-only SquashFS overlay",
 	Long: `Create a read-only SquashFS overlay.
@@ -98,6 +104,10 @@ var createCmd = &cobra.Command{
 --desc sets the description of the resulting overlay.
   It takes one Conda package, or --name, --prefix or --file.
   It does not take a recipe name, such as orad/2.7.0.
+
+--needed-by takes scripts and directories, not packages.
+  It installs each #DEP: and each overlay a #SLOT: lists.
+  A script in a project is refused. Use project restore.
 
 --dry-run shows what would be built, pulled or submitted, and does none of it.
 Exits with code 3 if build jobs were submitted to a scheduler.`,
@@ -107,13 +117,20 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
   condatainer create -n nvim nvim nodejs        # Several packages, one overlay
   condatainer create matplotlib pandas -p /path
   condatainer create -f environment.yml -p myenv
-  condatainer create --from docker://ubuntu:22.04 -p ubuntu`,
+  condatainer create --from docker://ubuntu:22.04 -p ubuntu
+  condatainer create --needed-by run.sh         # Install what a script declares
+  condatainer create --needed-by src/ -y        # Skip the question`,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		return config.SelectSources(createSources)
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
 		// 1. Validation Logic
+		if createNeededBy {
+			if err := checkNeededByFlags(args); err != nil {
+				ExitWithError("%v", err)
+			}
+		}
 		if len(args) == 0 && createFile == "" && createFrom == "" {
 			ExitWithError("At least one of [packages], --file, or --from must be provided.")
 		}
@@ -170,6 +187,11 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 		// plan, built with everything else.
 		if _, err := apptainer.Resolve(apptainer.Need{Overlays: true}); err != nil {
 			ExitWithError("cannot build an overlay: %v", err)
+		}
+
+		if createNeededBy {
+			runCreateNeededBy(ctx, args)
+			return
 		}
 
 		// 6. Normalize package names (only for build-script mode, not for conda/prefix/source modes)
@@ -238,6 +260,8 @@ func init() {
 	f.BoolVar(&createNoPrebuilt, "no-prebuilt", false, "Build from the recipe instead of pulling a prebuilt overlay")
 	f.StringVarP(&createLayer, "layer", "l", "", "Build into this layer: "+layerChoices)
 	f.BoolVar(&createDryRun, "dry-run", false, "Show what would be built, pulled or submitted, without doing it")
+	f.BoolVar(&createNeededBy, "needed-by", false, "Take scripts and directories, and install what they declare")
+	f.BoolVar(&noProjectRequested, "no-project", false, "Ignore the project: its lock, root and distro")
 	jsonFlag(f, &createJSON)
 	settings.AddSwitch(f, "build.always_submit_data", "always-submit-data", "true", settings.Usage("Submit data builds as scheduler jobs, even without directives"))
 	settings.AddSwitch(f, "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))

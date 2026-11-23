@@ -124,13 +124,13 @@ Before running the script, you can ensure all required overlays are built:
 
 ```bash
 # Creates any missing overlays specified by #DEP:
-condatainer check -a sort.sh
+condatainer create --needed-by sort.sh
 
 # Starts the script inside a container with its required overlays
 condatainer run sort.sh
 ```
 
-- `check -a` creates missing `#DEP:` overlays.
+- `create --needed-by` creates missing `#DEP:` overlays. It lists what each script needs and what it will do, then asks first. Add `-y` to skip the question.
 - `run` executes the script inside a container loaded with those overlays.
 - With scheduler directives, `run` submits the script as a job and returns. Without them, or on a machine with no scheduler, it runs right away.
 

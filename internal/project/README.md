@@ -61,7 +61,7 @@
   - It is committed with the lock, so the team scans the same files.
   - It is applied after the `.gitignore` files and has no `!` line.
   - A file `.gitignore` ignores is not part of the project. A lock that recorded it would make no sense, so bringing it back is an edit of `.gitignore`.
-- `run`, `check` and `project lock` decide membership with the same rules (`IsMember`). A run and a lock cannot disagree about which scripts a project owns.
+- `run`, `create --needed-by` and `project lock` decide membership with the same rules (`IsMember`). A run and a lock cannot disagree about which scripts a project owns.
 - `project ignore` stores each line anchored at the root, so a line means the same from any directory.
   - It skips a path `.gitignore` already covers, since that file is already out of the project.
   - It walks up to the project from a subdirectory, because a path is naturally typed there.
@@ -70,6 +70,7 @@
 - A `#SLOT:` pins its default and every `choices=` entry, whatever `strict=` says. Listing an overlay says the project uses it, so a restored project must have it. An overlay the author does not list is not recorded.
   - A request only a slot names is `SlotOnly`. A run mounts the other requests alone, since the slot binds one of its overlays.
   - A slot with no default and no choices pins nothing.
+  - What a slot lists is `slot.Decl.Listed()`. `create --needed-by` installs the same set.
   - A slot follows its script in a project. An overlay no pin covers, such as one a `strict=false` slot is bound to or one the lock was not rebuilt for, resolves from what is installed, is not recorded, and `run` says it is not pinned.
 
 ## Manual pins
@@ -152,6 +153,7 @@
 - `cnt-lock/` and every dot-directory are skipped. They hold tool state (`.venv`, `.snakemake`) whose scripts are not this project's.
 - A build recipe is skipped. Its `#DEP:` are build dependencies already recorded in that artifact's provenance.
 - A recipe is identified by `$CNT_BUILD_PREFIX`. That is a property of the file itself.
+  - `run` and `create --needed-by` refuse a recipe by the same rule (`lock.IsBuildRecipe`). A recipe run as a script has no `$CNT_BUILD_PREFIX`, and in a project its `#DEP:` would be dropped.
 - A folder convention or a sibling `.sqf` would make a script's meaning depend on something outside it.
 - An analysis script must name an exact version. A result should say which version produced it.
 - That also keeps one module from having two keys.
@@ -228,12 +230,12 @@ A pin answers for its own keys. A build dependency only has to leave its depende
 ## The match mode is the project's
 
 - Whether a substitute artifact is acceptable is a fact about the project. It is the lock's `match` field, and absent means `equivalence`.
-- `Resolve` and restore both default from it, so `run`, `exec`, `check`, the dashboard and restore hold one project to one rule.
+- `Resolve` and restore both default from it, so `run`, `exec`, the dashboard and restore hold one project to one rule.
 - An explicit mode still wins. `project registry push` passes identity, since it publishes exact artifacts.
 
 ## Acting in a project
 
-- `run`, `check`, `exec` and a helper's required overlays act in the project the caller stands in. Standing elsewhere is the opt-out.
+- `run`, `exec`, `create --needed-by` and a helper's required overlays act in the project the caller stands in. Standing elsewhere is the opt-out.
 - `Standing` is the one implementation. Every caller finds the root, loads the lock and refuses the same way.
 - Reads walk up to an ancestor project. Write commands do not.
 - A write reaching an ancestor project from an empty-looking subdirectory is a hazard an ambient read never is.
@@ -242,7 +244,7 @@ A pin answers for its own keys. A build dependency only has to leave its depende
 - `Standing` sits above `ResolveOverlayPaths`. Other callers there resolve a build's own `#DEP:` or a base image, and none may pick up the lock of the directory the user stands in.
 - Resolve never acquires. An absent artifact is an error naming `project restore`.
 - A `name:` request is held to an exact identity when it is pinned, not when it runs.
-- With no pin, `exec -o`, `run` and `check` resolve as they would outside a project: an installed version first, then the catalog's candidates, never a build.
+- With no pin, `exec -o` and `run` resolve as they would outside a project: an installed version first, then the catalog's candidates, never a build.
   - A bare or partial name that a pin satisfies mounts the pin, even when a newer or older installed version also satisfies it.
   - A full version no pin covers mounts the installed overlay and is marked `not pinned`. One nothing installed has is refused, and says to pin it.
   - A short name, with at most one slash, that no pin matches as written is read again under the project's distro, so `r/4.6` finds the pin `ubuntu24/r/4.6.1`.

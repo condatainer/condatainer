@@ -21,7 +21,7 @@ Builds overlay images from Conda packages, recipes or Apptainer definitions.
 - A build's `#DEP:` is a `name/version`, never a path. A running script's may be either.
   - A running script mounts what it names and records nothing.
   - A build's declaration becomes an edge in an artifact that must mean the same thing on another machine, and a path is neither resolvable there nor a key anything can regenerate.
-- `validateDeps` holds both rules. `validateRecipe` and `FromExternalSource` call it, never `run` or `check`.
+- `validateDeps` holds both rules. `validateRecipe` and `FromExternalSource` call it, never `run` or `create --needed-by`.
 - A `.sif` is a root-only, literal-path reference. It never stacks and carries no build identity.
 
 ## `#TARGET:` names the artifact

@@ -29,15 +29,15 @@ const overlayFreezeHelp = `Pack a writable overlay into an immutable snapshot.
 
 - The environment is kept exactly as it is, not rebuilt.
 - The snapshot has no recipe behind it, so back it up or push it.
-- ` + "`overlay unfreeze`" + ` turns it back into a writable .img.
+- ` + "`overlay unfreeze`" + ` makes a standalone writable copy of it.
 
 Destination:
 - By default the snapshot is <name>.sqf beside the .img, which is removed.
 - An explicit destination leaves the .img where it is.
 
 Backup:
-- --backup PREFIX renames the .img to PREFIX.img instead of removing it.
-- A paired snapshot that the freeze replaces is kept as PREFIX.sqf.
+- --backup moves the .img to the path instead of removing it.
+- A paired snapshot that the freeze replaces is kept as sibling .sqf.
 
 Per-user overlays:
 - Freezing env-<user>.img writes env.sqf, as a shared env.img does.
@@ -51,10 +51,13 @@ var overlayFreezeCmd = &cobra.Command{
 	Args:  cobra.RangeArgs(1, 2),
 	Example: `  # env.sqf beside it, env.img removed
   condatainer overlay freeze env.img
+
   # env.sqf beside it, env.img renamed backup/env-v1.img
   condatainer overlay freeze env.img --backup backup/env-v1
+
   # env.sqf, replacing the shared one
   condatainer overlay freeze env-alice.img
+
   # That path, env.img left where it is
   condatainer overlay freeze env.img ./overlays/env.sqf`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -118,6 +121,11 @@ var overlayFreezeCmd = &cobra.Command{
 		}
 		if err := checkFreezeSource(source, target, dest, plan); err != nil {
 			ExitWithError("%v", err)
+		}
+		if plan.img != "" {
+			if err := makeOverlayParent(plan.img); err != nil {
+				ExitWithError("%v", err)
+			}
 		}
 
 		// An .img that continues from a snapshot holds only what changed since, so
@@ -228,32 +236,22 @@ func resolveFreezeTarget(source, dest string) (string, error) {
 // replaces when there is one. Both are empty without --backup.
 type freezeBackupPlan struct{ img, sqf string }
 
-// planFreezeBackup places the backup files. A name with no directory puts them
-// beside source, and one with a directory puts them there. The name is always
-// given, never only a directory. The .img keeps its extension. The snapshot
-// is kept, under the name that pairs with the backup .img, only when the
-// freeze replaces one, which is a bare freeze of an .img with a paired snapshot.
-// The directory must exist.
-func planFreezeBackup(source, dest, name string, given bool) (freezeBackupPlan, error) {
+// planFreezeBackup places the backup files. The path is read as resolveOverlayPath reads one, with the .img's own extension when it has none.
+// The snapshot is kept, under the name that pairs with the backup .img, only when the freeze replaces one, which is a bare freeze of an .img with a paired snapshot.
+func planFreezeBackup(source, dest, path string, given bool) (freezeBackupPlan, error) {
 	if !given {
 		return freezeBackupPlan{}, nil
 	}
-	ext := filepath.Ext(source)
-	dir, base := filepath.Split(name)
-	if base == "" || base == "." || base == ".." || utils.IsImg(base) || utils.IsSqf(base) {
-		return freezeBackupPlan{}, fmt.Errorf("--backup %q is not a prefix: give one with no extension, after the directory if any", name)
+	img, err := resolveOverlayPath(path, filepath.Ext(source))
+	if err != nil {
+		return freezeBackupPlan{}, fmt.Errorf("--backup: %w", err)
 	}
-	if dir == "" {
-		dir = filepath.Dir(source)
-	} else if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		return freezeBackupPlan{}, fmt.Errorf("%s does not exist; create it or choose another prefix", dir)
+	if err := refusePairing(img, container.SnapshotPath(source)); err != nil {
+		return freezeBackupPlan{}, fmt.Errorf("--backup: %w", err)
 	}
-	plan := freezeBackupPlan{img: filepath.Join(dir, base+ext)}
-	if container.PairsWith(plan.img, container.SnapshotPath(source)) {
-		return freezeBackupPlan{}, fmt.Errorf("--backup %q would pair with the snapshot %s; choose another prefix", name, container.SnapshotPath(source))
-	}
+	plan := freezeBackupPlan{img: img}
 	if dest == "" && container.LookupSnapshot(source).Path != "" {
-		plan.sqf = container.SnapshotPath(plan.img)
+		plan.sqf = container.SnapshotPath(img)
 	}
 	return plan, nil
 }
@@ -393,7 +391,7 @@ func init() {
 	f := overlayFreezeCmd.Flags()
 	f.StringVarP(&freezeDescription, "desc", "d", "", "Description recorded in the overlay")
 	settings.AddFlag(f, "build.block_size", "block-size", settings.Usage("SquashFS block size (default: build.block_size)"))
-	f.StringVar(&freezeBackup, "backup", "", "Rename the source .img, and keep its snapshot, as `PREFIX`")
+	f.StringVar(&freezeBackup, "backup", "", "Rename the source .img, and keep its snapshot, as `PATH`")
 	for _, opt := range build.CompressOptions {
 		settings.AddSwitch(f, "build.compress_args", opt.Name, opt.Name, settings.Usage(opt.Description))
 	}

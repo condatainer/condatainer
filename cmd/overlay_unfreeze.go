@@ -2,10 +2,7 @@ package cmd
 
 import (
 	"errors"
-	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/condatainer/condatainer/internal/image/freeze"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -17,33 +14,33 @@ var (
 	unfreezeSparse bool
 )
 
-const overlayUnfreezeHelp = `Rebuild a writable .img from a snapshot.
+const overlayUnfreezeHelp = `Rebuild a standalone writable overlay from a snapshot.
 
-- The files come back at the paths they had, ready to install into again.
+- It holds every file of the snapshot, not only changes on top of it.
+- To add to a snapshot instead, run ` + "`overlay create env.img`" + ` beside it.
 - It cannot be pinned, locked or published until ` + "`overlay freeze`" + ` packs it.
-- The .sqf is left as it is.`
+- A pair name beside the snapshot, such as env.img for env.sqf, is refused.`
 
 var overlayUnfreezeCmd = &cobra.Command{
-	Use:   "unfreeze [flags] <snapshot.sqf> [overlay.img]",
+	Use:   "unfreeze [flags] <snapshot.sqf> <overlay>",
 	Short: "Rebuild a writable overlay from a snapshot",
 	Long:  overlayUnfreezeHelp,
-	Args:  cobra.RangeArgs(1, 2),
-	Example: `  condatainer overlay unfreeze env.sqf                 # env.img beside it
-  condatainer overlay unfreeze ./overlays/env.sqf      # ./overlays/env.img
+	Args:  cobra.ExactArgs(2),
+	Example: `  condatainer overlay unfreeze env.sqf dev.img         # dev.img here
+  condatainer overlay unfreeze env.sqf ./work/dev      # ./work/dev.img
   condatainer overlay unfreeze env.sqf dev.img -s 40G  # dev.img, 40G`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
-		artifact := args[0]
-		var given string
-		if len(args) > 1 {
-			given = args[1]
-		}
+		artifact, given := args[0], args[1]
 
 		if !utils.IsSqf(artifact) {
 			ExitWithError("%s is not a snapshot; unfreeze takes the .sqf that freeze produced.", artifact)
 		}
 		target, err := resolveUnfreezeTarget(artifact, given)
 		if err != nil {
+			ExitWithError("%v", err)
+		}
+		if err := makeOverlayParent(target); err != nil {
 			ExitWithError("%v", err)
 		}
 
@@ -78,35 +75,16 @@ var overlayUnfreezeCmd = &cobra.Command{
 	},
 }
 
-// resolveUnfreezeTarget decides where the overlay is written, as resolveFreezeTarget
-// does: with no destination it lands beside the artifact with the extension changed,
-// and a directory is a place to put it. An existing file is refused: unfreeze starts a
-// new line of development, and that path most likely holds the overlay someone is
-// already developing in.
+// resolveUnfreezeTarget decides where the overlay is written, named as resolveOverlayPath names one.
+//   - An existing file is refused: unfreeze starts a new line of development, and that path most likely holds the overlay someone is already developing in.
+//   - A path that would pair with the snapshot is refused: the overlay holds everything, so loading the snapshot under it would repeat it.
 func resolveUnfreezeTarget(artifact, dest string) (string, error) {
-	named := strings.TrimSuffix(filepath.Base(artifact), filepath.Ext(artifact)) + ".img"
-	switch {
-	case dest == "":
-		dest = filepath.Join(filepath.Dir(artifact), named)
-	case strings.HasSuffix(dest, string(filepath.Separator)):
-		dest = filepath.Join(dest, named)
-	default:
-		if info, err := os.Stat(dest); err == nil && info.IsDir() {
-			dest = filepath.Join(dest, named)
-		} else if !utils.IsImg(dest) {
-			return "", fmt.Errorf("%s is not a writable overlay path; give a path ending in .img or .ext3", dest)
-		}
-	}
-
-	abs, err := filepath.Abs(dest)
+	abs, err := resolveOverlayPath(dest, ".img")
 	if err != nil {
 		return "", err
 	}
-	if utils.FileExists(abs) {
-		return "", fmt.Errorf("%s already exists", abs)
-	}
-	if info, err := os.Stat(filepath.Dir(abs)); err != nil || !info.IsDir() {
-		return "", fmt.Errorf("%s does not exist; create it or choose another destination", filepath.Dir(abs))
+	if err := refusePairing(abs, artifact); err != nil {
+		return "", err
 	}
 	return abs, nil
 }

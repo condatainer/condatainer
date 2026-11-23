@@ -179,6 +179,15 @@ condatainer overlay freeze env.img   # Creates env.sqf and removes env.img
 - After freezing, commands like `e` will automatically use the new read-only file.
 - **Important:** An `env.sqf` cannot be rebuilt from a recipe, so keep a copy.
 
+To keep the old `env.img` instead of removing it, give `--backup` a path:
+
+```bash
+condatainer overlay freeze env.img --backup backup/v1  # Keeps it as backup/v1.img
+```
+
+- A path with no extension keeps the ending of the original. A missing folder is created.
+- If `env.img` sat on top of an older `env.sqf`, that snapshot is kept as `backup/v1.sqf`.
+
 ### Add packages after freezing
 
 To add packages afterwards, create a new `env.img` beside it:

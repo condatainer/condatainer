@@ -116,47 +116,6 @@ func TestResolveFreezeTargetRefusesAMissingDirectory(t *testing.T) {
 	}
 }
 
-// Unfreeze infers its destination the way freeze does: beside the artifact with
-// the extension changed.
-func TestResolveUnfreezeTarget(t *testing.T) {
-	dir := t.TempDir()
-	artifact := filepath.Join(dir, "env.sqf")
-	if err := os.WriteFile(artifact, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := resolveUnfreezeTarget(artifact, "")
-	if err != nil {
-		t.Fatalf("inferred destination: %v", err)
-	}
-	if want := filepath.Join(dir, "env.img"); got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-
-	// A directory is a place to put it, not the name of it.
-	got, err = resolveUnfreezeTarget(artifact, dir)
-	if err != nil {
-		t.Fatalf("directory destination: %v", err)
-	}
-	if want := filepath.Join(dir, "env.img"); got != want {
-		t.Errorf("directory destination = %q, want %q", got, want)
-	}
-
-	// An overlay already there is what someone is developing in.
-	occupied := filepath.Join(dir, "env.img")
-	if err := os.WriteFile(occupied, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := resolveUnfreezeTarget(artifact, ""); err == nil {
-		t.Error("an existing overlay was not refused")
-	}
-
-	// Only an .img: the result is writable and nothing else can hold it.
-	if _, err := resolveUnfreezeTarget(artifact, filepath.Join(dir, "dev.sqf")); err == nil {
-		t.Error("a .sqf destination was accepted")
-	}
-}
-
 func TestFreezeFlagsAreBackupNotKeep(t *testing.T) {
 	flags := overlayFreezeCmd.Flags()
 	f := flags.Lookup("backup")
@@ -172,10 +131,9 @@ func TestFreezeFlagsAreBackupNotKeep(t *testing.T) {
 }
 
 // A bare .img and a per-user .ext3, with and without a snapshot, against every
-// kind of prefix.
-// {dir} is the directory holding the overlay, and backup/ is a directory in it.
-// A name is always needed: a directory alone is a refusal, and a bare word that
-// happens to be a directory is just a name.
+// kind of path. {dir} is the directory holding the overlay, and backup/ is a
+// directory in it. A path is read from the working directory, so every value
+// here names {dir}. A path with no extension takes the .img's own.
 func TestPlanFreezeBackup(t *testing.T) {
 	for _, lower := range []bool{false, true} {
 		for _, name := range []string{"env.img", "env-alice.ext3"} {
@@ -190,20 +148,20 @@ func TestPlanFreezeBackup(t *testing.T) {
 					refused bool
 				}{
 					{"no flag", "", false, "", "", false},
-					{"a name", "old", true, "old" + ext, "old.sqf", false},
-					{"a name with the user's suffix", "old-alice", true, "old-alice" + ext, "old.sqf", false},
+					{"a name", "{dir}/old", true, "old" + ext, "old.sqf", false},
+					{"a name with the user's suffix", "{dir}/old-alice", true, "old-alice" + ext, "old.sqf", false},
 					{"a name in a directory", "{dir}/backup/old", true, "backup/old" + ext, "backup/old.sqf", false},
-					{"a directory alone, with a slash", "{dir}/backup/", true, "", "", true},
-					{"a directory alone, without a slash", "{dir}/backup", true, "backup" + ext, "backup.sqf", false},
+					{"a name that is a directory", "{dir}/backup", true, "backup" + ext, "backup.sqf", false},
 					{"the live name in a directory", "{dir}/backup/env", true, "backup/env" + ext, "backup/env.sqf", false},
-					{"a missing directory", "{dir}/missing/old", true, "", "", true},
-					{"the snapshot's own name", "env", true, "", "", true},
-					{"the user's own name for it", "env-alice", true, "", "", true},
+					{"a folder not there yet", "{dir}/missing/old", true, "missing/old" + ext, "missing/old.sqf", false},
+					{"an .img name", "{dir}/old.img", true, "old.img", "old.sqf", false},
+					{"an .ext3 name", "{dir}/old.ext3", true, "old.ext3", "old.sqf", false},
+					{"an extension in a directory", "{dir}/backup/old.img", true, "backup/old.img", "backup/old.sqf", false},
+					{"the snapshot's own name", "{dir}/env", true, "", "", true},
+					{"the user's own name for it", "{dir}/env-alice", true, "", "", true},
+					{"a directory alone", "{dir}/backup/", true, "", "", true},
 					{"an empty name", "", true, "", "", true},
-					{"an extension", "old.img", true, "", "", true},
-					{"another writable extension", "old.ext3", true, "", "", true},
-					{"a snapshot extension", "old.sqf", true, "", "", true},
-					{"an extension in a directory", "{dir}/backup/old.img", true, "", "", true},
+					{"a snapshot extension", "{dir}/old.sqf", true, "", "", true},
 				} {
 					t.Run(strconv.FormatBool(lower)+"/"+name+"/"+dest+"/"+tc.label, func(t *testing.T) {
 						dir, _, _ := envDir(t, lower)

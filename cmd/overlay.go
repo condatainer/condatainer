@@ -1,9 +1,15 @@
 package cmd
 
 import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/image/ext3"
+	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -55,4 +61,54 @@ func registerOverlayCreateFlags(cmd *cobra.Command) {
 // completeImages tells the shell to suggest ext3 overlay files (.img, .ext3).
 func completeImages(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	return []string{"img", "ext3"}, cobra.ShellCompDirectiveFilterFileExt
+}
+
+// displayPath is p relative to cwd when possible, so a message about a plain
+// "env.img" typed on the command line doesn't balloon into a long absolute
+// path — matches the display convention in checkDeps.
+func displayPath(p string) string {
+	if cwd, err := os.Getwd(); err == nil {
+		if rel, err := filepath.Rel(cwd, p); err == nil && !strings.HasPrefix(rel, "..") {
+			return rel
+		}
+	}
+	return p
+}
+
+// resolveOverlayPath turns a path typed for a writable overlay into the absolute path it names.
+//   - A path ending in .img or .ext3 is kept. One with no extension gets defaultExt. Any other extension is refused.
+//   - A path that is empty or ends in a separator names no file.
+//   - An existing file or directory at the path is refused.
+//   - The folder it sits in need not exist: makeOverlayParent creates it.
+func resolveOverlayPath(name, defaultExt string) (string, error) {
+	if name == "" || strings.HasSuffix(name, string(filepath.Separator)) {
+		return "", errors.New("give the overlay a path, ending in .img or .ext3 or with no extension")
+	}
+	if !utils.IsImg(name) {
+		if strings.Contains(filepath.Base(name), ".") {
+			return "", fmt.Errorf("%s is not a writable overlay path; it ends in .img or .ext3, or has no extension", name)
+		}
+		name += defaultExt
+	}
+	abs, err := filepath.Abs(name)
+	if err != nil {
+		return "", err
+	}
+	if utils.FileExists(abs) || utils.DirExists(abs) {
+		return "", fmt.Errorf("%s already exists", displayPath(abs))
+	}
+	return abs, nil
+}
+
+// makeOverlayParent creates the folder that holds the overlay at path.
+func makeOverlayParent(path string) error {
+	return utils.MkdirAllShared(filepath.Dir(path))
+}
+
+// refusePairing refuses an overlay that would load together with snapshot, for an overlay that holds everything the snapshot holds.
+func refusePairing(path, snapshot string) error {
+	if container.PairsWith(path, snapshot) {
+		return fmt.Errorf("%s would pair with %s and load on top of it; choose another path", displayPath(path), displayPath(snapshot))
+	}
+	return nil
 }

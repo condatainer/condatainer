@@ -12,6 +12,9 @@ go test -v ./internal/build -run TestParseScriptMetadata
 
 - Tests skip when `mksquashfs`, `squashfuse` or `fuse-overlayfs` are missing. They look in the libexec of `CNT_LIBEXEC`, else `$CNT_ROOT/libexec`, before `PATH`. A test binary calls `testenv.Isolate()` or `testenv.LibexecOnPath()` in `TestMain` for that.
 - Tests that read config call `testenv.Isolate()` in `TestMain`. The root dir is cached, so isolating later is too late.
+- `go test` needs no environment isolation, since a test binary isolates itself. To isolate a manual run of the built tool, set `CNT_ROOT` and the `XDG_*` variables to scratch directories.
+- Export `GOCACHE=$(go env GOCACHE)` before changing `XDG_CACHE_HOME`. Go keeps its build cache there when `GOCACHE` is unset, so a scratch `XDG_CACHE_HOME` makes every build and test run start cold. `staticcheck` and `gopls` cache there too.
+- Tests that need the toolchain skip without it, which makes a run fast. `go test -skip <regex>` and `-run <regex>` select the rest.
 - `gopls` and `staticcheck` are in `$(go env GOPATH)/bin`, which is not on `PATH`. After editing Go files, run `staticcheck ./...` and `gopls check` on the files changed. Each reports what the other misses.
 - `golang.org/x/crypto` is replaced by `github.com/condatainer/x-crypto`. A workflow bumps it.
 

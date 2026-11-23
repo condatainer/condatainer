@@ -149,6 +149,7 @@ type Dep struct {
 //   - Equiv is the recipe's key whenever it is known, whatever the action, and
 //     Deps are the dependencies it was derived from.
 //   - DependsOn orders the steps; Deps describes them.
+//   - Dependents names the steps that need this one built first, and Scripts the scripts whose declarations name it.
 //   - Outcome, JobID and Error are empty in a dry run.
 type Step struct {
 	Overlay
@@ -159,6 +160,8 @@ type Step struct {
 	Identity      meta.KeyRef `json:"identity,omitzero"`
 	Equiv         meta.KeyRef `json:"equiv,omitzero"`
 	DependsOn     []string    `json:"depends_on,omitempty"`
+	Dependents    []string    `json:"dependents,omitempty"`
+	Scripts       []string    `json:"scripts,omitempty"`
 	Deps          []Dep       `json:"deps,omitempty"`
 	RequiresInput bool        `json:"requires_input"`
 	Reason        string      `json:"reason,omitempty"`
@@ -374,32 +377,6 @@ type Recipe struct {
 type Recipes struct {
 	Doc
 	Recipes  List[Recipe]  `json:"recipes"`
-	Problems List[Problem] `json:"problems"`
-}
-
-// Dependency is one #DEP: of a script. Request is as the script wrote it, and
-// Name is what an installed one is called. An installed one has its Location.
-type Dependency struct {
-	Request   string `json:"request"`
-	Name      string `json:"name,omitempty"`
-	Installed bool   `json:"installed"`
-	Location
-}
-
-// Script is what a script, or a recipe given by name, declares.
-type Script struct {
-	Script string           `json:"script"`
-	Deps   List[Dependency] `json:"deps"`
-}
-
-// Checked is the document of a command that checks what scripts declare.
-// Missing is every request that is not installed, once, over all scripts.
-// Steps is present with a dry run of -a: what installing the missing would do.
-type Checked struct {
-	Doc
-	Scripts  List[Script]  `json:"scripts"`
-	Missing  List[string]  `json:"missing"`
-	Steps    List[Step]    `json:"steps,omitempty"`
 	Problems List[Problem] `json:"problems"`
 }
 

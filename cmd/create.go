@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/chzyer/readline"
 	"github.com/condatainer/condatainer/internal/build"
@@ -40,6 +39,8 @@ var (
 	createDryRun     bool
 	createDesc       string
 	createJSON       bool
+	createNeededBy   bool
+	createLatest     bool
 
 	// createFlagSet is createCmd.Flags(), held here so createJobFlags does not refer to createCmd.
 	createFlagSet *pflag.FlagSet
@@ -47,10 +48,16 @@ var (
 	// compFlagNames is the set of compression flags, generated from build.CompressOptions.
 	compFlagNames map[string]bool
 
+	// targetFlagNames is the set of flags shown under "Target Flags:" in help: what to create, from where, and where it lands.
+	targetFlagNames = map[string]bool{
+		"name": true, "prefix": true, "file": true, "from": true,
+		"layer": true, "desc": true, "source": true, "channel": true,
+	}
+
 	// buildFlagNames is the set of flags shown under "Build Flags:" in help.
 	buildFlagNames = map[string]bool{
 		"block-size":      true,
-		"data-block-size": true, "always-submit-data": true, "no-submit": true, "store": true, "no-prebuilt": true,
+		"data-block-size": true, "always-submit": true, "no-submit": true, "store": true, "no-prebuilt": true,
 	}
 )
 
@@ -67,31 +74,37 @@ var createJobRules = map[string]string{
 	"name": "the job builds by target", "prefix": "the job builds by target",
 	"file": "the job builds by target", "from": "the job builds by target",
 	"update": "the command builder adds it", "store": "the command builder adds it",
-	"no-prebuilt":        "the command builder adds it",
-	"no-submit":          "the job is the submission",
-	"dry-run":            "a dry run submits no job",
-	"json":               "output format of this run",
-	"always-submit-data": "decides whether to submit, not what is built",
+	"no-prebuilt":   "the command builder adds it",
+	"no-submit":     "the job is the submission",
+	"dry-run":       "a dry run submits no job",
+	"json":          "output format of this run",
+	"always-submit": "decides whether to submit, not what is built",
+	"needed-by":     "the job builds by target",
+	"latest":        "the job builds by target",
+	"no-project":    "the job builds by target",
 }
 
 // createJobFlags are the flags a submitted build has to repeat: the node re-runs
 // create from the name alone, so anything that changes what is built or where it
 // lands has to travel with it. Submission and mode flags are left out — the job
 // is the submission, and it builds by name.
-func createJobFlags() []string {
+func createJobFlags() []string { return createJobFlagsFor(createLayer) }
+
+// createJobFlagsFor is createJobFlags for a build placed in layer, or "" for one a prefix places.
+func createJobFlagsFor(layer string) []string {
 	var flags []string
 	for _, source := range createSources {
 		flags = append(flags, "--source", source)
 	}
-	if createLayer != "" {
-		flags = append(flags, "--layer", createLayer)
+	if layer != "" {
+		flags = append(flags, "--layer", layer)
 	}
 	return append(flags, settings.ChangedFlags(createFlagSet,
 		"channels", "build.block_size", "build.data_block_size", "build.compress_args")...)
 }
 
 var createCmd = &cobra.Command{
-	Use:     "create [flags] [packages...]",
+	Use:     "create [flags] [packages... | scripts...]",
 	Aliases: []string{"install", "i"},
 	Short:   "Create a read-only SquashFS overlay",
 	Long: `Create a read-only SquashFS overlay.
@@ -100,21 +113,39 @@ var createCmd = &cobra.Command{
   It takes one Conda package, or --name, --prefix or --file.
   It does not take a recipe name, such as orad/2.7.0.
 
+--needed-by takes scripts and directories, not packages.
+  It installs each #DEP: and each overlay a #SLOT: lists.
+  A script in a project is refused. Use project restore.
+
+--latest takes the newest version of a bare or partial name, such as star.
+  Without it, an installed version is used.
+
 --dry-run shows what would be built, pulled or submitted, and does none of it.
 Exits with code 3 if build jobs were submitted to a scheduler.`,
 	Example: `  condatainer create samtools/1.22              # From Conda
   condatainer create orad/2.7.0                 # From a recipe source
   condatainer create --source lab star/2.7.11b  # From the lab source
+  condatainer create code-server --latest       # The newest, not an installed
   condatainer create -n nvim nvim nodejs        # Several packages, one overlay
   condatainer create matplotlib pandas -p /path
   condatainer create -f environment.yml -p myenv
-  condatainer create --from docker://ubuntu:22.04 -p ubuntu`,
+  condatainer create --from docker://ubuntu:22.04 -p ubuntu
+  condatainer create --needed-by run.sh         # Install what a script declares
+  condatainer create --needed-by src/ -y        # Skip the question`,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		return config.SelectSources(createSources)
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
 		// 1. Validation Logic
+		if createNeededBy {
+			if err := checkNeededByFlags(args); err != nil {
+				ExitWithError("%v", err)
+			}
+		}
+		if createLatest && (createName != "" || createPrefix != "" || createFile != "" || createFrom != "") {
+			ExitWithError("--latest takes package names, not --name, --prefix, --file or --from")
+		}
 		if len(args) == 0 && createFile == "" && createFrom == "" {
 			ExitWithError("At least one of [packages], --file, or --from must be provided.")
 		}
@@ -173,23 +204,29 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 			ExitWithError("cannot build an overlay: %v", err)
 		}
 
+		if createNeededBy {
+			runCreateNeededBy(ctx, args)
+			return
+		}
+
 		// 6. Normalize package names (only for build-script mode, not for conda/prefix/source modes)
 		normalizedArgs := args
 		if createName == "" && createPrefix == "" && createFrom == "" {
 			normalizedArgs = make([]string, len(args))
 			for i, arg := range args {
-				normalized, expanded, err := solveCreateName(cmd.Context(), arg)
+				solved, err := solveCreate(cmd.Context(), arg, createLatest)
 				if err != nil {
 					ExitWithError("%v", err)
 				}
-				if expanded {
-					utils.PrintNote("Expanding '%s' to '%s'", utils.NormalizeModule(arg), normalized)
+				typedName(solved.Name, utils.NormalizeModule(arg))
+				if solved.Newer != "" {
+					createNewer[solved.Name] = solved.Newer
 				}
-				normalizedArgs[i] = normalized
+				normalizedArgs[i] = solved.Name
 			}
 		}
 
-		// 7b. Handle --always-submit-data
+		// 7b. Handle --no-prebuilt
 		if createNoPrebuilt {
 			config.Global.SkipPrebuilt = true
 		}
@@ -241,8 +278,11 @@ func init() {
 	f.BoolVar(&createNoPrebuilt, "no-prebuilt", false, "Build from the recipe instead of pulling a prebuilt overlay")
 	f.StringVarP(&createLayer, "layer", "l", "", "Build into this layer: "+layerChoices)
 	f.BoolVar(&createDryRun, "dry-run", false, "Show what would be built, pulled or submitted, without doing it")
+	f.BoolVar(&createNeededBy, "needed-by", false, "Take scripts and directories, and install what they declare")
+	f.BoolVar(&createLatest, "latest", false, "Take the newest version, not an installed one")
+	f.BoolVar(&noProjectRequested, "no-project", false, "Ignore the project: its lock, root and distro")
 	jsonFlag(f, &createJSON)
-	settings.AddSwitch(f, "build.always_submit_data", "always-submit-data", "true", settings.Usage("Submit data builds as scheduler jobs, even without directives"))
+	settings.AddFlag(f, "build.always_submit", "always-submit", settings.Usage("Always submit this kind of build as a job: data, app, os or all"))
 	settings.AddSwitch(f, "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (build locally)"))
 
 	for _, opt := range build.CompressOptions {
@@ -267,6 +307,7 @@ func init() {
 			fmt.Fprintf(cmd.OutOrStderr(), "\nExamples:\n%s\n", cmd.Example)
 		}
 		general := pflag.NewFlagSet("", pflag.ContinueOnError)
+		target := pflag.NewFlagSet("", pflag.ContinueOnError)
 		build := pflag.NewFlagSet("", pflag.ContinueOnError)
 		compress := pflag.NewFlagSet("", pflag.ContinueOnError)
 		cmd.LocalFlags().VisitAll(func(fl *pflag.Flag) {
@@ -274,12 +315,17 @@ func init() {
 				compress.AddFlag(fl)
 			} else if buildFlagNames[fl.Name] {
 				build.AddFlag(fl)
+			} else if targetFlagNames[fl.Name] {
+				target.AddFlag(fl)
 			} else {
 				general.AddFlag(fl)
 			}
 		})
 		if general.HasFlags() {
 			fmt.Fprintf(cmd.OutOrStderr(), "\nFlags:\n%s", flagUsages(general))
+		}
+		if target.HasFlags() {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nTarget Flags:\n%s", flagUsages(target))
 		}
 		if build.HasFlags() {
 			fmt.Fprintf(cmd.OutOrStderr(), "\nBuild Flags:\n%s", flagUsages(build))
@@ -293,10 +339,6 @@ func init() {
 		return nil
 	})
 }
-
-// imagesDirNoteOnce keeps the destination note to one line per command, since the
-// three create paths each resolve the directory independently.
-var imagesDirNoteOnce sync.Once
 
 // writableImagesDirFor resolves where a build installs: the layer named, or the
 // furthest-out writable directory when none is.
@@ -320,17 +362,14 @@ func writableImagesDirFor(layer string) (string, error) {
 }
 
 // getWritableImagesDir returns the writable images directory or exits with an error.
-// The destination and its data layer are reported once: the target depends on which
-// directories happen to be writable, so "(cnt-root)" vs "(user)" is the difference
-// between installing for everyone and installing only for yourself.
+// The plan names it with its data layer, since which directories are writable decides
+// whether an overlay is installed for everyone or only for the user.
 func getWritableImagesDir() string {
 	dir, err := writableImagesDirFor(createLayer)
 	if err != nil {
 		ExitWithError("%v", err)
 	}
-	imagesDirNoteOnce.Do(func() {
-		utils.PrintNote("Installing to %s (%s layer)", dir, config.ClassifyDataDir(dir))
-	})
+	createPlanDir = dir
 	return dir
 }
 
@@ -514,32 +553,70 @@ func resolveTemplateInteractively(ctx context.Context, info *catalog.Entry) (str
 	return concrete, nil
 }
 
-// solveCreateName resolves a create argument to one concrete module: catalog.SolveName,
-// then anaconda.org's package index, so "r", "rstudio-server" and a bare or partial
-// Conda name like "openjdk/17" each land on the newest version they admit.
-//   - Installed overlays are not consulted: installing a bare name always asks for the latest.
+// createSolved is what a create argument means.
+type createSolved struct {
+	// Name is the concrete module.
+	Name string
+	// Expanded is true when Name is not what was typed.
+	Expanded bool
+	// Newer is a version newer than the installed one that the recipe sources offer for a bare or partial name.
+	Newer string
+}
+
+// solveCreate resolves a create argument to one concrete module: catalog.SolveName, then anaconda.org's package index, so "r", "rstudio-server" and a bare or partial Conda name like "openjdk/17" each land on one version.
+//   - A bare or partial name resolves to the newest installed version it admits, and to the newest anywhere only when none is installed. latest skips the installed ones.
+//   - A name that landed on an installed version carries the newer version the recipe sources offer, if there is one. Conda is not asked.
 //   - A channel-annotated or fully qualified name that resolves nowhere is returned unchanged for the normal Conda fallback.
-func solveCreateName(ctx context.Context, nameVersion string) (string, bool, error) {
+func solveCreate(ctx context.Context, nameVersion string, latest bool) (createSolved, error) {
 	normalized := utils.NormalizeModule(nameVersion)
 	if normalized == "" || strings.Contains(normalized, "::") {
-		return normalized, false, nil
+		return createSolved{Name: normalized}, nil
 	}
 	cat, err := config.OpenCatalog(ctx)
 	if err != nil {
-		return normalized, false, nil
+		return createSolved{Name: normalized}, nil
 	}
-	if res, found, err := cat.SolveName(ctx, nil, projectDefaultDistro(), normalized); err == nil && found {
-		return res.Name, res.Name != normalized, nil
+	var have catalog.Have
+	if !latest {
+		have = build.InstalledVersions(nil)
+	}
+	distro := projectDefaultDistro()
+	if res, found, err := cat.SolveName(ctx, have, distro, normalized); err == nil && found {
+		solved := createSolved{Name: res.Name, Expanded: res.Name != normalized}
+		if res.Installed != "" && solved.Expanded {
+			solved.Newer = newerVersion(ctx, cat, distro, normalized, res.Name)
+		}
+		return solved, nil
 	}
 
 	resolved, err := solveCondaName(normalized)
 	if err != nil {
-		return normalized, false, err
+		return createSolved{Name: normalized}, err
 	}
 	if resolved != "" {
-		return resolved, resolved != normalized, nil
+		return createSolved{Name: resolved, Expanded: resolved != normalized}, nil
 	}
-	return normalized, false, nil
+	return createSolved{Name: normalized}, nil
+}
+
+// solveCreateName is solveCreate for the newest version, installed or not: it returns the module and whether it differs from what was typed.
+func solveCreateName(ctx context.Context, nameVersion string) (string, bool, error) {
+	solved, err := solveCreate(ctx, nameVersion, true)
+	return solved.Name, solved.Expanded, err
+}
+
+// newerVersion is the version of what the recipe sources offer for normalized when it is newer than installed, or "".
+func newerVersion(ctx context.Context, cat catalog.Catalog, distro, normalized, installed string) string {
+	res, found, err := cat.SolveName(ctx, nil, distro, normalized)
+	if err != nil || !found || res.Name == installed {
+		return ""
+	}
+	have, errHave := utils.ParseDep(installed)
+	want, errWant := utils.ParseDep(res.Name)
+	if errHave != nil || errWant != nil || have.Name != want.Name || utils.CompareVersions(want.Version, have.Version) <= 0 {
+		return ""
+	}
+	return want.Version
 }
 
 // solveCondaName resolves name against the first configured channel that carries it, picking the newest version Dep.Satisfies admits, so a bare or partial name lands on an exact version before micromamba solves.
@@ -570,9 +647,15 @@ func solveCondaName(name string) (string, error) {
 	return "", fmt.Errorf("no version of %q in channel %s satisfies %q", dep.Name, results[0].Channel, name)
 }
 
-// runCreatePackages creates separate sqf files for each package using BuildGraph
+// runCreatePackages creates separate sqf files for each package using BuildGraph, and exits when jobs were submitted.
 // Example: condatainer create samtools/1.16 bcftools/1.15
 func runCreatePackages(ctx context.Context, packages []string) {
+	graph, built := buildPackages(ctx, packages)
+	finishBuild(graph, built)
+}
+
+// buildPackages builds the packages as separate overlays. It returns the graph and how many overlays it builds, pulls or rebuilds, or nil for a dry run.
+func buildPackages(ctx context.Context, packages []string) (*build.BuildGraph, int) {
 	imagesDir := getWritableImagesDir()
 
 	buildObjects := make([]*build.BuildObject, 0, len(packages))
@@ -590,6 +673,9 @@ func runCreatePackages(ctx context.Context, packages []string) {
 				}
 				pkg = resolved
 			}
+		}
+		if _, ok := createTyped[pkg]; !ok {
+			typedName(pkg, pkg)
 		}
 
 		var bo *build.BuildObject
@@ -618,17 +704,19 @@ func runCreatePackages(ctx context.Context, packages []string) {
 		ExitWithError("Failed to create build graph: %v", err)
 	}
 	graph.SetJobFlags(createJobFlags())
+	steps := graph.Plan()
 	if createDryRun {
-		reportCreatePlan(graph.Plan())
-		return
+		reportCreatePlan(steps)
+		return nil, 0
+	}
+	if !planShown {
+		showPlan(steps)
 	}
 
 	if err := graph.Run(ctx); err != nil {
 		exitOnBuildError(err)
 	}
-	// If jobs were submitted to the scheduler, exit with a distinct code so downstream tooling
-	// can detect that overlays will be created asynchronously by scheduler jobs.
-	ExitIfJobsSubmitted(graph)
+	return graph, builtCount(steps)
 }
 
 // derivePrefixFromFile returns the prefix --file implies, or "" when the user
@@ -755,14 +843,16 @@ func buildForeignSource(ctx context.Context, targetPrefix, source, outputDir str
 	if err != nil {
 		ExitWithError("Failed to create build graph: %v", err)
 	}
+	steps := graph.Plan()
 	if createDryRun {
-		reportCreatePlan(graph.Plan())
+		reportCreatePlan(steps)
 		return
 	}
+	showPlan(steps)
 	if err := graph.Run(ctx); err != nil {
 		exitOnBuildError(err)
 	}
-	ExitIfJobsSubmitted(graph)
+	finishBuild(graph, builtCount(steps))
 }
 
 // applyStoreOverflow marks a build to be filed under its identity when --store
@@ -791,17 +881,17 @@ func buildExternalSource(ctx context.Context, targetPrefix, source string, isApp
 		ExitWithError("Failed to create build graph: %v", err)
 	}
 	graph.SetJobFlags(createJobFlags())
+	steps := graph.Plan()
 	if createDryRun {
-		reportCreatePlan(graph.Plan())
+		reportCreatePlan(steps)
 		return
 	}
+	showPlan(steps)
 
 	if err := graph.Run(ctx); err != nil {
 		exitOnBuildError(err)
 	}
-	// If jobs were submitted to the scheduler, exit with a distinct code so downstream tooling
-	// can detect that overlays will be created asynchronously by scheduler jobs.
-	ExitIfJobsSubmitted(graph)
+	finishBuild(graph, builtCount(steps))
 }
 
 // runCreateWithName creates a single sqf with multiple packages or from a file
@@ -821,10 +911,11 @@ func runCreateWithName(ctx context.Context, packages []string) {
 		// only <base>/<name> is.
 		scan, _ := image.ScanOverlays(image.ScanOptions{})
 		if existingPath := image.FirstPaths(scan)[normalizedName]; existingPath != "" {
-			utils.PrintMessage("Overlay %s already exists at %s. Skipping creation.",
-				filepath.Base(existingPath), existingPath)
+			installed := []build.PlannedStep{installedStep(normalizedName, existingPath)}
 			if createDryRun {
-				reportCreatePlan([]build.PlannedStep{installedStep(normalizedName, existingPath)})
+				reportCreatePlan(installed)
+			} else {
+				showPlan(installed)
 			}
 			return
 		}
@@ -867,14 +958,7 @@ func runCreateWithName(ctx context.Context, packages []string) {
 		ExitWithError("Failed to create build object: %v", err)
 	}
 	applyStoreOverflow(bo)
-	if createDryRun {
-		reportObjectPlan(ctx, bo)
-		return
-	}
-
-	if err := bo.Build(ctx, false); err != nil {
-		ExitWithError("Build failed: %v", err)
-	}
+	buildObject(ctx, bo)
 }
 
 // runCreateWithPrefix creates a sqf from external source file (.sh, .def, .yml)
@@ -899,13 +983,7 @@ func runCreateWithPrefix(ctx context.Context) {
 		if err != nil {
 			ExitWithError("Failed to create build object: %v", err)
 		}
-		if createDryRun {
-			reportObjectPlan(ctx, bo)
-			return
-		}
-		if err := bo.Build(ctx, false); err != nil {
-			ExitWithError("Build failed: %v", err)
-		}
+		buildObject(ctx, bo)
 	} else if isForeignRoot(createFile) {
 		// Already-built .sif or sandbox directory
 		absFile, _ := filepath.Abs(createFile)
@@ -932,13 +1010,7 @@ func runCreateWithPrefixAndPackages(ctx context.Context, packages []string) {
 	if err != nil {
 		ExitWithError("Failed to create build object: %v", err)
 	}
-	if createDryRun {
-		reportObjectPlan(ctx, bo)
-		return
-	}
-	if err := bo.Build(ctx, false); err != nil {
-		ExitWithError("Build failed: %v", err)
-	}
+	buildObject(ctx, bo)
 }
 
 // runCreateFromSource creates a sqf from an external source (def file or remote URI)

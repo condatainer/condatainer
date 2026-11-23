@@ -103,14 +103,12 @@ The script can contain these comment tags in its header:
   - #OUTPUT: #ERROR:      Log files (stdout, stderr)
   - #PARTITION: #ACCOUNT: Partition and account
 
-A script with any resource or job tag is submitted as a job.
-A job gets the current shell's env.
-It can carry scheduler directives (e.g. #SBATCH).
+A script with any resource or job tag is submitted as a job with shell env.
 Resources come from the first source that sets one:
   Current scheduler | TAG: | another scheduler.
 A directive that sets no resource, such as --qos, passes through to the job.
-Name, log, partition and account tags are read with the directives.
-Setting the same one in both is refused.
+
+A build recipe, which expands $CNT_BUILD_PREFIX, is refused.
 
 --dry-run shows what would happen, and exits 1 when the run would not start.`,
 	Example: `  condatainer run script.sh            # Check dependencies, then run
@@ -255,6 +253,9 @@ func runScript(cmd *cobra.Command, args []string) error {
 	// 1. Read specs → resolve the content script (HTCondor: .sub → .sh; others: identity)
 	contentScript, scriptSpecs := resolveScriptAndSpecs(scriptPath, subjects)
 	if err := requireInterpreterLine(contentScript); err != nil {
+		ExitWithError("%v", err)
+	}
+	if err := requireNotBuildRecipe(contentScript); err != nil {
 		ExitWithError("%v", err)
 	}
 	if runSubmit {
@@ -641,24 +642,6 @@ func applyScriptHeaders(scriptPath string) error {
 	return nil
 }
 
-// missingRunDeps returns the dependencies a run stops at: a file that does not
-// exist, or a name the solver left unchanged and no installed overlay has.
-func missingRunDeps(deps, solved []string, installed map[string]string) []string {
-	var missing []string
-	for i, dep := range deps {
-		if utils.IsOverlay(dep) || utils.IsSif(dep) {
-			if !utils.FileExists(dep) {
-				missing = append(missing, dep)
-			}
-		} else if solved[i] == dep {
-			if _, ok := installed[utils.NormalizeModule(dep)]; !ok {
-				missing = append(missing, dep)
-			}
-		}
-	}
-	return missing
-}
-
 // dryRunRefusals lists what would stop the real run before it starts, in the
 // order the run checks it. A project run has already resolved its dependencies.
 func dryRunRefusals(ctx context.Context, contentScript string, specs *scheduler.ScriptSpecs, arraySpec *scheduler.ArraySpec, projectRun *projectContext) []string {
@@ -684,15 +667,17 @@ func dryRunRefusals(ctx context.Context, contentScript string, specs *scheduler.
 	if err != nil {
 		return append(reasons, fmt.Sprintf("its dependencies could not be parsed: %v", err))
 	}
-	installed, err := getInstalledOverlaysMap()
-	if err != nil {
-		return append(reasons, fmt.Sprintf("installed overlays could not be listed: %v", err))
-	}
-	solved, err := resolveOverlayValues(ctx, deps, nil, false)
+	resolved, _, err := scriptDeps(ctx, deps)
 	if err != nil {
 		return append(reasons, err.Error())
 	}
-	if missing := missingRunDeps(deps, solved, installed); len(missing) > 0 {
+	var missing []string
+	for _, d := range resolved {
+		if d.Missing() {
+			missing = append(missing, d.Request)
+		}
+	}
+	if len(missing) > 0 {
 		reasons = append(reasons, "missing dependencies: "+strings.Join(missing, ", "))
 	}
 	return reasons
@@ -707,54 +692,39 @@ func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (o
 		return nil, errRunAborted
 	}
 
-	installedOverlays, err := getInstalledOverlaysMap()
-	if err != nil {
-		return nil, err
-	}
-	// A bare or partial name becomes the installed overlay it means; anything
-	// the solver leaves unchanged is checked by exact name below.
-	solved, err := resolveOverlayValues(ctx, deps, nil, false)
+	resolved, mounts, err := scriptDeps(ctx, deps)
 	if err != nil {
 		utils.PrintError("%v", err)
 		return nil, errRunAborted
 	}
+	printMounts(mounts, false)
 
-	missingDeps := missingRunDeps(deps, solved, installedOverlays)
+	var missingDeps, externalFiles []string
+	for _, d := range resolved {
+		if d.Missing() {
+			missingDeps = append(missingDeps, d.Request)
+			if d.IsFile() {
+				externalFiles = append(externalFiles, d.Request)
+			}
+		}
+	}
 	if len(missingDeps) > 0 {
 		utils.PrintMessage("Missing dependencies:")
 		for _, md := range missingDeps {
 			utils.PrintMessage("  - %s", md)
 		}
-		externalFiles := []string{}
-		for _, md := range missingDeps {
-			if utils.IsOverlay(md) || utils.IsSif(md) {
-				externalFiles = append(externalFiles, md)
-			}
-		}
 		if len(externalFiles) > 0 {
 			fileList := strings.Join(externalFiles, ", ")
-			utils.PrintError("External overlay(s) %s not found - use `condatainer check -a` to create them.", fileList)
+			utils.PrintError("External overlay(s) %s not found - use `condatainer create --needed-by %s` to create them.", fileList, originScriptPath)
 		} else {
-			utils.PrintHint("Please run `condatainer check -a %s` to install missing dependencies.", originScriptPath)
+			utils.PrintHint("Please run `condatainer create --needed-by %s` to install missing dependencies.", originScriptPath)
 		}
 		return nil, errRunAborted
 	}
 
-	// Resolve overlay paths
-	overlays = make([]string, len(deps))
-	for i, dep := range deps {
-		if utils.IsOverlay(dep) || utils.IsSif(dep) {
-			overlays[i] = dep
-		} else if solved[i] != dep {
-			overlays[i] = solved[i]
-		} else {
-			normalized := utils.NormalizeModule(dep)
-			if path, ok := installedOverlays[normalized]; ok {
-				overlays[i] = path
-			} else {
-				overlays[i] = dep
-			}
-		}
+	overlays = make([]string, len(resolved))
+	for i, d := range resolved {
+		overlays[i] = d.Path
 	}
 
 	// Check .img availability, and a .sif root's own /bin/bash, before
@@ -910,12 +880,15 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 	}
 
 	deps, err := utils.ScriptDependencies(contentScript)
+	var resolved []scriptDep
+	if projectRun == nil && err == nil {
+		resolved, _, err = scriptDeps(ctx, deps)
+	}
 	if projectRun != nil {
 		printProjectDependencies(baseImg, projectRun)
 	} else if err != nil {
-		fmt.Printf("%s Could not parse dependencies: %v\n", utils.StyleError("[ERR]"), err)
+		fmt.Printf("%s Could not read dependencies: %v\n", utils.StyleError("[ERR]"), err)
 	} else {
-		installedOverlays, _ := getInstalledOverlaysMap()
 		check := utils.StyleSuccess("✓")
 		cross := utils.StyleError("✗")
 
@@ -924,28 +897,9 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 			dep, path string
 			ok        bool
 		}
-		// Resolve the working directory for relative overlay path checks.
-		workDir := specs.Control.WorkDir
-		if workDir == "" {
-			workDir, _ = os.Getwd()
-		}
-
-		entries := make([]depEntry, 0, len(deps))
-		for _, dep := range deps {
-			var entry depEntry
-			entry.dep = dep
-			if utils.IsOverlay(dep) || utils.IsSif(dep) {
-				p := dep
-				if !filepath.IsAbs(p) {
-					p = filepath.Join(workDir, p)
-				}
-				entry.ok = utils.FileExists(p)
-				entry.path = p
-			} else {
-				normalized := utils.NormalizeModule(dep)
-				entry.path, entry.ok = installedOverlays[normalized]
-			}
-			entries = append(entries, entry)
+		entries := make([]depEntry, 0, len(resolved))
+		for _, d := range resolved {
+			entries = append(entries, depEntry{dep: d.Request, path: d.Path, ok: !d.Missing()})
 		}
 
 		found, missing := 0, 0

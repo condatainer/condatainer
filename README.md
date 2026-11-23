@@ -50,8 +50,8 @@ salmon quant -i $SALMON_INDEX_DIR -l A -r reads.fq -p $NCPU -o quants
 ```
 
 ```bash
-condatainer check -a script.sh     # Install missing dependencies
-condatainer run script.sh          # Submit it to the scheduler
+condatainer create --needed-by script.sh  # Install missing dependencies
+condatainer run script.sh                 # Submit it to the scheduler
 ```
 
 Run a web app on a compute node from the dashboard ([Helper](https://docs.condatainer.org/guides/helper/)):

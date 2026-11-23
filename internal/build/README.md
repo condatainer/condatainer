@@ -21,7 +21,7 @@ Builds overlay images from Conda packages, recipes or Apptainer definitions.
 - A build's `#DEP:` is a `name/version`, never a path. A running script's may be either.
   - A running script mounts what it names and records nothing.
   - A build's declaration becomes an edge in an artifact that must mean the same thing on another machine, and a path is neither resolvable there nor a key anything can regenerate.
-- `validateDeps` holds both rules. `validateRecipe` and `FromExternalSource` call it, never `run` or `check`.
+- `validateDeps` holds both rules. `validateRecipe` and `FromExternalSource` call it, never `run` or `create --needed-by`.
 - A `.sif` is a root-only, literal-path reference. It never stacks and carries no build identity.
 
 ## `#TARGET:` names the artifact
@@ -114,10 +114,13 @@ Builds overlay images from Conda packages, recipes or Apptainer definitions.
 - A dependency that is neither installed nor planned leaves the node undecided. It looks when it builds.
 - The base is resolved for every script and Conda build before any node runs, because a scheduler job cannot build one on the node.
 - A pull is always local.
-- A build goes to the scheduler when its recipe asks for resources, or when it is `data` and `build.always_submit_data` is set.
+- A build goes to the scheduler when its recipe asks for resources, or when its kind is one `build.always_submit` lists. The list takes `data`, `app`, `os` or `all`, and is empty by default.
+  - A build is decided by its own kind. A build with a dependency that is a job is a job too, queued behind it, because every foreground build runs before any job is submitted.
+  - A dependency that is not a job is built in the foreground first. A pulled build is never a job.
 - A recipe asks for them with `#NCPU:`, `#MEM:`, `#TIME:` and `#GPU:`, or with scheduler directives. One source is read, as for a run script.
 - A build ignores the container headers, which mean nothing to it, and writes its own logs.
 - A build job's partition and account come from `build.partition` and `build.account`, then `scheduler.partition` and `scheduler.account`, then the scheduler's own default. A recipe's own are ignored, so one recipe runs on any cluster. Restore jobs follow the same order.
+- A job starts in the directory `create` was run from, as a foreground build does. A recipe's own working directory wins. PBS would otherwise start it in `$HOME`.
 - A job re-runs `create` from the name, so only a build that command can reproduce is submitted: a catalog name or an external shell script. Conda from packages or a file, a definition and an import run locally.
 - Flags that change what is built or where it lands travel with the job. Submission flags do not.
 
@@ -131,6 +134,9 @@ Builds overlay images from Conda packages, recipes or Apptainer definitions.
 - A plan says where it looked for a published copy, and whether the registry could not be reached.
   - A copy that is absent and a registry that did not answer differ: only the first means the copy is missing.
 - Either kind of plan can be read, never run. A build runs where it is built, with its answers.
+- The graph logs nothing about what it will do. Each step carries it: pull, job, installed, dependencies and input.
+  - A command lays the steps out, so the same plan prints for every build path and for `--json`.
+  - A node whose prebuilt is undecided is planned as a build, and may pull when it runs.
 
 ## Workspace
 

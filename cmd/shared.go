@@ -14,6 +14,7 @@ import (
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
+	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -616,4 +617,42 @@ func addDistroAliasChoices(distro string, installed map[string]bool, choices map
 			choices[alias] = struct{}{}
 		}
 	}
+}
+
+// requireNotBuildRecipe refuses a build recipe, which expands $CNT_BUILD_PREFIX and is built, not run.
+func requireNotBuildRecipe(path string) error {
+	text, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	if lock.IsBuildRecipe(text) {
+		return fmt.Errorf("%s is a build recipe; build it with `condatainer create -f %s`", path, path)
+	}
+	return nil
+}
+
+// requireTextScript refuses a file that is not text, such as a writable overlay image or archive
+// passed where a script is expected.
+func requireTextScript(path string) error {
+	text, err := utils.IsTextFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	switch {
+	case text:
+		return nil
+	case utils.IsImg(path):
+		return fmt.Errorf("%s is not a text file; to check an overlay, run `condatainer overlay fscheck %s`", path, path)
+	case utils.IsSqf(path):
+		return fmt.Errorf("%s is not a text file; to check an overlay, run `condatainer info %s --validate`", path, path)
+	}
+	return fmt.Errorf("%s is not a text file", path)
+}
+
+// requireInterpreterLine refuses a script whose first line is not an interpreter line `run` accepts.
+func requireInterpreterLine(path string) error {
+	if err := utils.CheckShebangFile(path); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
 }

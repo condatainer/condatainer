@@ -254,3 +254,59 @@ func TestResolvePrefix(t *testing.T) {
 		})
 	}
 }
+
+// A bare or partial name takes what is installed, and --latest takes the newest.
+func TestSolveCreateTakesAnInstalledVersionUnlessLatest(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"tool/1.0", "tool/1.2", "other/2.0"} {
+		path := filepath.Join(root, "recipes", filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("#DESC:test\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	images := t.TempDir()
+	if err := os.WriteFile(filepath.Join(images, "tool--1.0.sqf"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldSources, oldPaths := config.Global.Sources, config.GlobalDataPaths
+	config.Global.Sources = []catalog.Spec{{Name: "test", Base: root}}
+	config.GlobalDataPaths.ImagesDirs = []string{images}
+	settingstest.Override(t, "default_distro", "ubuntu24")
+	settingstest.OverrideList(t, "channels")
+	config.ResetCatalog()
+	build.InvalidateInstalledOverlays()
+	t.Cleanup(func() {
+		config.Global.Sources, config.GlobalDataPaths = oldSources, oldPaths
+		config.ResetCatalog()
+		build.InvalidateInstalledOverlays()
+	})
+
+	for _, tc := range []struct {
+		input   string
+		latest  bool
+		want    string
+		newer   string
+		changed bool
+	}{
+		{"tool", false, "tool/1.0", "1.2", true},
+		{"tool/1", false, "tool/1.0", "1.2", true},
+		{"tool", true, "tool/1.2", "", true},
+		{"tool/1.0", false, "tool/1.0", "", false},
+		{"tool/1.0", true, "tool/1.0", "", false},
+		{"other", false, "other/2.0", "", true},
+	} {
+		got, err := solveCreate(context.Background(), tc.input, tc.latest)
+		if err != nil {
+			t.Errorf("solveCreate(%q, latest=%v): %v", tc.input, tc.latest, err)
+			continue
+		}
+		if got.Name != tc.want || got.Newer != tc.newer || got.Expanded != tc.changed {
+			t.Errorf("solveCreate(%q, latest=%v) = %+v, want name %q newer %q expanded %v",
+				tc.input, tc.latest, got, tc.want, tc.newer, tc.changed)
+		}
+	}
+}

@@ -3,11 +3,13 @@ package build
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/artifact/meta"
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -74,4 +76,76 @@ func TestPlannedStepListsTheDependenciesOfItsKey(t *testing.T) {
 	if d := deps[1]; d.Role != meta.RoleData || d.Installed || d.Path != "" || d.Equiv != equiv {
 		t.Errorf("planned data dep = %+v", d)
 	}
+}
+
+// A node whose dependency is a job is a job too: a foreground build runs before
+// any job is submitted, so it would find the dependency missing.
+func TestSplitWorkQueuesADependentBehindAJobDependency(t *testing.T) {
+	settingstest.OverrideList(t, "build.always_submit", "app")
+
+	node := func(name string, typ artifact.Type, deps ...string) *BuildObject {
+		b := planNode(name, typ, prebuiltNone, deps...)
+		b.submitJob = true
+		return b
+	}
+	tool := node("tool/1", artifact.TypeApp)
+	data := node("data/1", artifact.TypeData, "tool/1")
+	other := node("other/1", artifact.TypeData)
+	bg := &BuildGraph{graph: map[string]*BuildObject{"tool/1": tool, "data/1": data, "other/1": other}}
+
+	bg.splitWork([]*BuildObject{tool, data, other}, true)
+	if !slices.Equal(objectNames(bg.schedulerBuilds), []string{"tool/1", "data/1"}) {
+		t.Errorf("jobs = %v, want the app and its data dependent", objectNames(bg.schedulerBuilds))
+	}
+	if !slices.Equal(objectNames(bg.localBuilds), []string{"other/1"}) {
+		t.Errorf("foreground = %v, want only the build with no job dependency", objectNames(bg.localBuilds))
+	}
+}
+
+// A job whose dependency runs in the foreground needs no change: the foreground build is finished first.
+func TestSplitWorkKeepsAForegroundDependencyInTheForeground(t *testing.T) {
+	settingstest.OverrideList(t, "build.always_submit", "data")
+
+	tool := planNode("tool/1", artifact.TypeApp, prebuiltNone)
+	tool.submitJob = true
+	data := planNode("data/1", artifact.TypeData, prebuiltNone, "tool/1")
+	data.submitJob = true
+	bg := &BuildGraph{graph: map[string]*BuildObject{"tool/1": tool, "data/1": data}}
+
+	bg.splitWork([]*BuildObject{tool, data}, true)
+	if !slices.Equal(objectNames(bg.localBuilds), []string{"tool/1"}) || !slices.Equal(objectNames(bg.schedulerBuilds), []string{"data/1"}) {
+		t.Errorf("foreground = %v, jobs = %v", objectNames(bg.localBuilds), objectNames(bg.schedulerBuilds))
+	}
+}
+
+// Nothing is promoted when jobs cannot be submitted, for a build a job cannot reproduce, or for a pull.
+func TestSplitWorkPromotesOnlyWhatAJobCanBuild(t *testing.T) {
+	settingstest.OverrideList(t, "build.always_submit", "app")
+
+	tool := planNode("tool/1", artifact.TypeApp, prebuiltNone)
+	tool.submitJob = true
+	unreproducible := planNode("conda/1", artifact.TypeData, prebuiltNone, "tool/1") // submitJob is false
+	pulled := planNode("pulled/1", artifact.TypeData, prebuiltPull, "tool/1")
+	pulled.submitJob = true
+	graph := map[string]*BuildObject{"tool/1": tool, "conda/1": unreproducible, "pulled/1": pulled}
+
+	bg := &BuildGraph{graph: graph}
+	bg.splitWork([]*BuildObject{tool, unreproducible, pulled}, true)
+	if !slices.Equal(objectNames(bg.schedulerBuilds), []string{"tool/1"}) {
+		t.Errorf("jobs = %v, want only the app", objectNames(bg.schedulerBuilds))
+	}
+
+	bg = &BuildGraph{graph: graph}
+	bg.splitWork([]*BuildObject{tool, unreproducible, pulled}, false)
+	if len(bg.schedulerBuilds) != 0 {
+		t.Errorf("jobs = %v with submission off", objectNames(bg.schedulerBuilds))
+	}
+}
+
+func objectNames(objs []*BuildObject) []string {
+	out := make([]string, len(objs))
+	for i, o := range objs {
+		out[i] = o.NameVersion()
+	}
+	return out
 }

@@ -429,8 +429,8 @@ func writeCopies(w io.Writer, repository string, copies []report.Copy, problems 
 	return nil
 }
 
-// quietly returns ctx with a logger that passes warnings only, so planning
-// notes such as "will be built locally" do not read as this command's result.
+// quietly returns ctx with a logger that passes warnings only, so notes logged
+// while planning do not read as this command's result.
 func quietly(ctx context.Context) context.Context {
 	return logging.WithLogger(ctx, slog.New(warningsOnly{logging.FromContext(ctx).Handler()}))
 }

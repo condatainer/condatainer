@@ -191,19 +191,22 @@ func TestShellQuoteSurvivesAQuoteInAPath(t *testing.T) {
 	}
 }
 
-// build.always_submit_data calls for a job for a data rebuild and for nothing
-// else; a recipe's own directives still do, whatever its type.
-func TestCallsForJobFollowsAlwaysSubmitData(t *testing.T) {
-	settingstest.Override(t, "build.always_submit_data", "true")
-
+// build.always_submit calls for a job for a rebuild of a listed kind and for
+// nothing else; a recipe's own directives still do, whatever its type.
+func TestCallsForJobFollowsAlwaysSubmit(t *testing.T) {
+	settingstest.OverrideList(t, "build.always_submit", "data")
 	if !callsForJob(artifact.TypeData, nil) {
-		t.Error("a data rebuild does not call for a job under always_submit_data")
+		t.Error("a data rebuild does not call for a job under data")
 	}
 	if callsForJob(artifact.TypeApp, nil) {
-		t.Error("an app rebuild calls for a job under always_submit_data")
+		t.Error("an app rebuild calls for a job under data")
 	}
-	settingstest.Override(t, "build.always_submit_data", "false")
+	settingstest.OverrideList(t, "build.always_submit", "all")
+	if !callsForJob(artifact.TypeApp, nil) || !callsForJob(artifact.TypeOS, nil) {
+		t.Error("a rebuild does not call for a job under all")
+	}
+	settingstest.OverrideList(t, "build.always_submit")
 	if callsForJob(artifact.TypeData, nil) {
-		t.Error("a data rebuild calls for a job with the flag off")
+		t.Error("a data rebuild calls for a job with nothing listed")
 	}
 }

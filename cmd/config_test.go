@@ -56,7 +56,7 @@ func TestRegisteredKeyNames(t *testing.T) {
 		"autoload_gpu CNT_CONFIG_AUTOLOAD_GPU",
 		"bind CNT_CONFIG_BIND",
 		"build.account CNT_CONFIG_BUILD_ACCOUNT",
-		"build.always_submit_data CNT_CONFIG_BUILD_ALWAYS_SUBMIT_DATA",
+		"build.always_submit CNT_CONFIG_BUILD_ALWAYS_SUBMIT",
 		"build.block_size CNT_CONFIG_BUILD_BLOCK_SIZE",
 		"build.compress_args CNT_CONFIG_BUILD_COMPRESS_ARGS",
 		"build.data_block_size CNT_CONFIG_BUILD_DATA_BLOCK_SIZE",

@@ -35,6 +35,17 @@ func TestCanonicalExplicit(t *testing.T) {
 	}
 }
 
+func TestIsExplicitNeedsTheMarker(t *testing.T) {
+	if !IsExplicit([]byte(explicitExport)) {
+		t.Error("an export with the marker was not explicit")
+	}
+	for _, text := range []string{"samtools=1.22\nbwa\n", "notes\n@EXPLICITLY\n", ""} {
+		if IsExplicit([]byte(text)) {
+			t.Errorf("%q was taken for an explicit spec", text)
+		}
+	}
+}
+
 // The whole reason for re-emitting: a Micromamba upgrade that reorders or
 // re-spaces its output must not move the key of every artifact built after it.
 func TestCanonicalExplicitIsStableAcrossExporters(t *testing.T) {

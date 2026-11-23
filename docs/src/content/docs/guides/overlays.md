@@ -70,7 +70,7 @@ $ condatainer create grch38/salmon/2.7.0/gencode47-k31
 
 When you run `create`, CondaTainer first searches for a recipe; if none is found, it falls back to looking for a Conda package.
 
-- **Version Matching:** If you omit the version or provide a partial one, CondaTainer automatically selects the newest matching version. A data overlay, such as `grch38/genome/gencode`, is always written in full.
+- **Version Matching:** If you omit the version or provide a partial one, CondaTainer uses the newest matching version that is installed. When none is installed, it selects the newest matching version. A data overlay, such as `grch38/genome/gencode`, is always written in full.
 - **Templates Fill:** Template targets can be directly created by providing its full rendered name.
 - **Dependencies:** Any dependencies declared by a recipe are built automatically. For example, building a Salmon index overlay will create the transcript overlay.
 
@@ -78,6 +78,7 @@ When you run `create`, CondaTainer first searches for a recipe; if none is found
 
 | Flag | Effect |
 |---|---|
+| `--latest` | Take the newest matching version of a bare or partial name, even if one is installed. |
 | `--no-prebuilt` | Force fresh build instead of downloading a prebuilt. |
 | `--dry-run` | Show what would be built, downloaded or submitted as a job, and do none of it. |
 

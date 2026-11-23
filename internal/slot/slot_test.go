@@ -330,3 +330,19 @@ func TestGroupValues(t *testing.T) {
 		}
 	}
 }
+
+func TestListedNamesTheDefaultThenEachChoice(t *testing.T) {
+	for _, tc := range []struct {
+		decl Decl
+		want []string
+	}{
+		{Decl{Default: "a/1", Choices: []string{"b/2", "c/3"}}, []string{"a/1", "b/2", "c/3"}},
+		{Decl{Choices: []string{"b/2"}}, []string{"b/2"}},
+		{Decl{Default: "a/1"}, []string{"a/1"}},
+		{Decl{}, nil},
+	} {
+		if got := tc.decl.Listed(); !slices.Equal(got, tc.want) {
+			t.Errorf("%+v: Listed() = %v, want %v", tc.decl, got, tc.want)
+		}
+	}
+}

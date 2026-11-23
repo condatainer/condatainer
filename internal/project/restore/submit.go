@@ -127,10 +127,10 @@ func planJobs(ctx context.Context, root string, verified *lock.Verified, plan *P
 }
 
 // callsForJob reports whether a rebuild of this type is a scheduler job by itself:
-// its recipe carries directives, or it is data and build.always_submit_data is set.
+// its recipe carries directives, or its kind is one build.always_submit names.
 func callsForJob(typ artifact.Type, specs *scheduler.ScriptSpecs) bool {
 	return scheduler.HasSchedulerSpecs(specs) ||
-		(build.AlwaysSubmitData() && typ == artifact.TypeData)
+		build.AlwaysSubmit(typ)
 }
 
 // partition splits a plan into the steps the scheduler runs (submit) and the build

@@ -40,6 +40,18 @@ type Decl struct {
 	Line int
 }
 
+// Listed returns the overlays the declaration names: the default, then each choice. An empty one is left out.
+//   - Listing an overlay says the script uses it, so a project pins it and an install builds it.
+func (d Decl) Listed() []string {
+	var out []string
+	for _, name := range append([]string{d.Default}, d.Choices...) {
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 var (
 	slotName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	envName  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

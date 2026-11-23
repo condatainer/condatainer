@@ -52,4 +52,4 @@
 - The preferred version is the implicit upper bound. `2.7.0` as the minimum with `2.7.11b` as the version admits `[2.7.0, 2.7.11b]`.
 - With no constraint, a version admits any version that shares it as a dot-component prefix. `17` admits `17.0.18`, the family match conda gives a bare `=17`.
 - `ScriptDependencies` reads a script's `#DEP:` lines with that grammar. A name is normalized, and an overlay path (`IsPathDep`) is kept as written.
-- `run`, `check` and a build all read through it. What a dependency may be is each caller's rule: a running script may name a path, and a build may not.
+- `run`, `create --needed-by` and a build all read through it. What a dependency may be is each caller's rule: a running script may name a path, and a build may not.

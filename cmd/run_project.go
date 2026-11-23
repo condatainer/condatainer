@@ -25,9 +25,6 @@ type projectContext struct {
 //   - The working directory is left to the script and the scheduler.
 //   - A #DEP: with no pin resolves live, as outside a project.
 func projectRunContext(ctx context.Context, contentScript string, list bool) (*projectContext, error) {
-	if noProjectRequested {
-		return nil, nil
-	}
 	standing, err := standingProjectHere()
 	if err != nil || standing == nil {
 		return nil, err
@@ -68,9 +65,6 @@ func projectRunContext(ctx context.Context, contentScript string, list bool) (*p
 
 // projectCoversScript reports whether a run of the script resolves through the standing project, with nothing printed.
 func projectCoversScript(script string) bool {
-	if noProjectRequested {
-		return false
-	}
 	standing, err := standingProjectHere()
 	if err != nil || standing == nil {
 		return false

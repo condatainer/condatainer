@@ -2,11 +2,14 @@ package build
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/condatainer/condatainer/internal/artifact"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
@@ -25,9 +28,12 @@ var (
 		settings.Order(2),
 		settings.Help("Where build and restore job logs go. $SCRATCH/logs when SCRATCH is set, else $HOME/logs."))
 
-	keyAlwaysSubmitData = settings.Bool("build.always_submit_data",
-		settings.Default(false), settings.Order(3),
-		settings.Help("Submit data builds as scheduler jobs even when the recipe has no scheduler directives."))
+	keyAlwaysSubmit = settings.List("build.always_submit",
+		settings.Order(3), settings.MergeLists(),
+		settings.Validate(validateSubmitKind),
+		settings.Accepts("a list of data, app, os or all"),
+		settings.Suggest(submitAll, string(artifact.TypeData), string(artifact.TypeApp), string(artifact.TypeOS)),
+		settings.Help("Kinds of build always submitted as scheduler jobs, even when the recipe has no scheduler directives: data, app, os or all. A build a job cannot reproduce stays in the foreground."))
 
 	keyNcpu = settings.Int("build.ncpu",
 		settings.Default(config.DefaultNcpu), settings.Min(1), settings.Order(4),
@@ -132,8 +138,21 @@ func SetJobName(specs *scheduler.ScriptSpecs, nameVersion string) {
 	specs.Control.JobName = name
 }
 
-// AlwaysSubmitData reports whether data builds are submitted even without scheduler directives.
-func AlwaysSubmitData() bool { return keyAlwaysSubmitData.Get() }
+// submitAll stands for every kind of build in build.always_submit.
+const submitAll = "all"
+
+func validateSubmitKind(kind string) error {
+	switch kind {
+	case submitAll, string(artifact.TypeData), string(artifact.TypeApp), string(artifact.TypeOS):
+		return nil
+	}
+	return fmt.Errorf("%q is not a build kind: use data, app, os or all", kind)
+}
+
+// AlwaysSubmit reports whether a build of this kind is submitted even without scheduler directives.
+func AlwaysSubmit(kind artifact.Type) bool {
+	return slices.ContainsFunc(keyAlwaysSubmit.Get(), func(k string) bool { return k == submitAll || k == string(kind) })
+}
 
 // LogsDir is where build and restore job logs go.
 func LogsDir() string { return keyLogsDir.Get() }

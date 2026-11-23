@@ -40,3 +40,33 @@ func TestRequireInterpreterLineNamesTheAllowedForms(t *testing.T) {
 		}
 	}
 }
+
+func TestRequireNotBuildRecipe(t *testing.T) {
+	dir := t.TempDir()
+	for body, refused := range map[string]bool{
+		"#!/bin/bash\necho \"$CNT_BUILD_PREFIX\"\n":    true,
+		"#!/bin/bash\ncp x ${CNT_BUILD_PREFIX}/bin\n":  true,
+		"#!/bin/bash\n# writes to $CNT_BUILD_PREFIX\n": false,
+		"#!/bin/bash\n#DEP: samtools/1.22\nsamtools\n": false,
+	} {
+		script := filepath.Join(dir, "s")
+		if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		err := requireNotBuildRecipe(script)
+		if refused != (err != nil) || (refused && !strings.Contains(err.Error(), "create -f")) {
+			t.Errorf("%q: %v, want refused=%v", body, err, refused)
+		}
+	}
+}
+
+func TestRequireTextScriptRefusesAnImage(t *testing.T) {
+	dir := t.TempDir()
+	image := filepath.Join(dir, "env.sqf")
+	if err := os.WriteFile(image, append([]byte("hsqs"), make([]byte, 64)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireTextScript(image); err == nil || !strings.Contains(err.Error(), "not a text file") {
+		t.Fatalf("err = %v, want a refusal naming a non-text file", err)
+	}
+}

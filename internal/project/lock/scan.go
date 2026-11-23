@@ -254,7 +254,7 @@ func scanScript(path, rel string, merged map[string]*Request, result *ScanResult
 	if err != nil {
 		return false, err
 	}
-	if isBuildRecipe(text) {
+	if IsBuildRecipe(text) {
 		return false, nil
 	}
 
@@ -299,20 +299,18 @@ func scanScript(path, rel string, merged map[string]*Request, result *ScanResult
 		result.Findings = append(result.Findings, Finding{Script: rel, Text: "#SLOT:", Reason: err.Error()})
 	}
 	for _, d := range decls {
-		for _, name := range append([]string{d.Default}, d.Choices...) {
-			if name != "" {
-				declare(name, d.Line, true)
-			}
+		for _, name := range d.Listed() {
+			declare(name, d.Line, true)
 		}
 	}
 	return true, nil
 }
 
-// isBuildRecipe reports whether a script builds an artifact rather than analysing with one.
+// IsBuildRecipe reports whether a script builds an artifact rather than analysing with one.
 //   - Only a recipe expands $CNT_BUILD_PREFIX, where a build writes its payload.
 //   - A recipe's #DEP: are build dependencies already in that artifact's provenance, so reading them would make the project pin what it never mounts.
 //   - Comments are stripped first, and both $CNT_BUILD_PREFIX and ${CNT_BUILD_PREFIX} count.
-func isBuildRecipe(text []byte) bool {
+func IsBuildRecipe(text []byte) bool {
 	stripped := string(utils.StripComments(text))
 	return strings.Contains(stripped, "$CNT_BUILD_PREFIX") || strings.Contains(stripped, "${CNT_BUILD_PREFIX}")
 }

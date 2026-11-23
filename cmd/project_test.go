@@ -189,7 +189,7 @@ func TestCreateJobFlagsCarryWhatChangesTheBuild(t *testing.T) {
 		createFlagSet.VisitAll(func(f *pflag.Flag) { f.Changed = false })
 	})
 	createSources, createLayer = []string{"lab"}, "u"
-	args := []string{"-c", "conda-forge", "-c", "bioconda", "--block-size", "256k", "--data-block-size", "1m", "--always-submit-data", "--no-submit"}
+	args := []string{"-c", "conda-forge", "-c", "bioconda", "--block-size", "256k", "--data-block-size", "1m", "--always-submit", "data", "--no-submit"}
 	if err := createFlagSet.Parse(args); err != nil {
 		t.Fatal(err)
 	}

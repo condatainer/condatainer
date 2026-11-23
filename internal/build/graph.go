@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -83,8 +84,6 @@ func NewBuildGraph(ctx context.Context, buildObjects []*BuildObject, imagesDir s
 			// resolve as missing, or the walk stops at it and never reaches what
 			// it needs.
 			hidden[obj.NameVersion()] = true
-		} else if obj.IsInstalled() {
-			log.Info("Overlay already installed, skipping", "name", obj.NameVersion())
 		}
 	}
 
@@ -115,7 +114,7 @@ func InstalledVersions(hidden map[string]bool) catalog.Have {
 }
 
 // resolvePlan expands the seeded roots into a dependency-first build order and
-// splits it into local and scheduler work, noting which each build gets. Resolution runs over the catalog
+// splits it into local and scheduler work. Resolution runs over the catalog
 // index alone, before any recipe is fetched or temp file written.
 func (bg *BuildGraph) resolvePlan(ctx context.Context, roots []string, hidden map[string]bool) error {
 	cat, err := config.OpenCatalog(ctx)
@@ -161,36 +160,30 @@ func (bg *BuildGraph) resolvePlan(ctx context.Context, roots []string, hidden ma
 	order = bg.pruneDependencies(order, roots)
 	bg.order = order
 
-	log := logging.FromContext(ctx)
+	bg.splitWork(order, bg.submitJobs && bg.scheduler != nil)
+	return nil
+}
+
+// splitWork sends each node of order, dependencies first, to the scheduler or to the foreground.
+//   - A node goes to the scheduler when it asks for it and jobs can be submitted, and a pulled node never does.
+//   - A node that waits for a dependency that is a job is a job too, queued behind it. Every foreground build runs before any job is submitted, so it would find that dependency missing.
+func (bg *BuildGraph) splitWork(order []*BuildObject, canSubmit bool) {
+	jobs := make(map[string]bool)
 	for _, obj := range order {
 		pull := obj.prebuilt.choice == prebuiltPull
-		scheduled := !pull && bg.submitJobs && bg.scheduler != nil && obj.RequiresScheduler()
+		scheduled := canSubmit && !pull && (obj.RequiresScheduler() || bg.waitsForJob(obj, jobs))
 		if scheduled {
 			bg.schedulerBuilds = append(bg.schedulerBuilds, obj)
+			jobs[obj.NameVersion()] = true
 		} else {
 			bg.localBuilds = append(bg.localBuilds, obj)
 		}
-		if obj.IsInstalled() {
-			continue
-		}
-		verb := "installed"
-		if obj.prebuilt.choice == prebuiltNone {
-			verb = "built"
-		}
-		switch {
-		case pull:
-			log.Info(obj.NameVersion()+" will be pulled from "+obj.prebuilt.candidate.endpoint, "kind", "note")
-			if len(obj.prunedDeps) > 0 {
-				log.Info(fmt.Sprintf("Its build dependencies are not installed: %s; `condatainer install` adds them",
-					strings.Join(obj.prunedDeps, ", ")), "kind", "note")
-			}
-		case scheduled:
-			log.Info(obj.NameVersion()+" will be "+verb+" by a scheduler job", "kind", "note")
-		default:
-			log.Info(obj.NameVersion()+" will be "+verb+" locally", "kind", "note")
-		}
 	}
-	return nil
+}
+
+// waitsForJob reports whether obj can be a job and one of its dependencies in the graph is.
+func (bg *BuildGraph) waitsForJob(obj *BuildObject, jobs map[string]bool) bool {
+	return obj.submitJob && slices.ContainsFunc(bg.graphDependencies(obj), func(dep string) bool { return jobs[dep] })
 }
 
 // dependencyPlan returns what obj's dependencies will contribute to its
@@ -451,12 +444,13 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 		return "", err
 	}
 
-	// Get script specs; when always_submit_data forces submission without directives, synthesize empty specs
+	// Get script specs; when build.always_submit forces submission without directives, synthesize empty specs
 	specs := obj.ScriptSpecs()
 	if specs == nil {
 		effRS := EffectiveResourceSpec(nil)
 		specs = &scheduler.ScriptSpecs{Spec: effRS}
 	}
+	useSubmitDir(specs)
 	if scheduler.ProxyPerJob(scheduler.ProxyCreate) {
 		specs.ProxyVia = scheduler.LoginNode()
 	}
@@ -503,6 +497,17 @@ func (bg *BuildGraph) submitJob(obj *BuildObject, depIDs []string) (string, erro
 
 	log.Info("Submitted scheduler job", "type", bg.scheduler.GetType(), "jobID", jobID, "name", obj.NameVersion())
 	return jobID, nil
+}
+
+// useSubmitDir starts the job in the directory it was submitted from, unless the recipe names one.
+// A foreground build and a submitted one then start in the same place, whichever scheduler runs the job: PBS otherwise starts a job in $HOME.
+func useSubmitDir(specs *scheduler.ScriptSpecs) {
+	if specs.Control.WorkDir != "" {
+		return
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		specs.Control.WorkDir = cwd
+	}
 }
 
 // plainToken matches an argument that needs no quoting in the job script.

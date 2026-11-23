@@ -144,6 +144,33 @@ func TestPairsWithFollowsTheImageName(t *testing.T) {
 	}
 }
 
+// An env.ext3 pairs with env.sqf, and the snapshot is found with no writable
+// overlay beside it.
+func TestEnvOverlayAndSnapshotWithAnExt3(t *testing.T) {
+	requireSquashfsTools(t)
+	t.Setenv("USER", "alice")
+	dir := t.TempDir()
+	sqf := filepath.Join(dir, "env.sqf")
+	packRuntimeSqf(t, sqf, envRuntime())
+
+	if got := FindEnvSnapshot(dir); got != sqf {
+		t.Errorf("FindEnvSnapshot = %q, want %s", got, sqf)
+	}
+	if got := ResolveEnvOverlay("", dir); got != sqf {
+		t.Errorf("with no writable overlay, ResolveEnvOverlay = %q, want the snapshot", got)
+	}
+	ext3 := filepath.Join(dir, "env.ext3")
+	if err := os.WriteFile(ext3, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveEnvOverlay("", dir); got != ext3 {
+		t.Errorf("ResolveEnvOverlay = %q, want %s", got, ext3)
+	}
+	if got := LookupSnapshot(ext3).Path; got != sqf {
+		t.Errorf("env.ext3 pairs with %q, want %s", got, sqf)
+	}
+}
+
 func TestNamesEnvironment(t *testing.T) {
 	requireSquashfsTools(t)
 	dir := t.TempDir()

@@ -88,8 +88,8 @@ func IsCondaFile(path string) bool {
 
 // ResolveWD returns wd, or the process cwd when wd is "". The one place every
 // env-overlay lookup resolves its working directory — FindEnvOverlay for a
-// `.img`, helper.FindEnvSnapshot for a paired `.sqf` with no `.img` yet — so
-// the two can never disagree about where "here" is.
+// writable overlay, helper.FindEnvSnapshot for a paired `.sqf` with none yet —
+// so the two can never disagree about where "here" is.
 func ResolveWD(wd string) string {
 	if wd == "" {
 		wd, _ = os.Getwd()
@@ -97,8 +97,8 @@ func ResolveWD(wd string) string {
 	return wd
 }
 
-// FindEnvOverlay returns the env.img in wd (see ResolveWD).
-//   - {wd}/env-$USER.img is preferred over {wd}/env.img.
+// FindEnvOverlay returns the environment overlay in wd (see ResolveWD).
+//   - The first of env-$USER.img, env-$USER.ext3, env.img and env.ext3 that exists wins, so a user's own file beats the shared one and .img beats .ext3.
 //   - An explicit envImg path is returned as is. "" or "env.img" triggers the search.
 //   - It returns "" when nothing is found.
 func FindEnvOverlay(envImg, wd string) string {
@@ -106,13 +106,17 @@ func FindEnvOverlay(envImg, wd string) string {
 		return envImg
 	}
 	wd = ResolveWD(wd)
-	if userSuffix := os.Getenv("USER"); userSuffix != "" {
-		if p := filepath.Join(wd, "env-"+userSuffix+".img"); FileExists(p) {
-			return p
-		}
+	var stems []string
+	if user := os.Getenv("USER"); user != "" {
+		stems = append(stems, "env-"+user)
 	}
-	if p := filepath.Join(wd, "env.img"); FileExists(p) {
-		return p
+	stems = append(stems, "env")
+	for _, stem := range stems {
+		for _, ext := range []string{".img", ".ext3"} {
+			if p := filepath.Join(wd, stem+ext); FileExists(p) {
+				return p
+			}
+		}
 	}
 	return ""
 }

@@ -33,7 +33,7 @@ var overlayCreateCmd = &cobra.Command{
 // overlayCreateHelp is the help body for 'overlay create'.
 const overlayCreateHelp = `Create an ext3 overlay, sized and tuned by profile (-p).
 
-- The default path is env.img.
+- The default path is env.img. Supports both .img and .ext3 extensions.
 - Conda packages after -- or an environment file (-f) set up Conda right away.
 - Without either, Conda is set up on the first install.`
 

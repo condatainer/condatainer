@@ -377,3 +377,31 @@ func TestWithHomeHint(t *testing.T) {
 		t.Errorf("a replaced HOME got a hint: %v", got)
 	}
 }
+
+// The environment overlay in a directory is the first of env-$USER.img,
+// env-$USER.ext3, env.img and env.ext3 that exists.
+func TestFindEnvOverlayOrder(t *testing.T) {
+	t.Setenv("USER", "alice")
+	order := []string{"env-alice.img", "env-alice.ext3", "env.img", "env.ext3"}
+	for i, first := range order {
+		dir := t.TempDir()
+		for _, name := range order[i:] {
+			if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, envImg := range []string{"", "env.img"} {
+			if got := FindEnvOverlay(envImg, dir); got != filepath.Join(dir, first) {
+				t.Errorf("with %v present, FindEnvOverlay(%q) = %s, want %s", order[i:], envImg, got, first)
+			}
+		}
+	}
+
+	dir := t.TempDir()
+	if got := FindEnvOverlay("", dir); got != "" {
+		t.Errorf("an empty directory found %s", got)
+	}
+	if got := FindEnvOverlay("my.ext3", dir); got != "my.ext3" {
+		t.Errorf("an explicit path was changed to %s", got)
+	}
+}

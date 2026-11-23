@@ -94,7 +94,7 @@ func resolveUnfreezeTarget(artifact, dest string) (string, error) {
 		if info, err := os.Stat(dest); err == nil && info.IsDir() {
 			dest = filepath.Join(dest, named)
 		} else if !utils.IsImg(dest) {
-			return "", fmt.Errorf("%s is not a writable overlay path; unfreeze writes an .img", dest)
+			return "", fmt.Errorf("%s is not a writable overlay path; give a path ending in .img or .ext3", dest)
 		}
 	}
 

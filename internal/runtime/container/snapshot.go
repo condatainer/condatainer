@@ -26,7 +26,11 @@ type SnapshotLookup struct {
 //   - If a file is there and its runtime.json reports artifact.TypeEnv, it is the pair.
 //   - Any other file there is Blocked. The mount path treats it as nothing found, and `overlay freeze` refuses to replace it.
 func LookupSnapshot(imgPath string) SnapshotLookup {
-	slot := SnapshotPath(imgPath)
+	return lookupSlot(SnapshotPath(imgPath))
+}
+
+// lookupSlot reads the snapshot slot at slot: the env-typed artifact there, or the file that blocks it.
+func lookupSlot(slot string) SnapshotLookup {
 	if !utils.FileExists(slot) {
 		return SnapshotLookup{}
 	}

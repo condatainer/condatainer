@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/chzyer/readline"
 	"github.com/condatainer/condatainer/internal/build"
@@ -178,13 +177,11 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 		if createName == "" && createPrefix == "" && createFrom == "" {
 			normalizedArgs = make([]string, len(args))
 			for i, arg := range args {
-				normalized, expanded, err := solveCreateName(cmd.Context(), arg)
+				normalized, _, err := solveCreateName(cmd.Context(), arg)
 				if err != nil {
 					ExitWithError("%v", err)
 				}
-				if expanded {
-					utils.PrintNote("Expanding '%s' to '%s'", utils.NormalizeModule(arg), normalized)
-				}
+				typedName(normalized, utils.NormalizeModule(arg))
 				normalizedArgs[i] = normalized
 			}
 		}
@@ -294,10 +291,6 @@ func init() {
 	})
 }
 
-// imagesDirNoteOnce keeps the destination note to one line per command, since the
-// three create paths each resolve the directory independently.
-var imagesDirNoteOnce sync.Once
-
 // writableImagesDirFor resolves where a build installs: the layer named, or the
 // furthest-out writable directory when none is.
 //
@@ -320,17 +313,14 @@ func writableImagesDirFor(layer string) (string, error) {
 }
 
 // getWritableImagesDir returns the writable images directory or exits with an error.
-// The destination and its data layer are reported once: the target depends on which
-// directories happen to be writable, so "(cnt-root)" vs "(user)" is the difference
-// between installing for everyone and installing only for yourself.
+// The plan names it with its data layer, since which directories are writable decides
+// whether an overlay is installed for everyone or only for the user.
 func getWritableImagesDir() string {
 	dir, err := writableImagesDirFor(createLayer)
 	if err != nil {
 		ExitWithError("%v", err)
 	}
-	imagesDirNoteOnce.Do(func() {
-		utils.PrintNote("Installing to %s (%s layer)", dir, config.ClassifyDataDir(dir))
-	})
+	createPlanDir = dir
 	return dir
 }
 
@@ -570,9 +560,15 @@ func solveCondaName(name string) (string, error) {
 	return "", fmt.Errorf("no version of %q in channel %s satisfies %q", dep.Name, results[0].Channel, name)
 }
 
-// runCreatePackages creates separate sqf files for each package using BuildGraph
+// runCreatePackages creates separate sqf files for each package using BuildGraph, and exits when jobs were submitted.
 // Example: condatainer create samtools/1.16 bcftools/1.15
 func runCreatePackages(ctx context.Context, packages []string) {
+	graph, built := buildPackages(ctx, packages)
+	finishBuild(graph, built)
+}
+
+// buildPackages builds the packages as separate overlays. It returns the graph and how many overlays it builds, pulls or rebuilds, or nil for a dry run.
+func buildPackages(ctx context.Context, packages []string) (*build.BuildGraph, int) {
 	imagesDir := getWritableImagesDir()
 
 	buildObjects := make([]*build.BuildObject, 0, len(packages))
@@ -590,6 +586,9 @@ func runCreatePackages(ctx context.Context, packages []string) {
 				}
 				pkg = resolved
 			}
+		}
+		if _, ok := createTyped[pkg]; !ok {
+			typedName(pkg, pkg)
 		}
 
 		var bo *build.BuildObject
@@ -618,17 +617,19 @@ func runCreatePackages(ctx context.Context, packages []string) {
 		ExitWithError("Failed to create build graph: %v", err)
 	}
 	graph.SetJobFlags(createJobFlags())
+	steps := graph.Plan()
 	if createDryRun {
-		reportCreatePlan(graph.Plan())
-		return
+		reportCreatePlan(steps)
+		return nil, 0
+	}
+	if !planShown {
+		showPlan(steps)
 	}
 
 	if err := graph.Run(ctx); err != nil {
 		exitOnBuildError(err)
 	}
-	// If jobs were submitted to the scheduler, exit with a distinct code so downstream tooling
-	// can detect that overlays will be created asynchronously by scheduler jobs.
-	ExitIfJobsSubmitted(graph)
+	return graph, builtCount(steps)
 }
 
 // derivePrefixFromFile returns the prefix --file implies, or "" when the user
@@ -755,14 +756,16 @@ func buildForeignSource(ctx context.Context, targetPrefix, source, outputDir str
 	if err != nil {
 		ExitWithError("Failed to create build graph: %v", err)
 	}
+	steps := graph.Plan()
 	if createDryRun {
-		reportCreatePlan(graph.Plan())
+		reportCreatePlan(steps)
 		return
 	}
+	showPlan(steps)
 	if err := graph.Run(ctx); err != nil {
 		exitOnBuildError(err)
 	}
-	ExitIfJobsSubmitted(graph)
+	finishBuild(graph, builtCount(steps))
 }
 
 // applyStoreOverflow marks a build to be filed under its identity when --store
@@ -791,17 +794,17 @@ func buildExternalSource(ctx context.Context, targetPrefix, source string, isApp
 		ExitWithError("Failed to create build graph: %v", err)
 	}
 	graph.SetJobFlags(createJobFlags())
+	steps := graph.Plan()
 	if createDryRun {
-		reportCreatePlan(graph.Plan())
+		reportCreatePlan(steps)
 		return
 	}
+	showPlan(steps)
 
 	if err := graph.Run(ctx); err != nil {
 		exitOnBuildError(err)
 	}
-	// If jobs were submitted to the scheduler, exit with a distinct code so downstream tooling
-	// can detect that overlays will be created asynchronously by scheduler jobs.
-	ExitIfJobsSubmitted(graph)
+	finishBuild(graph, builtCount(steps))
 }
 
 // runCreateWithName creates a single sqf with multiple packages or from a file
@@ -821,10 +824,11 @@ func runCreateWithName(ctx context.Context, packages []string) {
 		// only <base>/<name> is.
 		scan, _ := image.ScanOverlays(image.ScanOptions{})
 		if existingPath := image.FirstPaths(scan)[normalizedName]; existingPath != "" {
-			utils.PrintMessage("Overlay %s already exists at %s. Skipping creation.",
-				filepath.Base(existingPath), existingPath)
+			installed := []build.PlannedStep{installedStep(normalizedName, existingPath)}
 			if createDryRun {
-				reportCreatePlan([]build.PlannedStep{installedStep(normalizedName, existingPath)})
+				reportCreatePlan(installed)
+			} else {
+				showPlan(installed)
 			}
 			return
 		}
@@ -867,14 +871,7 @@ func runCreateWithName(ctx context.Context, packages []string) {
 		ExitWithError("Failed to create build object: %v", err)
 	}
 	applyStoreOverflow(bo)
-	if createDryRun {
-		reportObjectPlan(ctx, bo)
-		return
-	}
-
-	if err := bo.Build(ctx, false); err != nil {
-		ExitWithError("Build failed: %v", err)
-	}
+	buildObject(ctx, bo)
 }
 
 // runCreateWithPrefix creates a sqf from external source file (.sh, .def, .yml)
@@ -899,13 +896,7 @@ func runCreateWithPrefix(ctx context.Context) {
 		if err != nil {
 			ExitWithError("Failed to create build object: %v", err)
 		}
-		if createDryRun {
-			reportObjectPlan(ctx, bo)
-			return
-		}
-		if err := bo.Build(ctx, false); err != nil {
-			ExitWithError("Build failed: %v", err)
-		}
+		buildObject(ctx, bo)
 	} else if isForeignRoot(createFile) {
 		// Already-built .sif or sandbox directory
 		absFile, _ := filepath.Abs(createFile)
@@ -932,13 +923,7 @@ func runCreateWithPrefixAndPackages(ctx context.Context, packages []string) {
 	if err != nil {
 		ExitWithError("Failed to create build object: %v", err)
 	}
-	if createDryRun {
-		reportObjectPlan(ctx, bo)
-		return
-	}
-	if err := bo.Build(ctx, false); err != nil {
-		ExitWithError("Build failed: %v", err)
-	}
+	buildObject(ctx, bo)
 }
 
 // runCreateFromSource creates a sqf from an external source (def file or remote URI)

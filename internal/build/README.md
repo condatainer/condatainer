@@ -131,6 +131,9 @@ Builds overlay images from Conda packages, recipes or Apptainer definitions.
 - A plan says where it looked for a published copy, and whether the registry could not be reached.
   - A copy that is absent and a registry that did not answer differ: only the first means the copy is missing.
 - Either kind of plan can be read, never run. A build runs where it is built, with its answers.
+- The graph logs nothing about what it will do. Each step carries it: pull, job, installed, dependencies and input.
+  - A command lays the steps out, so the same plan prints for every build path and for `--json`.
+  - A node whose prebuilt is undecided is planned as a build, and may pull when it runs.
 
 ## Workspace
 

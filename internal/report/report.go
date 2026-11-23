@@ -149,6 +149,7 @@ type Dep struct {
 //   - Equiv is the recipe's key whenever it is known, whatever the action, and
 //     Deps are the dependencies it was derived from.
 //   - DependsOn orders the steps; Deps describes them.
+//   - Dependents names the steps that need this one built first.
 //   - Outcome, JobID and Error are empty in a dry run.
 type Step struct {
 	Overlay
@@ -159,6 +160,7 @@ type Step struct {
 	Identity      meta.KeyRef `json:"identity,omitzero"`
 	Equiv         meta.KeyRef `json:"equiv,omitzero"`
 	DependsOn     []string    `json:"depends_on,omitempty"`
+	Dependents    []string    `json:"dependents,omitempty"`
 	Deps          []Dep       `json:"deps,omitempty"`
 	RequiresInput bool        `json:"requires_input"`
 	Reason        string      `json:"reason,omitempty"`

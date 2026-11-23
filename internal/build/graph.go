@@ -83,8 +83,6 @@ func NewBuildGraph(ctx context.Context, buildObjects []*BuildObject, imagesDir s
 			// resolve as missing, or the walk stops at it and never reaches what
 			// it needs.
 			hidden[obj.NameVersion()] = true
-		} else if obj.IsInstalled() {
-			log.Info("Overlay already installed, skipping", "name", obj.NameVersion())
 		}
 	}
 
@@ -115,7 +113,7 @@ func InstalledVersions(hidden map[string]bool) catalog.Have {
 }
 
 // resolvePlan expands the seeded roots into a dependency-first build order and
-// splits it into local and scheduler work, noting which each build gets. Resolution runs over the catalog
+// splits it into local and scheduler work. Resolution runs over the catalog
 // index alone, before any recipe is fetched or temp file written.
 func (bg *BuildGraph) resolvePlan(ctx context.Context, roots []string, hidden map[string]bool) error {
 	cat, err := config.OpenCatalog(ctx)
@@ -161,7 +159,6 @@ func (bg *BuildGraph) resolvePlan(ctx context.Context, roots []string, hidden ma
 	order = bg.pruneDependencies(order, roots)
 	bg.order = order
 
-	log := logging.FromContext(ctx)
 	for _, obj := range order {
 		pull := obj.prebuilt.choice == prebuiltPull
 		scheduled := !pull && bg.submitJobs && bg.scheduler != nil && obj.RequiresScheduler()
@@ -169,25 +166,6 @@ func (bg *BuildGraph) resolvePlan(ctx context.Context, roots []string, hidden ma
 			bg.schedulerBuilds = append(bg.schedulerBuilds, obj)
 		} else {
 			bg.localBuilds = append(bg.localBuilds, obj)
-		}
-		if obj.IsInstalled() {
-			continue
-		}
-		verb := "installed"
-		if obj.prebuilt.choice == prebuiltNone {
-			verb = "built"
-		}
-		switch {
-		case pull:
-			log.Info(obj.NameVersion()+" will be pulled from "+obj.prebuilt.candidate.endpoint, "kind", "note")
-			if len(obj.prunedDeps) > 0 {
-				log.Info(fmt.Sprintf("Its build dependencies are not installed: %s; `condatainer install` adds them",
-					strings.Join(obj.prunedDeps, ", ")), "kind", "note")
-			}
-		case scheduled:
-			log.Info(obj.NameVersion()+" will be "+verb+" by a scheduler job", "kind", "note")
-		default:
-			log.Info(obj.NameVersion()+" will be "+verb+" locally", "kind", "note")
 		}
 	}
 	return nil

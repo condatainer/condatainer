@@ -3,10 +3,11 @@ package container
 import (
 	"path/filepath"
 
+	"github.com/condatainer/condatainer/internal/artifact/meta"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
-// ResolveEnvOverlay resolves the project's environment overlay in cwd: the writable .img if one exists, else the read-only env-typed .sqf beside where it would go.
+// ResolveEnvOverlay resolves the project's environment overlay in cwd: the writable overlay (.img or .ext3) if one exists, else the read-only env-typed .sqf.
 //   - It never creates anything; callers check utils.IsImg on the result.
 //   - It lives here so internal/project can call it without importing internal/helper, which imports it.
 func ResolveEnvOverlay(envImg, cwd string) string {
@@ -23,5 +24,5 @@ func ResolveEnvOverlay(envImg, cwd string) string {
 // is none.
 func FindEnvSnapshot(cwd string) string {
 	wd := utils.ResolveWD(cwd)
-	return LookupSnapshot(filepath.Join(wd, "env.img")).Path
+	return lookupSlot(filepath.Join(wd, meta.EnvName+".sqf")).Path
 }

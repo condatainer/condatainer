@@ -106,6 +106,71 @@ func TestLookupSnapshotBlockedByNonEnvFile(t *testing.T) {
 	}
 }
 
+// A backup keeps its .img and snapshot as a pair under the backup name, and the
+// pair does not touch the live one.
+func TestBackupPairIsSeparateFromTheLivePair(t *testing.T) {
+	requireSquashfsTools(t)
+	t.Setenv("USER", "alice")
+	dir := t.TempDir()
+	for _, name := range []string{"env.sqf", "old.sqf"} {
+		packRuntimeSqf(t, filepath.Join(dir, name), envRuntime())
+	}
+	for img, want := range map[string]string{
+		"env-alice.img": "env.sqf",
+		"old.ext3":      "old.sqf",
+	} {
+		if got := LookupSnapshot(filepath.Join(dir, img)).Path; got != filepath.Join(dir, want) {
+			t.Errorf("%s pairs with %q, want %s", img, got, want)
+		}
+	}
+}
+
+// PairsWith is the name rule alone, so it needs no snapshot on disk. A backup
+// name selects no live snapshot.
+func TestPairsWithFollowsTheImageName(t *testing.T) {
+	t.Setenv("USER", "alice")
+	for name, want := range map[string]bool{
+		"env.ext3":       true,
+		"env-alice.img":  true,
+		"env-backup.img": false,
+		"other.img":      false,
+	} {
+		if got := PairsWith("/proj/"+name, "/proj/env.sqf"); got != want {
+			t.Errorf("PairsWith(%s) = %v, want %v", name, got, want)
+		}
+	}
+	if PairsWith("/proj/env.img", "/elsewhere/env.sqf") {
+		t.Error("a snapshot in another directory pairs")
+	}
+}
+
+// An env.ext3 pairs with env.sqf, and the snapshot is found with no writable
+// overlay beside it.
+func TestEnvOverlayAndSnapshotWithAnExt3(t *testing.T) {
+	requireSquashfsTools(t)
+	t.Setenv("USER", "alice")
+	dir := t.TempDir()
+	sqf := filepath.Join(dir, "env.sqf")
+	packRuntimeSqf(t, sqf, envRuntime())
+
+	if got := FindEnvSnapshot(dir); got != sqf {
+		t.Errorf("FindEnvSnapshot = %q, want %s", got, sqf)
+	}
+	if got := ResolveEnvOverlay("", dir); got != sqf {
+		t.Errorf("with no writable overlay, ResolveEnvOverlay = %q, want the snapshot", got)
+	}
+	ext3 := filepath.Join(dir, "env.ext3")
+	if err := os.WriteFile(ext3, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveEnvOverlay("", dir); got != ext3 {
+		t.Errorf("ResolveEnvOverlay = %q, want %s", got, ext3)
+	}
+	if got := LookupSnapshot(ext3).Path; got != sqf {
+		t.Errorf("env.ext3 pairs with %q, want %s", got, sqf)
+	}
+}
+
 func TestNamesEnvironment(t *testing.T) {
 	requireSquashfsTools(t)
 	dir := t.TempDir()

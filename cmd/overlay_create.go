@@ -33,24 +33,12 @@ var overlayCreateCmd = &cobra.Command{
 // overlayCreateHelp is the help body for 'overlay create'.
 const overlayCreateHelp = `Create an ext3 overlay, sized and tuned by profile (-p).
 
-- The default path is env.img.
+- The default path is env.img. Supports both .img and .ext3 extensions.
 - Conda packages after -- or an environment file (-f) set up Conda right away.
 - Without either, Conda is set up on the first install.`
 
 func init() {
 	registerOverlayCreateFlags(overlayCreateCmd)
-}
-
-// displayPath is p relative to cwd when possible, so a message about a plain
-// "env.img" typed on the command line doesn't balloon into a long absolute
-// path — matches the display convention in checkDeps.
-func displayPath(p string) string {
-	if cwd, err := os.Getwd(); err == nil {
-		if rel, err := filepath.Rel(cwd, p); err == nil && !strings.HasPrefix(rel, "..") {
-			return rel
-		}
-	}
-	return p
 }
 
 // overlayProfileFlag returns the chosen overlay profile.
@@ -77,23 +65,12 @@ func runOverlayCreate(cmd *cobra.Command, args []string) {
 		ExitWithError("Too many positional arguments before --.")
 	}
 
-	// Auto-append .img extension if not present and path doesn't have an extension
-	if !utils.IsImg(path) {
-		if strings.Contains(filepath.Base(path), ".") {
-			ExitWithError("Overlay must have a .img or .ext3 extension.")
-		}
-		path += ".img"
-	}
-
-	// Convert to absolute path
-	absPath, err := filepath.Abs(path)
+	path, err := resolveOverlayPath(path, ".img")
 	if err != nil {
-		ExitWithError("Failed to resolve path: %v", err)
+		ExitWithError("%v", err)
 	}
-	path = absPath
-
-	if utils.FileExists(path) || utils.DirExists(path) {
-		ExitWithError("Path %s already exists.", path)
+	if err := makeOverlayParent(path); err != nil {
+		ExitWithError("%v", err)
 	}
 
 	// lookup.Path is always beside path (LookupSnapshot's own invariant), so

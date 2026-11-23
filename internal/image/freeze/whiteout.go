@@ -58,7 +58,7 @@ type Translation struct {
 	// Devices are whiteouts the image already holds as char 0:0 nodes, by path
 	// relative to upper/. They need no definition when the pack reads the image
 	// directly — mksquashfs copies the node as it stands — so they are listed
-	// rather than translated. The copy route cannot: see ForCopy.
+	// rather than translated. A union mount cannot: see ForUnion.
 	Devices []string
 	// Convention is what the source overlay used.
 	Convention Convention
@@ -66,10 +66,10 @@ type Translation struct {
 	Opaque []string
 }
 
-// ForCopy returns the translation a pack needs when it reads a staged copy rather
-// than the image itself. rdump cannot create a device node, so whiteouts the
-// image held as char 0:0 are absent from the copy and must be injected.
-func (t Translation) ForCopy() Translation {
+// ForUnion returns the translation a pack needs when it reads a union mount
+// rather than the image itself. A union swallows every char 0:0 node, so the
+// whiteouts the image held as nodes must be injected.
+func (t Translation) ForUnion() Translation {
 	if len(t.Devices) == 0 {
 		return t
 	}
@@ -128,8 +128,7 @@ func Translate(ctx context.Context, imgPath string, entries []Entry, base BaseLi
 	// One whiteout per base entry the upper does not itself provide. This is
 	// exact against the base it was frozen against and only that one: a
 	// trusted.overlay.opaque xattr would be base-independent, but mksquashfs has
-	// no pseudo syntax for an xattr and the staged route needs a filesystem that
-	// stores them, which a shared NFS does not.
+	// no pseudo syntax for an xattr.
 	present := map[string]bool{}
 	for _, e := range entries {
 		present[e.Path] = true

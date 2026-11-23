@@ -84,6 +84,17 @@ func TestAutoloadEnv(t *testing.T) {
 	}
 }
 
+func TestAutoloadEnvLoadsAnExt3WithItsSnapshot(t *testing.T) {
+	dir, img, sqf := envDir(t, true)
+	ext3 := filepath.Join(dir, "env.ext3")
+	if err := os.Rename(img, ext3); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := autoloadEnv(dir, false); !slices.Equal(got, []string{ext3, sqf}) {
+		t.Errorf("autoloaded %v, want %v", got, []string{ext3, sqf})
+	}
+}
+
 func TestAutoloadEnvLoadsASnapshotWithNoImg(t *testing.T) {
 	dir, img, sqf := envDir(t, true)
 	if err := os.Remove(img); err != nil {

@@ -92,19 +92,24 @@ mkdir lib
 mkdir old
 mkdir opq
 mkdir swap
+mkdir dir2ln
 cd /upper/usr
 mkdir bin
 cd /upper/cnt_env/bin
 symlink lnkeep keep
-symlink lnedit keep`)
+symlink lnedit keep
+symlink ln2file keep
+symlink ln2dir keep
+symlink lngone keep`)
 	for dir, files := range map[string]map[string]string{
-		"/upper/cnt_env/bin":  {"keep": "v1\n", "edit": "v1\n", "gone": "v1\n"},
-		"/upper/cnt_env/swap": {"s1": "s\n"},
-		"/upper/cnt_env":      {"swap2": "was a file\n"},
-		"/upper/cnt_env/lib":  {"a": "a\n", "b": "b\n"},
-		"/upper/cnt_env/old":  {"x": "x\n"},
-		"/upper/cnt_env/opq":  {"old1": "1\n", "old2": "2\n"},
-		"/upper/usr/bin":      {".wh.basefile1": "", ".wh.basefile2": ""},
+		"/upper/cnt_env/bin":    {"keep": "v1\n", "edit": "v1\n", "gone": "v1\n", "file2ln": "v1\n"},
+		"/upper/cnt_env/dir2ln": {"x": "x\n"},
+		"/upper/cnt_env/swap":   {"s1": "s\n"},
+		"/upper/cnt_env":        {"swap2": "was a file\n"},
+		"/upper/cnt_env/lib":    {"a": "a\n", "b": "b\n"},
+		"/upper/cnt_env/old":    {"x": "x\n"},
+		"/upper/cnt_env/opq":    {"old1": "1\n", "old2": "2\n"},
+		"/upper/usr/bin":        {".wh.basefile1": "", ".wh.basefile2": "", ".wh.basedir": "", ".wh.baselink": "", ".wh.both": ""},
 	} {
 		for name, content := range files {
 			writeInto(t, first, dir, name, content)
@@ -120,16 +125,24 @@ cd cnt_env
 mkdir bin
 mkdir opq
 mkdir swap2
+symlink dir2ln bin
 cd /upper/usr
 mkdir bin
+cd /upper/usr/bin
+mkdir basedir
+symlink baselink basefile2
 cd /upper/cnt_env/bin
-symlink lnedit edit`)
+mkdir ln2dir
+symlink lnedit edit
+symlink file2ln keep`)
 	for dir, files := range map[string]map[string]string{
-		"/upper/cnt_env/bin":   {"new": "new\n", "edit": "version-two\n", ".wh.gone": ""},
-		"/upper/cnt_env":       {".wh.old": "", "swap": "now a file\n"},
-		"/upper/cnt_env/swap2": {".wh..wh..opq": "", "n": "n\n"},
-		"/upper/cnt_env/opq":   {".wh..wh..opq": "", "new1": "n\n"},
-		"/upper/usr/bin":       {"basefile2": "back\n", ".wh.basefile3": ""},
+		"/upper/cnt_env/bin":        {"new": "new\n", "edit": "version-two\n", ".wh.gone": "", "ln2file": "now a file\n", ".wh.lngone": ""},
+		"/upper/cnt_env/bin/ln2dir": {"d": "d\n"},
+		"/upper/cnt_env":            {".wh.old": "", "swap": "now a file\n"},
+		"/upper/cnt_env/swap2":      {".wh..wh..opq": "", "n": "n\n"},
+		"/upper/cnt_env/opq":        {".wh..wh..opq": "", "new1": "n\n"},
+		"/upper/usr/bin":            {"basefile2": "back\n", ".wh.basefile3": "", ".wh.both": ""},
+		"/upper/usr/bin/basedir":    {"f": "f\n"},
 	} {
 		for name, content := range files {
 			writeInto(t, thin, dir, name, content)
@@ -141,6 +154,9 @@ symlink lnedit edit`)
 	for path, kind := range map[string]byte{
 		"cnt_env/bin/keep": '-', "cnt_env/lib/a": '-', "cnt_env/swap/s1": '-',
 		"cnt_env/swap2": '-', "cnt_env/bin/lnkeep": 'l', "usr/bin/basefile1": 'c',
+		"cnt_env/bin/ln2file": 'l', "cnt_env/bin/file2ln": '-', "cnt_env/bin/ln2dir": 'l',
+		"cnt_env/bin/lngone": 'l', "cnt_env/dir2ln/x": '-', "usr/bin/basedir": 'c',
+		"usr/bin/baselink": 'c', "usr/bin/both": 'c',
 	} {
 		if n, ok := before[path]; !ok || n.kind != kind {
 			t.Fatalf("fixture: snapshot %s = %+v, want kind %q", path, n, kind)
@@ -184,6 +200,18 @@ symlink lnedit edit`)
 		"usr/bin/basefile1":  {'c', 0, ""},     // the snapshot's whiteout of a base file stays
 		"usr/bin/basefile2":  {'-', 5, ""},     // recreated in the .img: a file, not a whiteout
 		"usr/bin/basefile3":  {'c', 0, ""},     // a new whiteout of a base file
+
+		"cnt_env/bin/ln2file":  {'-', 11, ""},    // snapshot symlink replaced by a file
+		"cnt_env/bin/file2ln":  {'l', 0, "keep"}, // snapshot file replaced by a symlink
+		"cnt_env/bin/ln2dir":   {'d', 0, ""},     // snapshot symlink replaced by a directory
+		"cnt_env/bin/ln2dir/d": {'-', 2, ""},
+		"cnt_env/dir2ln":       {'l', 0, "bin"}, // snapshot directory replaced by a symlink
+		"cnt_env/dir2ln/x":     {'x', 0, ""},
+		"cnt_env/bin/lngone":   {'c', 0, ""}, // snapshot symlink deleted in the .img
+		"usr/bin/basedir":      {'d', 0, ""}, // the snapshot's whiteout, recreated as a directory
+		"usr/bin/basedir/f":    {'-', 2, ""},
+		"usr/bin/baselink":     {'l', 0, "basefile2"}, // the snapshot's whiteout, recreated as a symlink
+		"usr/bin/both":         {'c', 0, ""},          // whiteout in the snapshot and in the .img
 	}
 	for path, w := range cases {
 		n, present := got[path]

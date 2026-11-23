@@ -194,7 +194,7 @@ Once the environment is stable, compress `env.img` into a read-only SquashFS sna
 condatainer overlay freeze env.img
 ```
 
-- This command generates `env.sqf` and removes the original `env.img` (pass `--keep` to retain it).
+- This command generates `env.sqf` and removes the original `env.img`. To keep the old `env.img`, see [Freeze](environments.md#freeze).
 - Because environments cannot be reconstructed from scratch, preserving `env.sqf` is essential for reproducibility.
 
 ### Lock the Project

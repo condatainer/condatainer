@@ -42,8 +42,8 @@ var eCmd = &cobra.Command{
 - Extra Apptainer flags must use --flag=value format (no space).
 
 The environment overlay is the first of these in the current directory:
-  1. env-$USER.img, else env.img, with its env.sqf.
-  2. env.sqf alone, when there is no .img.`,
+  1. env-$USER.img or .ext3, else env.img or .ext3, with its env.sqf.
+  2. env.sqf alone, when there is no writable overlay.`,
 	Example: `  condatainer e                               # Load env.img if present
   condatainer e testing.img
   condatainer e samtools/1.22 bcftools/1.20
@@ -57,7 +57,7 @@ func init() {
 	rootCmd.AddCommand(eCmd)
 
 	eCmd.Flags().BoolVarP(&eReadOnly, "read-only", "r", false, "Mount .img overlays as read-only (default: writable)")
-	eCmd.Flags().BoolVarP(&eNoAutoload, "no-autoload", "n", false, "Disable auto-loading env.img from current directory")
+	eCmd.Flags().BoolVarP(&eNoAutoload, "no-autoload", "n", false, "Disable auto-loading the environment overlay")
 	eCmd.Flags().BoolVarP(&eFakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
 	eCmd.Flags().BoolVar(&eLoadGPU, "load-gpu", false, "Make the host GPU available even if autoload_gpu is off")
 	eCmd.Flags().StringVar(&eActivation, "activation", "all", "Which activate.d scripts to source before the command: all, env, or none")
@@ -169,9 +169,9 @@ func runE(cmd *cobra.Command, args []string) error {
 }
 
 // autoloadEnv picks the environment overlays in dir for a run that named no .img, and the message to print once the run is set up.
-//   - An env.img that can be locked is loaded with its paired env.sqf.
-//   - An env.img that cannot be used loads nothing, and neither does its env.sqf. The snapshot alone is an older environment, not this one.
-//   - With no env.img, an env.sqf in dir is loaded read-only.
+//   - A writable environment overlay (see utils.FindEnvOverlay) that can be locked is loaded with its paired env.sqf.
+//   - One that cannot be used loads nothing, and neither does its env.sqf. The snapshot alone is an older environment, not this one.
+//   - With none, an env.sqf in dir is loaded read-only.
 func autoloadEnv(dir string, readOnly bool) ([]string, func()) {
 	candidate := utils.FindEnvOverlay("", dir)
 	if candidate == "" {

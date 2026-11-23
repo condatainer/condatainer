@@ -136,6 +136,42 @@ mkdir bin`)
 	}
 }
 
+// A whiteout the image already holds as a char 0:0 node is packed as it stands,
+// beside one translated from a marker, and no working copy is left in scratch.
+func TestPackKeepsAnExistingWhiteoutNode(t *testing.T) {
+	requireSquashfs(t)
+	t.Setenv("CNT_TMPDIR", t.TempDir())
+	img := newImage(t, `cd upper
+mkdir usr
+cd usr
+mkdir bin
+cd bin
+mknod deleted c 0 0`)
+	writeInto(t, img, "/upper/usr/bin", ".wh.gone", "")
+	sqf := packImage(t, img)
+
+	out, err := exec.Command(hostTool(t, "unsquashfs"), "-ll", sqf).CombinedOutput()
+	if err != nil {
+		t.Fatalf("unsquashfs -ll: %v\n%s", err, out)
+	}
+	devices := 0
+	for _, l := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(l, "c") {
+			devices++
+		}
+	}
+	if devices != 2 {
+		t.Errorf("archive carries %d char devices, want 2 (one per deletion):\n%s", devices, out)
+	}
+	left, err := os.ReadDir(utils.GetTmpDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range left {
+		t.Errorf("left behind in scratch: %s", e.Name())
+	}
+}
+
 // The source is byte-identical afterwards, and its permissions are restored.
 func TestPackLeavesTheSourceUntouched(t *testing.T) {
 	requireSquashfs(t)

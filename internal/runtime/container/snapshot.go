@@ -26,7 +26,11 @@ type SnapshotLookup struct {
 //   - If a file is there and its runtime.json reports artifact.TypeEnv, it is the pair.
 //   - Any other file there is Blocked. The mount path treats it as nothing found, and `overlay freeze` refuses to replace it.
 func LookupSnapshot(imgPath string) SnapshotLookup {
-	slot := SnapshotPath(imgPath)
+	return lookupSlot(SnapshotPath(imgPath))
+}
+
+// lookupSlot reads the snapshot slot at slot: the env-typed artifact there, or the file that blocks it.
+func lookupSlot(slot string) SnapshotLookup {
 	if !utils.FileExists(slot) {
 		return SnapshotLookup{}
 	}
@@ -41,6 +45,13 @@ func LookupSnapshot(imgPath string) SnapshotLookup {
 //   - It sits beside the .img and is shared: env-alice.img and env.img both pair with env.sqf.
 func SnapshotPath(imgPath string) string {
 	return filepath.Join(filepath.Dir(imgPath), snapshotStem(imgPath)+".sqf")
+}
+
+// PairsWith reports whether snapshot is the file imgPath autoloads as its lower layer.
+func PairsWith(imgPath, snapshot string) bool {
+	a, errA := filepath.Abs(SnapshotPath(imgPath))
+	b, errB := filepath.Abs(snapshot)
+	return errA == nil && errB == nil && a == b
 }
 
 // snapshotStem is an .img's basename with its extension and, if present, its

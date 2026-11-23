@@ -82,12 +82,12 @@ type stackedPlan struct {
 
 // planStacked works out the deletions and roots for packing the image over the
 // snapshot listed in snapshotNodes.
-//   - The image's own deletions are injected as the copy route injects them, since a union swallows the char 0:0 nodes it holds.
+//   - The image's own deletions are injected, including its char 0:0 nodes, since a union swallows them.
 //   - The snapshot's own whiteouts are injected too, unless the image recreates the path or hides its parent.
 //   - The snapshot's own metadata directory is not a root. The new archive gets its own.
 //   - A whiteout is injected only where its parent exists in the merged view, since mksquashfs cannot define a node under a missing directory.
 func planStacked(snapshotNodes []archiveNode, entries []Entry, tr Translation) stackedPlan {
-	out := tr.ForCopy()
+	out := tr.ForUnion()
 	out.Exclude = nil
 
 	deleted := map[string]bool{}

@@ -65,12 +65,11 @@
   - The union applies edits, deletions, opaque directories, type changes and symlinks exactly as a mount does, so none is reimplemented.
 - The union reports every file as owned by root, with `squash_to_root`. The archive is packed `-all-root`, so the recorded owner is the same.
 - The union swallows every char `0:0` node, in any layer. Whiteouts are injected as pseudo-files instead.
-  - The `.img`'s own, as the staged copy route does.
+  - The `.img`'s own, including the char `0:0` nodes it holds.
   - The snapshot's, read from its archive listing. Its whiteouts hide base files, and dropping them would bring those back.
   - A snapshot whiteout is skipped when the `.img` recreates the path, or hides a directory above it. A pseudo-file cannot sit under a missing directory.
 - A deletion stays a whiteout even where nothing beneath it needs one, since the base may hold the same path.
 - The snapshot's own `.cnt` metadata is not carried. The new archive gets its own.
 - The manifest records `fuse-overlayfs`'s version with the other tools, since it decides the merged content.
 - The extra FUSE processes run in the same namespace as the mount, and are killed when the pack ends. Otherwise the namespace would never end.
-- There is no staged-copy route for it. `--use-tmp` is refused.
 

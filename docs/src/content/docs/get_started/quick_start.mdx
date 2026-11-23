@@ -30,12 +30,15 @@ Recipes come from **[recipe sources](../advanced/custom_source.mdx)**. The publi
 Create by name, with or without a version:
 
 ```bash
-condatainer create samtools/1.22   # Exact version
-condatainer create openjdk/17      # Newest 17.x release
-condatainer create samtools        # Newest available version
+condatainer create samtools/1.22         # Exact version
+condatainer create openjdk/17            # A 17.x release
+condatainer create samtools              # An installed version, else the newest
+condatainer create code-server --latest  # The newest, even if one is installed
 ```
 
-When creating an overlay, CondaTainer searches for the package in this order:
+If you leave out the version or give a partial one, CondaTainer first uses the newest matching version that is installed, and builds nothing. Add `--latest` to take the newest version instead.
+
+When no matching version is installed, CondaTainer searches for the package in this order:
 
 1. Search the **recipe sources** by name, and pick the newest version that matches.
 2. If no recipe is found, search the **Conda channels** by name, and pick the newest version that matches.

@@ -40,12 +40,19 @@ var (
 	createDesc       string
 	createJSON       bool
 	createNeededBy   bool
+	createLatest     bool
 
 	// createFlagSet is createCmd.Flags(), held here so createJobFlags does not refer to createCmd.
 	createFlagSet *pflag.FlagSet
 
 	// compFlagNames is the set of compression flags, generated from build.CompressOptions.
 	compFlagNames map[string]bool
+
+	// targetFlagNames is the set of flags shown under "Target Flags:" in help: what to create, from where, and where it lands.
+	targetFlagNames = map[string]bool{
+		"name": true, "prefix": true, "file": true, "from": true,
+		"layer": true, "desc": true, "source": true, "channel": true,
+	}
 
 	// buildFlagNames is the set of flags shown under "Build Flags:" in help.
 	buildFlagNames = map[string]bool{
@@ -73,6 +80,7 @@ var createJobRules = map[string]string{
 	"json":               "output format of this run",
 	"always-submit-data": "decides whether to submit, not what is built",
 	"needed-by":          "the job builds by target",
+	"latest":             "the job builds by target",
 	"no-project":         "the job builds by target",
 }
 
@@ -109,11 +117,15 @@ var createCmd = &cobra.Command{
   It installs each #DEP: and each overlay a #SLOT: lists.
   A script in a project is refused. Use project restore.
 
+--latest takes the newest version of a bare or partial name, such as star.
+  Without it, an installed version is used.
+
 --dry-run shows what would be built, pulled or submitted, and does none of it.
 Exits with code 3 if build jobs were submitted to a scheduler.`,
 	Example: `  condatainer create samtools/1.22              # From Conda
   condatainer create orad/2.7.0                 # From a recipe source
   condatainer create --source lab star/2.7.11b  # From the lab source
+  condatainer create code-server --latest       # The newest, not an installed
   condatainer create -n nvim nvim nodejs        # Several packages, one overlay
   condatainer create matplotlib pandas -p /path
   condatainer create -f environment.yml -p myenv
@@ -130,6 +142,9 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 			if err := checkNeededByFlags(args); err != nil {
 				ExitWithError("%v", err)
 			}
+		}
+		if createLatest && (createName != "" || createPrefix != "" || createFile != "" || createFrom != "") {
+			ExitWithError("--latest takes package names, not --name, --prefix, --file or --from")
 		}
 		if len(args) == 0 && createFile == "" && createFrom == "" {
 			ExitWithError("At least one of [packages], --file, or --from must be provided.")
@@ -199,12 +214,15 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 		if createName == "" && createPrefix == "" && createFrom == "" {
 			normalizedArgs = make([]string, len(args))
 			for i, arg := range args {
-				normalized, _, err := solveCreateName(cmd.Context(), arg)
+				solved, err := solveCreate(cmd.Context(), arg, createLatest)
 				if err != nil {
 					ExitWithError("%v", err)
 				}
-				typedName(normalized, utils.NormalizeModule(arg))
-				normalizedArgs[i] = normalized
+				typedName(solved.Name, utils.NormalizeModule(arg))
+				if solved.Newer != "" {
+					createNewer[solved.Name] = solved.Newer
+				}
+				normalizedArgs[i] = solved.Name
 			}
 		}
 
@@ -261,6 +279,7 @@ func init() {
 	f.StringVarP(&createLayer, "layer", "l", "", "Build into this layer: "+layerChoices)
 	f.BoolVar(&createDryRun, "dry-run", false, "Show what would be built, pulled or submitted, without doing it")
 	f.BoolVar(&createNeededBy, "needed-by", false, "Take scripts and directories, and install what they declare")
+	f.BoolVar(&createLatest, "latest", false, "Take the newest version, not an installed one")
 	f.BoolVar(&noProjectRequested, "no-project", false, "Ignore the project: its lock, root and distro")
 	jsonFlag(f, &createJSON)
 	settings.AddSwitch(f, "build.always_submit_data", "always-submit-data", "true", settings.Usage("Submit data builds as scheduler jobs, even without directives"))
@@ -288,6 +307,7 @@ func init() {
 			fmt.Fprintf(cmd.OutOrStderr(), "\nExamples:\n%s\n", cmd.Example)
 		}
 		general := pflag.NewFlagSet("", pflag.ContinueOnError)
+		target := pflag.NewFlagSet("", pflag.ContinueOnError)
 		build := pflag.NewFlagSet("", pflag.ContinueOnError)
 		compress := pflag.NewFlagSet("", pflag.ContinueOnError)
 		cmd.LocalFlags().VisitAll(func(fl *pflag.Flag) {
@@ -295,12 +315,17 @@ func init() {
 				compress.AddFlag(fl)
 			} else if buildFlagNames[fl.Name] {
 				build.AddFlag(fl)
+			} else if targetFlagNames[fl.Name] {
+				target.AddFlag(fl)
 			} else {
 				general.AddFlag(fl)
 			}
 		})
 		if general.HasFlags() {
 			fmt.Fprintf(cmd.OutOrStderr(), "\nFlags:\n%s", flagUsages(general))
+		}
+		if target.HasFlags() {
+			fmt.Fprintf(cmd.OutOrStderr(), "\nTarget Flags:\n%s", flagUsages(target))
 		}
 		if build.HasFlags() {
 			fmt.Fprintf(cmd.OutOrStderr(), "\nBuild Flags:\n%s", flagUsages(build))
@@ -528,32 +553,70 @@ func resolveTemplateInteractively(ctx context.Context, info *catalog.Entry) (str
 	return concrete, nil
 }
 
-// solveCreateName resolves a create argument to one concrete module: catalog.SolveName,
-// then anaconda.org's package index, so "r", "rstudio-server" and a bare or partial
-// Conda name like "openjdk/17" each land on the newest version they admit.
-//   - Installed overlays are not consulted: installing a bare name always asks for the latest.
+// createSolved is what a create argument means.
+type createSolved struct {
+	// Name is the concrete module.
+	Name string
+	// Expanded is true when Name is not what was typed.
+	Expanded bool
+	// Newer is a version newer than the installed one that the recipe sources offer for a bare or partial name.
+	Newer string
+}
+
+// solveCreate resolves a create argument to one concrete module: catalog.SolveName, then anaconda.org's package index, so "r", "rstudio-server" and a bare or partial Conda name like "openjdk/17" each land on one version.
+//   - A bare or partial name resolves to the newest installed version it admits, and to the newest anywhere only when none is installed. latest skips the installed ones.
+//   - A name that landed on an installed version carries the newer version the recipe sources offer, if there is one. Conda is not asked.
 //   - A channel-annotated or fully qualified name that resolves nowhere is returned unchanged for the normal Conda fallback.
-func solveCreateName(ctx context.Context, nameVersion string) (string, bool, error) {
+func solveCreate(ctx context.Context, nameVersion string, latest bool) (createSolved, error) {
 	normalized := utils.NormalizeModule(nameVersion)
 	if normalized == "" || strings.Contains(normalized, "::") {
-		return normalized, false, nil
+		return createSolved{Name: normalized}, nil
 	}
 	cat, err := config.OpenCatalog(ctx)
 	if err != nil {
-		return normalized, false, nil
+		return createSolved{Name: normalized}, nil
 	}
-	if res, found, err := cat.SolveName(ctx, nil, projectDefaultDistro(), normalized); err == nil && found {
-		return res.Name, res.Name != normalized, nil
+	var have catalog.Have
+	if !latest {
+		have = build.InstalledVersions(nil)
+	}
+	distro := projectDefaultDistro()
+	if res, found, err := cat.SolveName(ctx, have, distro, normalized); err == nil && found {
+		solved := createSolved{Name: res.Name, Expanded: res.Name != normalized}
+		if res.Installed != "" && solved.Expanded {
+			solved.Newer = newerVersion(ctx, cat, distro, normalized, res.Name)
+		}
+		return solved, nil
 	}
 
 	resolved, err := solveCondaName(normalized)
 	if err != nil {
-		return normalized, false, err
+		return createSolved{Name: normalized}, err
 	}
 	if resolved != "" {
-		return resolved, resolved != normalized, nil
+		return createSolved{Name: resolved, Expanded: resolved != normalized}, nil
 	}
-	return normalized, false, nil
+	return createSolved{Name: normalized}, nil
+}
+
+// solveCreateName is solveCreate for the newest version, installed or not: it returns the module and whether it differs from what was typed.
+func solveCreateName(ctx context.Context, nameVersion string) (string, bool, error) {
+	solved, err := solveCreate(ctx, nameVersion, true)
+	return solved.Name, solved.Expanded, err
+}
+
+// newerVersion is the version of what the recipe sources offer for normalized when it is newer than installed, or "".
+func newerVersion(ctx context.Context, cat catalog.Catalog, distro, normalized, installed string) string {
+	res, found, err := cat.SolveName(ctx, nil, distro, normalized)
+	if err != nil || !found || res.Name == installed {
+		return ""
+	}
+	have, errHave := utils.ParseDep(installed)
+	want, errWant := utils.ParseDep(res.Name)
+	if errHave != nil || errWant != nil || have.Name != want.Name || utils.CompareVersions(want.Version, have.Version) <= 0 {
+		return ""
+	}
+	return want.Version
 }
 
 // solveCondaName resolves name against the first configured channel that carries it, picking the newest version Dep.Satisfies admits, so a bare or partial name lands on an exact version before micromamba solves.

@@ -218,3 +218,57 @@ func TestPlanPathKeepsAFileInTheWorkingDirectoryAPath(t *testing.T) {
 		}
 	}
 }
+
+func TestInstalledLineSaysWhatWasTypedAndWhatIsNewer(t *testing.T) {
+	pc := planContext{
+		typed: map[string]string{"code-server/4.100.0": "code-server", "bwa/0.7.19": "bwa/0.7.19"},
+		newer: map[string]string{"code-server/4.100.0": "4.146.0"},
+	}
+	for name, want := range map[string]string{
+		"code-server/4.100.0": "code-server is already installed as code-server/4.100.0 (newer: 4.146.0)",
+		"bwa/0.7.19":          "bwa/0.7.19 is already installed",
+		"other/1.0":           "other/1.0 is already installed",
+	} {
+		if got := installedLine(name, pc); got != want {
+			t.Errorf("installedLine(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestPlanLinesReportAnInstalledNameWithANewerVersion(t *testing.T) {
+	steps := []build.PlannedStep{{Name: "code-server/4.100.0", Path: "/images/c.sqf", Installed: true}}
+	_, _, newer := planLines(steps, planContext{newer: map[string]string{"code-server/4.100.0": "4.146.0"}})
+	if !newer {
+		t.Error("the newer version is not reported")
+	}
+	if _, _, newer := planLines(steps, planContext{}); newer {
+		t.Error("a newer version is reported with none on offer")
+	}
+}
+
+// The hint about a newer version waits for a local build, and is not held for a dry run, a job or a plan with nothing to build.
+func TestWritePlanTimesTheNewerHint(t *testing.T) {
+	dir := t.TempDir()
+	installed := build.PlannedStep{Name: "code-server/4.100.0", Path: filepath.Join(dir, "c.sqf"), Installed: true}
+	local := build.PlannedStep{Name: "bwa/0.7.19", Path: filepath.Join(dir, "b.sqf")}
+	job := build.PlannedStep{Name: "bwa/0.7.19", Path: filepath.Join(dir, "b.sqf"), InJob: true}
+	pc := planContext{dir: dir, newer: map[string]string{"code-server/4.100.0": "4.146.0"}}
+	for name, tc := range map[string]struct {
+		steps   []build.PlannedStep
+		dryRun  bool
+		pending bool
+	}{
+		"nothing to build": {[]build.PlannedStep{installed}, false, false},
+		"dry run":          {[]build.PlannedStep{installed, local}, true, false},
+		"a job":            {[]build.PlannedStep{installed, job}, false, false},
+		"a local build":    {[]build.PlannedStep{installed, local}, false, true},
+	} {
+		newerPending = false
+		var out strings.Builder
+		writePlan(&out, tc.steps, pc, tc.dryRun)
+		if newerPending != tc.pending {
+			t.Errorf("%s: hint pending = %v, want %v", name, newerPending, tc.pending)
+		}
+	}
+	newerPending = false
+}

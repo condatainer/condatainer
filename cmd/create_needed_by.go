@@ -24,6 +24,7 @@ func neededByRefused() map[string]bool {
 	return map[string]bool{
 		"--name": createName != "", "--prefix": createPrefix != "", "--file": createFile != "",
 		"--from": createFrom != "", "--desc": createDesc != "", "--store": createStore, "--update": createUpdate,
+		"--latest": createLatest,
 	}
 }
 
@@ -32,7 +33,7 @@ func checkNeededByFlags(args []string) error {
 	if len(args) == 0 {
 		return errors.New("--needed-by needs a script or a directory")
 	}
-	for _, flag := range []string{"--name", "--prefix", "--file", "--from", "--desc", "--store", "--update"} {
+	for _, flag := range []string{"--name", "--prefix", "--file", "--from", "--desc", "--store", "--update", "--latest"} {
 		if neededByRefused()[flag] {
 			return fmt.Errorf("--needed-by cannot be used with %s", flag)
 		}
@@ -525,7 +526,7 @@ func neededSteps(plan neededPlan, planned []build.PlannedStep) ([]build.PlannedS
 func writeNeededPlan(w io.Writer, needs []scriptNeeds, plan neededPlan, planned []build.PlannedStep, dryRun bool) {
 	writeNeeded(w, needs, plan)
 	steps, pc := neededSteps(plan, planned)
-	if installed, block := planLines(steps, pc); len(installed)+len(block) > 0 {
+	if installed, block, _ := planLines(steps, pc); len(installed)+len(block) > 0 {
 		fmt.Fprintln(w)
 	}
 	writePlan(w, steps, pc, dryRun)

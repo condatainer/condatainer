@@ -41,10 +41,11 @@ func TestCheckNeededByFlagsRefusesWhatItCannotTake(t *testing.T) {
 		"--desc":   func() { createDesc = "x" },
 		"--store":  func() { createStore = true },
 		"--update": func() { createUpdate = true },
+		"--latest": func() { createLatest = true },
 	} {
 		set()
 		err := checkNeededByFlags([]string{"run.sh"})
-		createName, createPrefix, createFile, createFrom, createDesc, createStore, createUpdate = "", "", "", "", "", false, false
+		createName, createPrefix, createFile, createFrom, createDesc, createStore, createUpdate, createLatest = "", "", "", "", "", false, false, false
 		if err == nil || !strings.Contains(err.Error(), flag) {
 			t.Errorf("%s: err = %v, want it named", flag, err)
 		}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/artifact/meta"
@@ -21,6 +22,12 @@ import (
 // the plan can show where an expanded name came from and which lines the user
 // did not ask for.
 var createTyped = map[string]string{}
+
+// createNewer maps an installed name a bare or partial name resolved to the newer version the recipe sources offer.
+var createNewer = map[string]string{}
+
+// newerPending is set when the hint about a newer version waits for a build that has not finished.
+var newerPending bool
 
 // planShown is set when the caller has printed the plan, so a build it starts prints none of its own.
 var planShown bool
@@ -64,23 +71,26 @@ func printPlan(w io.Writer, steps []build.PlannedStep, dryRun bool) {
 	if utils.QuietMode {
 		return
 	}
-	writePlan(w, steps, planContext{typed: createTyped, dir: createPlanDir, update: createUpdate}, dryRun)
+	writePlan(w, steps, planContext{typed: createTyped, newer: createNewer, dir: createPlanDir, update: createUpdate}, dryRun)
 }
 
 // planContext is what a plan shows beyond the steps.
 //   - typed holds each name that was asked for, mapped to what was typed.
+//   - newer maps an installed name to a newer version on offer.
 //   - dir is the images directory. A file there is shown by name, any other by its path.
 //   - from maps a file's path to the source that builds it.
 type planContext struct {
 	typed  map[string]string
+	newer  map[string]string
 	dir    string
 	update bool
 	from   map[string]string
 }
 
 // writePlan lays out the steps for w.
+//   - The hint about a newer version follows the block. When a local build comes next it waits until the build has finished.
 func writePlan(w io.Writer, steps []build.PlannedStep, pc planContext, dryRun bool) {
-	installed, block := planLines(steps, pc)
+	installed, block, newer := planLines(steps, pc)
 	for _, line := range installed {
 		fmt.Fprintln(w, line)
 	}
@@ -89,6 +99,13 @@ func writePlan(w io.Writer, steps []build.PlannedStep, pc planContext, dryRun bo
 	}
 	for _, line := range block {
 		fmt.Fprintln(w, line)
+	}
+	if newer {
+		if dryRun || len(block) == 0 || slices.ContainsFunc(steps, func(s build.PlannedStep) bool { return s.InJob }) {
+			printNewerHint()
+		} else {
+			newerPending = true
+		}
 	}
 	if dryRun {
 		fmt.Fprintln(w, "Dry run: nothing was built, pulled or submitted.")
@@ -101,17 +118,18 @@ type planRow struct {
 	notes        []string
 }
 
-// planLines returns the installed lines and the plan block for steps.
-//   - An installed step has a line, and no row.
+// planLines returns the installed lines and the plan block for steps, and whether an installed line says a newer version exists.
+//   - An installed step has a line, and no row. It says what was typed when that differs, and the newer version when there is one.
 //   - A file in dir is shown by its name, any other by its path.
 //   - A name that was typed has no "for" note. One that was expanded says what was typed.
-func planLines(steps []build.PlannedStep, pc planContext) (installed, block []string) {
+func planLines(steps []build.PlannedStep, pc planContext) (installed, block []string, newer bool) {
 	dependents := dependentsOf(steps)
 	var rows []planRow
 	byName := false
 	for _, s := range steps {
 		if s.Installed {
-			installed = append(installed, s.Name+" is already installed")
+			installed = append(installed, installedLine(s.Name, pc))
+			newer = newer || pc.newer[s.Name] != ""
 			continue
 		}
 		row := planRow{name: s.Name, action: planAction(s, pc.update && utils.FileExists(s.Path))}
@@ -139,9 +157,9 @@ func planLines(steps []build.PlannedStep, pc planContext) (installed, block []st
 		rows = append(rows, row)
 	}
 	if len(rows) == 0 {
-		return installed, nil
+		return installed, nil, newer
 	}
-	return installed, append([]string{planHeader(len(rows), byName, pc.dir)}, planTable(rows)...)
+	return installed, append([]string{planHeader(len(rows), byName, pc.dir)}, planTable(rows)...), newer
 }
 
 // dependentsOf maps each step to the steps that wait for it. An installed step waits for nothing.
@@ -156,6 +174,24 @@ func dependentsOf(steps []build.PlannedStep) map[string][]string {
 		}
 	}
 	return dependents
+}
+
+// installedLine says an overlay is already installed, as what was typed when that differs, and with the newer version on offer.
+func installedLine(name string, pc planContext) string {
+	line := name + " is already installed"
+	if from := pc.typed[name]; from != "" && from != name {
+		line = from + " is already installed as " + name
+	}
+	if v := pc.newer[name]; v != "" {
+		line += " (newer: " + v + ")"
+	}
+	return line
+}
+
+// printNewerHint says how to install the newer version an installed line named.
+func printNewerHint() {
+	newerPending = false
+	utils.PrintHint("a newer version exists; --latest installs it")
 }
 
 // planHeader is the count line, with the images directory when a row is shown by name.
@@ -242,6 +278,9 @@ func printBuilt(built int) {
 		utils.PrintSuccess("1 overlay installed")
 	case built > 1:
 		utils.PrintSuccess("%d overlays installed", built)
+	}
+	if newerPending {
+		printNewerHint()
 	}
 }
 

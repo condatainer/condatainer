@@ -19,7 +19,9 @@ import (
 	"github.com/condatainer/condatainer/internal/conda"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
+	"github.com/condatainer/condatainer/internal/testenv"
 )
 
 func TestSourceSpecBuildTypeIsDerived(t *testing.T) {
@@ -333,6 +335,28 @@ func envMap(t *testing.T, settings []string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// A build in a job gets the job's allocation, whichever form the recipe's memory is in.
+func TestBuildEnvTakesTheJobAllocation(t *testing.T) {
+	testenv.ClearJobEnvFor(t)
+	t.Setenv("SLURM_JOB_ID", "1")
+	t.Setenv("SLURM_NTASKS", "1")
+	t.Setenv("CNT_NCPU", "4")
+	t.Setenv("CNT_MEM", "16384")
+	t.Setenv("CNT_NRANK", "1")
+	for name, rs := range map[string]*scheduler.ResourceSpec{
+		"per-node memory": {CpusPerTask: 2, MemPerNodeMB: 3072},
+		"per-CPU memory":  {CpusPerTask: 2, MemPerCpuMB: 1024},
+	} {
+		env := envMap(t, buildEnv(Spec{}, Options{ScriptSpecs: &scheduler.ScriptSpecs{HasDirectives: true, Spec: rs}}))
+		if env["NCPU"] != "4" || env["MEM"] != "16384" {
+			t.Errorf("%s: NCPU=%s MEM=%s, want the allocation's 4 and 16384", name, env["NCPU"], env["MEM"])
+		}
+		if v, ok := env["OMP_NUM_THREADS"]; ok {
+			t.Errorf("%s: a build sets OMP_NUM_THREADS = %q, which only a run sets", name, v)
+		}
+	}
 }
 
 func TestBuildEnvFromSpec(t *testing.T) {

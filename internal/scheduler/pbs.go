@@ -189,8 +189,8 @@ func (p *PbsScheduler) JobIDVar() string { return "PBS_JOBID" }
 // GetCurrentJobID returns the PBS job ID of the currently running job, or "".
 func (p *PbsScheduler) GetCurrentJobID() string { return os.Getenv(p.JobIDVar()) }
 
-// JobIDEnvExpr strips the server suffix (e.g. "123.server" → "123") present on some PBS clusters.
-func (p *PbsScheduler) JobIDEnvExpr() string { return "${" + p.JobIDVar() + "%%.*}" }
+// JobIDEnvExpr is the whole job ID, server included ("123.server"), the form qsub prints and GetCurrentJobID reads.
+func (p *PbsScheduler) JobIDEnvExpr() string { return "${" + p.JobIDVar() + "}" }
 
 // NodeNameEnvExpr is the first host of the job's node file.
 func (p *PbsScheduler) NodeNameEnvExpr() string { return `$(head -n 1 "$PBS_NODEFILE" 2>/dev/null)` }
@@ -575,7 +575,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	scriptPath := filepath.Join(outputDir, scriptName)
 
 	// Create the batch script
-	file, err := utils.CreateFileWritable(scriptPath)
+	file, err := createScriptFile(scriptPath, jobSpec.UniqueName)
 	if err != nil {
 		return "", NewScriptCreationError(jobSpec.Name, scriptPath, err)
 	}
@@ -631,10 +631,10 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 		if rs.TasksPerNode > 0 || rs.Nodes > 0 {
 			nodes := rs.Nodes
 			if nodes <= 0 {
-				// Nodes unspecified: safe to default to 1 for single-task jobs.
-				// Multi-task jobs need an explicit node count to distribute correctly.
+				// Nodes unspecified: safe to default to 1 for single-rank jobs.
+				// Multi-rank jobs need an explicit node count to distribute correctly.
 				if rs.IsMPI() {
-					return "", fmt.Errorf("PBS requires an explicit node count (select=N) for multi-task jobs; Ntasks=%d but Nodes is unset", rs.GetNtasks())
+					return "", fmt.Errorf("PBS requires an explicit node count (select=N) for multi-rank jobs; Ntasks=%d but Nodes is unset", rs.GetNtasks())
 				}
 				nodes = 1
 			}
@@ -702,7 +702,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 			}
 		} else {
 			// TasksPerNode=0 and Nodes=0: either an unparsed multi-chunk job
-			// (non-uniform CpusPerTask/MemPerCpu across chunks), or a single-task
+			// (non-uniform CpusPerTask/MemPerCpu across chunks), or a single-rank
 			// job with no node specification.
 			// Unparsed: original -l select=...+... is in RemainingFlags (written above).
 			isMultiChunk := false
@@ -1198,57 +1198,47 @@ func parsePbsMemory(memStr string) (int64, error) {
 }
 
 // GetJobResources reads allocated resources from PBS environment variables.
-// Fields with value 0 were not exposed by PBS.
+//   - Fields with value 0 were not exposed by PBS.
+//   - PBS sets no variable with the job's memory, so MemPerNodeMB is never set.
+//   - The ranks and nodes are counted in the file PBS_NODEFILE names, which has mpiprocs lines per chunk. PBS sets no variable with either count.
+//   - https://github.com/openpbs/openpbs/blob/master/doc/man1/pbs_resources.7B
 func (s *PbsScheduler) GetJobResources() *ResourceSpec {
 	if _, ok := os.LookupEnv("PBS_JOBID"); !ok {
 		return nil
 	}
 	res := &ResourceSpec{}
-	if v := getEnvInt("PBS_NUM_NODES"); v != nil {
-		res.Nodes = *v
-	}
-	// NCPUS is the ncpus of the first select chunk, which counts every rank on the node.
-	// It is the CPUs of one rank for a job with one rank per chunk, such as an interactive allocation.
+	_, res.Nodes = pbsNodeFile()
+	// NCPUS is the first select chunk's ompthreads, else its ncpus, which counts every rank on the node.
+	// It is the CPUs of one rank for a job with one rank per chunk, such as an interactive allocation, or one that sets ompthreads.
 	// A script CondaTainer generated exports the CPUs of one rank as NCPU, which CurrentJobResources reads first.
 	// https://help.altair.com/2024.1.0/PBS%20Professional/PBSUserGuide2024.1.pdf#page=119
 	if v := getEnvInt("NCPUS"); v != nil {
 		res.CpusPerTask = *v
 	}
 
-	// PBS_NP / PBS_TASKNUM: total MPI tasks across all nodes.
-	// Prefer MPI library env vars (global) over PBS vars when running under mpiexec.
-	ntasks := getMpiCommSize()
-	if ntasks == nil {
-		ntasks = getEnvInt("PBS_NP")
-	}
-	if ntasks == nil {
-		ntasks = getEnvInt("PBS_TASKNUM")
-	}
-	if ntasks != nil {
-		res.Ntasks = *ntasks
-	}
-
-	// TasksPerNode: prefer MPI local size (actual tasks on this node)
-	if mpiLocal := getMpiLocalSize(); mpiLocal != nil {
-		res.TasksPerNode = *mpiLocal
-	} else if res.Ntasks > 0 && res.Nodes > 0 {
-		res.TasksPerNode = res.Ntasks / res.Nodes
-	}
-	// PBS_VMEM is total virtual memory in bytes across the job.
-	// Divide by node count to get per-node MB.
-	if vmem := getEnvInt64("PBS_VMEM"); vmem != nil {
-		nodes := res.Nodes
-		if nodes < 1 {
-			nodes = 1
-		}
-		if mb := *vmem / (1024 * 1024) / int64(nodes); mb > 0 {
-			res.MemPerNodeMB = mb
-		}
-	}
-	if n := getCudaDeviceCount(); n != nil && *n > 0 {
+	res.Ntasks = jobRankCount()
+	if n := jobGpuCount(); n != nil && *n > 0 {
 		res.Gpu = &GpuSpec{Count: *n}
 	}
 	return res
+}
+
+// pbsNodeFile returns the ranks and the distinct nodes listed in the file PBS_NODEFILE names, or 0, 0 when it is unset or unreadable.
+func pbsNodeFile() (ranks, nodes int) {
+	path := os.Getenv("PBS_NODEFILE")
+	if path == "" {
+		return 0, 0
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0
+	}
+	seen := map[string]bool{}
+	for _, host := range strings.Fields(string(data)) {
+		ranks++
+		seen[host] = true
+	}
+	return ranks, len(seen)
 }
 
 // GetJobStatus returns the current status of the given PBS job ID.

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
+	"github.com/condatainer/condatainer/internal/testenv"
 	"github.com/condatainer/condatainer/internal/utils"
 )
 
@@ -833,29 +834,11 @@ echo "Running job"
 	}
 }
 
-// clearJobEnvVars ensures no scheduler job env vars are set for test isolation.
+// clearJobEnvVars removes every scheduler job variable for one test.
 // Shared across all scheduler test files (same package).
 func clearJobEnvVars(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{
-		"SLURM_JOB_ID", "SLURM_CPUS_PER_TASK", "SLURM_MEM_PER_NODE",
-		"SLURM_NTASKS", "SLURM_JOB_NUM_NODES", "SLURM_NTASKS_PER_NODE",
-		"PBS_JOBID", "PBS_NCPUS", "NCPUS", "PBS_VMEM",
-		"PBS_NUM_NODES", "PBS_NP", "PBS_TASKNUM",
-		"LSB_JOBID", "LSB_DJOB_NUMPROC", "LSB_MAX_NUM_PROCESSORS", "LSB_MAX_MEM_RUSAGE",
-		"_CONDOR_JOB_AD", "_CONDOR_REQUEST_CPUS", "_CONDOR_REQUEST_MEMORY",
-		"CUDA_VISIBLE_DEVICES",
-		// Normalized env vars injected by ResourceEnvVars (may be present on an HPC node).
-		"NNODE", "NRANK", "NRANK_PER_NODE", "NCPU", "MEM", "MEM_GB",
-		"CNT_NNODE", "CNT_NRANK", "CNT_NRANK_PER_NODE", "CNT_NCPU", "CNT_MEM", "CNT_MEM_GB",
-		"MEM_PER_CPU", "MEM_PER_CPU_MB", "OMP_NUM_THREADS",
-		// MPI library variables.
-		"OMPI_COMM_WORLD_SIZE", "OMPI_COMM_WORLD_LOCAL_SIZE", "PMI_SIZE", "MV2_COMM_WORLD_SIZE", "MPI_LOCALNRANKS",
-	} {
-		os.Unsetenv(key)
-		t.Setenv(key, "")
-		os.Unsetenv(key)
-	}
+	testenv.ClearJobEnvFor(t)
 }
 
 func TestSlurmGetJobResources(t *testing.T) {
@@ -888,9 +871,6 @@ func TestSlurmGetJobResources(t *testing.T) {
 		if res.CpusPerTask != 16 {
 			t.Errorf("CpusPerTask = %d; want 16", res.CpusPerTask)
 		}
-		if res.TasksPerNode != 2 {
-			t.Errorf("TasksPerNode = %d; want 2", res.TasksPerNode)
-		}
 		if res.Nodes != 2 {
 			t.Errorf("Nodes = %d; want 2", res.Nodes)
 		}
@@ -899,6 +879,19 @@ func TestSlurmGetJobResources(t *testing.T) {
 		}
 		if res.Gpu == nil || res.Gpu.Count != 2 {
 			t.Errorf("Gpu.Count = %v; want 2", res.Gpu)
+		}
+	})
+
+	t.Run("memory per CPU wins over the per-node figure", func(t *testing.T) {
+		clearJobEnvVars(t)
+		t.Setenv("SLURM_JOB_ID", "12345")
+		t.Setenv("SLURM_CPUS_PER_TASK", "2")
+		t.Setenv("SLURM_MEM_PER_CPU", "1024")
+		t.Setenv("SLURM_MEM_PER_NODE", "16384")
+
+		res := sched.GetJobResources()
+		if res == nil || res.MemPerCpuMB != 1024 || res.MemPerNodeMB != 0 || res.GetMemPerTaskMB() != 2048 {
+			t.Errorf("res = %+v", res)
 		}
 	})
 

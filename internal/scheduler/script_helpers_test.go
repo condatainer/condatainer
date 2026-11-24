@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,13 +48,12 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerNodeMB: 32768,
 			},
 			wantVars: map[string]string{
-				"NNODE":           "1",
-				"NRANK":           "1",
-				"NCPU":            "8",
-				"OMP_NUM_THREADS": "8",
-				"NRANK_PER_NODE":  "1",
-				"MEM":             "32768", // 32768 / 1 task
-				"MEM_GB":          "32",
+				"NNODE":          "1",
+				"NRANK":          "1",
+				"NCPU":           "8",
+				"NRANK_PER_NODE": "1",
+				"MEM":            "32768", // 32768 / 1 task
+				"MEM_GB":         "32",
 			},
 		},
 		{
@@ -66,13 +66,12 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerCpuMB:  4096,
 			},
 			wantVars: map[string]string{
-				"NNODE":           "2",
-				"NRANK":           "16",
-				"NCPU":            "1",
-				"OMP_NUM_THREADS": "1",
-				"NRANK_PER_NODE":  "8",
-				"MEM":             "4096", // 4096 * 1 CPU/task
-				"MEM_GB":          "4",
+				"NNODE":          "2",
+				"NRANK":          "16",
+				"NCPU":           "1",
+				"NRANK_PER_NODE": "8",
+				"MEM":            "4096", // 4096 * 1 CPU/task
+				"MEM_GB":         "4",
 			},
 		},
 		{
@@ -85,13 +84,12 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerNodeMB: 65536,
 			},
 			wantVars: map[string]string{
-				"NNODE":           "2",
-				"NRANK":           "8",
-				"NCPU":            "4",
-				"OMP_NUM_THREADS": "4",
-				"NRANK_PER_NODE":  "4",
-				"MEM":             "16384", // 65536 / 4 tasks/node
-				"MEM_GB":          "16",
+				"NNODE":          "2",
+				"NRANK":          "8",
+				"NCPU":           "4",
+				"NRANK_PER_NODE": "4",
+				"MEM":            "16384", // 65536 / 4 tasks/node
+				"MEM_GB":         "16",
 			},
 		},
 		{
@@ -104,12 +102,11 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerCpuMB:  8192,
 			},
 			wantVars: map[string]string{
-				"NNODE":           "2",
-				"NRANK":           "7",
-				"NCPU":            "1",
-				"OMP_NUM_THREADS": "1",
-				"MEM":             "8192", // 8192 * 1 CPU/task
-				"MEM_GB":          "8",
+				"NNODE":  "2",
+				"NRANK":  "7",
+				"NCPU":   "1",
+				"MEM":    "8192", // 8192 * 1 CPU/task
+				"MEM_GB": "8",
 			},
 		},
 		{
@@ -122,12 +119,11 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerCpuMB:  8192,
 			},
 			wantVars: map[string]string{
-				"NNODE":           "1", // Defaults to 1
-				"NRANK":           "7",
-				"NCPU":            "1",
-				"OMP_NUM_THREADS": "1",
-				"MEM":             "8192", // 8192 * 1 CPU/task
-				"MEM_GB":          "8",
+				"NNODE":  "1", // Defaults to 1
+				"NRANK":  "7",
+				"NCPU":   "1",
+				"MEM":    "8192", // 8192 * 1 CPU/task
+				"MEM_GB": "8",
 			},
 		},
 		{
@@ -140,13 +136,12 @@ func TestResourceEnvVars(t *testing.T) {
 				MemPerCpuMB:  2048,
 			},
 			wantVars: map[string]string{
-				"NNODE":           "1", // Defaults to 1
-				"NRANK":           "1",
-				"NCPU":            "16",
-				"OMP_NUM_THREADS": "16",
-				"NRANK_PER_NODE":  "1",
-				"MEM":             "32768", // 2048 * 16 CPUs/task
-				"MEM_GB":          "32",
+				"NNODE":          "1", // Defaults to 1
+				"NRANK":          "1",
+				"NCPU":           "16",
+				"NRANK_PER_NODE": "1",
+				"MEM":            "32768", // 2048 * 16 CPUs/task
+				"MEM_GB":         "32",
 			},
 		},
 		{
@@ -158,21 +153,19 @@ func TestResourceEnvVars(t *testing.T) {
 				CpusPerTask:  2,
 			},
 			wantVars: map[string]string{
-				"NNODE":           "2",
-				"NRANK":           "8",
-				"NCPU":            "2",
-				"OMP_NUM_THREADS": "2",
-				"NRANK_PER_NODE":  "4",
+				"NNODE":          "2",
+				"NRANK":          "8",
+				"NCPU":           "2",
+				"NRANK_PER_NODE": "4",
 			},
 		},
 		{
 			name: "Minimal defaults: nil ResourceSpec",
 			rs:   nil,
 			wantVars: map[string]string{
-				"NNODE":           "1",
-				"NRANK":           "1",
-				"NCPU":            "1",
-				"OMP_NUM_THREADS": "1",
+				"NNODE": "1",
+				"NRANK": "1",
+				"NCPU":  "1",
 			},
 		},
 		{
@@ -183,11 +176,10 @@ func TestResourceEnvVars(t *testing.T) {
 				CpusPerTask:  2,
 			},
 			wantVars: map[string]string{
-				"NNODE":           "2",
-				"NRANK":           "8", // 2 * 4
-				"NCPU":            "2",
-				"OMP_NUM_THREADS": "2",
-				"NRANK_PER_NODE":  "4",
+				"NNODE":          "2",
+				"NRANK":          "8", // 2 * 4
+				"NCPU":           "2",
+				"NRANK_PER_NODE": "4",
 			},
 		},
 	}
@@ -206,12 +198,12 @@ func TestResourceEnvVars(t *testing.T) {
 			}
 
 			// Check expected variables exist with correct values, and that each has a CNT_ copy
-			// with the same value. OMP_NUM_THREADS is the one name without a copy.
+			// with the same value.
+			if v, exists := gotMap["OMP_NUM_THREADS"]; exists {
+				t.Errorf("OMP_NUM_THREADS = %q is set; only a run sets it", v)
+			}
 			for key, wantVal := range tt.wantVars {
 				names := []string{key, "CNT_" + key}
-				if key == "OMP_NUM_THREADS" {
-					names = names[:1]
-				}
 				for _, name := range names {
 					gotVal, exists := gotMap[name]
 					if !exists {
@@ -264,5 +256,24 @@ func TestScriptDirectivesAreReadFromTheHeaderOnly(t *testing.T) {
 				t.Errorf("RawFlags = %v, want only the header's directive", specs.RawFlags)
 			}
 		})
+	}
+}
+
+// A unique job file never replaces one that exists; any other job file does.
+func TestCreateScriptFileUnique(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "job.sbatch")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createScriptFile(path, true); !errors.Is(err, os.ErrExist) {
+		t.Errorf("unique create of a taken path: err = %v, want os.ErrExist", err)
+	}
+	f, err := createScriptFile(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if got, _ := os.ReadFile(path); len(got) != 0 {
+		t.Errorf("a create that is not unique keeps %q", got)
 	}
 }

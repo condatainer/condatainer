@@ -102,6 +102,17 @@ func jobAdValue(attr string) string {
 	return ""
 }
 
+// jobAdInt is the first of attrs in the job ad that holds a whole number, and whether one did.
+//   - An attribute that is an expression, such as a RequestMemory computed at match time, is skipped.
+func jobAdInt(attrs ...string) (int64, bool) {
+	for _, attr := range attrs {
+		if n, err := strconv.ParseInt(jobAdValue(attr), 10, 64); err == nil && n >= 0 {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
 // NodeNameEnvExpr is the Machine attribute of the slot the job runs in.
 func (h *HTCondorScheduler) NodeNameEnvExpr() string {
 	return `$(sed -n 's/^Machine = "\(.*\)"/\1/p' "$_CONDOR_MACHINE_AD" 2>/dev/null)`
@@ -438,7 +449,7 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 
 	// === Create wrapper bash script ===
 	shPath := filepath.Join(outputDir, fmt.Sprintf("%s.sh", name))
-	shFile, err := utils.CreateFileWritable(shPath)
+	shFile, err := createScriptFile(shPath, jobSpec.UniqueName)
 	if err != nil {
 		return "", NewScriptCreationError(jobSpec.Name, shPath, err)
 	}
@@ -491,8 +502,9 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 
 	// === Create HTCondor submit file ===
 	subPath := filepath.Join(outputDir, fmt.Sprintf("%s.sub", name))
-	subFile, err := utils.CreateFileWritable(subPath)
+	subFile, err := createScriptFile(subPath, jobSpec.UniqueName)
 	if err != nil {
+		os.Remove(shPath) // the name is not this job's: the next one takes it whole
 		return "", NewScriptCreationError(jobSpec.Name, subPath, err)
 	}
 	defer subFile.Close()
@@ -771,21 +783,24 @@ func (h *HTCondorScheduler) getConfigValue(param string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-// GetJobResources reads allocated resources from HTCondor environment variables.
-// HTCondor is always single-node; Nodes and TasksPerNode are not set.
+// GetJobResources reads what the slot gave the job from its job ad, $_CONDOR_JOB_AD.
+//   - HTCondor sets no variable with the request. The job ad holds it.
+//   - CpusProvisioned and MemoryProvisioned (MiB) are what the slot gave, which may be more than requested. RequestCpus and RequestMemory are read without them.
+//   - The GPUs are GpusProvisioned (jobGpuCount).
+//   - A vanilla job is one rank on one node, so Nodes and TasksPerNode are not set.
+//   - https://htcondor.readthedocs.io/en/latest/users-manual/env-of-job.html
 func (h *HTCondorScheduler) GetJobResources() *ResourceSpec {
 	if _, ok := os.LookupEnv("_CONDOR_JOB_AD"); !ok {
 		return nil
 	}
 	res := &ResourceSpec{}
-	if v := getEnvInt("_CONDOR_REQUEST_CPUS"); v != nil {
-		res.CpusPerTask = *v
+	if n, ok := jobAdInt("CpusProvisioned", "RequestCpus"); ok && n > 0 {
+		res.CpusPerTask = int(n)
 	}
-	// _CONDOR_REQUEST_MEMORY is in MB
-	if v := getEnvInt64("_CONDOR_REQUEST_MEMORY"); v != nil {
-		res.MemPerNodeMB = *v
+	if n, ok := jobAdInt("MemoryProvisioned", "RequestMemory"); ok && n > 0 {
+		res.MemPerNodeMB = n
 	}
-	if n := getCudaDeviceCount(); n != nil && *n > 0 {
+	if n := jobGpuCount(); n != nil && *n > 0 {
 		res.Gpu = &GpuSpec{Count: *n}
 	}
 	return res

@@ -135,6 +135,14 @@ func flagScanInt(flag string, dest *int, prefixes ...string) (bool, error) {
 	return flagScan(flag, dest, strconv.Atoi, prefixes...)
 }
 
+// createScriptFile creates a job file. With unique it fails with os.ErrExist when the path is taken, and never overwrites it.
+func createScriptFile(path string, unique bool) (*os.File, error) {
+	if unique {
+		return utils.CreateFileNew(path)
+	}
+	return utils.CreateFileWritable(path)
+}
+
 // safeJobName converts a job name to a filesystem-safe string by replacing "/" with "--".
 func safeJobName(name string) string {
 	return strings.ReplaceAll(name, "/", "--")
@@ -156,7 +164,7 @@ func absPath(path string) string {
 //   - With JobHome set it first replaces HOME, saving the current one in CNT_REAL_HOME.
 //   - jobIDVar is the shell expression for the job ID.
 //   - Resource lines print only when specs.Spec is set, and specs.ScriptPath when present.
-//   - A job with one task prints its node name. An MPI job does not, since the script runs on one of its nodes only.
+//   - A job with one rank prints its node name. An MPI job does not, since the script runs on one of its nodes only.
 //   - formatTime renders rs.Time. nil skips that line.
 func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime func(time.Duration) string, metadata map[string]string) {
 	if JobHome != "" {

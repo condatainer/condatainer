@@ -518,7 +518,7 @@ func (l *LsfScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	scriptPath := filepath.Join(outputDir, scriptName)
 
 	// Create the batch script
-	file, err := utils.CreateFileWritable(scriptPath)
+	file, err := createScriptFile(scriptPath, jobSpec.UniqueName)
 	if err != nil {
 		return "", NewScriptCreationError(jobSpec.Name, scriptPath, err)
 	}
@@ -605,7 +605,7 @@ func (l *LsfScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 
 		// rusage[mem=X] is the per-slot memory allocation request in LSF.
 		// Ceiling-divide per-node MB by slotsPerNode to get per-slot MB.
-		// MPI jobs: slot = one task (slotsPerNode = TasksPerNode).
+		// MPI jobs: slot = one rank (slotsPerNode = TasksPerNode).
 		// OpenMP / single-node / no-span: slot = one CPU (slotsPerNode = CpusPerTask).
 		// isMPI = GetNtasks() > 1 (uses Ntasks if set, else Nodes×TasksPerNode, min 1).
 		// Three generation paths:
@@ -1142,45 +1142,23 @@ func formatLsfTime(d time.Duration) string {
 }
 
 // GetJobResources reads the allocated resources from LSF environment variables.
-//   - LSF exposes no node count or tasks per node. The MPI library's variables give the task counts when it set them.
-//   - LSB_DJOB_NUMPROC or LSB_MAX_NUM_PROCESSORS is the total slot count. Each slot counts as one task.
-//   - LSB_MAX_MEM_RUSAGE is per-slot memory in KB and becomes MemPerCpuMB.
+//   - LSF exposes no node count or tasks per node.
+//   - LSB_DJOB_NUMPROC or LSB_MAX_NUM_PROCESSORS is the total slot count. Each slot counts as one rank.
+//   - LSF sets no variable with a running job's memory, so it is not set.
 //   - A job CondaTainer submitted also exports its geometry, which CurrentJobResources reads first.
+//   - https://www.ibm.com/docs/en/spectrum-lsf/10.1.0?topic=variables-environment-set-job-execution
 func (s *LsfScheduler) GetJobResources() *ResourceSpec {
 	if _, ok := os.LookupEnv("LSB_JOBID"); !ok {
 		return nil
 	}
 	res := &ResourceSpec{}
 
-	if mpiLocal := getMpiLocalSize(); mpiLocal != nil {
-		res.TasksPerNode = *mpiLocal
-	}
-	if mpiSize := getMpiCommSize(); mpiSize != nil {
-		res.Ntasks = *mpiSize
+	// Each slot is one rank with one CPU.
+	if res.Ntasks = jobRankCount(); res.Ntasks > 0 {
+		res.CpusPerTask = 1
 	}
 
-	// Total slots from LSF native vars, used when the MPI library gave no task count.
-	if res.Ntasks == 0 {
-		var totalSlots int
-		if v := getEnvInt("LSB_DJOB_NUMPROC"); v != nil {
-			totalSlots = *v
-		} else if v := getEnvInt("LSB_MAX_NUM_PROCESSORS"); v != nil {
-			totalSlots = *v
-		}
-		if totalSlots > 0 {
-			res.Ntasks = totalSlots
-			res.CpusPerTask = 1
-		}
-	}
-
-	// Memory: LSB_MAX_MEM_RUSAGE is per-slot (per-task) in KB → MemPerCpuMB.
-	if memKB := getEnvInt64("LSB_MAX_MEM_RUSAGE"); memKB != nil {
-		if mb := *memKB / 1024; mb > 0 {
-			res.MemPerCpuMB = mb
-		}
-	}
-
-	if n := getCudaDeviceCount(); n != nil && *n > 0 {
+	if n := jobGpuCount(); n != nil && *n > 0 {
 		res.Gpu = &GpuSpec{Count: *n}
 	}
 	return res

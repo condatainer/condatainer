@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/condatainer/condatainer/cmd/internal/ui"
@@ -11,6 +12,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/runtime/hostrun"
+	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/spf13/cobra"
 )
 
@@ -101,8 +103,8 @@ func runExec(cmd *cobra.Command, args []string) error {
 	options := exec.Options{
 		Overlays:       resolvedOverlays,
 		Command:        commandFinal,
-		WritableImg:    execFlags.WritableImg,                                          // Default false, unless -w specified
-		EnvSettings:    append(liveJobResourceEnvSettings(), execFlags.EnvSettings...), // Inject live job resources, then user env vars
+		WritableImg:    execFlags.WritableImg, // Default false, unless -w specified
+		EnvSettings:    append(jobCpuEnv(), execFlags.EnvSettings...),
 		BindPaths:      append(configBinds(), execFlags.BindPaths...),
 		ApptainerFlags: apptainerFlags, // Pass through unknown flags
 		Fakeroot:       execFlags.Fakeroot,
@@ -152,4 +154,17 @@ func execHelpRequested(args []string) bool {
 	default:
 		return false
 	}
+}
+
+// jobCpuEnv is NCPU, the CPUs of the one-rank job this process runs in, for exec and e.
+//   - A job with more than one rank has none, and neither has a process outside a job.
+func jobCpuEnv() []string {
+	if scheduler.InMultiRankJob() {
+		return nil
+	}
+	job := scheduler.CurrentJobResources()
+	if job == nil || job.CpusPerTask == 0 {
+		return nil
+	}
+	return []string{"NCPU=" + strconv.Itoa(job.CpusPerTask)}
 }

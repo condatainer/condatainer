@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -998,45 +999,20 @@ func TestPbsGetJobResources(t *testing.T) {
 		clearJobEnvVars(t)
 		t.Setenv("PBS_JOBID", "67890.pbs-server")
 		t.Setenv("NCPUS", "2") // cpus per task (ompthreads per chunk)
-		t.Setenv("PBS_NUM_NODES", "4")
-		t.Setenv("PBS_NP", "16")
+		t.Setenv("PBS_NODEFILE", nodeFile(t, "a", "a", "b", "b", "b"))
 
 		res := sched.GetJobResources()
 		if res == nil {
 			t.Fatal("expected non-nil")
 		}
-		if res.Nodes != 4 {
-			t.Errorf("Nodes = %d; want 4", res.Nodes)
+		if res.Nodes != 2 {
+			t.Errorf("Nodes = %d; want 2", res.Nodes)
 		}
-		if res.Ntasks != 16 {
-			t.Errorf("Ntasks = %d; want 16", res.Ntasks)
+		if res.Ntasks != 5 {
+			t.Errorf("Ntasks = %d; want 5, one per node file line", res.Ntasks)
 		}
-		// TasksPerNode = PBS_NP / PBS_NUM_NODES = 16 / 4 = 4
-		if res.TasksPerNode != 4 {
-			t.Errorf("TasksPerNode = %d; want 4 (derived from PBS_NP/PBS_NUM_NODES)", res.TasksPerNode)
-		}
-		// CpusPerTask = NCPUS = 2
 		if res.CpusPerTask != 2 {
 			t.Errorf("CpusPerTask = %d; want 2", res.CpusPerTask)
-		}
-	})
-
-	t.Run("PBS_TASKNUM fallback", func(t *testing.T) {
-		clearJobEnvVars(t)
-		t.Setenv("PBS_JOBID", "67890")
-		t.Setenv("PBS_NUM_NODES", "2")
-		t.Setenv("PBS_TASKNUM", "8")
-
-		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.Ntasks != 8 {
-			t.Errorf("Ntasks = %d; want 8", res.Ntasks)
-		}
-		// TasksPerNode = PBS_TASKNUM / PBS_NUM_NODES = 8 / 2 = 4
-		if res.TasksPerNode != 4 {
-			t.Errorf("TasksPerNode = %d; want 4 (derived from PBS_TASKNUM/PBS_NUM_NODES)", res.TasksPerNode)
 		}
 	})
 
@@ -1051,20 +1027,6 @@ func TestPbsGetJobResources(t *testing.T) {
 		}
 		if res.CpusPerTask != 12 {
 			t.Errorf("CpusPerTask = %d; want 12", res.CpusPerTask)
-		}
-	})
-
-	t.Run("memory from PBS_VMEM", func(t *testing.T) {
-		clearJobEnvVars(t)
-		t.Setenv("PBS_JOBID", "67890")
-		t.Setenv("PBS_VMEM", "8589934592") // 8 GB in bytes
-
-		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.MemPerNodeMB != 8192 {
-			t.Errorf("MemPerNodeMB = %d; want 8192", res.MemPerNodeMB)
 		}
 	})
 
@@ -1471,5 +1433,17 @@ func TestPbsSelectExtra(t *testing.T) {
 				t.Errorf("script lacks %q:\n%s", want, data)
 			}
 		})
+	}
+}
+
+// The helper's job ID keeps the server, the same ID qsub printed at submit.
+func TestPbsJobIDEnvExprKeepsTheServer(t *testing.T) {
+	t.Setenv("PBS_JOBID", "123[4].pbs-server")
+	out, err := exec.Command("bash", "-c", `echo "`+(&PbsScheduler{}).JobIDEnvExpr()+`"`).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "123[4].pbs-server" {
+		t.Errorf("job ID = %q, want 123[4].pbs-server", got)
 	}
 }

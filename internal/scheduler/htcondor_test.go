@@ -534,6 +534,14 @@ func TestHTCondorResourceParsing(t *testing.T) {
 
 func TestHTCondorGetJobResources(t *testing.T) {
 	sched := &HTCondorScheduler{}
+	ad := func(t *testing.T, lines string) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), ".job.ad")
+		if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("_CONDOR_JOB_AD", path)
+	}
 
 	t.Run("not in job", func(t *testing.T) {
 		clearJobEnvVars(t)
@@ -542,65 +550,55 @@ func TestHTCondorGetJobResources(t *testing.T) {
 		}
 	})
 
-	t.Run("full resources", func(t *testing.T) {
+	t.Run("what the slot gave", func(t *testing.T) {
 		clearJobEnvVars(t)
-		t.Setenv("_CONDOR_JOB_AD", "/tmp/condor_job_ad")
-		t.Setenv("_CONDOR_REQUEST_CPUS", "16")
-		t.Setenv("_CONDOR_REQUEST_MEMORY", "8192")
-		t.Setenv("CUDA_VISIBLE_DEVICES", "0,1")
-
+		ad(t, "RequestCpus = 2\nRequestMemory = 1500\nCpusProvisioned = 2\nMemoryProvisioned = 1536\nGpusProvisioned = 2\nRequestGPUs = 2\n")
+		t.Setenv("CUDA_VISIBLE_DEVICES", "GPU-a,GPU-b")
 		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.CpusPerTask != 16 {
-			t.Errorf("CpusPerTask = %d; want 16", res.CpusPerTask)
-		}
-		if res.MemPerNodeMB != 8192 {
-			t.Errorf("MemPerNodeMB = %d; want 8192", res.MemPerNodeMB)
-		}
-		if res.Gpu == nil || res.Gpu.Count != 2 {
-			t.Errorf("Gpu.Count = %v; want 2", res.Gpu)
+		if res == nil || res.CpusPerTask != 2 || res.MemPerNodeMB != 1536 || res.Gpu == nil || res.Gpu.Count != 2 {
+			t.Errorf("res = %+v", res)
 		}
 	})
 
-	t.Run("partial data", func(t *testing.T) {
+	t.Run("the request without provisioned values", func(t *testing.T) {
 		clearJobEnvVars(t)
-		t.Setenv("_CONDOR_JOB_AD", "/tmp/condor_job_ad")
-		t.Setenv("_CONDOR_REQUEST_CPUS", "4")
-
+		ad(t, "RequestCpus = 4\nRequestMemory = 8192\n")
 		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.CpusPerTask != 4 {
-			t.Errorf("CpusPerTask = %d; want 4", res.CpusPerTask)
-		}
-		if res.MemPerNodeMB != 0 {
-			t.Errorf("MemPerNodeMB should be 0 (not set), got %d", res.MemPerNodeMB)
-		}
-		if res.Gpu != nil {
-			t.Errorf("Gpu should be nil, got %+v", res.Gpu)
+		if res == nil || res.CpusPerTask != 4 || res.MemPerNodeMB != 8192 || res.Gpu != nil {
+			t.Errorf("res = %+v", res)
 		}
 	})
 
-	t.Run("invalid values", func(t *testing.T) {
+	t.Run("a memory expression is not a size", func(t *testing.T) {
 		clearJobEnvVars(t)
-		t.Setenv("_CONDOR_JOB_AD", "/tmp/condor_job_ad")
-		t.Setenv("_CONDOR_REQUEST_CPUS", "not-a-number")
-		t.Setenv("_CONDOR_REQUEST_MEMORY", "-100")
-
-		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.CpusPerTask != 0 {
-			t.Errorf("CpusPerTask should be 0 for invalid value, got %d", res.CpusPerTask)
-		}
-		if res.MemPerNodeMB != 0 {
-			t.Errorf("MemPerNodeMB should be 0 for negative value, got %d", res.MemPerNodeMB)
+		ad(t, "RequestCpus = 1\nRequestMemory = ifthenelse(MemoryUsage =!= undefined,MemoryUsage,128)\n")
+		if res := sched.GetJobResources(); res == nil || res.CpusPerTask != 1 || res.MemPerNodeMB != 0 {
+			t.Errorf("res = %+v", res)
 		}
 	})
+
+	t.Run("no GPU though CUDA_VISIBLE_DEVICES hides them", func(t *testing.T) {
+		clearJobEnvVars(t)
+		ad(t, "CpusProvisioned = 1\nMemoryProvisioned = 128\nGpusProvisioned = 0\n")
+		t.Setenv("CUDA_VISIBLE_DEVICES", "10000")
+		if res := sched.GetJobResources(); res == nil || res.Gpu != nil {
+			t.Errorf("res = %+v", res)
+		}
+	})
+}
+
+func TestJobGpuCountOfAnHTCondorJobIgnoresTheHiddenDevices(t *testing.T) {
+	clearJobEnvVars(t)
+	path := filepath.Join(t.TempDir(), ".job.ad")
+	if err := os.WriteFile(path, []byte("GpusProvisioned = 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("_CONDOR_JOB_AD", path)
+	t.Setenv("CUDA_VISIBLE_DEVICES", "10000")
+	t.Setenv("CNT_NCPU", "2")
+	if res := resourcesFromExports(); res == nil || res.Gpu != nil {
+		t.Errorf("resourcesFromExports = %+v", res)
+	}
 }
 
 func TestHTCondorSubmitFileFormat(t *testing.T) {

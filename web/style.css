@@ -1,6 +1,6 @@
 /* ── CSS Custom Properties ──────────────── */
 :root {
-  --sidebar-w: 170px;
+  --sidebar-w: 156px;
   --sidebar-col-w: 48px;
   --detail-w: 420px;
   --radius: 6px;
@@ -86,18 +86,18 @@ input,button,select{font-family:inherit;font-size:inherit;}
   padding-left:10px;background:color-mix(in srgb,var(--accent) 8%,transparent);
 }
 .sb-logo{
-  height:48px;padding:0 14px;display:flex;align-items:center;gap:3px;
-  border-bottom:1px solid var(--border);font-weight:700;font-size:16px;
+  height:48px;padding:0 10px 0 14px;display:flex;align-items:center;gap:3px;
+  border-bottom:1px solid var(--border);font-weight:700;font-size:14px;
   white-space:nowrap;overflow:hidden;flex-shrink:0;
 }
-.sb-logo-icon{width:20px;height:20px;flex-shrink:0;display:block;object-fit:contain;}
+.sb-logo-icon{width:18px;height:18px;flex-shrink:0;display:block;object-fit:contain;}
 .sb-logo-text{transition:opacity 150ms;display:inline-flex;align-items:baseline;}
 .sb-logo-conda{color:#07b843;}
 .sb-logo-tainer{color:#3084c3;}
 #sidebar.collapsed .sb-logo-text{opacity:0;pointer-events:none;}
 .nav{list-style:none;padding:6px 0;flex:1;overflow-y:auto;overflow-x:hidden;}
 .nav-item{
-  display:flex;align-items:center;gap:9px;padding:8px 13px;cursor:pointer;
+  display:flex;align-items:center;gap:8px;padding:8px 13px;cursor:pointer;
   white-space:nowrap;color:var(--muted);font-size:14px;font-weight:500;
   border-left:3px solid transparent;
   transition:background 120ms,color 120ms,border-color 120ms;user-select:none;
@@ -115,14 +115,14 @@ input,button,select{font-family:inherit;font-size:inherit;}
 #sidebar.collapsed .nav-count{opacity:0;pointer-events:none;}
 .sb-bottom{border-top:1px solid var(--border);padding:4px 0;flex-shrink:0;}
 .sb-btn{
-  display:flex;align-items:center;gap:9px;padding:8px 13px;width:100%;
+  display:flex;align-items:center;gap:8px;padding:8px 6px 8px 13px;width:100%;
   border:none;background:none;color:var(--muted);font-size:14px;
   cursor:pointer;white-space:nowrap;transition:color 120ms;text-align:left;
 }
 .sb-btn:hover{color:var(--text);}
 #sidebar.collapsed .sb-btn .sb-btn-label{opacity:0;pointer-events:none;transition:opacity 150ms;}
 .sb-status{
-  display:flex;align-items:center;gap:9px;
+  display:flex;align-items:center;gap:8px;
   padding:8px 13px;font-size:12px;color:var(--muted);white-space:nowrap;
 }
 #status-dot{
@@ -594,3 +594,5 @@ code{font-family:var(--mono);}
 
 /* Shown when the server answers 401: this browser is no longer signed in. Same tint as .ov-notice.error. */
 .signed-out{position:fixed;top:0;left:0;right:0;z-index:1000;padding:10px 16px;background:color-mix(in srgb,var(--danger) 7%,var(--surface));border-bottom:1px solid color-mix(in srgb,var(--danger) 25%,transparent);color:var(--danger);font-size:13px;text-align:center;-webkit-user-select:text;user-select:text;}
+/* last, so a class's display (.btn, .toggle-lbl, .hm-layer) never overrides the hidden attribute */
+[hidden]{display:none;}

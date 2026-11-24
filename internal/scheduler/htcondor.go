@@ -102,6 +102,17 @@ func jobAdValue(attr string) string {
 	return ""
 }
 
+// jobAdInt is the first of attrs in the job ad that holds a whole number, and whether one did.
+//   - An attribute that is an expression, such as a RequestMemory computed at match time, is skipped.
+func jobAdInt(attrs ...string) (int64, bool) {
+	for _, attr := range attrs {
+		if n, err := strconv.ParseInt(jobAdValue(attr), 10, 64); err == nil && n >= 0 {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
 // NodeNameEnvExpr is the Machine attribute of the slot the job runs in.
 func (h *HTCondorScheduler) NodeNameEnvExpr() string {
 	return `$(sed -n 's/^Machine = "\(.*\)"/\1/p' "$_CONDOR_MACHINE_AD" 2>/dev/null)`
@@ -438,7 +449,7 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 
 	// === Create wrapper bash script ===
 	shPath := filepath.Join(outputDir, fmt.Sprintf("%s.sh", name))
-	shFile, err := utils.CreateFileWritable(shPath)
+	shFile, err := createScriptFile(shPath, jobSpec.UniqueName)
 	if err != nil {
 		return "", NewScriptCreationError(jobSpec.Name, shPath, err)
 	}
@@ -452,7 +463,7 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 	htcRS := &ResourceSpec{Nodes: 1, TasksPerNode: 1}
 	if specs.Spec != nil {
 		htcRS.CpusPerTask = specs.Spec.CpusPerTask
-		htcRS.MemPerNodeMB = specs.Spec.MemPerNodeMB
+		htcRS.MemPerNodeMB = specs.Spec.GetMemPerTaskMB()
 	}
 
 	// The nested "condatainer run <bash_script>" cannot re-read HTCondor specs (they live in the
@@ -491,8 +502,9 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 
 	// === Create HTCondor submit file ===
 	subPath := filepath.Join(outputDir, fmt.Sprintf("%s.sub", name))
-	subFile, err := utils.CreateFileWritable(subPath)
+	subFile, err := createScriptFile(subPath, jobSpec.UniqueName)
 	if err != nil {
+		os.Remove(shPath) // the name is not this job's: the next one takes it whole
 		return "", NewScriptCreationError(jobSpec.Name, subPath, err)
 	}
 	defer subFile.Close()
@@ -551,8 +563,9 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 		if specs.Spec.CpusPerTask > 0 {
 			fmt.Fprintf(subWriter, "request_cpus = %d\n", specs.Spec.CpusPerTask)
 		}
-		if specs.Spec.MemPerNodeMB > 0 {
-			fmt.Fprintf(subWriter, "request_memory = %d\n", specs.Spec.MemPerNodeMB)
+		// The one rank's memory, whether the spec gave it per node or per CPU.
+		if mem := specs.Spec.GetMemPerTaskMB(); mem > 0 {
+			fmt.Fprintf(subWriter, "request_memory = %d\n", mem)
 		}
 		if specs.Spec.Gpu != nil && specs.Spec.Gpu.Count > 0 {
 			fmt.Fprintf(subWriter, "request_gpus = %d\n", specs.Spec.Gpu.Count)
@@ -640,16 +653,16 @@ func (h *HTCondorScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, e
 	}
 
 	// Single condor_status call: CPU, mem, and GPU info per machine.
-	maxCpus, maxMem, gpus, err := h.getNodeAndGpuInfo()
+	pool, err := h.getNodeAndGpuInfo()
 	if err == nil {
-		info.MaxCpusPerNode = maxCpus
-		info.MaxMemMBPerNode = maxMem
-		info.AvailableGpus = gpus
+		info.MaxCpusPerNode = pool.maxCpus
+		info.MaxMemMBPerNode = pool.maxMemMB
+		info.AvailableGpus = pool.gpus
 	}
 
 	// Get cluster limits (HTCondor uses global/accounting group limits rather than queues)
 	if h.condorConfigValBin != "" || h.condorStatusBin != "" {
-		limits, err := h.getClusterLimits(info.AvailableGpus, maxCpus, maxMem)
+		limits, err := h.getClusterLimits(pool)
 		if err == nil {
 			info.Limits = limits
 		}
@@ -659,75 +672,70 @@ func (h *HTCondorScheduler) GetClusterInfo(ctx context.Context) (*ClusterInfo, e
 	return info, nil
 }
 
+// htcondorDefaultPartition is the one partition an HTCondor pool is shown as.
+const htcondorDefaultPartition = "default"
+
+// htcondorPool is the machines of a pool as condor_status reports them.
+type htcondorPool struct {
+	maxCpus   int
+	maxMemMB  int64
+	machines  int
+	gpus      []GpuInfo  // the pool's GPUs, under the default partition
+	nodeTypes []NodeType // one per machine; the table joins alike ones
+}
+
 // getNodeAndGpuInfo queries HTCondor for CPU, memory, and GPU info in a single condor_status call.
-func (h *HTCondorScheduler) getNodeAndGpuInfo() (int, int64, []GpuInfo, error) {
+func (h *HTCondorScheduler) getNodeAndGpuInfo() (htcondorPool, error) {
 	output, err := runCommand(context.Background(), "HTCondor", "query-node-info", h.condorStatusBin,
 		"-compact", "-af", "TotalSlotCpus", "TotalSlotMemory", "TotalGpus", "Machine")
 	if err != nil {
-		return 0, 0, nil, NewClusterError("HTCondor", "query node info", err)
+		return htcondorPool{}, NewClusterError("HTCondor", "query node info", err)
 	}
+	return parseHTCondorPool(string(output)), nil
+}
 
-	var maxCpus int
-	var maxMemMB int64
-	gpuMap := make(map[string]*GpuInfo)
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
+// parseHTCondorPool reads condor_status -compact -af TotalSlotCpus TotalSlotMemory TotalGpus Machine, one line per machine.
+//   - A machine with no GPUs prints undefined for TotalGpus.
+//   - HTCondor names no GPU type, so every GPU is of type gpu.
+func parseHTCondorPool(output string) htcondorPool {
+	var pool htcondorPool
+	totalGpus := 0
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 4 {
 			continue
 		}
-
-		var cpus int
+		var cpus, gpuCount int
 		var memMB int64
-		var gpuCount int
 		fmt.Sscanf(fields[0], "%d", &cpus)
 		fmt.Sscanf(fields[1], "%d", &memMB)
 		fmt.Sscanf(fields[2], "%d", &gpuCount)
-		machine := fields[3]
 
-		if cpus > maxCpus {
-			maxCpus = cpus
-		}
-		if memMB > maxMemMB {
-			maxMemMB = memMB
-		}
-
+		pool.machines++
+		pool.maxCpus = max(pool.maxCpus, cpus)
+		pool.maxMemMB = max(pool.maxMemMB, memMB)
+		t := NodeType{Nodes: 1, Cpus: cpus, MemMB: memMB}
 		if gpuCount > 0 {
-			key := "gpu:" + machine
-			if existing, ok := gpuMap[key]; ok {
-				existing.Total += gpuCount
-			} else {
-				gpuMap[key] = &GpuInfo{
-					Type:      "gpu",
-					Total:     gpuCount,
-					Partition: machine,
-				}
-			}
+			t.Gpus = []NodeGpu{{Type: "gpu", PerNode: gpuCount}}
+			totalGpus += gpuCount
 		}
+		pool.nodeTypes = append(pool.nodeTypes, t)
 	}
-
-	gpus := make([]GpuInfo, 0, len(gpuMap))
-	for _, g := range gpuMap {
-		gpus = append(gpus, *g)
+	if totalGpus > 0 {
+		pool.gpus = []GpuInfo{{Type: "gpu", Total: totalGpus, Partition: htcondorDefaultPartition}}
 	}
-	return maxCpus, maxMemMB, gpus, nil
+	return pool
 }
 
-// getClusterLimits queries HTCondor for cluster-wide resource limits
-// HTCondor doesn't have partitions/queues like other schedulers, but uses accounting groups
-// and global limits. This function creates a "default" limit representing cluster resources.
-func (h *HTCondorScheduler) getClusterLimits(gpuInfo []GpuInfo, maxCpus int, maxMemMB int64) ([]ResourceLimits, error) {
+// getClusterLimits queries HTCondor for cluster-wide resource limits.
+// HTCondor has no partitions or queues, so the pool is one "default" partition of its machines.
+func (h *HTCondorScheduler) getClusterLimits(pool htcondorPool) ([]ResourceLimits, error) {
 	limit := &ResourceLimits{
-		Partition: "default",
-	}
-
-	// Use the max node resources as baseline
-	if maxCpus > 0 {
-		limit.MaxCpusPerNode = maxCpus
-	}
-	if maxMemMB > 0 {
-		limit.MaxMemMBPerNode = maxMemMB
+		Partition:       htcondorDefaultPartition,
+		Nodes:           pool.machines,
+		MaxCpusPerNode:  pool.maxCpus,
+		MaxMemMBPerNode: pool.maxMemMB,
+		NodeTypes:       pool.nodeTypes,
 	}
 
 	// Try to get max walltime from config if condor_config_val is available
@@ -740,13 +748,8 @@ func (h *HTCondorScheduler) getClusterLimits(gpuInfo []GpuInfo, maxCpus int, max
 		}
 	}
 
-	// Calculate total GPU count
-	totalGpus := 0
-	for _, gpu := range gpuInfo {
-		totalGpus += gpu.Total
-	}
-	if totalGpus > 0 {
-		limit.MaxGpus = totalGpus
+	for _, gpu := range pool.gpus {
+		limit.MaxGpus += gpu.Total
 	}
 
 	// If we have any limits set, return them
@@ -771,21 +774,24 @@ func (h *HTCondorScheduler) getConfigValue(param string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-// GetJobResources reads allocated resources from HTCondor environment variables.
-// HTCondor is always single-node; Nodes and TasksPerNode are not set.
+// GetJobResources reads what the slot gave the job from its job ad, $_CONDOR_JOB_AD.
+//   - HTCondor sets no variable with the request. The job ad holds it.
+//   - CpusProvisioned and MemoryProvisioned (MiB) are what the slot gave, which may be more than requested. RequestCpus and RequestMemory are read without them.
+//   - The GPUs are GpusProvisioned (jobGpuCount).
+//   - A vanilla job is one rank on one node, so Nodes and TasksPerNode are not set.
+//   - https://htcondor.readthedocs.io/en/latest/users-manual/env-of-job.html
 func (h *HTCondorScheduler) GetJobResources() *ResourceSpec {
 	if _, ok := os.LookupEnv("_CONDOR_JOB_AD"); !ok {
 		return nil
 	}
 	res := &ResourceSpec{}
-	if v := getEnvInt("_CONDOR_REQUEST_CPUS"); v != nil {
-		res.CpusPerTask = *v
+	if n, ok := jobAdInt("CpusProvisioned", "RequestCpus"); ok && n > 0 {
+		res.CpusPerTask = int(n)
 	}
-	// _CONDOR_REQUEST_MEMORY is in MB
-	if v := getEnvInt64("_CONDOR_REQUEST_MEMORY"); v != nil {
-		res.MemPerNodeMB = *v
+	if n, ok := jobAdInt("MemoryProvisioned", "RequestMemory"); ok && n > 0 {
+		res.MemPerNodeMB = n
 	}
-	if n := getCudaDeviceCount(); n != nil && *n > 0 {
+	if n := jobGpuCount(); n != nil && *n > 0 {
 		res.Gpu = &GpuSpec{Count: *n}
 	}
 	return res
@@ -808,24 +814,44 @@ func parseHTCondorMemory(memStr string) (int64, error) {
 	return parseMemoryMB(memStr)
 }
 
-// GetJobStatus returns the current status of the given HTCondor job ID.
-// Uses condor_q; returns JobStatusUnknown conservatively when condor_q is unavailable or times out.
-// condor_q doesn't easily distinguish idle vs running without --format; presence = alive.
+// GetJobStatus returns the state of an HTCondor job from its JobStatus attribute.
+//   - condor_q prints no line for a job that has left the queue, which is done.
+//   - 1 (idle) and 5 (held) are pending; 2 (running), 6 (transferring output) and 7 (suspended) running; 3 (removed) failed; 4 (completed) done.
+//   - A cluster of several procs is running while one runs, else pending while one waits.
+//   - A failed or timed-out condor_q is unknown.
 func (h *HTCondorScheduler) GetJobStatus(ctx context.Context, jobID string) (JobStatus, error) {
 	if h.condorQBin == "" {
-		return JobStatusUnknown, nil // conservative: can't check
+		return JobStatusUnknown, nil
 	}
-	out, err := runCommand(ctx, "HTCondor", "job-status", h.condorQBin, jobID)
+	out, err := runCommand(ctx, "HTCondor", "job-status", h.condorQBin, jobID, "-af", "JobStatus")
 	if err != nil {
-		if _, ok := err.(*TimeoutError); ok {
-			return JobStatusUnknown, nil // conservative: timed out
+		return JobStatusUnknown, nil
+	}
+	return htcondorJobStatus(string(out)), nil
+}
+
+// htcondorJobStatus reads the JobStatus lines that condor_q -af JobStatus prints, one per proc.
+func htcondorJobStatus(out string) JobStatus {
+	var pending, running, failed bool
+	for _, line := range strings.Split(out, "\n") {
+		switch strings.TrimSpace(line) {
+		case "1", "5":
+			pending = true
+		case "2", "6", "7":
+			running = true
+		case "3":
+			failed = true
 		}
-		return JobStatusDone, nil
 	}
-	if strings.TrimSpace(string(out)) != "" {
-		return JobStatusRunning, nil // in queue (can't distinguish idle vs running without --format)
+	switch {
+	case running:
+		return JobStatusRunning
+	case pending:
+		return JobStatusPending
+	case failed:
+		return JobStatusFailed
 	}
-	return JobStatusDone, nil
+	return JobStatusDone
 }
 
 // CancelJob cancels the HTCondor job with the given ID using condor_rm.

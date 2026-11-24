@@ -3,6 +3,7 @@ package scheduler
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -23,14 +24,37 @@ func TestWriteResourceExports(t *testing.T) {
 		"export NCPU=2\n", "export CNT_NCPU=2\n",
 		"export MEM=4096\n", "export CNT_MEM=4096\n",
 		"export MEM_GB=4\n", "export CNT_MEM_GB=4\n",
-		"export OMP_NUM_THREADS=2\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("exports missing %q\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "CNT_OMP_NUM_THREADS") {
-		t.Errorf("OMP_NUM_THREADS has no CNT_ copy\n%s", got)
+	if strings.Contains(got, "OMP_NUM_THREADS") {
+		t.Errorf("a job script exports OMP_NUM_THREADS, which the run in the job sets when it is unset\n%s", got)
+	}
+}
+
+// The unset line names every variable the exports can write, and comes before them.
+func TestWriteResourceExportsUnsetsFirst(t *testing.T) {
+	var b strings.Builder
+	writeResourceExports(&b, hybridSpec())
+	got := b.String()
+	line, _, _ := strings.Cut(got, "\n")
+	if !strings.HasPrefix(line, "unset ") {
+		t.Fatalf("the first line is %q, want an unset line", line)
+	}
+	unset := strings.Fields(line)[1:]
+	for _, kv := range ResourceEnvVars(hybridSpec()) {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(unset, name) {
+			t.Errorf("%s is exported but not unset", name)
+		}
+		if strings.Index(got, "export "+kv) < len(line) {
+			t.Errorf("%s is exported before the unset line", name)
+		}
+	}
+	if slices.Contains(unset, "OMP_NUM_THREADS") {
+		t.Error("OMP_NUM_THREADS is unset, which the scheduler may have set for the job")
 	}
 }
 
@@ -58,13 +82,13 @@ func TestScriptsExportResourceVars(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{"export NCPU=2\n", "export CNT_NCPU=2\n", "export NRANK=8\n", "export OMP_NUM_THREADS=2\n"} {
+			for _, want := range []string{"export NCPU=2\n", "export CNT_NCPU=2\n", "export NRANK=8\n"} {
 				if !strings.Contains(string(body), want) {
 					t.Errorf("script missing %q\n%s", want, body)
 				}
 			}
-			if strings.Contains(string(body), "OMP_NUM_THREADS:-") {
-				t.Errorf("script still defaults OMP_NUM_THREADS\n%s", body)
+			if strings.Contains(string(body), "OMP_NUM_THREADS") {
+				t.Errorf("script sets OMP_NUM_THREADS\n%s", body)
 			}
 		})
 	}
@@ -228,14 +252,15 @@ func TestResourcesFromExports(t *testing.T) {
 		}
 	})
 
+	// Only the CPUs and the memory of a rank are read. The rank variables are for display.
 	t.Run("round trip", func(t *testing.T) {
 		setExports(t, hybridSpec())
 		res := resourcesFromExports()
 		if res == nil {
 			t.Fatal("expected non-nil")
 		}
-		if res.Nodes != 2 || res.Ntasks != 8 || res.TasksPerNode != 4 || res.CpusPerTask != 2 {
-			t.Errorf("geometry = %+v", res)
+		if res.CpusPerTask != 2 || res.Nodes != 0 || res.Ntasks != 0 || res.TasksPerNode != 0 {
+			t.Errorf("read %+v; want only 2 CPUs", res)
 		}
 		if got := res.GetMemPerTaskMB(); got != 4096 {
 			t.Errorf("memory per rank = %d MB; want 4096", got)
@@ -250,16 +275,6 @@ func TestResourcesFromExports(t *testing.T) {
 		res := resourcesFromExports()
 		if res.CpusPerTask != 2 || res.GetMemPerTaskMB() != 4096 {
 			t.Errorf("CpusPerTask = %d, memory = %d MB; want 2 and 4096", res.CpusPerTask, res.GetMemPerTaskMB())
-		}
-	})
-
-	t.Run("MPI variables stay ahead of CNT_NRANK", func(t *testing.T) {
-		setExports(t, hybridSpec())
-		t.Setenv("OMPI_COMM_WORLD_SIZE", "6")
-		t.Setenv("OMPI_COMM_WORLD_LOCAL_SIZE", "3")
-		res := resourcesFromExports()
-		if res.Ntasks != 6 || res.TasksPerNode != 3 {
-			t.Errorf("Ntasks = %d, TasksPerNode = %d; want 6 and 3", res.Ntasks, res.TasksPerNode)
 		}
 	})
 
@@ -287,5 +302,141 @@ func TestCurrentJobResourcesWithoutJob(t *testing.T) {
 	clearJobEnvVars(t)
 	if res := CurrentJobResources(); res != nil {
 		t.Fatalf("expected nil outside a job, got %+v", res)
+	}
+}
+
+// nodeFile writes a PBS node file with one line per host given and returns its path.
+func nodeFile(t *testing.T, hosts ...string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "nodes")
+	if err := os.WriteFile(path, []byte(strings.Join(hosts, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The task count is CNT_NRANK first, then the scheduler's own variables. An MPI library's variables are not read.
+func TestJobTaskCount(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want int
+	}{
+		{"no job", nil, 0},
+		{"SLURM", map[string]string{"SLURM_JOB_ID": "1", "SLURM_NTASKS": "4"}, 4},
+		{"PBS node file", map[string]string{"PBS_JOBID": "1.srv", "PBS_NODEFILE": nodeFile(t, "n1", "n1", "n2")}, 3},
+		{"PBS node file with one rank", map[string]string{"PBS_JOBID": "1.srv", "PBS_NODEFILE": nodeFile(t, "n1"), "PBS_TASKNUM": "6"}, 1},
+		{"PBS node file unreadable", map[string]string{"PBS_JOBID": "1.srv", "PBS_NODEFILE": "/missing/nodes"}, 0},
+		{"LSF slots", map[string]string{"LSB_JOBID": "1", "LSB_DJOB_NUMPROC": "3"}, 3},
+		{"one task", map[string]string{"SLURM_JOB_ID": "1", "SLURM_NTASKS": "1"}, 1},
+		{"CNT_NRANK", map[string]string{"PBS_JOBID": "1.srv", "CNT_NRANK": "2", "PBS_NODEFILE": nodeFile(t, "n1")}, 2},
+		{"CNT_NRANK wins", map[string]string{"SLURM_JOB_ID": "1", "CNT_NRANK": "9", "SLURM_NTASKS": "1"}, 9},
+		{"MPI library is not read", map[string]string{"SLURM_JOB_ID": "1", "OMPI_COMM_WORLD_SIZE": "9"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearJobEnvVars(t)
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			if got := jobRankCount(); got != tc.want {
+				t.Errorf("jobRankCount = %d, want %d", got, tc.want)
+			}
+			if got, want := InMultiRankJob(), tc.want > 1 && IsInsideJob(); got != want {
+				t.Errorf("InMultiRankJob = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// A script run in place gets its CPUs and memory, and no rank variable.
+func TestRunEnvVars(t *testing.T) {
+	clearJobEnvVars(t)
+	rs := &ResourceSpec{Nodes: 2, Ntasks: 8, TasksPerNode: 4, CpusPerTask: 2, MemPerNodeMB: 16384}
+	got := map[string]string{}
+	for _, kv := range RunEnvVars(rs, false) {
+		k, v, _ := strings.Cut(kv, "=")
+		got[k] = v
+	}
+	want := map[string]string{
+		"NCPU": "2", "CNT_NCPU": "2", "MEM": "4096", "CNT_MEM": "4096", "MEM_GB": "4", "CNT_MEM_GB": "4",
+		"OMP_NUM_THREADS": "2",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+	for _, k := range []string{"NRANK", "NNODE", "NRANK_PER_NODE", "CNT_NRANK", "CNT_NNODE", "CNT_NRANK_PER_NODE"} {
+		if v, ok := got[k]; ok {
+			t.Errorf("%s = %q is set; the rank variables belong to the job script header", k, v)
+		}
+	}
+}
+
+// OMP_NUM_THREADS is a default: a value that is set stays, unless the caller forces it.
+func TestRunEnvVarsKeepsThreads(t *testing.T) {
+	rs := &ResourceSpec{CpusPerTask: 4}
+	threads := func(env []string) string {
+		for _, kv := range env {
+			if v, ok := strings.CutPrefix(kv, "OMP_NUM_THREADS="); ok {
+				return v
+			}
+		}
+		return ""
+	}
+	clearJobEnvVars(t)
+	if got := threads(RunEnvVars(rs, false)); got != "4" {
+		t.Errorf("unset: OMP_NUM_THREADS = %q, want 4", got)
+	}
+	t.Setenv("OMP_NUM_THREADS", "16")
+	if got := threads(RunEnvVars(rs, false)); got != "" {
+		t.Errorf("set: OMP_NUM_THREADS = %q, want it left alone", got)
+	}
+	if got := threads(RunEnvVars(rs, true)); got != "4" {
+		t.Errorf("forced: OMP_NUM_THREADS = %q, want 4", got)
+	}
+}
+
+// A job with more than one rank gets OMP_NUM_THREADS when it is unset, from the CPUs of one rank, and nothing else.
+func TestMultiRankEnvVars(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		want []string
+	}{
+		{"already set", map[string]string{"OMP_NUM_THREADS": "8", "CNT_NCPU": "2"}, nil},
+		{"from the CondaTainer header", map[string]string{"CNT_NCPU": "2", "SLURM_CPUS_PER_TASK": "6"}, []string{"OMP_NUM_THREADS=2"}},
+		{"from SLURM", map[string]string{"SLURM_CPUS_PER_TASK": "6"}, []string{"OMP_NUM_THREADS=6"}},
+		{"nothing known", nil, []string{"OMP_NUM_THREADS=1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearJobEnvVars(t)
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			got := MultiRankEnvVars()
+			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
+				t.Errorf("MultiRankEnvVars = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A process with no active scheduler, such as a container in a job, reads the variables of the scheduler whose job it is in.
+func TestCurrentJobResourcesWithoutAnActiveScheduler(t *testing.T) {
+	ClearActiveScheduler()
+	t.Cleanup(ClearActiveScheduler)
+	clearJobEnvVars(t)
+	t.Setenv("SLURM_JOB_ID", "1")
+	t.Setenv("SLURM_CPUS_PER_TASK", "4")
+	t.Setenv("SLURM_MEM_PER_NODE", "8192")
+	res := CurrentJobResources()
+	if res == nil || res.CpusPerTask != 4 || res.MemPerNodeMB != 8192 {
+		t.Fatalf("got %+v, want 4 CPUs and 8192 MB from the SLURM variables", res)
+	}
+
+	clearJobEnvVars(t)
+	if res := CurrentJobResources(); res != nil {
+		t.Fatalf("got %+v outside a job", res)
 	}
 }

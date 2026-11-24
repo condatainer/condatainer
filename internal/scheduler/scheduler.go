@@ -301,21 +301,18 @@ func IsUnparsed(specs *ScriptSpecs) bool {
 	return specs != nil && specs.HasDirectives && specs.Spec == nil
 }
 
-// specDefaults is the package-level defaults used by all schedulers.
-var specDefaults = ResourceSpec{
-	Ntasks:       1,
-	CpusPerTask:  1,
-	MemPerNodeMB: 2048,
-	Time:         2 * time.Hour,
-}
-
-// GetSpecDefaults returns the current default values for ScriptSpecs.
+// GetSpecDefaults returns the resources of one task for what a script does not set.
+//   - They are the scheduler.ncpu, scheduler.mem and scheduler.time settings.
+//   - Every scheduler's parser starts from them, and so does a script with no resources.
 func GetSpecDefaults() ResourceSpec {
-	return specDefaults
+	rs := DefaultSpec()
+	rs.Ntasks = 1
+	return rs
 }
 
 // Override updates rs in-place with non-zero/non-nil fields from other.
 //   - Fields in other that are zero/nil are skipped (rs retains its value).
+//   - Memory is one value, per CPU or per node. Whichever other sets replaces the one rs had.
 //   - Safe to call with a nil other.
 func (rs *ResourceSpec) Override(other *ResourceSpec) {
 	if other == nil {
@@ -341,6 +338,9 @@ func (rs *ResourceSpec) Override(other *ResourceSpec) {
 	}
 	if other.MemPerNodeMB > 0 {
 		rs.MemPerNodeMB = other.MemPerNodeMB
+		if other.MemPerCpuMB == 0 {
+			rs.MemPerCpuMB = 0 // the per-CPU value would win over the per-node one
+		}
 	}
 	if other.Gpu != nil {
 		rs.Gpu = other.Gpu
@@ -418,6 +418,7 @@ type JobSpec struct {
 	OverrideOutput bool              // If true, always set Stdout/Stderr from Name (ignores script directives)
 	Array          *ArraySpec        // Non-nil → emit array job directives
 	KeepScript     bool              // If true, skip self-removal of the generated script after execution
+	UniqueName     bool              // If true, the script is created only when its path is free; a taken path fails with os.ErrExist
 }
 
 // Scheduler defines the interface for job schedulers
@@ -478,7 +479,7 @@ type Scheduler interface {
 	// JobIDEnvExpr returns a shell expression that expands to the job ID at
 	// runtime inside a submitted job (e.g. "${SLURM_JOB_ID}"). Used by the
 	// helper wrapper to set CNT_HELPER_JOB_ID scheduler-specifically.
-	// Derived from JobIDVar() for most schedulers; PBS strips the server suffix.
+	// Derived from JobIDVar(), except on HTCondor, which reads the job ad.
 	JobIDEnvExpr() string
 
 	// NodeNameEnvExpr returns a shell expression that expands, inside a submitted job, to the
@@ -773,6 +774,20 @@ func getEnvInt64(key string) *int64 {
 	return &n
 }
 
+// jobGpuCount is the number of GPUs of the job this process runs in, or nil when unknown.
+//   - An HTCondor job's count is GpusProvisioned in its job ad. HTCondor sets CUDA_VISIBLE_DEVICES=10000 in a job without GPUs, to hide them.
+//   - Any other job's count is the entries of CUDA_VISIBLE_DEVICES.
+func jobGpuCount() *int {
+	if _, ok := os.LookupEnv("_CONDOR_JOB_AD"); ok {
+		if n, ok := jobAdInt("GpusProvisioned", "RequestGPUs"); ok {
+			count := int(n)
+			return &count
+		}
+		return nil
+	}
+	return getCudaDeviceCount()
+}
+
 // getCudaDeviceCount parses CUDA_VISIBLE_DEVICES and returns the number of devices.
 // Returns nil if the variable is unset or empty.
 func getCudaDeviceCount() *int {
@@ -786,41 +801,6 @@ func getCudaDeviceCount() *int {
 		return nil
 	}
 	return &count
-}
-
-// getMpiCommSize returns the total MPI communicator size from MPI library environment variables.
-//   - Checks OpenMPI (OMPI_COMM_WORLD_SIZE) and MPICH/Intel MPI (PMI_SIZE) variables.
-//   - These variables are set by the MPI library and are consistent across all MPI ranks, unlike scheduler-specific variables which may be task-local.
-//   - Returns nil if no MPI environment is detected.
-func getMpiCommSize() *int {
-	// OpenMPI sets OMPI_COMM_WORLD_SIZE
-	if v := getEnvInt("OMPI_COMM_WORLD_SIZE"); v != nil {
-		return v
-	}
-	// MPICH and Intel MPI set PMI_SIZE
-	if v := getEnvInt("PMI_SIZE"); v != nil {
-		return v
-	}
-	// MVAPICH2 also uses PMI_SIZE, but also sets MV2_COMM_WORLD_SIZE
-	if v := getEnvInt("MV2_COMM_WORLD_SIZE"); v != nil {
-		return v
-	}
-	return nil
-}
-
-// getMpiLocalSize returns the number of MPI ranks on the current node.
-//   - This corresponds to TasksPerNode in scheduler terminology.
-//   - Returns nil if no MPI environment is detected.
-func getMpiLocalSize() *int {
-	// OpenMPI sets OMPI_COMM_WORLD_LOCAL_SIZE
-	if v := getEnvInt("OMPI_COMM_WORLD_LOCAL_SIZE"); v != nil {
-		return v
-	}
-	// MPICH sets MPI_LOCALNRANKS
-	if v := getEnvInt("MPI_LOCALNRANKS"); v != nil {
-		return v
-	}
-	return nil
 }
 
 // ReadScriptSpecsFromPath reads a script's scheduler specs, translating from whichever scheduler wrote it.

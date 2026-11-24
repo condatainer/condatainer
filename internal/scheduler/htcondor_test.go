@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -534,6 +535,14 @@ func TestHTCondorResourceParsing(t *testing.T) {
 
 func TestHTCondorGetJobResources(t *testing.T) {
 	sched := &HTCondorScheduler{}
+	ad := func(t *testing.T, lines string) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), ".job.ad")
+		if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("_CONDOR_JOB_AD", path)
+	}
 
 	t.Run("not in job", func(t *testing.T) {
 		clearJobEnvVars(t)
@@ -542,65 +551,55 @@ func TestHTCondorGetJobResources(t *testing.T) {
 		}
 	})
 
-	t.Run("full resources", func(t *testing.T) {
+	t.Run("what the slot gave", func(t *testing.T) {
 		clearJobEnvVars(t)
-		t.Setenv("_CONDOR_JOB_AD", "/tmp/condor_job_ad")
-		t.Setenv("_CONDOR_REQUEST_CPUS", "16")
-		t.Setenv("_CONDOR_REQUEST_MEMORY", "8192")
-		t.Setenv("CUDA_VISIBLE_DEVICES", "0,1")
-
+		ad(t, "RequestCpus = 2\nRequestMemory = 1500\nCpusProvisioned = 2\nMemoryProvisioned = 1536\nGpusProvisioned = 2\nRequestGPUs = 2\n")
+		t.Setenv("CUDA_VISIBLE_DEVICES", "GPU-a,GPU-b")
 		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.CpusPerTask != 16 {
-			t.Errorf("CpusPerTask = %d; want 16", res.CpusPerTask)
-		}
-		if res.MemPerNodeMB != 8192 {
-			t.Errorf("MemPerNodeMB = %d; want 8192", res.MemPerNodeMB)
-		}
-		if res.Gpu == nil || res.Gpu.Count != 2 {
-			t.Errorf("Gpu.Count = %v; want 2", res.Gpu)
+		if res == nil || res.CpusPerTask != 2 || res.MemPerNodeMB != 1536 || res.Gpu == nil || res.Gpu.Count != 2 {
+			t.Errorf("res = %+v", res)
 		}
 	})
 
-	t.Run("partial data", func(t *testing.T) {
+	t.Run("the request without provisioned values", func(t *testing.T) {
 		clearJobEnvVars(t)
-		t.Setenv("_CONDOR_JOB_AD", "/tmp/condor_job_ad")
-		t.Setenv("_CONDOR_REQUEST_CPUS", "4")
-
+		ad(t, "RequestCpus = 4\nRequestMemory = 8192\n")
 		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.CpusPerTask != 4 {
-			t.Errorf("CpusPerTask = %d; want 4", res.CpusPerTask)
-		}
-		if res.MemPerNodeMB != 0 {
-			t.Errorf("MemPerNodeMB should be 0 (not set), got %d", res.MemPerNodeMB)
-		}
-		if res.Gpu != nil {
-			t.Errorf("Gpu should be nil, got %+v", res.Gpu)
+		if res == nil || res.CpusPerTask != 4 || res.MemPerNodeMB != 8192 || res.Gpu != nil {
+			t.Errorf("res = %+v", res)
 		}
 	})
 
-	t.Run("invalid values", func(t *testing.T) {
+	t.Run("a memory expression is not a size", func(t *testing.T) {
 		clearJobEnvVars(t)
-		t.Setenv("_CONDOR_JOB_AD", "/tmp/condor_job_ad")
-		t.Setenv("_CONDOR_REQUEST_CPUS", "not-a-number")
-		t.Setenv("_CONDOR_REQUEST_MEMORY", "-100")
-
-		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.CpusPerTask != 0 {
-			t.Errorf("CpusPerTask should be 0 for invalid value, got %d", res.CpusPerTask)
-		}
-		if res.MemPerNodeMB != 0 {
-			t.Errorf("MemPerNodeMB should be 0 for negative value, got %d", res.MemPerNodeMB)
+		ad(t, "RequestCpus = 1\nRequestMemory = ifthenelse(MemoryUsage =!= undefined,MemoryUsage,128)\n")
+		if res := sched.GetJobResources(); res == nil || res.CpusPerTask != 1 || res.MemPerNodeMB != 0 {
+			t.Errorf("res = %+v", res)
 		}
 	})
+
+	t.Run("no GPU though CUDA_VISIBLE_DEVICES hides them", func(t *testing.T) {
+		clearJobEnvVars(t)
+		ad(t, "CpusProvisioned = 1\nMemoryProvisioned = 128\nGpusProvisioned = 0\n")
+		t.Setenv("CUDA_VISIBLE_DEVICES", "10000")
+		if res := sched.GetJobResources(); res == nil || res.Gpu != nil {
+			t.Errorf("res = %+v", res)
+		}
+	})
+}
+
+func TestJobGpuCountOfAnHTCondorJobIgnoresTheHiddenDevices(t *testing.T) {
+	clearJobEnvVars(t)
+	path := filepath.Join(t.TempDir(), ".job.ad")
+	if err := os.WriteFile(path, []byte("GpusProvisioned = 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("_CONDOR_JOB_AD", path)
+	t.Setenv("CUDA_VISIBLE_DEVICES", "10000")
+	t.Setenv("CNT_NCPU", "2")
+	if res := resourcesFromExports(); res == nil || res.Gpu != nil {
+		t.Errorf("resourcesFromExports = %+v", res)
+	}
 }
 
 func TestHTCondorSubmitFileFormat(t *testing.T) {
@@ -1089,5 +1088,94 @@ func TestHTCondorArrayLogInWrapper(t *testing.T) {
 	}
 	if strings.Contains(string(sub), "array_args") {
 		t.Errorf("submit file still names logs from array_args\n%s", sub)
+	}
+}
+
+func TestHTCondorJobStatus(t *testing.T) {
+	for out, want := range map[string]JobStatus{
+		"":          JobStatusDone,
+		"1\n":       JobStatusPending,
+		"5\n":       JobStatusPending,
+		"2\n":       JobStatusRunning,
+		"6\n":       JobStatusRunning,
+		"7\n":       JobStatusRunning,
+		"3\n":       JobStatusFailed,
+		"4\n":       JobStatusDone,
+		"4\n1\n":    JobStatusPending,
+		"1\n2\n4\n": JobStatusRunning,
+		"3\n4\n":    JobStatusFailed,
+		"\n4\n\n":   JobStatusDone,
+	} {
+		if got := htcondorJobStatus(out); got != want {
+			t.Errorf("htcondorJobStatus(%q) = %v, want %v", out, got, want)
+		}
+	}
+}
+
+func TestHTCondorGetJobStatusAsksForTheAttribute(t *testing.T) {
+	dir := t.TempDir()
+	args := filepath.Join(dir, "args")
+	condorQ := filepath.Join(dir, "condor_q")
+	script := "#!/bin/sh\necho \"$@\" > " + args + "\necho 2\n"
+	if err := os.WriteFile(condorQ, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestHTCondorScheduler()
+	h.condorQBin = condorQ
+	status, err := h.GetJobStatus(context.Background(), "12")
+	if err != nil || status != JobStatusRunning {
+		t.Fatalf("GetJobStatus = %v, %v", status, err)
+	}
+	got, _ := os.ReadFile(args)
+	if strings.TrimSpace(string(got)) != "12 -af JobStatus" {
+		t.Errorf("condor_q args = %q", got)
+	}
+}
+
+func TestHTCondorPoolIsOneDefaultPartition(t *testing.T) {
+	pool := parseHTCondorPool("24 31877 1 gpuhost\n24 31000 undefined cpuhost1\n24 31500 undefined cpuhost2\n")
+	if pool.machines != 3 || pool.maxCpus != 24 || pool.maxMemMB != 31877 {
+		t.Fatalf("pool = %+v", pool)
+	}
+	if len(pool.gpus) != 1 || pool.gpus[0].Total != 1 || pool.gpus[0].Partition != "default" {
+		t.Errorf("gpus = %+v", pool.gpus)
+	}
+	h := newTestHTCondorScheduler()
+	limits, err := h.getClusterLimits(pool)
+	if err != nil || len(limits) != 1 {
+		t.Fatalf("limits = %+v, %v", limits, err)
+	}
+	if limits[0].Partition != "default" || limits[0].Nodes != 3 || limits[0].MaxGpus != 1 {
+		t.Errorf("limit = %+v", limits[0])
+	}
+	var nodes, gpus []string
+	for _, row := range partitionRows(limits[0], pool.gpus) {
+		nodes = append(nodes, row[2])
+		gpus = append(gpus, row[8])
+	}
+	if strings.Join(nodes, ",") != "1,2" || strings.Join(gpus, ",") != "gpu:1,-" {
+		t.Errorf("NODES = %v, GPUS = %v", nodes, gpus)
+	}
+}
+
+// A spec that gives memory per CPU asks HTCondor for the whole task's memory, and exports it.
+func TestHTCondorRequestsTheMemoryOfTheTask(t *testing.T) {
+	dir := t.TempDir()
+	jobSpec := &JobSpec{
+		Name:    "permem",
+		Command: "true",
+		Specs:   &ScriptSpecs{Spec: &ResourceSpec{Nodes: 1, CpusPerTask: 4, MemPerCpuMB: 1024}},
+	}
+	subPath, err := newTestHTCondorScheduler().CreateScriptWithSpec(jobSpec, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, _ := os.ReadFile(subPath)
+	if !strings.Contains(string(sub), "request_memory = 4096\n") {
+		t.Errorf("submit file:\n%s", sub)
+	}
+	sh, _ := os.ReadFile(filepath.Join(dir, "permem.sh"))
+	if !strings.Contains(string(sh), "export MEM=4096\n") {
+		t.Errorf("job script:\n%s", sh)
 	}
 }

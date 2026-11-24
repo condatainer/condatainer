@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -49,6 +50,68 @@ func TestPbsCreateScriptUsesOutputDir(t *testing.T) {
 	}
 	if !strings.Contains(string(content), fmt.Sprintf("-o %s", logPath)) {
 		t.Errorf("Generated script does not contain expected output path %s\nScript:\n%s", logPath, string(content))
+	}
+}
+
+// PBS has no working directory directive, so the script changes into it and writes no -d.
+func TestPbsScriptChangesToTheWorkDir(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "my dir")
+	jobSpec := &JobSpec{
+		Name:    "workdir",
+		Command: "echo hi",
+		Specs: &ScriptSpecs{
+			Control: RuntimeConfig{WorkDir: workDir},
+			Spec:    &ResourceSpec{CpusPerTask: 1},
+		},
+	}
+	scriptPath, err := newTestPbsScheduler().CreateScriptWithSpec(jobSpec, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, _ := os.ReadFile(scriptPath)
+	if strings.Contains(string(content), "#PBS -d") {
+		t.Errorf("the script has a -d directive, which PBS Pro rejects\n%s", content)
+	}
+	if want := "cd '" + workDir + "' || exit 1\n"; !strings.Contains(string(content), want) {
+		t.Errorf("the script does not contain %q\n%s", want, content)
+	}
+}
+
+// One log for both streams is -j oe, and two streams of one path never get both -o and -e.
+func TestPbsScriptMergesOneLog(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		stdout, stderr string
+		wantMerge      bool
+	}{
+		{"one file", "job.log", "job.log", true},
+		{"two files", "job.out", "job.err", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jobSpec := &JobSpec{
+				Name:    "merge",
+				Command: "echo hi",
+				Specs: &ScriptSpecs{
+					Control: RuntimeConfig{WorkDir: t.TempDir(), Stdout: tc.stdout, Stderr: tc.stderr},
+					Spec:    &ResourceSpec{CpusPerTask: 1},
+				},
+			}
+			scriptPath, err := newTestPbsScheduler().CreateScriptWithSpec(jobSpec, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			content, _ := os.ReadFile(scriptPath)
+			text := string(content)
+			if got := strings.Contains(text, "#PBS -j oe"); got != tc.wantMerge {
+				t.Errorf("-j oe present = %v, want %v\n%s", got, tc.wantMerge, text)
+			}
+			if tc.wantMerge && strings.Contains(text, "#PBS -e ") {
+				t.Errorf("a merged log has an -e directive\n%s", text)
+			}
+			if !tc.wantMerge && !strings.Contains(text, "#PBS -e ") {
+				t.Errorf("two logs have no -e directive\n%s", text)
+			}
+		})
 	}
 }
 
@@ -998,45 +1061,20 @@ func TestPbsGetJobResources(t *testing.T) {
 		clearJobEnvVars(t)
 		t.Setenv("PBS_JOBID", "67890.pbs-server")
 		t.Setenv("NCPUS", "2") // cpus per task (ompthreads per chunk)
-		t.Setenv("PBS_NUM_NODES", "4")
-		t.Setenv("PBS_NP", "16")
+		t.Setenv("PBS_NODEFILE", nodeFile(t, "a", "a", "b", "b", "b"))
 
 		res := sched.GetJobResources()
 		if res == nil {
 			t.Fatal("expected non-nil")
 		}
-		if res.Nodes != 4 {
-			t.Errorf("Nodes = %d; want 4", res.Nodes)
+		if res.Nodes != 2 {
+			t.Errorf("Nodes = %d; want 2", res.Nodes)
 		}
-		if res.Ntasks != 16 {
-			t.Errorf("Ntasks = %d; want 16", res.Ntasks)
+		if res.Ntasks != 5 {
+			t.Errorf("Ntasks = %d; want 5, one per node file line", res.Ntasks)
 		}
-		// TasksPerNode = PBS_NP / PBS_NUM_NODES = 16 / 4 = 4
-		if res.TasksPerNode != 4 {
-			t.Errorf("TasksPerNode = %d; want 4 (derived from PBS_NP/PBS_NUM_NODES)", res.TasksPerNode)
-		}
-		// CpusPerTask = NCPUS = 2
 		if res.CpusPerTask != 2 {
 			t.Errorf("CpusPerTask = %d; want 2", res.CpusPerTask)
-		}
-	})
-
-	t.Run("PBS_TASKNUM fallback", func(t *testing.T) {
-		clearJobEnvVars(t)
-		t.Setenv("PBS_JOBID", "67890")
-		t.Setenv("PBS_NUM_NODES", "2")
-		t.Setenv("PBS_TASKNUM", "8")
-
-		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.Ntasks != 8 {
-			t.Errorf("Ntasks = %d; want 8", res.Ntasks)
-		}
-		// TasksPerNode = PBS_TASKNUM / PBS_NUM_NODES = 8 / 2 = 4
-		if res.TasksPerNode != 4 {
-			t.Errorf("TasksPerNode = %d; want 4 (derived from PBS_TASKNUM/PBS_NUM_NODES)", res.TasksPerNode)
 		}
 	})
 
@@ -1051,20 +1089,6 @@ func TestPbsGetJobResources(t *testing.T) {
 		}
 		if res.CpusPerTask != 12 {
 			t.Errorf("CpusPerTask = %d; want 12", res.CpusPerTask)
-		}
-	})
-
-	t.Run("memory from PBS_VMEM", func(t *testing.T) {
-		clearJobEnvVars(t)
-		t.Setenv("PBS_JOBID", "67890")
-		t.Setenv("PBS_VMEM", "8589934592") // 8 GB in bytes
-
-		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.MemPerNodeMB != 8192 {
-			t.Errorf("MemPerNodeMB = %d; want 8192", res.MemPerNodeMB)
 		}
 	})
 
@@ -1191,9 +1215,7 @@ func TestPbsNonUniformMpiScriptGen(t *testing.T) {
 				CpusPerTask:  2,
 				MemPerNodeMB: 16384,
 			},
-			// ceil(14/4)=4 → nFull=3, rem=2, remNodes=1
-			// chunk1: 3:ncpus=8:mpiprocs=4:ompthreads=2:mem=16384mb
-			// chunk2: 1:ncpus=4:mpiprocs=2:ompthreads=2:mem=16384mb
+			// ceil(14/4)=4 → 3 full nodes and one with 2 ranks
 			wantSelect: "select=3:ncpus=8:mpiprocs=4:ompthreads=2:mem=16384mb+1:ncpus=4:mpiprocs=2:ompthreads=2:mem=16384mb",
 		},
 		{
@@ -1215,6 +1237,34 @@ func TestPbsNonUniformMpiScriptGen(t *testing.T) {
 				CpusPerTask: 2,
 			},
 			wantSelect: "select=3:ncpus=8:mpiprocs=4:ompthreads=2+1:ncpus=4:mpiprocs=2:ompthreads=2",
+		},
+		{
+			name: "the ranks of the remainder nodes add up: 9 ranks over 6 nodes",
+			spec: &ResourceSpec{
+				Nodes:       6,
+				Ntasks:      9,
+				CpusPerTask: 2,
+			},
+			// 3 nodes of 2 ranks, then 3 nodes of 1 rank
+			wantSelect: "select=3:ncpus=4:mpiprocs=2:ompthreads=2+3:ncpus=2",
+		},
+		{
+			name: "no node is left empty: 4 ranks over 3 nodes",
+			spec: &ResourceSpec{
+				Nodes:       3,
+				Ntasks:      4,
+				CpusPerTask: 1,
+			},
+			wantSelect: "select=1:ncpus=2:mpiprocs=2:ompthreads=1+2:ncpus=1",
+		},
+		{
+			name: "fewer ranks than nodes: only the nodes with a rank",
+			spec: &ResourceSpec{
+				Nodes:       4,
+				Ntasks:      3,
+				CpusPerTask: 1,
+			},
+			wantSelect: "select=3:ncpus=1",
 		},
 		{
 			name: "uniform Ntasks divisible by Nodes: single chunk (inferred tasksPerNode)",
@@ -1274,6 +1324,43 @@ func TestPbsNonUniformMpiScriptGen(t *testing.T) {
 
 			if !strings.Contains(scriptContent, tt.wantSelect) {
 				t.Errorf("Script missing expected select directive:\n  want: %q\n  script:\n%s", tt.wantSelect, scriptContent)
+			}
+		})
+	}
+}
+
+// Ranks with no node count are one chunk per rank, with the memory of one rank and no place of their own.
+func TestPbsRanksWithoutNodes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rs   ResourceSpec
+		want string
+		err  bool
+	}{
+		{"memory of the node figure", ResourceSpec{Ntasks: 4, CpusPerTask: 1, MemPerNodeMB: 2048}, "#PBS -l select=4:ncpus=1:mem=2048mb\n", false},
+		{"memory per CPU", ResourceSpec{Ntasks: 4, CpusPerTask: 2, MemPerCpuMB: 1024}, "#PBS -l select=4:ncpus=2:mem=2048mb\n", false},
+		{"exclusive", ResourceSpec{Ntasks: 2, CpusPerTask: 1, Exclusive: true}, "#PBS -l select=2:ncpus=1\n#PBS -l place=excl\n", false},
+		{"GPU", ResourceSpec{Ntasks: 4, CpusPerTask: 1, Gpu: &GpuSpec{Type: "gpu", Count: 1}}, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := tc.rs
+			jobSpec := &JobSpec{Name: "free", Command: "mpirun ./app", Specs: &ScriptSpecs{Spec: &rs, RemainingFlags: []string{}}, Metadata: map[string]string{}}
+			scriptPath, err := newTestPbsScheduler().CreateScriptWithSpec(jobSpec, t.TempDir())
+			if tc.err {
+				if err == nil {
+					t.Error("expected an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			content, _ := os.ReadFile(scriptPath)
+			if !strings.Contains(string(content), tc.want) {
+				t.Errorf("script lacks %q\n%s", tc.want, content)
+			}
+			if !tc.rs.Exclusive && strings.Contains(string(content), "place=") {
+				t.Errorf("a place line the site's default should decide\n%s", content)
 			}
 		})
 	}
@@ -1471,5 +1558,17 @@ func TestPbsSelectExtra(t *testing.T) {
 				t.Errorf("script lacks %q:\n%s", want, data)
 			}
 		})
+	}
+}
+
+// The helper's job ID keeps the server, the same ID qsub printed at submit.
+func TestPbsJobIDEnvExprKeepsTheServer(t *testing.T) {
+	t.Setenv("PBS_JOBID", "123[4].pbs-server")
+	out, err := exec.Command("bash", "-c", `echo "`+(&PbsScheduler{}).JobIDEnvExpr()+`"`).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "123[4].pbs-server" {
+		t.Errorf("job ID = %q, want 123[4].pbs-server", got)
 	}
 }

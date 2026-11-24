@@ -305,8 +305,8 @@ func (j *jobs) launch(ctx context.Context, root string, entry *lock.Entry, step 
 	if scheduler.IsUnparsed(specs) {
 		return "", fmt.Errorf("the recipe has scheduler directives that cannot be normalized")
 	}
-	// The same priority chain a catalog build resolves: build defaults, then the
-	// recipe's own directives, then the resources of the job doing the submitting.
+	// The same chain a catalog build resolves: the build defaults, then the
+	// recipe's own directives.
 	specs.Spec = build.EffectiveResourceSpec(specs)
 	// Parsed from a scratch copy of the vendored recipe, which is gone. The job
 	// header echoes it, and a path that no longer exists is worse than none.

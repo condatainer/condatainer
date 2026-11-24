@@ -182,13 +182,12 @@ Fix these before, or with, the first other scheduler.
   - Let the scheduler give a sort key, or compare through `ArrayID` and `TaskID`.
 - The help of `jobs` and `cancel` uses `245068_4`-style IDs.
   - Make it neutral, or let each scheduler describe its IDs.
-- `internal/scheduler/settings.go`: `DetectBin` and `TypeFromBin` do not know `condor_submit`.
 - `ResourceLimits.State` and `IsUp()` use SLURM's word `up`.
   - PBS (enabled and started) and LSF (`Open:Active`) must map to it for `partitions`.
 - `ResourceSpec.SelectExtra` is a PBS-only field in a shared struct.
 - The existing `GetJobStatus` of PBS, LSF and HTCondor do not match the new model.
-  - They return "done" when the status tool fails.
-  - HTCondor calls every queued job running.
+  - PBS and LSF return "done" when the status tool fails. HTCondor returns "unknown".
+  - HTCondor reads `JobStatus` from `condor_q -af`, and a job that has left the queue is done.
   - None reads a finished job's result. `jobs` and `cancel` must not reuse them.
 
 ## Other schedulers

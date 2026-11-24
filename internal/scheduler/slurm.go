@@ -584,7 +584,7 @@ func (s *SlurmScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string
 	scriptPath := filepath.Join(outputDir, scriptName)
 
 	// Create the batch script
-	file, err := utils.CreateFileWritable(scriptPath)
+	file, err := createScriptFile(scriptPath, jobSpec.UniqueName)
 	if err != nil {
 		return "", NewScriptCreationError(jobSpec.Name, scriptPath, err)
 	}
@@ -1185,7 +1185,10 @@ func formatSlurmTimeSpec(d time.Duration) string {
 }
 
 // GetJobResources reads allocated resources from SLURM environment variables.
-// Fields with value 0 were not exposed by SLURM.
+//   - Fields with value 0 were not exposed by SLURM.
+//   - SLURM_CPUS_PER_TASK is set only when the job asked for CPUs per task.
+//   - SLURM_MEM_PER_CPU and SLURM_MEM_PER_NODE (MB) follow --mem-per-cpu and --mem. A job with both reads per CPU, which a per-node figure SLURM derives can disagree with.
+//   - https://slurm.schedmd.com/sbatch.html#SECTION_OUTPUT-ENVIRONMENT-VARIABLES
 func (s *SlurmScheduler) GetJobResources() *ResourceSpec {
 	if _, ok := os.LookupEnv("SLURM_JOB_ID"); !ok {
 		return nil
@@ -1195,30 +1198,16 @@ func (s *SlurmScheduler) GetJobResources() *ResourceSpec {
 		res.Nodes = *v
 	}
 
-	// Prefer MPI library env vars (global across all ranks) over SLURM vars (task-local in MPI jobs).
-	if mpiSize := getMpiCommSize(); mpiSize != nil {
-		res.Ntasks = *mpiSize
-	} else if v := getEnvInt("SLURM_NTASKS"); v != nil {
-		res.Ntasks = *v
-	}
-
-	// TasksPerNode: prefer MPI local size (actual tasks on this node) over SLURM var
-	if mpiLocal := getMpiLocalSize(); mpiLocal != nil {
-		res.TasksPerNode = *mpiLocal
-	} else if v := getEnvInt("SLURM_NTASKS_PER_NODE"); v != nil {
-		res.TasksPerNode = *v
-	} else if res.Ntasks > 0 && res.Nodes > 1 && res.Ntasks%res.Nodes == 0 {
-		// Derive TasksPerNode when SLURM_NTASKS_PER_NODE is absent but geometry is uniform.
-		res.TasksPerNode = res.Ntasks / res.Nodes
-	}
+	res.Ntasks = jobRankCount()
 	if v := getEnvInt("SLURM_CPUS_PER_TASK"); v != nil {
 		res.CpusPerTask = *v
 	}
-	// SLURM_MEM_PER_NODE is already in MB.
-	if v := getEnvInt64("SLURM_MEM_PER_NODE"); v != nil {
+	if v := getEnvInt64("SLURM_MEM_PER_CPU"); v != nil {
+		res.MemPerCpuMB = *v
+	} else if v := getEnvInt64("SLURM_MEM_PER_NODE"); v != nil {
 		res.MemPerNodeMB = *v
 	}
-	if n := getCudaDeviceCount(); n != nil && *n > 0 {
+	if n := jobGpuCount(); n != nil && *n > 0 {
 		res.Gpu = &GpuSpec{Count: *n}
 	}
 	return res

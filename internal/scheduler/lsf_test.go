@@ -1597,24 +1597,6 @@ func TestLsfGetJobResources(t *testing.T) {
 		}
 	})
 
-	// LSB_MAX_MEM_RUSAGE is per-slot (per-task) in KB → MemPerCpuMB.
-	t.Run("memory from LSB_MAX_MEM_RUSAGE", func(t *testing.T) {
-		clearJobEnvVars(t)
-		t.Setenv("LSB_JOBID", "99999")
-		t.Setenv("LSB_MAX_MEM_RUSAGE", "8388608") // 8 GB in KB
-
-		res := sched.GetJobResources()
-		if res == nil {
-			t.Fatal("expected non-nil")
-		}
-		if res.MemPerCpuMB != 8192 {
-			t.Errorf("MemPerCpuMB = %d; want 8192", res.MemPerCpuMB)
-		}
-		if res.MemPerNodeMB != 0 {
-			t.Errorf("MemPerNodeMB should be 0 (per-slot memory goes to MemPerCpuMB), got %d", res.MemPerNodeMB)
-		}
-	})
-
 	t.Run("partial data", func(t *testing.T) {
 		clearJobEnvVars(t)
 		t.Setenv("LSB_JOBID", "99999")

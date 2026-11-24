@@ -22,6 +22,7 @@ func withAllTiers(t *testing.T) (scratch, user, extraRoot, root string) {
 	t.Setenv("XDG_DATA_HOME", user)
 	t.Setenv("CNT_EXTRA_ROOT", extraRoot)
 	t.Setenv("CNT_ROOT", root)
+	t.Setenv("CNT_LIBEXEC", "") // a test that wants the toolchain override sets it
 
 	reset := func() {
 		extraRootOnce, extraRootCache = sync.Once{}, ""

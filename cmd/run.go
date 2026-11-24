@@ -215,6 +215,11 @@ func runScript(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	resFlags, err := parseResourceFlags(cmd.Flags())
+	if err != nil {
+		ExitWithError("%v", err)
+	}
+
 	// Build array spec early so we can validate before doing expensive work
 	arraySpec, err := buildArraySpec()
 	if err != nil {
@@ -297,39 +302,15 @@ func runScript(cmd *cobra.Command, args []string) error {
 	}
 
 	// CLI -c/-m/-t/-g resource overrides (highest priority, only when spec is parsed)
-	if scriptSpecs != nil && scriptSpecs.Spec == nil && scriptSpecs.HasDirectives {
+	if jobKeepsResources() {
+		warnResourceFlagsInJob(cmd.Flags())
+	} else if scriptSpecs != nil && scriptSpecs.Spec == nil && scriptSpecs.HasDirectives {
 		// The resource directives could not be fully parsed, so overrides cannot be applied; warn if the user specified any.
 		if runCPU > 0 || runMem != "" || runTime != "" || runGPU != "" {
-			utils.PrintWarning("Resource overrides (-c/-m/-t/-g) have no effect: the script's directives could not be parsed; edit them in the script")
+			utils.PrintWarning("Resource flags ignored: the script's directives could not be parsed")
 		}
 	} else if scriptSpecs != nil && scriptSpecs.Spec != nil {
-		override := &scheduler.ResourceSpec{}
-		if runCPU > 0 {
-			override.CpusPerTask = runCPU
-		}
-		if runMem != "" {
-			mb, err := utils.ParseMemoryMB(runMem)
-			if err != nil {
-				ExitWithError("--mem %q: %v", runMem, err)
-			}
-			cpus := overrideCPUs(runCPU, scriptSpecs.Spec.CpusPerTask)
-			override.MemPerCpuMB = (mb + int64(cpus) - 1) / int64(cpus)
-		}
-		if runTime != "" {
-			d, err := utils.ParseWalltime(runTime)
-			if err != nil {
-				ExitWithError("--time %q: %v", runTime, err)
-			}
-			override.Time = d
-		}
-		if runGPU != "" {
-			gpu, err := scheduler.ParseGPU(runGPU)
-			if err != nil {
-				ExitWithError("--gpu %q: %v", runGPU, err)
-			}
-			override.Gpu = gpu
-		}
-		scriptSpecs.Spec.Override(override)
+		scriptSpecs.Spec.Override(resFlags.override(scriptSpecs.Spec))
 	}
 
 	// Conflict: --array flag + native scheduler array directive in the script
@@ -375,23 +356,8 @@ func runScript(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Resource directives that could not be parsed leave nothing to regenerate the scheduler script from.
-	// Reject submission and direct the user to submit manually.
-	if scheduler.IsUnparsed(scriptSpecs) {
-		ExitWithError("script %q has scheduler directives that could not be fully parsed; please submit it manually", originScriptPath)
-	}
-
-	// Blank lines in the array input file are only warned about in dry-run; error here
-	if arraySpec != nil && len(arraySpec.BlankLines) > 0 {
-		ExitWithError("--array: blank lines at %v in %s; please remove them", arraySpec.BlankLines, arraySpec.InputFile)
-	}
-
-	// Array jobs require scheduler submission; cannot run locally
-	if arraySpec != nil && runsInPlace() {
-		ExitWithError("--array requires scheduler submission; cannot run array jobs locally")
-	}
-	if runWritableImg && getNtasks(scriptSpecs) > 1 {
-		ExitWithError("--writable cannot be used with multi-rank jobs (%d ranks)", getNtasks(scriptSpecs))
+	if reasons := runRefusals(scriptSpecs, arraySpec); len(reasons) > 0 {
+		ExitWithError("the run cannot start: %s", strings.Join(reasons, "; "))
 	}
 	var overlays []string
 	if projectRun != nil {
@@ -445,7 +411,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 			return submitRunJob(cmd.Context(), sched, originScriptPath, contentScript, scriptSpecs, runDependencies(), containerFlags, scriptArgs, arraySpec)
 		}
 	}
-	jobFlags := runStdout != "" || runStderr != "" || runMem != "" || runTime != "" || runGPU != "" || runAccount != "" || runPartition != ""
+	jobFlags := runStdout != "" || runStderr != "" || runTime != "" || runAccount != "" || runPartition != ""
 	if note := localRunNote(noScheduler, jobFlags); note != "" {
 		utils.PrintNote("%s", note)
 	}
@@ -454,15 +420,16 @@ func runScript(cmd *cobra.Command, args []string) error {
 
 // localRunNote is the one line a local run prints, or "" when it has nothing to add.
 //   - A script with no resources runs locally by definition and says nothing.
-//   - A fallback for lack of a scheduler, and job flags that a local run ignores, share one line.
+//   - A fallback for lack of a scheduler, and the flags that only a submitted job uses, share one line.
+//   - -c, -m and -g change what a local run gets, so they are not in it.
 func localRunNote(noScheduler, jobFlags bool) string {
 	switch {
 	case noScheduler && jobFlags:
-		return "No scheduler: running locally, -o/-e/-m/-t/-g/-A/-p ignored"
+		return "No scheduler: running locally, -o/-e/-t/-A/-p ignored"
 	case noScheduler:
 		return "No scheduler: running locally"
 	case jobFlags:
-		return "-o/-e/-m/-t/-g/-A/-p are only used for submitted jobs and are ignored when running locally"
+		return "-o/-e/-t/-A/-p ignored: only a submitted job uses them"
 	}
 	return ""
 }
@@ -523,8 +490,6 @@ func submitDefaultSpecs(specs *scheduler.ScriptSpecs) *scheduler.ScriptSpecs {
 		specs = &scheduler.ScriptSpecs{}
 	}
 	rs := scheduler.GetSpecDefaults()
-	defaults := scheduler.DefaultSpec()
-	rs.Override(&defaults)
 	rs.Nodes = 1
 	specs.Spec = &rs
 	specs.HasDirectives = true
@@ -563,6 +528,82 @@ func flagArgv(fs *pflag.FlagSet, skip map[string]bool) []string {
 func willSubmitRun(specs *scheduler.ScriptSpecs) bool {
 	return scheduler.Enabled() && scheduler.HasSchedulerSpecs(specs) &&
 		!runsInPlace() && scheduler.ActiveScheduler() != nil
+}
+
+// resourceFlags are the typed values of -c, -m, -t and -g. A flag that was not typed is zero.
+type resourceFlags struct {
+	cpus  int
+	memMB int64
+	time  time.Duration
+	gpu   *scheduler.GpuSpec
+}
+
+// parseResourceFlags reads and checks the resource flags that were typed, whether or not they have an effect.
+func parseResourceFlags(fs *pflag.FlagSet) (resourceFlags, error) {
+	var f resourceFlags
+	if fs.Changed("cpu") {
+		if runCPU < 1 {
+			return f, fmt.Errorf("--cpu %d: must be at least 1", runCPU)
+		}
+		f.cpus = runCPU
+	}
+	if runMem != "" {
+		mb, err := utils.ParseMemoryMB(runMem)
+		if err != nil {
+			return f, fmt.Errorf("--mem %q: %v", runMem, err)
+		}
+		f.memMB = mb
+	}
+	if runTime != "" {
+		d, err := utils.ParseWalltime(runTime)
+		if err != nil {
+			return f, fmt.Errorf("--time %q: %v", runTime, err)
+		}
+		f.time = d
+	}
+	if runGPU != "" {
+		gpu, err := scheduler.ParseGPU(runGPU)
+		if err != nil {
+			return f, fmt.Errorf("--gpu %q: %v", runGPU, err)
+		}
+		f.gpu = gpu
+	}
+	return f, nil
+}
+
+// override is the flags as a resource spec to lay over script.
+//   - -m is memory per rank. With one rank that is the memory of the node, which is set as it is.
+//   - With more ranks it is per CPU, over the CPUs that -c gives, else the script's, else 1. That rounds up.
+func (f resourceFlags) override(script *scheduler.ResourceSpec) *scheduler.ResourceSpec {
+	rs := &scheduler.ResourceSpec{CpusPerTask: f.cpus, Time: f.time, Gpu: f.gpu}
+	switch {
+	case f.memMB == 0:
+	case script.GetNtasks() == 1:
+		rs.MemPerNodeMB = f.memMB
+	default:
+		cpus := int64(overrideCPUs(f.cpus, script.CpusPerTask))
+		rs.MemPerCpuMB = (f.memMB + cpus - 1) / cpus
+	}
+	return rs
+}
+
+// jobKeepsResources reports whether this run is in a job, which keeps the resources it was given.
+//   - -c, -m, -t and -g have no effect there. --submit starts a new job, which they apply to.
+func jobKeepsResources() bool {
+	return scheduler.IsInsideJob() && !runSubmit
+}
+
+// warnResourceFlagsInJob names the resource flags that were typed and have no effect in a job.
+func warnResourceFlagsInJob(fs *pflag.FlagSet) {
+	var typed []string
+	for _, name := range []string{"cpu", "mem", "time", "gpu"} {
+		if fs.Changed(name) {
+			typed = append(typed, "--"+name)
+		}
+	}
+	if len(typed) > 0 {
+		utils.PrintWarning("Resource flags ignored in a job: %s", strings.Join(typed, ", "))
+	}
 }
 
 // overrideCPUs is the CPU count that -m is divided over: -c, else the script's #NCPU, else 1.
@@ -642,16 +683,56 @@ func applyScriptHeaders(scriptPath string) error {
 	return nil
 }
 
-// dryRunRefusals lists what would stop the real run before it starts, in the
-// order the run checks it. A project run has already resolved its dependencies.
-func dryRunRefusals(ctx context.Context, contentScript string, specs *scheduler.ScriptSpecs, arraySpec *scheduler.ArraySpec, projectRun *projectContext) []string {
+// runRefusals lists what stops a run once the script's headers are read, in the order the run checks it.
+//   - The real run and the dry run both read it.
+//   - An HTCondor job is one slot on one machine, so a submit of more than one rank is refused there.
+func runRefusals(specs *scheduler.ScriptSpecs, arraySpec *scheduler.ArraySpec) []string {
 	var reasons []string
 	if scheduler.IsUnparsed(specs) {
-		reasons = append(reasons, "its scheduler directives could not be fully parsed")
+		reasons = append(reasons, "the scheduler directives could not be fully parsed")
 	}
 	if arraySpec != nil && len(arraySpec.BlankLines) > 0 {
 		reasons = append(reasons, fmt.Sprintf("the --array file has blank lines at %v", arraySpec.BlankLines))
 	}
+	if arraySpec != nil && !scheduler.IsUnparsed(specs) && !willSubmitRun(specs) {
+		reasons = append(reasons, "--array needs a new job, but this run stays in place")
+	}
+	if reason := writableRefusal(specs, arraySpec); reason != "" {
+		reasons = append(reasons, reason)
+	}
+	if ranks := getNtasks(specs); ranks > 1 && willSubmitRun(specs) {
+		if scheduler.ActiveScheduler().GetType() == scheduler.SchedulerHTCondor {
+			reasons = append(reasons, fmt.Sprintf("HTCondor runs no job with more than one rank (%d ranks)", ranks))
+		} else if _, ok := detectMpi(); !ok {
+			reasons = append(reasons, fmt.Sprintf("%d ranks need mpiexec, which is not on PATH", ranks))
+		}
+	}
+	return reasons
+}
+
+// writableRefusal says why --writable cannot be used, or "" when it can.
+//   - Array subjobs and ranks run at the same time, and a writable overlay is locked to one of them.
+//   - A run in a job with more than one rank is one of those ranks.
+func writableRefusal(specs *scheduler.ScriptSpecs, arraySpec *scheduler.ArraySpec) string {
+	if !runWritableImg {
+		return ""
+	}
+	switch ranks := getNtasks(specs); {
+	case arraySpec != nil:
+		return "--writable cannot be used with --array: subjobs run at the same time"
+	case ranks > 1:
+		return fmt.Sprintf("--writable cannot be used with more than one rank (%d ranks)", ranks)
+	case runsInPlace() && scheduler.InMultiRankJob():
+		return "--writable cannot be used in a job with more than one rank"
+	}
+	return ""
+}
+
+// dryRunRefusals lists what would stop the real run before it starts, in the
+// order the run checks it: runRefusals, then the slots and the dependencies.
+// A project run has already resolved its dependencies.
+func dryRunRefusals(ctx context.Context, contentScript string, specs *scheduler.ScriptSpecs, arraySpec *scheduler.ArraySpec, projectRun *projectContext) []string {
+	reasons := runRefusals(specs, arraySpec)
 	if _, err := planSlots(ctx, contentScript, runSlots, projectRun != nil); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		var missing *errSlotMissing
 		if errors.As(err, &missing) {
@@ -747,35 +828,57 @@ func resolveDeps(ctx context.Context, contentScript, originScriptPath string) (o
 	return overlays, nil
 }
 
-// effectiveResourceSpec resolves the resource spec using the priority chain:
-//
-//	JobResources (scheduler env, actual allocation) > specs.Spec (directives) > defaults
+// effectiveResourceSpec resolves the resources of a run: the config defaults, then the script's spec with the flags on it, then the allocation of the job it runs in.
+//   - The spec of a script with no resources holds the defaults, so the flags apply to it.
+//   - A run in place gets the allocation it runs in.
+//   - A job with more than one rank is not read. The script's own spec stands.
+//   - A submitted job is a new job, so the job that submits it does not apply.
 func effectiveResourceSpec(specs *scheduler.ScriptSpecs) *scheduler.ResourceSpec {
-	return scheduler.ResolveResourceSpec(scheduler.CurrentJobResources(), specs)
+	rs := scheduler.GetSpecDefaults()
+	if specs != nil && specs.Spec != nil {
+		rs = *specs.Spec
+	}
+	if runsInPlace() && !scheduler.InMultiRankJob() {
+		rs.Override(scheduler.CurrentJobResources())
+	}
+	return &rs
 }
 
-// resourceEnvSettings derives NNODE, NRANK, NCPU, MEM and the other resource variables from scheduler specs and returns them as KEY=VALUE strings suitable for EnvSettings.
-//   - When the script's directives could not be parsed (Spec == nil) it falls back to live job resources.
-//   - Applies priority chain: JobResources > ScriptSpec > Defaults.
+// memoryGuessWarning is the warning for a run in a one-rank job whose memory the job does not report, or "".
+//   - MEM is then the script's #MEM or the scheduler.mem setting, which may not be what the job has.
+func memoryGuessWarning(specs *scheduler.ScriptSpecs) string {
+	if specs == nil || specs.Spec == nil || !scheduler.IsInsideJob() || !runsInPlace() || scheduler.InMultiRankJob() {
+		return ""
+	}
+	if job := scheduler.CurrentJobResources(); job != nil && (job.MemPerNodeMB > 0 || job.MemPerCpuMB > 0) {
+		return ""
+	}
+	return "Job memory is unknown. MEM is set from the script and config."
+}
+
+// resourceEnvSettings is the resource variables a script run here gets.
+//   - A job with more than one rank gets OMP_NUM_THREADS when it is unset, and nothing else.
+//   - When the script's directives could not be parsed (Spec == nil) the live job's resources are used.
+//   - In a job they are the job's size, set every time, so NCPU always equals CNT_NCPU. Outside a job the script and the flags decide.
+//   - -c replaces an OMP_NUM_THREADS that is already set, except in a job, where -c has no effect.
 func resourceEnvSettings(specs *scheduler.ScriptSpecs) []string {
+	if scheduler.InMultiRankJob() {
+		return scheduler.MultiRankEnvVars()
+	}
 	if specs == nil || specs.Spec == nil {
 		return liveJobResourceEnvSettings()
 	}
-	return scheduler.ResourceEnvVars(effectiveResourceSpec(specs))
+	return scheduler.RunEnvVars(effectiveResourceSpec(specs), runCPU > 0 && !scheduler.IsInsideJob())
 }
 
-// liveJobResourceEnvSettings returns resource env vars from the active scheduler.
-// Returns nil when not in a job or cannot retrieve resources.
+// liveJobResourceEnvSettings returns the resource variables of the job this process runs in, for a run whose script directives did not parse.
+// Returns nil when not in a job or when the scheduler gives no resource value.
 func liveJobResourceEnvSettings() []string {
 	jobRes := scheduler.CurrentJobResources()
-	if jobRes == nil {
+	if jobRes == nil || (jobRes.CpusPerTask == 0 && jobRes.MemPerNodeMB == 0 && jobRes.MemPerCpuMB == 0) {
 		return nil
 	}
-	// Only expose when the scheduler actually provided at least one resource value.
-	if jobRes.Nodes == 0 && jobRes.TasksPerNode == 0 && jobRes.CpusPerTask == 0 && jobRes.MemPerNodeMB == 0 {
-		return nil
-	}
-	return scheduler.ResourceEnvVars(jobRes)
+	return scheduler.RunEnvVars(jobRes, false)
 }
 
 // runLocally executes the script in the container with the given overlays.
@@ -792,6 +895,9 @@ func runLocally(ctx context.Context, contentScript string, overlays []string, sp
 
 	rs := effectiveResourceSpec(specs)
 	gpuRequested := rs.Gpu != nil && rs.Gpu.Count > 0
+	if warning := memoryGuessWarning(specs); warning != "" {
+		utils.PrintWarning("%s", warning)
+	}
 
 	options := execpkg.Options{
 		Overlays:     overlays,
@@ -1018,8 +1124,12 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 			} else {
 				fmt.Printf("  %s %d MB\n", memLabel, memPerTaskMB)
 			}
+			if warning := memoryGuessWarning(specs); warning != "" {
+				utils.PrintWarning("%s", warning)
+			}
 		}
-		if rs.Time > 0 {
+		// Only a submitted job has a time. A run neither enforces nor exports one.
+		if rs.Time > 0 && willSubmitRun(specs) {
 			total := int64(rs.Time.Seconds())
 			fmt.Printf("  Time:       %02d:%02d:%02d\n", total/3600, (total%3600)/60, total%60)
 		}
@@ -1167,7 +1277,7 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 		fmt.Printf("Action: Would run locally (in container)\n")
 	} else if scheduler.IsUnparsed(specs) {
 		fmt.Printf("Action: %s\n",
-			"Would fail — directives not fully parsed; please submit it manually")
+			"Would fail: the scheduler directives could not be fully parsed")
 	} else if scheduler.Enabled() && scheduler.HasSchedulerSpecs(specs) {
 		sched := scheduler.ActiveScheduler()
 		if sched == nil {
@@ -1228,7 +1338,7 @@ func buildArraySpec() (*scheduler.ArraySpec, error) {
 	}, nil
 }
 
-// getNtasks returns the total number of MPI tasks using the priority chain:
+// getNtasks returns the total number of MPI ranks using the priority chain:
 // JobResources > ScriptSpec > Defaults. (Skipped when the directives could not be parsed)
 func getNtasks(specs *scheduler.ScriptSpecs) int {
 	if specs == nil || specs.Spec == nil {
@@ -1306,6 +1416,25 @@ func buildMpiRunCommand(contentScript string, containerFlags, scriptArgs []strin
 	}
 	utils.PrintDebug("Detected mpiexec: %s", mpiexecPath)
 	return fmt.Sprintf("%s -n %d %s", mpiexecPath, getNtasks(specs), runCmd), nil
+}
+
+// maxRunNameSuffix is the last -N a run's file name takes before the submit fails.
+const maxRunNameSuffix = 99
+
+// createRunJobScript writes a run's job script under base, else base-2, base-3, ..., whichever is free first.
+//   - A name is taken by creating its script, so two runs of one script in the same second never share one.
+//   - control is reset before each try, since writing a script sets its log paths from the name.
+func createRunJobScript(create func(name string) (string, error), base string, control *scheduler.RuntimeConfig) (path, name string, err error) {
+	saved := *control
+	name = base
+	for i := 2; ; i++ {
+		*control = saved
+		path, err = create(name)
+		if !errors.Is(err, os.ErrExist) || i > maxRunNameSuffix {
+			return path, name, err
+		}
+		name = fmt.Sprintf("%s-%d", base, i)
+	}
 }
 
 // shellQuote returns a single-quoted shell-safe version of s.
@@ -1422,16 +1551,19 @@ func submitRunJob(ctx context.Context, sched scheduler.Scheduler, originScriptPa
 	}
 
 	jobSpec := &scheduler.JobSpec{
-		Name:      fileBaseName,
-		Command:   runCommand,
-		Specs:     specs,
-		DepJobIDs: allDepIDs,
-		Metadata:  map[string]string{},
-		Array:     arraySpec,
+		Command:    runCommand,
+		Specs:      specs,
+		DepJobIDs:  allDepIDs,
+		Metadata:   map[string]string{},
+		Array:      arraySpec,
+		UniqueName: true,
 	}
 
-	// Create the job script in the same directory as logs
-	jobScriptPath, err := sched.CreateScriptWithSpec(jobSpec, logsDir)
+	// Create the job script in the same directory as logs, under a name no other run holds
+	jobScriptPath, fileBaseName, err := createRunJobScript(func(name string) (string, error) {
+		jobSpec.Name = name
+		return sched.CreateScriptWithSpec(jobSpec, logsDir)
+	}, fileBaseName, &specs.Control)
 	if err != nil {
 		return fmt.Errorf("failed to create job script: %w", err)
 	}

@@ -70,6 +70,7 @@ A job asks for ranks with scheduler directives in the script, where they are cal
 Each version asks for 2 nodes with 4 ranks each, so 8 ranks in total. Every rank has 2 CPUs and 2 GB of memory.
 
 - A job with more than one rank is an MPI job.
+- `--writable` and `#WRITABLE:` are refused for it, since only one rank can write to an overlay at a time.
 - Every rank gets the same number of CPUs and the same memory. A request that cannot be described that way, such as PBS chunks with different CPUs per rank, is refused.
 - A script whose directives CondaTainer cannot read is refused too. Submit it with the scheduler's own command instead.
 
@@ -151,7 +152,8 @@ Each rank sees these variables:
 | `$NRANK` | Total number of ranks |
 | `$NNODE` | Number of nodes |
 | `$NRANK_PER_NODE` | Ranks per node, when known |
-| `$NCPU`, `$OMP_NUM_THREADS` | CPUs per rank |
+| `$NCPU` | CPUs per rank |
+| `$OMP_NUM_THREADS` | Threads per rank for OpenMP, the same as `$NCPU` unless it was already set |
 | `$MEM`, `$MEM_GB` | Memory per rank, in MB and in GB |
 
-`$NCPU` is the CPUs of one rank, not of the whole job. A rank that also uses threads should start `$NCPU` of them.
+`$NCPU` is the CPUs of one rank, not of the whole job. A rank that also uses threads should start `$NCPU` of them. OpenMP programs do this on their own through `$OMP_NUM_THREADS`.

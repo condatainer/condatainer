@@ -57,7 +57,7 @@ When you execute `condatainer run`, CondaTainer parses these directives and head
 - If a scheduler is detected, it submits the script as a job and prints the resulting job ID.
 - If no scheduler is found, or the script has no scheduler directive and no resource or job header, it executes the script immediately on the current machine.
 
-**NOTE:** This page assumes single-task jobs. If you are looking for MPI, check the [MPI](../advanced/mpi.mdx) page.
+**NOTE:** This page assumes jobs with one rank. If you are looking for MPI, check the [MPI](../advanced/mpi.mdx) page.
 
 ## Overriding Resources
 
@@ -67,6 +67,10 @@ While resources are typically defined inside the script via headers or directive
 condatainer run -c 8 -m 32G -t 4h analysis.sh
 condatainer run -g a100:2 gpu_job.sh
 ```
+
+- A flag replaces the value in the script for this run only.
+- What neither the script nor a flag sets comes from the `scheduler.ncpu`, `scheduler.mem` and `scheduler.time` [settings](config.md) unless you changed them.
+- Inside a job, it already has resources. `-c`, `-m`, `-t` and `-g` are ignored with a warning.
 
 ### Important Resource Flags
 
@@ -206,13 +210,17 @@ condatainer run --dry-run --slot species=mouse align.sh
 
 ### Standardized Environment Variables
 
-When your script runs through `condatainer run`, these variables hold the resources of the job:
+When your script runs through `condatainer run`, these variables hold its resources:
 
 | Variable | Value |
 |---|---|
 | `$NCPU` | CPUs allocated to the job |
 | `$MEM` | Memory of the job in MB |
 | `$MEM_GB` | Memory of the job in GB |
+| `$OMP_NUM_THREADS` | The same as `$NCPU` unless it was already set |
+
+- In a job they are the job's resources. Outside a job they come from the script, the flags and the settings above.
+- When the job does not report its memory, `$MEM` is the script's `#MEM` or the `scheduler.mem` setting with a warning.
 
 ```bash
 samtools sort -@ "$NCPU" -o sorted.bam input.bam
@@ -376,7 +384,7 @@ condatainer run --dry-run --array samples.txt quant.sh
 ```
 
 - Any manual positional arguments provided on the command line will be appended **after** the array's line arguments.
-- Arrays must be submitted to a scheduler; they cannot be executed locally.
+- Arrays must be submitted to a scheduler. `--array` is refused when the run would not submit: no scheduler or inside a job.
 - The script cannot contain its own array directive.
 
 ## Job Chaining (Dependencies)
@@ -438,5 +446,6 @@ bcftools view /data/input.vcf | head
 | `#WRITABLE:` | Mount `.img` overlays as writable. |
 | `#FAKEROOT:` | Appear as root inside the container. |
 
+- `#WRITABLE:` cannot be used with `--array` or with more than one rank, since only one process can write to an overlay.
 - `#WRITABLE:` and `#FAKEROOT:` are switches. Write the line with nothing after the colon to turn the option on, and delete the line to turn it off. Writing a value other than `true` is an error.
 - A `--bind` on the command line to the same container path replaces the script's `#BIND:`.

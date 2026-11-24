@@ -240,10 +240,13 @@ func TestGenerateWrapperHeadlessExportsResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"export NCPU=4\n", "export CNT_NCPU=4\n", "export MEM=8192\n", "export OMP_NUM_THREADS=4\n"} {
+	for _, want := range []string{"export NCPU=4\n", "export CNT_NCPU=4\n", "export MEM=8192\n"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("job.sh lacks %q:\n%s", want, data)
 		}
+	}
+	if strings.Contains(string(data), "OMP_NUM_THREADS") {
+		t.Errorf("job.sh sets OMP_NUM_THREADS, which only a run sets:\n%s", data)
 	}
 }
 

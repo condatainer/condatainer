@@ -48,8 +48,8 @@ func TestLocalRunNote(t *testing.T) {
 	}{
 		{false, false, ""},
 		{true, false, "No scheduler: running locally"},
-		{true, true, "No scheduler: running locally, -o/-e/-m/-t/-g/-A/-p ignored"},
-		{false, true, "-o/-e/-m/-t/-g/-A/-p are only used for submitted jobs and are ignored when running locally"},
+		{true, true, "No scheduler: running locally, -o/-e/-t/-A/-p ignored"},
+		{false, true, "-o/-e/-t/-A/-p ignored: only a submitted job uses them"},
 	} {
 		if got := localRunNote(tc.noScheduler, tc.jobFlags); got != tc.want {
 			t.Errorf("noScheduler=%v jobFlags=%v: %q, want %q", tc.noScheduler, tc.jobFlags, got, tc.want)

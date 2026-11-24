@@ -46,18 +46,18 @@ var (
 	keyNcpu = settings.Int("scheduler.ncpu",
 		settings.Order(6),
 		settings.Default(1), settings.Min(1),
-		settings.Help("CPUs for a job that has no scheduler directives of its own."))
+		settings.Help("CPUs for a job or a run when the script does not set them."))
 
 	keyMem = settings.MemoryMB("scheduler.mem",
 		settings.Order(7),
 		settings.Default(2048),
-		settings.Help("Memory for a job that has no scheduler directives of its own."),
+		settings.Help("Memory for a job or a run when the script does not set it."),
 		settings.Suggest("2g", "4g", "8g", "16g"))
 
 	keyTime = settings.Walltime("scheduler.time",
 		settings.Order(8),
 		settings.Default("2h"),
-		settings.Help("Time limit for a job that has no scheduler directives of its own."),
+		settings.Help("Time limit for a job when the script does not set one."),
 		settings.Suggest("1h", "2h", "4h", "8h"))
 
 	keyExcludeNodes = settings.List("scheduler.exclude_nodes",
@@ -107,9 +107,9 @@ var (
 	detected   string
 )
 
-// DetectBin returns the first of sbatch, qsub and bsub on PATH, or "".
+// DetectBin returns the first of sbatch, qsub, bsub and condor_submit on PATH, or "".
 func DetectBin() string {
-	for _, name := range []string{"sbatch", "qsub", "bsub"} {
+	for _, name := range []string{"sbatch", "qsub", "bsub", "condor_submit"} {
 		if path, err := exec.LookPath(name); err == nil {
 			return path
 		}
@@ -129,6 +129,8 @@ func TypeFromBin(bin string) SchedulerType {
 		return SchedulerPBS
 	case "bsub", "bjobs", "bkill":
 		return SchedulerLSF
+	case "condor_submit", "condor_q", "condor_status", "condor_rm":
+		return SchedulerHTCondor
 	}
 	return SchedulerUnknown
 }
@@ -208,7 +210,7 @@ func ProxyPerJob(kind string) bool {
 	return slices.ContainsFunc(keyProxyPerJob.Get(), func(k string) bool { return k == kind || k == ProxyAll })
 }
 
-// DefaultSpec is the resource request for a job that has no scheduler directives of its own.
+// DefaultSpec is the resource request for what a script does not set.
 func DefaultSpec() ResourceSpec {
 	return ResourceSpec{CpusPerTask: keyNcpu.Get(), MemPerNodeMB: keyMem.Get(), Time: keyTime.Get()}
 }

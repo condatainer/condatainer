@@ -194,6 +194,16 @@ func CreateFileWritable(path string) (*os.File, error) {
 	return f, withHomeHint(err, path)
 }
 
+// CreateFileNew is CreateFileWritable for a file that must not exist yet.
+//   - It fails with an error matching os.ErrExist when path exists, so the caller that creates it owns the name.
+func CreateFileNew(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, PermFile)
+	if err == nil {
+		ShareWithParentGroup(path)
+	}
+	return f, withHomeHint(err, path)
+}
+
 // ShareWithParentGroup grants the group g+rw (plus g+x on dirs and executables) when
 // path's parent is group-writable, and does nothing otherwise — so files land
 // group-writable in a shared "2775" install and untouched in a personal one.

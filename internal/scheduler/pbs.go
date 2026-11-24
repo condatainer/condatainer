@@ -274,9 +274,6 @@ func (p *PbsScheduler) parseRuntimeConfig(directives []string) (RuntimeConfig, [
 		switch {
 		case flagMatches(flag, "-N"):
 			rc.JobName, _ = flagValue(flag, "-N")
-		case flagMatches(flag, "-d"):
-			v, _ := flagValue(flag, "-d")
-			rc.WorkDir = absPath(v)
 		case flagMatches(flag, "-o"):
 			rc.Stdout, _ = flagValue(flag, "-o")
 		case flagMatches(flag, "-e"):
@@ -606,13 +603,14 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 		}
 		fmt.Fprintf(writer, "#PBS -N %s\n", jobName)
 	}
-	if ctrl.WorkDir != "" {
-		fmt.Fprintf(writer, "#PBS -d %s\n", ctrl.WorkDir)
-	}
+	// One file for both streams is -j oe. Two -o and -e of one path make the later copy replace the earlier.
+	mergeOutput := ctrl.Stdout != "" && ctrl.AbsStdout() == ctrl.AbsStderr()
 	if ctrl.Stdout != "" {
 		fmt.Fprintf(writer, "#PBS -o %s\n", ctrl.AbsStdout())
 	}
-	if ctrl.Stderr != "" {
+	if mergeOutput {
+		fmt.Fprintln(writer, "#PBS -j oe")
+	} else if ctrl.Stderr != "" {
 		fmt.Fprintf(writer, "#PBS -e %s\n", ctrl.AbsStderr())
 	}
 	if ctrl.Partition != "" {
@@ -634,7 +632,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 				// Nodes unspecified: safe to default to 1 for single-rank jobs.
 				// Multi-rank jobs need an explicit node count to distribute correctly.
 				if rs.IsMPI() {
-					return "", fmt.Errorf("PBS requires an explicit node count (select=N) for multi-rank jobs; Ntasks=%d but Nodes is unset", rs.GetNtasks())
+					return "", fmt.Errorf("PBS needs a node count when ranks per node is set (%d ranks, no nodes)", rs.GetNtasks())
 				}
 				nodes = 1
 			}
@@ -648,27 +646,34 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 				tasksPerNode = rs.Ntasks / nodes
 			}
 
-			// Non-uniform distribution: Ntasks explicitly set and not divisible by Nodes.
-			// Emit two chunks: nFullNodes with ceil(Ntasks/Nodes) tasks, one remainder node.
+			// Non-uniform distribution: Ntasks explicitly set and not divisible by Nodes. Two chunks.
+			//   - Full nodes with ceil(Ntasks/Nodes) ranks, then one node with the rest, when they fill the nodes exactly.
+			//   - Otherwise the remainder nodes have one rank more than the others, and a node with no rank is left out.
 			if rs.Ntasks > 0 && nodes > 0 && rs.Ntasks%nodes != 0 {
 				if rs.Gpu != nil && rs.Gpu.Count > 0 {
-					return "", fmt.Errorf("PBS: GPU jobs need the same number of ranks on every node (%d ranks over %d nodes)", rs.Ntasks, nodes)
+					return "", fmt.Errorf("PBS GPU jobs need the same ranks on every node (%d ranks over %d nodes)", rs.Ntasks, nodes)
 				}
-				tasksPerNodeCeil := (rs.Ntasks + nodes - 1) / nodes
-				nFullNodes := rs.Ntasks / tasksPerNodeCeil
-				remainderTasks := rs.Ntasks % tasksPerNodeCeil
-				remainderNodes := nodes - nFullNodes
-				var memPerFullMB, memPerRemMB int64
-				if rs.MemPerCpuMB > 0 {
-					memPerFullMB = rs.MemPerCpuMB * int64(cpuPerTask*tasksPerNodeCeil)
-					memPerRemMB = rs.MemPerCpuMB * int64(cpuPerTask*remainderTasks)
-				} else if rs.MemPerNodeMB > 0 {
-					memPerFullMB = rs.MemPerNodeMB
-					memPerRemMB = rs.MemPerNodeMB
+				bigTasks := (rs.Ntasks + nodes - 1) / nodes
+				bigNodes := rs.Ntasks / bigTasks
+				smallTasks := rs.Ntasks % bigTasks
+				smallNodes := nodes - bigNodes
+				if smallTasks == 0 || smallNodes != 1 {
+					smallTasks = rs.Ntasks / nodes
+					bigTasks = smallTasks + 1
+					bigNodes = rs.Ntasks % nodes
+					smallNodes = nodes - bigNodes
 				}
-				chunk1 := pbsSelectChunkBody(nFullNodes, cpuPerTask*tasksPerNodeCeil, tasksPerNodeCeil, memPerFullMB, rs.SelectExtra)
-				chunk2 := pbsSelectChunkBody(remainderNodes, cpuPerTask*remainderTasks, remainderTasks, memPerRemMB, rs.SelectExtra)
-				fmt.Fprintf(writer, "#PBS -l select=%s+%s\n", chunk1, chunk2)
+				memFor := func(tasks int) int64 {
+					if rs.MemPerCpuMB > 0 {
+						return rs.MemPerCpuMB * int64(cpuPerTask*tasks)
+					}
+					return rs.MemPerNodeMB
+				}
+				chunks := pbsSelectChunkBody(bigNodes, cpuPerTask*bigTasks, bigTasks, memFor(bigTasks), rs.SelectExtra)
+				if smallTasks > 0 {
+					chunks += "+" + pbsSelectChunkBody(smallNodes, cpuPerTask*smallTasks, smallTasks, memFor(smallTasks), rs.SelectExtra)
+				}
+				fmt.Fprintf(writer, "#PBS -l select=%s\n", chunks)
 			} else {
 				// Uniform distribution: single-chunk select=.
 				if tasksPerNode <= 0 {
@@ -713,35 +718,40 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 				}
 			}
 			if !isMultiChunk {
-				// PBS select= requires at least a node count; reject multi-task jobs.
-				if rs.Ntasks > 1 {
-					return "", fmt.Errorf("PBS requires explicit Nodes or TasksPerNode for multi-task jobs (Ntasks=%d); set node count via select=N or equivalent", rs.Ntasks)
+				// Ranks with no node count: one chunk per rank, placed as the site's default place says.
+				if ranks := rs.GetNtasks(); ranks > 1 {
+					if rs.Gpu != nil && rs.Gpu.Count > 0 {
+						return "", fmt.Errorf("PBS GPU jobs need a node count (%d ranks, no nodes)", ranks)
+					}
+					cpuPerTask := max(rs.CpusPerTask, 1)
+					fmt.Fprintf(writer, "#PBS -l select=%s\n", pbsSelectChunkBody(ranks, cpuPerTask, 1, rs.GetMemPerTaskMB(), rs.SelectExtra))
+				} else {
+					// Single task (Ntasks=0 or 1): default to select=1.
+					cpuPerTask := rs.CpusPerTask
+					if cpuPerTask < 1 {
+						cpuPerTask = 1
+					}
+					var memMB int64
+					if rs.MemPerCpuMB > 0 {
+						memMB = rs.MemPerCpuMB * int64(cpuPerTask)
+					} else if rs.MemPerNodeMB > 0 {
+						memMB = rs.MemPerNodeMB
+					}
+					selectParts := []string{"select=1"}
+					if cpuPerTask > 1 {
+						selectParts = append(selectParts, fmt.Sprintf("ncpus=%d", cpuPerTask))
+					}
+					if memMB > 0 {
+						selectParts = append(selectParts, fmt.Sprintf("mem=%dmb", memMB))
+					}
+					if rs.Gpu != nil && rs.Gpu.Count > 0 {
+						selectParts = append(selectParts, fmt.Sprintf("ngpus=%d", rs.Gpu.Count))
+					}
+					if rs.SelectExtra != "" {
+						selectParts = append(selectParts, rs.SelectExtra)
+					}
+					fmt.Fprintf(writer, "#PBS -l %s\n", strings.Join(selectParts, ":"))
 				}
-				// Single task (Ntasks=0 or 1): default to select=1.
-				cpuPerTask := rs.CpusPerTask
-				if cpuPerTask < 1 {
-					cpuPerTask = 1
-				}
-				var memMB int64
-				if rs.MemPerCpuMB > 0 {
-					memMB = rs.MemPerCpuMB * int64(cpuPerTask)
-				} else if rs.MemPerNodeMB > 0 {
-					memMB = rs.MemPerNodeMB
-				}
-				selectParts := []string{"select=1"}
-				if cpuPerTask > 1 {
-					selectParts = append(selectParts, fmt.Sprintf("ncpus=%d", cpuPerTask))
-				}
-				if memMB > 0 {
-					selectParts = append(selectParts, fmt.Sprintf("mem=%dmb", memMB))
-				}
-				if rs.Gpu != nil && rs.Gpu.Count > 0 {
-					selectParts = append(selectParts, fmt.Sprintf("ngpus=%d", rs.Gpu.Count))
-				}
-				if rs.SelectExtra != "" {
-					selectParts = append(selectParts, rs.SelectExtra)
-				}
-				fmt.Fprintf(writer, "#PBS -l %s\n", strings.Join(selectParts, ":"))
 			}
 		}
 
@@ -782,6 +792,11 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	}
 
 	fmt.Fprintln(writer, "")
+
+	// PBS has no directive for the working directory, and a job starts in the home directory.
+	if specs.Control.WorkDir != "" {
+		fmt.Fprintf(writer, "cd %s || exit 1\n\n", utils.ShellQuote(specs.Control.WorkDir))
+	}
 
 	if specs.Spec != nil {
 		writeResourceExports(writer, specs.Spec)

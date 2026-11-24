@@ -107,9 +107,9 @@ var (
 	detected   string
 )
 
-// DetectBin returns the first of sbatch, qsub and bsub on PATH, or "".
+// DetectBin returns the first of sbatch, qsub, bsub and condor_submit on PATH, or "".
 func DetectBin() string {
-	for _, name := range []string{"sbatch", "qsub", "bsub"} {
+	for _, name := range []string{"sbatch", "qsub", "bsub", "condor_submit"} {
 		if path, err := exec.LookPath(name); err == nil {
 			return path
 		}
@@ -129,6 +129,8 @@ func TypeFromBin(bin string) SchedulerType {
 		return SchedulerPBS
 	case "bsub", "bjobs", "bkill":
 		return SchedulerLSF
+	case "condor_submit", "condor_q", "condor_status", "condor_rm":
+		return SchedulerHTCondor
 	}
 	return SchedulerUnknown
 }

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -46,11 +47,24 @@ func TestDefaultSpecAndTimeout(t *testing.T) {
 
 func TestTypeFromBin(t *testing.T) {
 	for bin, want := range map[string]SchedulerType{
-		"/usr/bin/sbatch": SchedulerSLURM, "bsub": SchedulerLSF, "/x/qsub": SchedulerPBS, "/x/other": SchedulerUnknown,
+		"/usr/bin/sbatch": SchedulerSLURM, "bsub": SchedulerLSF, "/x/qsub": SchedulerPBS,
+		"/usr/bin/condor_submit": SchedulerHTCondor, "/x/other": SchedulerUnknown,
 	} {
 		if got := TypeFromBin(bin); got != want {
 			t.Errorf("TypeFromBin(%q) = %q, want %q", bin, got, want)
 		}
+	}
+}
+
+func TestDetectBinFindsCondorSubmit(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "condor_submit")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if got := DetectBin(); got != bin {
+		t.Errorf("DetectBin() = %q, want %q", got, bin)
 	}
 }
 

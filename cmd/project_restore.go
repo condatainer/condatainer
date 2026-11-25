@@ -3,12 +3,12 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/project/restore"
 	"github.com/condatainer/condatainer/internal/report"
+	"github.com/condatainer/condatainer/internal/runtime/usage"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -23,6 +23,7 @@ func newProjectRestoreCmd() *cobra.Command {
 		keepBuildDeps bool
 		replace       bool
 		only          string
+		usageFlag     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "restore",
@@ -46,12 +47,13 @@ func newProjectRestoreCmd() *cobra.Command {
 			}
 			opts := restore.Options{
 				SkipPrebuilt: noPrebuilt, KeepBuildDeps: keepBuildDeps,
-				Replace: replace, Only: only, SubmitJobs: scheduler.Enabled(),
+				Replace: replace, Only: only, SubmitJobs: scheduler.Enabled(), Usage: usageFlag,
 			}
 
 			if dryRun {
 				return reportPlan(cmd, current, restore.Compute(root, current, opts), jsonOutput)
 			}
+			usage.Configure(usage.KindCreate, usageFlag)
 			run, runErr := restore.Run(cmd.Context(), root, current, opts)
 			if err := reportRestore(cmd, current, run, jsonOutput); err != nil {
 				return err
@@ -59,7 +61,7 @@ func newProjectRestoreCmd() *cobra.Command {
 			if errors.Is(runErr, restore.ErrJobsSubmitted) {
 				utils.PrintNote("%d scheduler job(s) submitted. exiting with code %d",
 					len(run.Submitted), ExitCodeJobsSubmitted)
-				os.Exit(ExitCodeJobsSubmitted)
+				exit(ExitCodeJobsSubmitted)
 			}
 			return runErr
 		},
@@ -71,6 +73,7 @@ func newProjectRestoreCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&keepBuildDeps, "keep-build-deps", false,
 		"Keep the build dependencies of a rebuild")
 	settings.AddSwitch(cmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (rebuild locally)"))
+	cmd.Flags().BoolVar(&usageFlag, usage.Flag, false, "Print the wall time, CPU time and peak memory the restore used")
 	cmd.Flags().BoolVar(&replace, "replace", false,
 		"Overwrite a project path holding something the lock does not name")
 	// Set by the job a submitted rebuild runs, so it produces exactly what it

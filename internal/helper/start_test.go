@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/condatainer/condatainer/internal/config"
 )
 
 func TestPollOnceStart(t *testing.T) {
@@ -83,5 +85,53 @@ func TestHistoryRecordStoresWalltimeInSeconds(t *testing.T) {
 	}
 	if got := (&HelperRun{WalltimeSecs: 43200}).Walltime(); got != 12*time.Hour {
 		t.Errorf("Walltime() = %v, want 12h", got)
+	}
+}
+
+// A usage event is read back, is ignored by the poll, and is copied into the run's record when it ends.
+func TestUsageEventReachesTheHistoryRecord(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	addHistoryRun(t, "svc-1", "running", 1)
+	t.Setenv("CNT_HELPER_ID", "svc-1")
+	t.Setenv("CNT_HELPER_STATE_DIR", config.GetHelperStateDir("svc-1"))
+
+	used := &UsageStats{WallSecs: 3441, CPUSecs: 15709, PeakMemMB: 31950}
+	if err := AppendEvent("svc-1", StateEvent{Type: "usage", Usage: used}); err != nil {
+		t.Fatal(err)
+	}
+	if got := PollOnce("svc-1", 0); got.Start != nil || got.Ready != nil || got.Done != nil || len(got.NewMessages) != 0 {
+		t.Errorf("a usage event changed the poll: %+v", got)
+	}
+	if got, _ := ReadUsageEvent("svc-1"); got == nil || *got != *used {
+		t.Fatalf("ReadUsageEvent = %+v, want %+v", got, used)
+	}
+
+	if err := UpdateHistoryStatus("svc-1", "done", time.Unix(10, 0)); err != nil {
+		t.Fatal(err)
+	}
+	run := HistoryEntryForID("svc-1")
+	if run == nil || run.Usage == nil || *run.Usage != *used {
+		t.Fatalf("history usage = %+v, want %+v", run, used)
+	}
+	data, _ := json.Marshal(run)
+	if !strings.Contains(string(data), `"usage":{"wall_secs":3441,"cpu_secs":15709,"peak_mem_mb":31950}`) ||
+		!strings.Contains(string(data), `"walltime_secs":0`) {
+		t.Errorf("record = %s", data)
+	}
+}
+
+// A run that wrote no usage event has no usage in its record.
+func TestRunWithoutUsageEventHasNone(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	addHistoryRun(t, "svc-2", "running", 1)
+	if err := UpdateHistoryStatus("svc-2", "done", time.Unix(10, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if run := HistoryEntryForID("svc-2"); run == nil || run.Usage != nil {
+		t.Errorf("history entry = %+v, want no usage", run)
+	}
+	data, _ := json.Marshal(HelperRun{ID: "x"})
+	if strings.Contains(string(data), "usage") {
+		t.Errorf("record = %s; a run that never measured carries no usage", data)
 	}
 }

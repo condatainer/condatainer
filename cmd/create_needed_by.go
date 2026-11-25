@@ -14,6 +14,7 @@ import (
 	"github.com/condatainer/condatainer/internal/conda"
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/report"
+	"github.com/condatainer/condatainer/internal/runtime/usage"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/slot"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -543,6 +544,7 @@ func buildNeededFile(ctx context.Context, f neededFile) (*build.BuildGraph, erro
 		if err != nil {
 			return nil, err
 		}
+		usage.Worked()
 		return nil, bo.Build(ctx, false)
 	}
 	bo, err := build.FromExternalSource(ctx, absPrefix, f.Source, strings.HasSuffix(f.Source, ".def"), outputDir, false)
@@ -601,7 +603,7 @@ func runCreateNeededBy(ctx context.Context, args []string) {
 			writeNeededPlan(os.Stdout, needs, plan, planned, true)
 		}
 		if len(plan.Refused) > 0 {
-			os.Exit(ExitCodeError)
+			exit(ExitCodeError)
 		}
 		return
 	}
@@ -613,7 +615,7 @@ func runCreateNeededBy(ctx context.Context, args []string) {
 	}
 	if pending == 0 {
 		if len(plan.Refused) > 0 {
-			os.Exit(ExitCodeError)
+			exit(ExitCodeError)
 		}
 		utils.PrintSuccess("Everything the scripts need is installed.")
 		return
@@ -621,7 +623,7 @@ func runCreateNeededBy(ctx context.Context, args []string) {
 	if asking && !utils.ConfirmDefaultYes(ctx, os.Stderr, fmt.Sprintf("Install %d overlay(s)? [Y/n]: ", pending)) {
 		utils.PrintMessage("Nothing was installed.")
 		if len(plan.Refused) > 0 {
-			os.Exit(ExitCodeError)
+			exit(ExitCodeError)
 		}
 		return
 	}
@@ -651,9 +653,9 @@ func runCreateNeededBy(ctx context.Context, args []string) {
 	switch {
 	case jobs > 0:
 		utils.PrintNote("%d scheduler job(s) submitted. exiting with code %d", jobs, ExitCodeJobsSubmitted)
-		os.Exit(ExitCodeJobsSubmitted)
+		exit(ExitCodeJobsSubmitted)
 	case failed:
-		os.Exit(ExitCodeError)
+		exit(ExitCodeError)
 	}
 	printBuilt(built)
 }

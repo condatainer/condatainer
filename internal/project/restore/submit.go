@@ -16,6 +16,7 @@ import (
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/project"
 	"github.com/condatainer/condatainer/internal/project/lock"
+	"github.com/condatainer/condatainer/internal/runtime/usage"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -378,6 +379,10 @@ func restoreCommand(root string, step Step, opts Options) string {
 	}
 	if opts.Replace {
 		cmd.WriteString(" --replace")
+	}
+	for _, flag := range usage.JobFlags(usage.KindCreate, opts.Usage) {
+		cmd.WriteString(" ")
+		cmd.WriteString(flag)
 	}
 	return cmd.String()
 }

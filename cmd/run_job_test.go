@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/spf13/pflag"
 )
 
@@ -54,5 +55,41 @@ func TestLocalRunNote(t *testing.T) {
 		if got := localRunNote(tc.noScheduler, tc.jobFlags); got != tc.want {
 			t.Errorf("noScheduler=%v jobFlags=%v: %q, want %q", tc.noScheduler, tc.jobFlags, got, tc.want)
 		}
+	}
+}
+
+// A submitted run carries --usage when it was typed or record_usage names run, and once.
+func TestSubmittedRunCarriesTheUsageFlag(t *testing.T) {
+	fs := pflag.NewFlagSet("run", pflag.ContinueOnError)
+	fs.Bool("usage", false, "")
+	fs.Bool("quiet", false, "")
+	t.Cleanup(func() { runUsage = false })
+
+	if got := submittedFlagArgs(fs); len(got) != 0 {
+		t.Errorf("nothing asked for = %q", got)
+	}
+
+	settingstest.OverrideList(t, "record_usage", "run")
+	if got := submittedFlagArgs(fs); len(got) != 1 || got[0] != "--usage" {
+		t.Errorf("record_usage names run = %q, want --usage", got)
+	}
+
+	// -q is forwarded and --usage rides with it.
+	if err := fs.Set("quiet", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if got := submittedFlagArgs(fs); len(got) != 2 || got[0] != "--quiet='true'" || got[1] != "--usage" {
+		t.Errorf("under -q = %q", got)
+	}
+
+	// A typed flag is repeated once, not twice.
+	settingstest.OverrideList(t, "record_usage", "none")
+	if err := fs.Set("usage", "true"); err != nil {
+		t.Fatal(err)
+	}
+	runUsage = true
+	got := submittedFlagArgs(fs)
+	if count := strings.Count(strings.Join(got, " "), "--usage"); count != 1 {
+		t.Errorf("a typed flag appears %d times in %q, want once", count, got)
 	}
 }

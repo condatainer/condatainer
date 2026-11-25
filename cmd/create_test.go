@@ -319,3 +319,20 @@ func TestSolveCreateTakesAnInstalledVersionUnlessLatest(t *testing.T) {
 		}
 	}
 }
+
+// A submitted build carries --usage when it was typed or record_usage names create.
+func TestSubmittedBuildCarriesTheUsageFlag(t *testing.T) {
+	t.Cleanup(func() { createUsage = false })
+	if got := strings.Join(createJobFlags(), " "); strings.Contains(got, "--usage") {
+		t.Errorf("nothing asked for = %q", got)
+	}
+	settingstest.OverrideList(t, "record_usage", "create")
+	if got := strings.Join(createJobFlags(), " "); !strings.Contains(got, "--usage") {
+		t.Errorf("record_usage names create = %q", got)
+	}
+	settingstest.OverrideList(t, "record_usage", "run")
+	createUsage = true
+	if got := strings.Join(createJobFlags(), " "); !strings.Contains(got, "--usage") {
+		t.Errorf("a typed flag = %q", got)
+	}
+}

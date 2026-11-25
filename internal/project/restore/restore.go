@@ -20,6 +20,7 @@ import (
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/registry"
+	"github.com/condatainer/condatainer/internal/runtime/usage"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -298,8 +299,10 @@ func execute(ctx context.Context, root string, verified *lock.Verified, step Ste
 		}
 		return result, nil
 	case ActionFetch:
+		usage.Worked()
 		return fetch(ctx, root, entry, step, match, result)
 	}
+	usage.Worked()
 	return rebuild(ctx, root, entry, step, match, available, baseArtifact, scratch, opts, result)
 }
 

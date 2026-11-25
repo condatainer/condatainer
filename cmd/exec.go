@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/condatainer/condatainer/cmd/internal/ui"
+	"github.com/condatainer/condatainer/internal/helper"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/runtime/hostrun"
+	"github.com/condatainer/condatainer/internal/runtime/usage"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +28,7 @@ var execActivation string
 var execProjectDir string
 var execStopGrace int
 var execLaunchKind string
+var execUsage bool
 
 var execCmd = &execCommand{
 	Command: cobra.Command{
@@ -56,6 +59,7 @@ func init() {
 	execCmd.Flags().MarkHidden("stop-grace") //nolint:errcheck
 	execCmd.Flags().StringVar(&execLaunchKind, "launch-kind", "", "Launch kind for host-run (set by helpers)")
 	execCmd.Flags().MarkHidden("launch-kind") //nolint:errcheck
+	execCmd.Flags().BoolVar(&execUsage, usage.Flag, false, "Print the wall time, CPU time and peak memory the command used")
 	RegisterProjectFlags(&execCmd.Command, &execProjectDir)
 
 	// For 'exec': use default file completion for positional args
@@ -121,6 +125,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	ui.RenderExecPlan(plan)
+	configureUsage()
 	if err := exec.RunPrepared(cmd.Context(), plan, exec.IO{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
 			return nil
@@ -128,7 +133,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 		// Propagate exit code from container command
 		if appErr, ok := err.(*apptainer.ApptainerError); ok {
 			if code := appErr.ExitCode(); code >= 0 {
-				os.Exit(code)
+				exit(code)
 			}
 		}
 		return err
@@ -137,6 +142,23 @@ func runExec(cmd *cobra.Command, args []string) error {
 }
 
 // execHostRunKind is the launch kind of this exec: a helper's wrapper names itself, any other is a typed exec.
+// configureUsage sets up the usage line for this exec.
+//   - A helper's exec always prints it and writes it to the run's events, which the dashboard keeps in the run's history.
+func configureUsage() {
+	kind := ""
+	if execLaunchKind == hostrun.KindHelper {
+		kind = usage.KindHelper
+		if id := os.Getenv("CNT_HELPER_ID"); id != "" {
+			usage.OnFinish(func(r usage.Result) {
+				_ = helper.AppendEvent(id, helper.StateEvent{Type: "usage", Usage: &helper.UsageStats{
+					WallSecs: int64(r.Wall.Seconds()), CPUSecs: int64(r.CPU.Seconds()), PeakMemMB: r.PeakMB}})
+			})
+		}
+	}
+	usage.Configure(kind, execUsage)
+	usage.Worked()
+}
+
 func execHostRunKind() string {
 	if execLaunchKind == hostrun.KindHelper {
 		return hostrun.KindHelper

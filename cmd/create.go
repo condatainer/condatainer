@@ -18,6 +18,7 @@ import (
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/runtime/usage"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -37,6 +38,7 @@ var (
 	createNoPrebuilt bool
 	createLayer      string
 	createDryRun     bool
+	createUsage      bool
 	createDesc       string
 	createJSON       bool
 	createNeededBy   bool
@@ -82,6 +84,7 @@ var createJobRules = map[string]string{
 	"needed-by":     "the job builds by target",
 	"latest":        "the job builds by target",
 	"no-project":    "the job builds by target",
+	"usage":         jobRepeats,
 }
 
 // createJobFlags are the flags a submitted build has to repeat: the node re-runs
@@ -99,6 +102,7 @@ func createJobFlagsFor(layer string) []string {
 	if layer != "" {
 		flags = append(flags, "--layer", layer)
 	}
+	flags = append(flags, usage.JobFlags(usage.KindCreate, createUsage)...)
 	return append(flags, settings.ChangedFlags(createFlagSet,
 		"channels", "build.block_size", "build.data_block_size", "build.compress_args")...)
 }
@@ -204,6 +208,7 @@ Exits with code 3 if build jobs were submitted to a scheduler.`,
 			ExitWithError("cannot build an overlay: %v", err)
 		}
 
+		usage.Configure(usage.KindCreate, createUsage)
 		if createNeededBy {
 			runCreateNeededBy(ctx, args)
 			return
@@ -277,6 +282,7 @@ func init() {
 	f.BoolVar(&createStore, "store", false, "Build into the store, filed under its identity")
 	f.BoolVar(&createNoPrebuilt, "no-prebuilt", false, "Build from the recipe instead of pulling a prebuilt overlay")
 	f.StringVarP(&createLayer, "layer", "l", "", "Build into this layer: "+layerChoices)
+	f.BoolVar(&createUsage, usage.Flag, false, "Print the wall time, CPU time and peak memory the build used")
 	f.BoolVar(&createDryRun, "dry-run", false, "Show what would be built, pulled or submitted, without doing it")
 	f.BoolVar(&createNeededBy, "needed-by", false, "Take scripts and directories, and install what they declare")
 	f.BoolVar(&createLatest, "latest", false, "Take the newest version, not an installed one")
@@ -1062,5 +1068,5 @@ func exitOnBuildError(err error) {
 	} else {
 		utils.PrintError("Build failed: %v", err)
 	}
-	os.Exit(ExitCodeError)
+	exit(ExitCodeError)
 }

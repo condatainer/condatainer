@@ -61,6 +61,7 @@ var restoreJobRules = map[string]string{
 	"only":      "the command builder sets it to the artifact the job is for",
 	"dry-run":   "a plan is shown and nothing is submitted",
 	"no-submit": "the job is the submission",
+	"usage":     jobRepeats,
 	"json":      "output format of this run",
 }
 

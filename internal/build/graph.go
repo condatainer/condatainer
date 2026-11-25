@@ -15,6 +15,7 @@ import (
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/registry"
+	"github.com/condatainer/condatainer/internal/runtime/usage"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -347,6 +348,7 @@ func (bg *BuildGraph) runLocalStep(ctx context.Context) error {
 		if bg.installedAlready(obj) {
 			continue
 		}
+		usage.Worked()
 		logging.FromContext(ctx).Debug("processing overlay (local build)", "name", obj.NameVersion())
 		if err := obj.Build(ctx, len(obj.prunedDeps) > 0); err != nil {
 			return fmt.Errorf("failed to build %s: %w", obj.NameVersion(), err)

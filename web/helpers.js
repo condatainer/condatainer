@@ -768,6 +768,8 @@ function selectHelper(name, overrides) {
         _setVal('cfg-mem',   overrides.mem   || d.mem      || '');
         _setVal('cfg-wall',  overrides.wall  || d.walltime || '');
         _setVal('cfg-gpu',   overrides.gpu   != null ? overrides.gpu   : (d.gpu      || ''));
+        _setVal('cfg-account',   overrides.account   || '');
+        _setVal('cfg-partition', overrides.partition || '');
       } else {
         // Script defaults loaded — re-apply placeholders (saved config may already be set).
         _applyConfigPlaceholders();

@@ -895,6 +895,9 @@ func newHelperRun(id, name, jobID, cwd string, walltime time.Duration,
 		Status:       status,
 		Connect:      Connect(),
 	}
+	if runner != "local" {
+		run.Account, run.Partition = opts.Account, opts.Partition
+	}
 	if spec != nil {
 		run.CPU = spec.CpusPerTask
 		if mb := spec.GetMemPerNodeMB(); mb > 0 {

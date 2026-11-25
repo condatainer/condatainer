@@ -192,6 +192,12 @@ func ApplyHistoryRun(opts *helper.RunOptions, r *helper.HelperRun) {
 			}
 		}
 	}
+	if r.Account != "" {
+		opts.Account = r.Account
+	}
+	if r.Partition != "" {
+		opts.Partition = r.Partition
+	}
 	if r.EnvOverlay != "" {
 		opts.EnvImg = r.EnvOverlay
 	}

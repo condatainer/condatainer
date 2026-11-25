@@ -28,6 +28,8 @@ type HelperRun struct {
 	CPU          int               `json:"cpu,omitempty"`
 	Mem          string            `json:"mem,omitempty"`         // e.g. "32G", "1536M" — via utils.FormatMemoryMB
 	GPU          string            `json:"gpu,omitempty"`         // e.g. "a100:1"
+	Account      string            `json:"account,omitempty"`     // scheduler account; a headless run has none
+	Partition    string            `json:"partition,omitempty"`   // scheduler partition; a headless run has none
 	EnvOverlay   string            `json:"env_overlay,omitempty"` // writable .img (-e)
 	Overlays     []string          `json:"overlays,omitempty"`    // read-only .sqf (-o)
 	Params       map[string]string `json:"params,omitempty"`      // resolved #PARAM: values

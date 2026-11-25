@@ -413,6 +413,8 @@ async function rerunJob(jobOrId) {
     mem:     job.mem,
     wall:    fmtTimeDetail(job.walltime_secs),
     gpu:     job.gpu     || '',
+    account:   job.account   || '',
+    partition: job.partition || '',
     cwd:     job.cwd     || '',
     overlay: job.env_overlay || '',
     modules:   (job.overlays || []).map(p => allOverlays.find(o => o.name === p || o.path === p)).filter(Boolean),

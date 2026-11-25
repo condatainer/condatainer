@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"testing"
@@ -75,5 +76,19 @@ func TestFSListingPermissions(t *testing.T) {
 	}
 	if len(got) != len(want) {
 		t.Errorf("got %d entries, want %d", len(got), len(want))
+	}
+}
+
+// TestGetentName checks that a name comes from getent, and that an id with no
+// name is an error.
+func TestGetentName(t *testing.T) {
+	if _, err := exec.LookPath("getent"); err != nil {
+		t.Skip("getent not found")
+	}
+	if name, err := getentName("passwd", "0"); err != nil || name != "root" {
+		t.Errorf("getentName(passwd, 0) = %q, %v, want root", name, err)
+	}
+	if name, err := getentName("group", "4294967000"); err == nil {
+		t.Errorf("getentName(group, unused id) = %q, want an error", name)
 	}
 }

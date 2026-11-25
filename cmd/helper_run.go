@@ -72,7 +72,7 @@ type postScriptHelperFlags struct {
 }
 
 func init() {
-	settings.AddSwitch(helperRunCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run headless on this node)"))
+	settings.AddSwitch(helperRunCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run locally)"))
 
 	// Stop flag parsing after the first positional argument so helper-specific flags
 	// (e.g. -c/--cpu) are passed through to parsePostScriptHelperFlags rather than cobra.

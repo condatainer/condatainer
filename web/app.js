@@ -323,14 +323,15 @@ let srvDebug = false;
 let _serverAlive = true;
 
 // _renderJobCounts shows the number of active jobs in the sidebar status line
-// and, with --debug, the number running next to the Jobs tab.
+// and the number running next to the Jobs tab. The badge shows while a job
+// runs, and always with --debug.
 function _renderJobCounts() {
   const text = gid('status-text');
   if (text && _serverAlive) text.textContent = allJobs.length + ' active';
   const running = allJobs.filter(j => j.status === 'running').length;
   const el = gid('jobs-count');
   if (!el) return;
-  el.hidden = !srvDebug;
+  el.hidden = !(srvDebug || running > 0);
   el.textContent = running;
   el.title = running + ' running';
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/runtime/hostrun"
+	"github.com/condatainer/condatainer/internal/runtime/usage"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -53,6 +54,7 @@ var (
 	runArray        string
 	runArrayLimit   int
 	runName         string
+	runUsage        bool
 	runProjectDir   string
 )
 
@@ -145,6 +147,7 @@ func init() {
 	runCmd.Flags().StringVarP(&runPartition, "partition", "p", "", "Override partition/queue")
 	runCmd.Flags().StringSliceVar(&runExcludeNodes, "exclude-nodes", nil, "Override the excluded nodes (comma-separated; empty for none)")
 	runCmd.Flags().BoolVar(&runDryRun, "dry-run", false, "Show what would happen, without doing it")
+	runCmd.Flags().BoolVar(&runUsage, usage.Flag, false, "Print the wall time, CPU time and peak memory the run used")
 	settings.AddSwitch(runCmd.Flags(), "scheduler.submit_job", "no-submit", "false", settings.Usage("Disable job submission (run locally)"))
 	runCmd.Flags().BoolVar(&runSubmit, "submit", false, "Submit a new job from a job or a container (via host-run)")
 	runCmd.Flags().StringVar(&runSubmitOn, "submit-on", "", "Node to submit from: localhost, login or a node name (default: host_run.on)")
@@ -333,7 +336,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 	}
 
 	// Taken before the script's own container headers are applied, which change the same variables: the job reads those itself.
-	containerFlags := forwardedFlagArgs(cmd.Flags())
+	containerFlags := submittedFlagArgs(cmd.Flags())
 
 	// 2. Container headers + dependency check/install
 	if err := applyScriptHeaders(contentScript); err != nil {
@@ -368,7 +371,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 		runBindPaths = append(runBindPaths, projectRun.Root)
 	} else if overlays, err = resolveDeps(cmd.Context(), contentScript, originScriptPath); err != nil {
 		if errors.Is(err, errRunAborted) {
-			os.Exit(ExitCodeError)
+			exit(ExitCodeError)
 		}
 		return err
 	}
@@ -379,7 +382,7 @@ func runScript(cmd *cobra.Command, args []string) error {
 	}
 	if slotErr != nil {
 		if reportSlotError(slotErr) {
-			os.Exit(ExitCodeError)
+			exit(ExitCodeError)
 		}
 		return slotErr
 	}
@@ -883,6 +886,8 @@ func liveJobResourceEnvSettings() []string {
 
 // runLocally executes the script in the container with the given overlays.
 func runLocally(ctx context.Context, contentScript string, overlays []string, specs *scheduler.ScriptSpecs, scriptArgs []string) error {
+	usage.Configure(usage.KindRun, runUsage)
+	usage.Worked()
 	command, err := scriptCommand(contentScript, scriptArgs)
 	if err != nil {
 		ExitWithError("%v", err)
@@ -916,7 +921,7 @@ func runLocally(ctx context.Context, contentScript string, overlays []string, sp
 		// Propagate exit code from container command
 		if appErr, ok := err.(*apptainer.ApptainerError); ok {
 			if code := appErr.ExitCode(); code >= 0 {
-				os.Exit(code)
+				exit(code)
 			}
 		}
 		return err
@@ -1119,19 +1124,14 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 			if !isMPI {
 				memLabel = "Mem:       "
 			}
-			if memPerTaskMB >= 1024 && memPerTaskMB%1024 == 0 {
-				fmt.Printf("  %s %d GB\n", memLabel, memPerTaskMB/1024)
-			} else {
-				fmt.Printf("  %s %d MB\n", memLabel, memPerTaskMB)
-			}
+			fmt.Printf("  %s %s\n", memLabel, utils.FormatMemoryMB(memPerTaskMB))
 			if warning := memoryGuessWarning(specs); warning != "" {
 				utils.PrintWarning("%s", warning)
 			}
 		}
 		// Only a submitted job has a time. A run neither enforces nor exports one.
 		if rs.Time > 0 && willSubmitRun(specs) {
-			total := int64(rs.Time.Seconds())
-			fmt.Printf("  Time:       %02d:%02d:%02d\n", total/3600, (total%3600)/60, total%60)
+			fmt.Printf("  Time:       %s\n", utils.FormatTimeDetail(rs.Time))
 		}
 		if rs.Gpu != nil {
 			if rs.Gpu.Type != "" {
@@ -1357,6 +1357,11 @@ func detectMpi() (string, bool) {
 	return path, true
 }
 
+// submittedFlagArgs is what a submitted run's command repeats: the flags typed, and the usage flag when record_usage names run.
+func submittedFlagArgs(fs *pflag.FlagSet) []string {
+	return append(forwardedFlagArgs(fs), usage.JobFlags(usage.KindRun, runUsage)...)
+}
+
 // forwardedFlagArgs returns the flags given on the command line that a submitted job must run with, as shell words.
 //   - A submitted job runs `condatainer run` again on the compute node, so a flag left out of that command is lost there.
 //   - Every flag that was set is forwarded, except the job flags, which the generated job script carries.
@@ -1367,7 +1372,7 @@ func forwardedFlagArgs(fs *pflag.FlagSet) []string {
 		if !fl.Changed || runJobFlagNames[fl.Name] {
 			return
 		}
-		if fl.Name == "slot" {
+		if fl.Name == "slot" || fl.Name == usage.Flag {
 			return
 		}
 		if fl.Name == "project" {

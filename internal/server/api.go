@@ -22,18 +22,6 @@ type helperListEntry struct {
 	AccessURL   string `json:"access_url,omitempty"`
 	EndsAtMs    int64  `json:"ends_at_ms,omitempty"`
 	LastMessage string `json:"last_message,omitempty"`
-	WalltimeStr string `json:"walltime_str,omitempty"`
-}
-
-// fmtDuration formats a time.Duration as "HH:MM:SS".
-func fmtDuration(d time.Duration) string {
-	if d == 0 {
-		return ""
-	}
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	s := int(d.Seconds()) % 60
-	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
 }
 
 // fmtUptime formats the duration since t as a human-readable string.
@@ -80,7 +68,6 @@ func (s *srv) enrichRun(run *helper.HelperRun, port int) helperListEntry {
 		e.EndsAtMs = est.UnixMilli()
 	}
 	e.LastMessage = s.watcher.LastMsg(run.ID)
-	e.WalltimeStr = fmtDuration(run.Walltime())
 	return e
 }
 

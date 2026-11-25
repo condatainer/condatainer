@@ -26,7 +26,7 @@ type HelperRun struct {
 	CWD          string            `json:"cwd"`           // working directory
 	WalltimeSecs int64             `json:"walltime_secs"` // from #TIME: / -t flag, in seconds
 	CPU          int               `json:"cpu,omitempty"`
-	Mem          string            `json:"mem,omitempty"`         // e.g. "32GB", "1536MB" — via utils.FormatMemoryMB
+	Mem          string            `json:"mem,omitempty"`         // e.g. "32G", "1536M" — via utils.FormatMemoryMB
 	GPU          string            `json:"gpu,omitempty"`         // e.g. "a100:1"
 	EnvOverlay   string            `json:"env_overlay,omitempty"` // writable .img (-e)
 	Overlays     []string          `json:"overlays,omitempty"`    // read-only .sqf (-o)
@@ -37,7 +37,15 @@ type HelperRun struct {
 	Connect      string            `json:"connect,omitempty"`     // helper.connect at submission: "auto"|"ssh"|"scheduler"|"direct"
 	StartedAt    time.Time         `json:"started_at"`
 	EndedAt      *time.Time        `json:"ended_at,omitempty"`
-	Status       string            `json:"status"` // "pending"|"starting"|"running"|"done"|"failed"
+	Status       string            `json:"status"`          // "pending"|"starting"|"running"|"done"|"failed"
+	Usage        *UsageStats       `json:"usage,omitempty"` // what the run used, from the "usage" event
+}
+
+// UsageStats is what a helper run used, measured by its own process.
+type UsageStats struct {
+	WallSecs  int64 `json:"wall_secs"`
+	CPUSecs   int64 `json:"cpu_secs"`
+	PeakMemMB int64 `json:"peak_mem_mb"`
 }
 
 // Headless reports whether the run is a local process rather than a scheduler
@@ -77,7 +85,7 @@ func (r *HelperRun) EstimatedEnd() time.Time {
 }
 
 // StateEvent is one entry in the unified events JSONL file per helper run.
-// Type is one of "msg", "start", "ready", or "done".
+// Type is one of "msg", "start", "ready", "usage", or "done".
 type StateEvent struct {
 	Type string    `json:"type"`
 	Ts   time.Time `json:"ts"`
@@ -96,6 +104,9 @@ type StateEvent struct {
 
 	// "done" fields — pointer so exit_code:0 is preserved in JSON (not omitted by omitempty)
 	ExitCode *int `json:"exit_code,omitempty"`
+
+	// "usage" field, written before "done"
+	Usage *UsageStats `json:"usage,omitempty"`
 }
 
 // StartState is derived from a "start" StateEvent.
@@ -271,6 +282,20 @@ func ReadReadyEvent(id string) (*ReadyState, error) {
 	return nil, nil
 }
 
+// ReadUsageEvent returns the "usage" event of the given helper, or nil if there is none.
+func ReadUsageEvent(id string) (*UsageStats, error) {
+	events, _, err := ReadEventsFrom(id, 0)
+	if err != nil {
+		return nil, err
+	}
+	for _, ev := range events {
+		if ev.Type == "usage" && ev.Usage != nil {
+			return ev.Usage, nil
+		}
+	}
+	return nil, nil
+}
+
 // ReadDoneEvent returns the first "done" event for the given helper, or nil if none yet.
 func ReadDoneEvent(id string) (*DoneState, error) {
 	events, _, err := ReadEventsFrom(id, 0)
@@ -359,11 +384,16 @@ func LoadHistory() ([]*HelperRun, error) {
 // UpdateHistoryStatus rewrites the JSONL history, setting status and endedAt for the given ID.
 // endedAt should reflect when the job actually ended (e.g. the done-event timestamp or
 // StartedAt+Walltime for synthesised expiry), not merely when the server noticed.
+// The run's "usage" event, when it wrote one, is copied into the record.
 // Prunes old completed entries when helper.history_limit is above 0.
 func UpdateHistoryStatus(id, status string, endedAt time.Time) error {
+	used, _ := ReadUsageEvent(id)
 	err := UpdateHistoryRun(id, func(r *HelperRun) {
 		r.Status = status
 		r.EndedAt = &endedAt
+		if used != nil {
+			r.Usage = used
+		}
 	})
 	if limit := HistoryLimit(); err == nil && limit > 0 {
 		_ = pruneHistory(limit)

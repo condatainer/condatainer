@@ -210,3 +210,18 @@ func TestCallsForJobFollowsAlwaysSubmit(t *testing.T) {
 		t.Error("a data rebuild calls for a job with nothing listed")
 	}
 }
+
+// A submitted rebuild repeats --usage when it was asked for, or when record_usage names create.
+func TestRestoreCommandCarriesTheUsageFlag(t *testing.T) {
+	step := Step{Artifact: "provenance/x"}
+	if cmd := restoreCommand("/p", step, Options{}); strings.Contains(cmd, "--usage") {
+		t.Errorf("nothing asked for: %q", cmd)
+	}
+	if cmd := restoreCommand("/p", step, Options{Usage: true}); !strings.Contains(cmd, " --usage") {
+		t.Errorf("a typed flag: %q", cmd)
+	}
+	settingstest.OverrideList(t, "record_usage", "create")
+	if cmd := restoreCommand("/p", step, Options{}); !strings.Contains(cmd, " --usage") {
+		t.Errorf("record_usage names create: %q", cmd)
+	}
+}

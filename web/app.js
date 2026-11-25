@@ -43,11 +43,11 @@ function shortNode(node) {
   if (!node || /^[\d.]+$/.test(node)) return node || '';
   return node.split('.')[0];
 }
-// fmtSize follows the ls -h convention: one decimal below 10 (9.6 MB),
-// whole numbers from 10 up (96 MB), bytes always whole.
+// fmtSize follows the ls -h convention: one decimal below 10 (9.6 MiB),
+// whole numbers from 10 up (96 MiB), bytes always whole.
 function fmtSize(bytes) {
   if (!bytes) return '—';
-  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
   let i = 0, b = bytes;
   while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
   return (i > 0 && b < 10 ? b.toFixed(1) : Math.round(b)) + ' ' + u[i];
@@ -76,6 +76,16 @@ function pathTailHtml(path, maxWidth, cls) {
   const style = maxWidth ? ' style="max-width:' + escHtml(maxWidth) + '"' : '';
   const classes = 'path-tail' + (cls ? ' ' + cls : '');
   return '<span class="' + classes + '"' + style + ' title="' + escHtml(s) + '"><bdi>' + escHtml(s || '—') + '</bdi></span>';
+}
+// fmtTimeDetail writes a duration in seconds as HH:MM:SS, or D-HH:MM:SS from one day. A missing or zero value is "".
+function fmtTimeDetail(secs) {
+  const total = Math.floor(Number(secs));
+  if (!Number.isFinite(total) || total <= 0) return '';
+  const p = n => String(n).padStart(2, '0');
+  const days = Math.floor(total / 86400);
+  const rest = total % 86400;
+  const clock = p(Math.floor(rest / 3600)) + ':' + p(Math.floor(rest % 3600 / 60)) + ':' + p(rest % 60);
+  return days ? days + '-' + clock : clock;
 }
 function calcDuration(startIso, endIso, status, walltimeStr) {
   if (!startIso) return '—';

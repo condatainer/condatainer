@@ -740,7 +740,7 @@ func (l *LsfScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	}
 
 	// Print job information at start
-	writeJobHeader(writer, "$LSB_JOBID", specs, formatLsfTime, jobSpec.Metadata)
+	writeJobHeader(writer, "$LSB_JOBID", specs, utils.FormatTimeDetail, jobSpec.Metadata)
 	fmt.Fprintln(writer, "")
 
 	// Write the command and capture exit code

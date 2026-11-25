@@ -482,7 +482,7 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 	}
 
 	// Print job information at start
-	writeJobHeader(shWriter, jobAdLabelExpr, specs, formatHMSTime, jobSpec.Metadata)
+	writeJobHeader(shWriter, jobAdLabelExpr, specs, utils.FormatTimeDetail, jobSpec.Metadata)
 	fmt.Fprintln(shWriter, "")
 
 	// Write the command and capture exit code

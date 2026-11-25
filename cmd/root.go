@@ -15,6 +15,7 @@ import (
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/runtime/apptainer"
 	execpkg "github.com/condatainer/condatainer/internal/runtime/exec"
+	"github.com/condatainer/condatainer/internal/runtime/usage"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/toolpath"
 	"github.com/condatainer/condatainer/internal/utils"
@@ -231,28 +232,30 @@ func Execute() {
 	}()
 
 	rejectUnknownSubcommands(rootCmd)
+	usage.Watch(ctx)
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		// Cobra's automatic error printing is silenced. For Apptainer errors
 		// print only the captured output (trimmed) and exit with non-zero
 		// status. For other errors, print the default error string.
 		// Ctrl+C or timeout: ^C on the terminal is feedback enough.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			os.Exit(ExitCodeError)
+			exit(ExitCodeError)
 		}
 		if ae, ok := err.(*apptainer.ApptainerError); ok {
 			out := strings.TrimSpace(ae.Output)
 			if out != "" {
 				fmt.Fprintln(os.Stderr, out)
 			}
-			os.Exit(ExitCodeError)
+			exit(ExitCodeError)
 		}
 		if exitErr, ok := err.(interface{ ExitCode() int }); ok {
 			if code := exitErr.ExitCode(); code >= 0 {
-				os.Exit(code)
+				exit(code)
 			}
 		}
 		ExitWithError("%v", err)
 	}
+	usage.Finish()
 }
 
 // rejectUnknownSubcommands makes every group below root with no action of its

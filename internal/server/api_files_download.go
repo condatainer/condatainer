@@ -141,7 +141,7 @@ func (b *downloadBudget) add(size int64) error {
 	case b.files > b.maxFiles:
 		b.reason = fmt.Sprintf("more than %d files", b.maxFiles)
 	case b.bytes > b.maxMB<<20:
-		b.reason = "more than " + utils.FormatMemoryMB(b.maxMB)
+		b.reason = "more than " + utils.FormatMemoryDetail(b.maxMB)
 	default:
 		return nil
 	}

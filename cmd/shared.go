@@ -16,6 +16,7 @@ import (
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/project/lock"
 	"github.com/condatainer/condatainer/internal/runtime/container"
+	"github.com/condatainer/condatainer/internal/runtime/usage"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 	"github.com/spf13/cobra"
@@ -349,14 +350,21 @@ func ExitIfJobsSubmitted(graph *build.BuildGraph) {
 	if scheduler.Enabled() && graph != nil && len(graph.GetJobIDs()) > 0 {
 		utils.PrintNote("%d scheduler job(s) submitted. exiting with code %d",
 			len(graph.GetJobIDs()), ExitCodeJobsSubmitted)
-		os.Exit(ExitCodeJobsSubmitted)
+		exit(ExitCodeJobsSubmitted)
 	}
+}
+
+// exit ends the process with code, after the usage line a command asked for.
+//   - os.Exit skips deferred calls, so every exit that follows work goes through here.
+func exit(code int) {
+	usage.Finish()
+	os.Exit(code)
 }
 
 // ExitWithError prints an error and exits with ExitCodeError
 func ExitWithError(format string, a ...interface{}) {
 	utils.PrintError(format, a...)
-	os.Exit(ExitCodeError)
+	exit(ExitCodeError)
 }
 
 // ParseCommandArgs parses arguments from os.Args after cmd's name

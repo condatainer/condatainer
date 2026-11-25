@@ -14,6 +14,7 @@ import (
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/report"
+	"github.com/condatainer/condatainer/internal/runtime/usage"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
 )
@@ -303,6 +304,7 @@ func buildObject(ctx context.Context, bo *build.BuildObject) {
 		return
 	}
 	showPlan(steps)
+	usage.Worked()
 	if err := bo.Build(ctx, false); err != nil {
 		ExitWithError("Build failed: %v", err)
 	}

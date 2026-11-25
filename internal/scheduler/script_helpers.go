@@ -165,7 +165,7 @@ func absPath(path string) string {
 //   - jobIDVar is the shell expression for the job ID.
 //   - Resource lines print only when specs.Spec is set, and specs.ScriptPath when present.
 //   - A job with one rank prints its node name. An MPI job does not, since the script runs on one of its nodes only.
-//   - formatTime renders rs.Time. nil skips that line.
+//   - formatTime renders rs.Time for a person to read, as the footer does. nil skips that line.
 func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime func(time.Duration) string, metadata map[string]string) {
 	if JobHome != "" {
 		fmt.Fprintln(w, "# Replace HOME (home_override)")
@@ -175,7 +175,8 @@ func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime
 	}
 	fmt.Fprintln(w, "# Print job information")
 	fmt.Fprintln(w, "_START_TIME=$SECONDS")
-	fmt.Fprintln(w, "_format_time() { local s=$1; printf '%02d:%02d:%02d' $((s/3600)) $((s%3600/60)) $((s%60)); }")
+	// io.WriteString, not Fprintln: the line holds printf directives for the shell.
+	io.WriteString(w, "_format_time() { local s=$1 d=$(($1/86400)); if [ $d -gt 0 ]; then printf '%d-' $d; s=$((s%86400)); fi; printf '%02d:%02d:%02d' $((s/3600)) $((s%3600/60)) $((s%60)); }\n") //nolint:errcheck
 	fmt.Fprintln(w, "echo \"========================================\"")
 	fmt.Fprintf(w, "echo \"Job ID:     %s\"\n", jobIDVar)
 	jobName := ""
@@ -214,7 +215,7 @@ func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime
 			fmt.Fprintf(w, "echo \"%s %d\"\n", cpuLabel, rs.CpusPerTask)
 		}
 		if memPerTaskMB := rs.GetMemPerTaskMB(); memPerTaskMB > 0 {
-			fmt.Fprintf(w, "echo \"%s %d MB\"\n", memLabel, memPerTaskMB)
+			fmt.Fprintf(w, "echo \"%s %s\"\n", memLabel, utils.FormatMemoryMB(memPerTaskMB))
 		}
 		if rs.Time > 0 && formatTime != nil {
 			fmt.Fprintf(w, "echo \"Time:       %s\"\n", formatTime(rs.Time))
@@ -292,13 +293,4 @@ func parseMemoryMB(memStr string) (int64, error) {
 		return 0, fmt.Errorf("%w: %s", ErrInvalidMemoryFormat, memStr)
 	}
 	return mb, nil
-}
-
-// formatHMSTime formats a duration as "HH:MM:SS" (PBS / HTCondor walltime format).
-func formatHMSTime(d time.Duration) string {
-	total := int64(d.Seconds())
-	hours := total / 3600
-	mins := (total % 3600) / 60
-	secs := total % 60
-	return fmt.Sprintf("%02d:%02d:%02d", hours, mins, secs)
 }

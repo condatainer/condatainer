@@ -72,6 +72,25 @@ func TestHelperListLinkUsesTheRequestPort(t *testing.T) {
 	}
 }
 
+// The helper list carries a walltime as seconds only, and the page writes its own text.
+func TestHelperListHasWalltimeAsSecondsOnly(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	invalidateHistoryCache()
+	t.Cleanup(invalidateHistoryCache)
+	run := &helper.HelperRun{ID: "svc-20260101-000000", Name: "svc", Status: "running", WalltimeSecs: 7200}
+	if err := helper.AppendHistory(run); err != nil {
+		t.Fatal(err)
+	}
+	s := &srv{ctx: context.Background(), port: 13182}
+	s.watcher = newWatcher(s)
+	w := httptest.NewRecorder()
+	s.handleHelpersList(w, httptest.NewRequest("GET", "/api/helpers", nil))
+	body := w.Body.String()
+	if !strings.Contains(body, `"walltime_secs":7200`) || strings.Contains(body, "walltime_str") {
+		t.Errorf("helper list = %s, want walltime_secs and no walltime_str", body)
+	}
+}
+
 // listHelpers calls the helper list with a request target and decodes the reply.
 func listHelpers(t *testing.T, s *srv, target string) ([]helperListEntry, *httptest.ResponseRecorder) {
 	t.Helper()

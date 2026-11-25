@@ -102,6 +102,12 @@ func PrintMessage(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "[%s] %s\n", projectPrefix, msg)
 }
 
+// PrintRecord prints a message the user asked for, even in quiet mode. → stderr
+// Output: [CNT] Message...
+func PrintRecord(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "[%s] %s\n", projectPrefix, fmt.Sprintf(format, a...))
+}
+
 // PrintLink prints a link on a line of its own, with no prefix, color or trailing text. → stderr
 // A terminal then finds the whole link, and a link that wraps stays one selection.
 func PrintLink(link string) {

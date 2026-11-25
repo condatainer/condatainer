@@ -4,33 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/condatainer/condatainer/internal/utils"
 )
-
-func TestFormatHMSTime(t *testing.T) {
-	tests := []struct {
-		input time.Duration
-		want  string
-	}{
-		{2*time.Hour + 30*time.Minute, "02:30:00"},
-		{time.Hour + 30*time.Second, "01:00:30"},
-		{90 * time.Minute, "01:30:00"},
-		{168 * time.Hour, "168:00:00"},
-		{0, "00:00:00"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
-			got := formatHMSTime(tt.input)
-			if got != tt.want {
-				t.Errorf("formatHMSTime(%v) = %q; want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
 
 func TestResourceEnvVars(t *testing.T) {
 	tests := []struct {
@@ -275,5 +257,33 @@ func TestCreateScriptFileUnique(t *testing.T) {
 	f.Close()
 	if got, _ := os.ReadFile(path); len(got) != 0 {
 		t.Errorf("a create that is not unique keeps %q", got)
+	}
+}
+
+// The Elapsed line of a job log writes a time as utils.FormatTimeDetail does: HH:MM:SS under a day, D-HH:MM:SS from a day.
+func TestJobFooterTimeMatchesTimeDetail(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+	var header strings.Builder
+	writeJobHeader(&header, "$JOB", nil, utils.FormatTimeDetail, nil)
+	var definition string
+	for _, line := range strings.Split(header.String(), "\n") {
+		if strings.HasPrefix(line, "_format_time()") {
+			definition = line
+		}
+	}
+	if definition == "" {
+		t.Fatal("the job header does not define _format_time")
+	}
+	for _, seconds := range []int{0, 5, 59, 3599, 3600, 86399, 86400, 86401, 90061, 168 * 3600, 30*86400 + 5*3600 + 6} {
+		out, err := exec.Command(bash, "-c", definition+"\n_format_time "+strconv.Itoa(seconds)).Output()
+		if err != nil {
+			t.Fatalf("%d seconds: %v", seconds, err)
+		}
+		if want := utils.FormatTimeDetail(time.Duration(seconds) * time.Second); string(out) != want {
+			t.Errorf("_format_time %d = %q, want %q", seconds, out, want)
+		}
 	}
 }

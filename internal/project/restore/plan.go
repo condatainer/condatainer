@@ -162,6 +162,8 @@ type Options struct {
 	// addressed by name goes wherever the store's destination rule puts it, which
 	// never takes a name another identity already holds.
 	Replace bool
+	// Usage asks for the usage line, and a submitted rebuild repeats it.
+	Usage bool
 	// SearchDirs overrides the configured image roots.
 	SearchDirs []string
 	// HostArch is the architecture to plan for. Empty means this machine.

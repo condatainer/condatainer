@@ -360,3 +360,12 @@ func TestNewHelperRunRecordsAccountAndPartitionOfSchedulerRuns(t *testing.T) {
 		t.Errorf("a headless run recorded %q/%q, want none", run.Account, run.Partition)
 	}
 }
+
+func TestNewHelperRunRecordsNoProject(t *testing.T) {
+	for _, noProject := range []bool{true, false} {
+		run := newHelperRun("id", "igv", "", "/cwd", time.Hour, RunOptions{NoProject: noProject}, nil, nil, nil, "starting", "local")
+		if run.NoProject != noProject {
+			t.Errorf("NoProject = %v, want %v", run.NoProject, noProject)
+		}
+	}
+}

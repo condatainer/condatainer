@@ -75,7 +75,7 @@
         </div>
         <div class="btn-row">
           <button class="btn btn-sm" id="start-manage-btn" onclick="openHelperManager()" title="Add, upgrade and remove helpers"><svg class="icon"><use href="#i-settings"></use></svg>Manage</button>
-          <button class="btn btn-sm" id="start-refresh-btn" onclick="refreshStartHelpers()" title="Reload helper list"><svg class="icon"><use href="#i-refresh"></use></svg>Refresh</button>
+          <button class="btn btn-sm" id="start-refresh-btn" onclick="refreshStartHelpers()" title="Reload the helper list and the project"><svg class="icon"><use href="#i-refresh"></use></svg>Refresh</button>
         </div>
       </div>
       <div class="start-layout">
@@ -139,7 +139,12 @@
             <div class="project-line" id="project-distro-line">
               <span class="project-label">Distro</span>
               <span class="mono" id="project-distro"></span>
-              <button class="btn btn-sm btn-primary" id="project-history-btn" style="margin-left:auto" disabled onclick="openReuseModal()">Overlay history</button>
+              <div class="project-actions">
+                <label class="toggle-lbl" id="no-project-row" title="Ignore the project's lock, root and distro for this start" hidden>
+                  <input type="checkbox" id="cfg-no-project"> Ignore project
+                </label>
+                <button class="btn btn-sm btn-primary" id="project-history-btn" disabled onclick="openReuseModal()">Overlay history</button>
+              </div>
             </div>
           </div>
           <div class="field">

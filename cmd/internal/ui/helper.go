@@ -198,6 +198,9 @@ func ApplyHistoryRun(opts *helper.RunOptions, r *helper.HelperRun) {
 	if r.Partition != "" {
 		opts.Partition = r.Partition
 	}
+	if r.NoProject {
+		opts.NoProject = true
+	}
 	if r.EnvOverlay != "" {
 		opts.EnvImg = r.EnvOverlay
 	}
@@ -649,6 +652,9 @@ func PrintLaunchSpec(plan *helper.RunPlan) {
 	}
 	if opts.Partition != "" {
 		utils.PrintMessage("  Partition: %s", opts.Partition)
+	}
+	if opts.NoProject {
+		utils.PrintMessage("  Project:  ignored")
 	}
 	// A summary, so a base that is not installed yet is reported rather than
 	// resolved: the launch that follows is what has to succeed or fail.

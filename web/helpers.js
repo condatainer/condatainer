@@ -346,6 +346,9 @@ async function refreshStartHelpers() {
   try {
     _helpersLoaded = false;
     await loadHelpers(true);
+    _projectKey = '';
+    renderModuleChips();
+    checkProjectReuse();
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -564,6 +567,7 @@ function resetStartForm(helper) {
   gid('cfg-gpu').value       = '';
   gid('cfg-account').value   = '';
   gid('cfg-partition').value = '';
+  gid('cfg-no-project').checked = false;
   _setCwd('');
   gid('cfg-cwd').dispatchEvent(new Event('input'));
   _setVal('cfg-overlay', '');
@@ -798,6 +802,7 @@ function selectHelper(name, overrides) {
 
   // When rerunning, apply saved cwd/overlay directly and skip auto-resolution.
   if (overrides) {
+    gid('cfg-no-project').checked = !!overrides.noProject;
     _setCwd(overrides.cwd || '');
     let overlayPath = overrides.overlay || '';
     if (overlayPath && !overlayPath.startsWith('/')) {
@@ -1581,6 +1586,7 @@ async function startHelper() {
     params:  _collectParams(),
     slots:   _collectSlots(),
     no_submit: gid('cfg-no-submit').checked,
+    no_project: _noProject(),
   };
 
   const term = openStreamLogProgress('Starting ' + selectedHelper.name);
@@ -1684,7 +1690,7 @@ function _optionalChip(name) {
 
 function _syncProjectInfo(names, optional) {
   const cwd = gid('cfg-cwd')?.value || '';
-  const key = cwd + '\n' + names.join('\n') + '\n--\n' + optional.join('\n');
+  const key = cwd + '\n' + names.join('\n') + '\n--\n' + optional.join('\n') + '\n' + _noProject();
   if (key === _projectKey) return;
   _projectKey = key;
   loadProjectInfo(cwd, names, optional);
@@ -1697,11 +1703,13 @@ async function loadProjectInfo(cwd, names, optional) {
     const qs = new URLSearchParams({ cwd });
     names.forEach(n => qs.append('name', n));
     optional.forEach(n => qs.append('optional', n));
+    if (_noProject()) qs.append('no_project', '1');
     try { info = await fetch('api/project?' + qs).then(r => r.ok ? r.json() : null); } catch { info = null; }
   }
   if (req !== _projectReq) return;
   _projectInfo = info;
   _renderProjectLine();
+  _renderNoProject();
   renderModuleChips();
 }
 
@@ -1716,6 +1724,19 @@ function _renderProjectLine() {
   gid('project-path').textContent = info.root || 'none';
   gid('project-distro').textContent = info.distro || '';
   gid('project-create-btn').disabled = info.root === info.cwd;
+}
+
+// "Ignore project" is shown where a project stands, and is cleared where none does.
+function _renderNoProject() {
+  const row = gid('no-project-row');
+  if (!row) return;
+  const has = !!(_projectInfo && _projectInfo.has_project);
+  row.hidden = !has;
+  if (!has) gid('cfg-no-project').checked = false;
+}
+
+function _noProject() {
+  return !!gid('cfg-no-project')?.checked;
 }
 
 async function createProject() {
@@ -1734,6 +1755,7 @@ async function createProject() {
 }
 
 gid('cfg-cwd').addEventListener('input', () => renderModuleChips());
+gid('cfg-no-project').addEventListener('change', () => renderModuleChips());
 
 /* ── Module chips ────────────────────────── */
 function renderModuleChips() {

@@ -132,12 +132,14 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 - History keeps the newest `helper.history_limit` finished runs, counted in file order. `0` keeps all.
   - A run that finishes prunes the file, and removes the state folder of each run it drops.
   - A pending, starting or running run is never pruned and never counts.
+- `no_project` is set when the run ignored the project. A rerun ignores it again, since the overlays it recorded were solved without the project.
 - `slots` maps each bound slot to the exact overlay name it mounted. A reuse restores the slots the script still declares, and drops one it no longer declares or a strict slot no longer takes. The exact name keeps a newer overlay from changing what a reused run mounts.
 
 ## Shared history
 
 - It records which overlay combinations a project's helpers ran with, so the next person does not rediscover them.
 - It lives in the project's `cnt-lock/.helper-history/`, one file per combination.
+- A launch with `--no-project` records nothing here. The project did not solve it, so it is not a combination the project's users should be offered.
 - It is used only inside an existing project. It never runs `project init` to make a place for itself.
   - A project's presence already changes overlay resolution, so creating one could break the launch.
 - Dedup is by content and recency is the file mtime. A repeat bumps the mtime.

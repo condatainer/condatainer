@@ -529,6 +529,7 @@ th.file-actions-cell{width:112px;} /* fits the 3 buttons of a folder row (star, 
 .project-line{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;}
 .project-label{color:var(--muted);min-width:52px;}
 .project-path{flex:1;word-break:break-all;}
+.project-actions{display:flex;align-items:center;gap:12px;margin-left:auto;}
 .module-chip-name{font-family:var(--mono);flex:1;}
 .module-chip-label{font-family:var(--mono);color:var(--muted);}
 .module-chip .btn-ghost{padding:0 4px;}

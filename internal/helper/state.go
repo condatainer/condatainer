@@ -30,6 +30,7 @@ type HelperRun struct {
 	GPU          string            `json:"gpu,omitempty"`         // e.g. "a100:1"
 	Account      string            `json:"account,omitempty"`     // scheduler account; a headless run has none
 	Partition    string            `json:"partition,omitempty"`   // scheduler partition; a headless run has none
+	NoProject    bool              `json:"no_project,omitempty"`  // the run ignored the project (--no-project)
 	EnvOverlay   string            `json:"env_overlay,omitempty"` // writable .img (-e)
 	Overlays     []string          `json:"overlays,omitempty"`    // read-only .sqf (-o)
 	Params       map[string]string `json:"params,omitempty"`      // resolved #PARAM: values

@@ -45,3 +45,15 @@ func TestApplyHistoryRunRestoresAccountAndPartition(t *testing.T) {
 		t.Errorf("a record with none changed them to %q/%q", opts.Account, opts.Partition)
 	}
 }
+
+func TestApplyHistoryRunRestoresNoProject(t *testing.T) {
+	var opts helper.RunOptions
+	ApplyHistoryRun(&opts, &helper.HelperRun{})
+	if opts.NoProject {
+		t.Error("a record without it set NoProject")
+	}
+	ApplyHistoryRun(&opts, &helper.HelperRun{NoProject: true})
+	if !opts.NoProject {
+		t.Error("a record with it did not set NoProject")
+	}
+}

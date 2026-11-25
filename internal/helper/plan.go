@@ -332,7 +332,11 @@ func ExecutePlan(ctx context.Context, plan *RunPlan) (string, error) {
 // recordSharedUsage records this launch's required and added overlays in the
 // project's shared history when cwd stands inside one. It is best-effort: a launch
 // that already started must not fail because of it.
+// A launch that ignored the project records nothing there, since the project did not solve it.
 func recordSharedUsage(cwd string, plan *RunPlan, overlays []string) {
+	if plan.Options.NoProject {
+		return
+	}
 	standing, err := project.StandingAt(cwd)
 	if err != nil || standing == nil {
 		return

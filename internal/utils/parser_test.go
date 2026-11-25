@@ -158,3 +158,93 @@ func TestFormatSpeed(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatMemoryTable(t *testing.T) {
+	tests := map[int64]string{
+		0:        "0M",
+		512:      "512M",
+		2150:     "2150M",
+		10239:    "10239M",
+		10240:    "10G",
+		10445:    "10.2G",
+		31949:    "31.2G",
+		64512:    "63G",
+		101990:   "99.6G",
+		102400:   "100G",
+		126362:   "123G",
+		766000:   "748G",
+		2048000:  "2000G",
+		3045514:  "2974G",
+		10485759: "10240G",
+		10485760: "10T",
+		11010048: "10.5T",
+		13212057: "12.6T",
+		12582912: "12T",
+		2 << 30:  "2048T",
+	}
+	for mb, want := range tests {
+		if got := FormatMemoryTable(mb); got != want {
+			t.Errorf("FormatMemoryTable(%d) = %q, want %q", mb, got, want)
+		}
+	}
+}
+
+func TestFormatHMS(t *testing.T) {
+	tests := map[time.Duration]string{
+		0:                                     "00:00:00",
+		59*time.Second + 900*time.Millisecond: "00:00:59",
+		time.Hour + 30*time.Second:            "01:00:30",
+		2*time.Hour + 30*time.Minute:          "02:30:00",
+		4*time.Hour + 21*time.Minute + 49*time.Second: "04:21:49",
+		72 * time.Hour:     "72:00:00",
+		7 * 24 * time.Hour: "168:00:00",
+	}
+	for d, want := range tests {
+		if got := FormatHMS(d); got != want {
+			t.Errorf("FormatHMS(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestFormatTimeDetail(t *testing.T) {
+	tests := map[time.Duration]string{
+		0:                             "00:00:00",
+		23*time.Hour + 59*time.Minute: "23:59:00",
+		24 * time.Hour:                "1-00:00:00",
+		72 * time.Hour:                "3-00:00:00",
+		7 * 24 * time.Hour:            "7-00:00:00",
+		30*24*time.Hour + 5*time.Hour + 6*time.Second: "30-05:00:06",
+	}
+	for d, want := range tests {
+		if got := FormatTimeDetail(d); got != want {
+			t.Errorf("FormatTimeDetail(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestFormatTimeTable(t *testing.T) {
+	for d, want := range map[time.Duration]string{0: "00:00:00", 72 * time.Hour: "72:00:00", 7 * 24 * time.Hour: "168:00:00"} {
+		if got := FormatTimeTable(d); got != want {
+			t.Errorf("FormatTimeTable(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestFormatMemoryDetail(t *testing.T) {
+	for mb, want := range map[int64]string{400: "400 MiB", 2150: "2.10 GiB", 31949: "31.2 GiB", 40 * 1024: "40.0 GiB"} {
+		if got := FormatMemoryDetail(mb); got != want {
+			t.Errorf("FormatMemoryDetail(%d) = %q, want %q", mb, got, want)
+		}
+	}
+}
+
+func TestFormatMemoryMB(t *testing.T) {
+	for mb, want := range map[int64]string{512: "512M", 1536: "1536M", 8192: "8G", 32768: "32G"} {
+		if got := FormatMemoryMB(mb); got != want {
+			t.Errorf("FormatMemoryMB(%d) = %q, want %q", mb, got, want)
+		}
+		if back, err := ParseMemoryMB(FormatMemoryMB(mb)); err != nil || back != mb {
+			t.Errorf("FormatMemoryMB(%d) = %q reads back as %d, %v", mb, FormatMemoryMB(mb), back, err)
+		}
+	}
+}

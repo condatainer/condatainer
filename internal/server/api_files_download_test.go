@@ -244,7 +244,7 @@ func TestDownloadWarning(t *testing.T) {
 
 	settingstest.Override(t, "server.download_warn_files", "100")
 	settingstest.Override(t, "server.download_warn_size", "2m")
-	if w := get(one + "&check=1"); !strings.Contains(w.Body.String(), `"warn":"more than 2MB"`) {
+	if w := get(one + "&check=1"); !strings.Contains(w.Body.String(), `"warn":"more than 2.00 MiB"`) {
 		t.Fatalf("check = %s, want a size warning", w.Body.String())
 	}
 }

@@ -729,7 +729,7 @@ func (s *SlurmScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string
 	if jobSpec.Array != nil {
 		jobIDVar = "$SLURM_ARRAY_JOB_ID"
 	}
-	writeJobHeader(writer, jobIDVar, specs, formatSlurmTimeSpec, jobSpec.Metadata)
+	writeJobHeader(writer, jobIDVar, specs, utils.FormatTimeDetail, jobSpec.Metadata)
 	fmt.Fprintln(writer, "")
 
 	// Write the command and capture exit code
@@ -1179,9 +1179,9 @@ func formatSlurmTimeSpec(d time.Duration) string {
 	days := int64(d.Hours()) / 24
 	if days > 0 {
 		rem := d - time.Duration(days*24)*time.Hour
-		return fmt.Sprintf("%d-%s", days, formatHMSTime(rem))
+		return fmt.Sprintf("%d-%s", days, utils.FormatHMS(rem))
 	}
-	return formatHMSTime(d)
+	return utils.FormatHMS(d)
 }
 
 // GetJobResources reads allocated resources from SLURM environment variables.

@@ -756,7 +756,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 		}
 
 		if rs.Time > 0 {
-			fmt.Fprintf(writer, "#PBS -l walltime=%s\n", formatHMSTime(rs.Time))
+			fmt.Fprintf(writer, "#PBS -l walltime=%s\n", utils.FormatHMS(rs.Time))
 		}
 		if rs.Exclusive {
 			fmt.Fprintln(writer, "#PBS -l place=excl")
@@ -815,7 +815,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	}
 
 	// Print job information at start
-	writeJobHeader(writer, "$PBS_JOBID", specs, formatHMSTime, jobSpec.Metadata)
+	writeJobHeader(writer, "$PBS_JOBID", specs, utils.FormatTimeDetail, jobSpec.Metadata)
 	fmt.Fprintln(writer, "")
 
 	// Write the command and capture exit code

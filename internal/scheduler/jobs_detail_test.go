@@ -27,11 +27,11 @@ func TestJobDetailOfASuccessfulJob(t *testing.T) {
 	want := `248534  success  realign
   partitions   large
   exit code    0
-  resources    4 cpus, 40 GB
+  resources    4 cpus, 40.0 GiB
   node list    node02.example.org
   time limit   01:00:00
   elapsed      00:48:06
-  usage        cpu time 02:57:00, peak mem 11 GB
+  usage        cpu time 02:57:00, peak mem 11.3 GiB
   submit time  2026-11-12 14:52:25
   start time   2026-11-12 14:52:25
   end time     2026-11-12 15:40:31
@@ -52,7 +52,7 @@ func TestJobDetailOfAFailedJobHasItsReasonAndNoExitCode(t *testing.T) {
 		Stdout: "/scratch/align_248600.out",
 	}
 	got := detailText(j)
-	for _, want := range []string{"  failure      out_of_memory\n", "  usage        cpu time 21:12:08, peak mem 79 GB\n", "  queued       00:02:37\n"} {
+	for _, want := range []string{"  failure      out_of_memory\n", "  usage        cpu time 21:12:08, peak mem 78.8 GiB\n", "  queued       00:02:37\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("detail lacks %q:\n%s", want, got)
 		}
@@ -87,7 +87,7 @@ func TestJobDetailOfAnArray(t *testing.T) {
 	}
 	want := `248550  failed  step05_count
   partitions   large
-  resources    4 cpus, 16 GB
+  resources    4 cpus, 16.0 GiB
   time limit   04:00:00
   tasks        9: 8 success, 1 failed
   failed       248550_2
@@ -120,9 +120,9 @@ func TestJobDetailLayout(t *testing.T) {
 		want string
 	}{
 		{"fixed ranks per node", JobInfo{Cpus: 16, MemMB: 32 * 1024, NodeCount: 2, Ranks: 8, RanksPerNode: 4, CpusPerRank: 2},
-			"16 cpus, 32 GB (2 nodes x 4 ranks x 2 cpus)"},
+			"16 cpus, 32.0 GiB (2 nodes x 4 ranks x 2 cpus)"},
 		{"placed by the scheduler", JobInfo{Cpus: 16, MemMB: 32 * 1024, NodeCount: 2, Ranks: 8, CpusPerRank: 2},
-			"16 cpus, 32 GB (8 ranks x 2 cpus on 2 nodes)"},
+			"16 cpus, 32.0 GiB (8 ranks x 2 cpus on 2 nodes)"},
 		{"ranks on one node", JobInfo{Cpus: 8, NodeCount: 1, Ranks: 4, CpusPerRank: 2}, "8 cpus (4 ranks x 2 cpus)"},
 		{"fixed per node but the counts disagree", JobInfo{Cpus: 8, NodeCount: 3, Ranks: 4, RanksPerNode: 2, CpusPerRank: 2},
 			"8 cpus (4 ranks x 2 cpus on 3 nodes)"},
@@ -134,7 +134,7 @@ func TestJobDetailLayout(t *testing.T) {
 			t.Errorf("%s: %q, want %q", tt.name, got, tt.want)
 		}
 	}
-	if got := resourcesText(JobInfo{Cpus: 1, MemMB: 400, Gpus: []JobGpu{{Type: "h100", Count: 1}}}); got != "1 cpu, 400 MB, 1 h100" {
+	if got := resourcesText(JobInfo{Cpus: 1, MemMB: 400, Gpus: []JobGpu{{Type: "h100", Count: 1}}}); got != "1 cpu, 400 MiB, 1 h100" {
 		t.Errorf("resources = %q", got)
 	}
 }

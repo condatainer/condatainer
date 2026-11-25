@@ -14,24 +14,6 @@ import (
 // maxListedTasks is how many task IDs one line of the detail block lists.
 const maxListedTasks = 10
 
-// formatHMS writes a duration as HH:MM:SS, hours not wrapping at 24.
-func formatHMS(d time.Duration) string {
-	s := int(d.Seconds())
-	return fmt.Sprintf("%02d:%02d:%02d", s/3600, s%3600/60, s%60)
-}
-
-// formatSizeMB writes a size in MB as "400 MB", "40 GB" or "1.5 GB".
-func formatSizeMB(mb int64) string {
-	if mb < 1024 {
-		return strconv.FormatInt(mb, 10) + " MB"
-	}
-	gb := float64(mb) / 1024
-	if gb >= 10 {
-		return fmt.Sprintf("%.0f GB", gb)
-	}
-	return strings.TrimSuffix(fmt.Sprintf("%.1f", gb), ".0") + " GB"
-}
-
 // WriteJobDetail prints one job as a block: its ID, state and name, then a line for each fact the
 // scheduler reported. A line's label is the JSON key of the fact, with "_" shown as a space and the
 // unit suffix dropped. A fact that is not reported has no line.
@@ -77,10 +59,10 @@ func WriteJobDetail(w io.Writer, j JobInfo) {
 	case j.TimeUnlimited:
 		add("time limit", "unlimited")
 	case j.TimeLimit > 0:
-		add("time limit", formatHMS(j.TimeLimit))
+		add("time limit", utils.FormatTimeDetail(j.TimeLimit))
 	}
 	if !j.IsArray() && !j.StartTime.IsZero() {
-		add("elapsed", formatHMS(j.Elapsed))
+		add("elapsed", utils.FormatTimeDetail(j.Elapsed))
 	}
 	add("usage", usageText(j))
 	if j.IsArray() {
@@ -90,7 +72,7 @@ func WriteJobDetail(w io.Writer, j JobInfo) {
 	add("start time", timeOf(j.StartTime))
 	add("end time", timeOf(j.EndTime))
 	if !j.StartTime.IsZero() && !j.SubmitTime.IsZero() {
-		add("queued", formatHMS(j.StartTime.Sub(j.SubmitTime)))
+		add("queued", utils.FormatTimeDetail(j.StartTime.Sub(j.SubmitTime)))
 	}
 	add("stdout", j.Stdout)
 	if j.Stderr != j.Stdout {
@@ -127,14 +109,14 @@ func dependencyText(deps []JobDependency) string {
 	return strings.Join(parts, ", ")
 }
 
-// resourcesText is "4 cpus, 40 GB, 1 h100", with the layout of a job of several nodes or ranks after it.
+// resourcesText is "4 cpus, 40.0 GiB, 1 h100", with the layout of a job of several nodes or ranks after it.
 func resourcesText(j JobInfo) string {
 	var parts []string
 	if j.Cpus > 0 {
 		parts = append(parts, plural(j.Cpus, "cpu"))
 	}
 	if j.MemMB > 0 {
-		parts = append(parts, formatSizeMB(j.MemMB))
+		parts = append(parts, utils.FormatMemoryDetail(j.MemMB))
 	}
 	for _, g := range j.Gpus {
 		parts = append(parts, strconv.Itoa(g.Count)+" "+g.Type)
@@ -181,14 +163,14 @@ func plural(n int, word string) string {
 	return strconv.Itoa(n) + " " + word + "s"
 }
 
-// usageText is "cpu time 02:57:00, peak mem 11 GB", with what the scheduler did not report left out.
+// usageText is "cpu time 02:57:00, peak mem 11.3 GiB", with what the scheduler did not report left out.
 func usageText(j JobInfo) string {
 	var parts []string
 	if j.CpuTime != nil {
-		parts = append(parts, "cpu time "+formatHMS(*j.CpuTime))
+		parts = append(parts, "cpu time "+utils.FormatTimeDetail(*j.CpuTime))
 	}
 	if j.PeakMemMB > 0 {
-		parts = append(parts, "peak mem "+formatSizeMB(j.PeakMemMB))
+		parts = append(parts, "peak mem "+utils.FormatMemoryDetail(j.PeakMemMB))
 	}
 	return strings.Join(parts, ", ")
 }

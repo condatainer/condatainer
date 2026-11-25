@@ -25,14 +25,54 @@ func ParseMemoryMB(memStr string) (int64, error) {
 	return ParseMemoryMBWithDefault(memStr, "MB")
 }
 
-// FormatMemoryMB formats a MB value into a human-readable string.
-//   - Uses "GB" when divisible by 1024, otherwise "MB".
-//   - Examples: 8192 → "8GB", 1536 → "1536MB".
+// FormatMemoryMB writes a MB value as text the memory parser reads back, with a one-letter unit.
+//   - It uses "G" when divisible by 1024, otherwise "M".
+//   - Examples: 8192 → "8G", 1536 → "1536M".
 func FormatMemoryMB(mb int64) string {
 	if mb%1024 == 0 {
-		return fmt.Sprintf("%dGB", mb/1024)
+		return fmt.Sprintf("%dG", mb/1024)
 	}
-	return fmt.Sprintf("%dMB", mb)
+	return fmt.Sprintf("%dM", mb)
+}
+
+// FormatHMS writes a duration as the HH:MM:SS a job script carries, with the seconds cut and the hours counting past 24.
+func FormatHMS(d time.Duration) string {
+	total := int64(d.Seconds())
+	return fmt.Sprintf("%02d:%02d:%02d", total/3600, total%3600/60, total%60)
+}
+
+// FormatTimeTable writes a duration for a table column: HH:MM:SS, with the hours counting past 24.
+//   - Seven days is "168:00:00".
+func FormatTimeTable(d time.Duration) string { return FormatHMS(d) }
+
+// FormatTimeDetail writes a duration where there is room: HH:MM:SS under a day, D-HH:MM:SS from a day.
+//   - Seven days is "7-00:00:00".
+func FormatTimeDetail(d time.Duration) string {
+	if d < 24*time.Hour {
+		return FormatHMS(d)
+	}
+	days := int64(d.Hours()) / 24
+	return fmt.Sprintf("%d-%s", days, FormatHMS(d-time.Duration(days)*24*time.Hour))
+}
+
+// FormatMemoryDetail writes memory in MB where there is room, in GiB: "31.2 GiB", "512 MiB".
+func FormatMemoryDetail(mb int64) string { return FormatSize(mb << 20) }
+
+// FormatMemoryTable writes memory in MB for a table column, in at most five characters: "2150M", "10.2G", "123G", "12.6T".
+//   - Below 10 GB it is whole megabytes.
+//   - From there it is gigabytes, then from 10 TB terabytes. Each has one decimal below 100 and none from 100. A whole value drops its ".0".
+func FormatMemoryTable(mb int64) string {
+	if mb < 10240 {
+		return strconv.FormatInt(mb, 10) + "M"
+	}
+	value, unit := float64(mb)/1024, "G"
+	if value >= 10240 {
+		value, unit = value/1024, "T"
+	}
+	if value >= 100 {
+		return strconv.FormatFloat(value, 'f', 0, 64) + unit
+	}
+	return strings.TrimSuffix(strconv.FormatFloat(value, 'f', 1, 64), ".0") + unit
 }
 
 // minSpeedWindow is the shortest span FormatSpeed quotes a rate over; less is noise.

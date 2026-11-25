@@ -7,30 +7,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/condatainer/condatainer/internal/utils"
 )
-
-// formatMem writes a per-node memory figure as "8192M", "2000G" or "12T".
-// The unit changes only from 10240 of the unit below: 10240M is "10G" and 10240G is "10T".
-func formatMem(mb int64) string {
-	switch {
-	case mb >= 10240*1024:
-		return strings.TrimSuffix(strconv.FormatFloat(float64(mb)/(1024*1024), 'f', 1, 64), ".0") + "T"
-	case mb >= 10240:
-		return fmt.Sprintf("%.0fG", float64(mb)/1024)
-	default:
-		return fmt.Sprintf("%dM", mb)
-	}
-}
-
-// formatHM writes a duration as HH:MM, hours not wrapping at 24: three days is "72:00".
-func formatHM(d time.Duration) string {
-	minutes := int(d.Minutes())
-	return fmt.Sprintf("%02d:%02d", minutes/60, minutes%60)
-}
 
 // partitionColumns are the columns of the partition table. Numbers align right.
 var partitionColumns = []string{"PARTITION", "AVAIL", "NODES", "IDLECPUS", "CPUS", "MEM", "MAXTIME", "MAXNODES", "GPUS"}
@@ -156,7 +136,7 @@ func partitionRows(l ResourceLimits, fallbackGpus []GpuInfo) [][]string {
 	case l.TimeUnlimited:
 		maxTime = "inf"
 	case l.MaxTime > 0:
-		maxTime = formatHM(l.MaxTime)
+		maxTime = utils.FormatTimeTable(l.MaxTime)
 	}
 	maxNodes := "-"
 	if l.MaxNodes > 0 {
@@ -182,7 +162,7 @@ func partitionRows(l ResourceLimits, fallbackGpus []GpuInfo) [][]string {
 			}
 		}
 		if t.MemMB > 0 {
-			mem = formatMem(t.MemMB)
+			mem = utils.FormatMemoryTable(t.MemMB)
 			if t.MemLowerBound {
 				mem += "+"
 			}
@@ -350,7 +330,7 @@ var jobColumns = []jobColumn{
 	{header: "STATE", cell: func(j JobInfo) string { return string(j.State) }},
 	{header: "CPUS", right: true, cell: func(j JobInfo) string { return orDash(j.Cpus, strconv.Itoa(j.Cpus)) }},
 	{header: "GPUS", cell: jobGpus},
-	{header: "MEM", right: true, cell: func(j JobInfo) string { return orDash(int(j.MemMB), formatMem(j.MemMB)) }},
+	{header: "MEM", right: true, cell: func(j JobInfo) string { return orDash(int(j.MemMB), utils.FormatMemoryTable(j.MemMB)) }},
 	{header: "TIME", cell: jobTime},
 	{header: "NODE", minWidth: minNodeWidth, cell: jobNode},
 	{header: "NOTE", minWidth: minFlexWidth, cell: jobNote},
@@ -377,22 +357,22 @@ func jobGpus(j JobInfo) string {
 }
 
 // jobTime is the limit of a job that waits, elapsed over limit for one that runs, and elapsed for one that ended.
-// An array shows its per-task limit only. Every time is HH:MM:SS.
+// An array shows its per-task limit only. Every time is utils.FormatTimeTable.
 func jobTime(j JobInfo) string {
 	limit := "-"
 	switch {
 	case j.TimeUnlimited:
 		limit = "inf"
 	case j.TimeLimit > 0:
-		limit = formatHMS(j.TimeLimit)
+		limit = utils.FormatTimeTable(j.TimeLimit)
 	}
 	switch {
 	case j.IsArray():
 		return limit
 	case j.State == JobRunning:
-		return formatHMS(j.Elapsed) + "/" + limit
+		return utils.FormatTimeTable(j.Elapsed) + "/" + limit
 	case ended(j.State) && j.Elapsed > 0:
-		return formatHMS(j.Elapsed)
+		return utils.FormatTimeTable(j.Elapsed)
 	case ended(j.State):
 		return "-"
 	}

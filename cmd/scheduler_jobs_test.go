@@ -553,7 +553,7 @@ func TestJobsByIDLooksUpOnceAndNeverLists(t *testing.T) {
 func TestJobsOneIDShowsTheDetailAndSeveralShowTheTable(t *testing.T) {
 	f := &fakeJobScheduler{lookup: lookupInQueue}
 	one, _ := runJobs(t, f, "21")
-	if strings.HasPrefix(one, "JOBID") || !strings.HasPrefix(one, "21  running  align_sample\n") || !strings.Contains(one, "  resources   8 cpus, 64 GB") {
+	if strings.HasPrefix(one, "JOBID") || !strings.HasPrefix(one, "21  running  align_sample\n") || !strings.Contains(one, "  resources   8 cpus, 64.0 GiB") {
 		t.Errorf("one ID:\n%s", one)
 	}
 	many, _ := runJobs(t, f, "21", "9")

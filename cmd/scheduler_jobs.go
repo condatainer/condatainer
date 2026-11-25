@@ -47,9 +47,10 @@ In a cell:
 - An ID can also have the state notfound or unknown.
 
 One ID shows the job in full: a line for each fact the scheduler reported.
-A finished job has its exit code, CPU time and peak memory.
-A failed job also has why it failed.
-An array lists its tasks by state, and the IDs of the tasks that failed.`,
+- A time of a day or more is written D-HH:MM:SS.
+- A finished job has its exit code, CPU time and peak memory.
+- A failed job also has why it failed.
+- An array lists its tasks by state, and the IDs of the tasks that failed.`,
 	Example: `  condatainer scheduler jobs
   condatainer scheduler jobs align          # Jobs with "align" in the name
   condatainer scheduler jobs 245068         # One job in full, even if ended

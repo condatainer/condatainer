@@ -10,45 +10,6 @@ import (
 	"github.com/fatih/color"
 )
 
-func TestFormatMem(t *testing.T) {
-	tests := map[int64]string{
-		512:      "512M",
-		1000:     "1000M",
-		8192:     "8192M",
-		10239:    "10239M",
-		10240:    "10G",
-		766000:   "748G",
-		507000:   "495G",
-		2048000:  "2000G",
-		3045514:  "2974G",
-		10485759: "10240G",
-		10485760: "10T",
-		12582912: "12T",
-		11010048: "10.5T",
-	}
-	for mb, want := range tests {
-		if got := formatMem(mb); got != want {
-			t.Errorf("formatMem(%d) = %q, want %q", mb, got, want)
-		}
-	}
-}
-
-func TestFormatHM(t *testing.T) {
-	tests := map[time.Duration]string{
-		8 * time.Hour:              "08:00",
-		72 * time.Hour:             "72:00",
-		time.Hour + 5*time.Minute:  "01:05",
-		7 * 24 * time.Hour:         "168:00",
-		0:                          "00:00",
-		59*time.Minute + time.Hour: "01:59",
-	}
-	for d, want := range tests {
-		if got := formatHM(d); got != want {
-			t.Errorf("formatHM(%v) = %q, want %q", d, got, want)
-		}
-	}
-}
-
 func TestPartitionTable(t *testing.T) {
 	limits := []ResourceLimits{
 		{Partition: "cpubase_interac", State: "up", MaxTime: 8 * time.Hour, Nodes: 702, MaxCpusPerNode: 192, MaxMemMBPerNode: 766000,
@@ -69,14 +30,14 @@ func TestPartitionTable(t *testing.T) {
 	var out bytes.Buffer
 	WritePartitionTable(&out, limits, nil, true)
 
-	want := `PARTITION          AVAIL  NODES  CPUS    MEM  MAXTIME  MAXNODES  GPUS
-cpubase_interac    up       702   192   748G    08:00         -  -
-cpubackfill*       up       709   192  748G+    24:00         -  -
-gpubase_bynode_b4  up         6   112  2000G    72:00         -  h100:8
-                              5   112  2000G                     nvidia_h100_80gb_hbm3_3g.40gb:8
-                                                                 nvidia_h100_80gb_hbm3_1g.10gb:16
-                              4    96   495G                     mi300a:4
-retired            down       3     8  1000M    01:00         4  -
+	want := `PARTITION          AVAIL  NODES  CPUS    MEM   MAXTIME  MAXNODES  GPUS
+cpubase_interac    up       702   192   748G  08:00:00         -  -
+cpubackfill*       up       709   192  748G+  24:00:00         -  -
+gpubase_bynode_b4  up         6   112  2000G  72:00:00         -  h100:8
+                              5   112  2000G                      nvidia_h100_80gb_hbm3_3g.40gb:8
+                                                                  nvidia_h100_80gb_hbm3_1g.10gb:16
+                              4    96   495G                      mi300a:4
+retired            down       3     8  1000M  01:00:00         4  -
 `
 	if got := stripColor(out.String()); got != want {
 		t.Errorf("table mismatch\ngot:\n%s\nwant:\n%s", got, want)
@@ -117,9 +78,9 @@ func TestPartitionTableWithoutAvail(t *testing.T) {
 	}
 	var out bytes.Buffer
 	WritePartitionTable(&out, limits, nil, false)
-	want := `PARTITION  NODES  CPUS  MEM  MAXTIME  GPUS
-a              2     8  16G    01:00  -
-b              2     8  16G      inf  -
+	want := `PARTITION  NODES  CPUS  MEM   MAXTIME  GPUS
+a              2     8  16G  01:00:00  -
+b              2     8  16G       inf  -
 `
 	if got := out.String(); got != want {
 		t.Errorf("table mismatch\ngot:\n%s\nwant:\n%s", got, want)
@@ -139,10 +100,10 @@ func TestPartitionTableWithoutNodeCap(t *testing.T) {
 	}
 	var out bytes.Buffer
 	WritePartitionTable(&out, limits, nil, true)
-	want := `PARTITION  AVAIL  NODES  CPUS  MEM  MAXTIME  GPUS
-a          up         2     8  16G    01:00  -
-b          up         2     8  16G      inf  -
-c          up         2     8  16G        -  -
+	want := `PARTITION  AVAIL  NODES  CPUS  MEM   MAXTIME  GPUS
+a          up         2     8  16G  01:00:00  -
+b          up         2     8  16G       inf  -
+c          up         2     8  16G         -  -
 `
 	if got := stripColor(out.String()); got != want {
 		t.Errorf("table mismatch\ngot:\n%s\nwant:\n%s", got, want)

@@ -92,9 +92,10 @@ function stableHelperURL(j, url) {
 function jobCardHTML(j, stableJobIds) {
   const endsAt     = j.ends_at_ms || 0;
   const showEndsIn = endsAt && j.status === 'running';
+  const walltime   = fmtTimeDetail(j.walltime_secs);
   const walltimeEl = showEndsIn
     ? '<span data-ends="' + endsAt + '" class="walltime-span"></span>'
-    : (j.walltime_str ? '⏱ ' + escHtml(j.walltime_str) : '');
+    : (walltime ? 'Walltime ' + escHtml(walltime) : '');
   const overlay = j.env_overlay || '';
   const url     = j.access_url || j.external_url || '';
   const stableURL = stableJobIds[j.name] === j.id ? stableHelperURL(j, url) : '';
@@ -291,7 +292,7 @@ function renderDetail(job) {
     '<div class="d-res"><span class="d-res-k">CPUs</span><span class="d-res-v">'    + escHtml(job.cpu || '—')          + '</span></div>' +
     '<div class="d-res"><span class="d-res-k">Memory</span><span class="d-res-v">'  + escHtml(job.mem || '—')          + '</span></div>' +
     '<div class="d-res"><span class="d-res-k">GPU</span><span class="d-res-v">'     + escHtml(job.gpu || '—')          + '</span></div>' +
-    '<div class="d-res"><span class="d-res-k">Walltime</span><span class="d-res-v">'+ escHtml(job.walltime_str || '—') + '</span></div>';
+    '<div class="d-res"><span class="d-res-k">Walltime</span><span class="d-res-v">'+ escHtml(fmtTimeDetail(job.walltime_secs) || '—') + '</span></div>';
 
   // Params
   const params    = job.params || {};
@@ -410,7 +411,7 @@ async function rerunJob(jobOrId) {
   queueStartSelection(job.name, {
     cpu:     job.cpu,
     mem:     job.mem,
-    wall:    job.walltime_str,
+    wall:    fmtTimeDetail(job.walltime_secs),
     gpu:     job.gpu     || '',
     cwd:     job.cwd     || '',
     overlay: job.env_overlay || '',

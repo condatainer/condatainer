@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/helper"
+	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
 )
 
@@ -227,5 +229,34 @@ func TestHelperListNeverCarriesTheToken(t *testing.T) {
 	}
 	if strings.Contains(body, tok) || strings.Contains(body, tokenParam) {
 		t.Errorf("the list carries the token: %s", body)
+	}
+}
+
+func TestGpuOptionsOf(t *testing.T) {
+	info := &scheduler.ClusterInfo{
+		Limits: []scheduler.ResourceLimits{{Partition: "compute", Default: true}, {Partition: "gpu"}, {Partition: "gpu-long"}},
+		AvailableGpus: []scheduler.GpuInfo{
+			{Type: "h100", Partition: "gpu"}, {Type: "a100", Partition: "gpu-long"},
+			{Type: "a100", Partition: "gpu"}, {Type: "gpu", Partition: "gpu"}, {Type: "a100", Partition: "gpu"},
+		},
+	}
+	got := gpuOptionsOf(info, scheduler.SchedulerSLURM)
+	want := gpuOptions{DefaultPartition: "compute", GPUs: []gpuOption{
+		{"a100", "gpu"}, {"a100", "gpu-long"}, {"h100", "gpu"},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Slurm with a default partition = %+v, want %+v", got, want)
+	}
+
+	plain := gpuOptions{GPUs: []gpuOption{{Type: "a100"}, {Type: "h100"}}}
+	if got := gpuOptionsOf(info, scheduler.SchedulerLSF); !reflect.DeepEqual(got, plain) {
+		t.Errorf("LSF = %+v, want plain types", got)
+	}
+	info.Limits[0].Default = false
+	if got := gpuOptionsOf(info, scheduler.SchedulerSLURM); !reflect.DeepEqual(got, plain) {
+		t.Errorf("Slurm with no default partition = %+v, want plain types", got)
+	}
+	if got := gpuOptionsOf(&scheduler.ClusterInfo{}, scheduler.SchedulerSLURM); got.GPUs == nil {
+		t.Error("no GPUs must be an empty list, not null")
 	}
 }

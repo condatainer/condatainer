@@ -966,7 +966,6 @@ func (p *PbsScheduler) getNodeInfoByQueue() (map[string]ResourceLimits, []GpuInf
 	var nodeState string
 	var nodeQueue string
 	var nodeGpus int
-	var nodeGpuType string
 
 	flushNode := func() {
 		if currentNode == "" {
@@ -994,18 +993,13 @@ func (p *PbsScheduler) getNodeInfoByQueue() (map[string]ResourceLimits, []GpuInf
 			}
 		}
 
-		// GPU info
+		// GPU info: PBS names no GPU model, and a request carries a count alone, so every GPU is of type gpu.
 		if nodeGpus > 0 {
-			gpuType := nodeGpuType
-			if gpuType == "" {
-				gpuType = "gpu"
-			}
-			key := nodeQueue + ":" + gpuType
-			if existing, ok := gpuMap[key]; ok {
+			if existing, ok := gpuMap[nodeQueue]; ok {
 				existing.Total += nodeGpus
 			} else {
-				gpuMap[key] = &GpuInfo{
-					Type:      gpuType,
+				gpuMap[nodeQueue] = &GpuInfo{
+					Type:      "gpu",
 					Total:     nodeGpus,
 					Partition: nodeQueue,
 				}
@@ -1023,7 +1017,7 @@ func (p *PbsScheduler) getNodeInfoByQueue() (map[string]ResourceLimits, []GpuInf
 			flushNode()
 			currentNode = line
 			nodeCpus, nodeMemKB, nodeGpus = 0, 0, 0
-			nodeState, nodeQueue, nodeGpuType = "", "", ""
+			nodeState, nodeQueue = "", ""
 			continue
 		}
 
@@ -1051,8 +1045,6 @@ func (p *PbsScheduler) getNodeInfoByQueue() (map[string]ResourceLimits, []GpuInf
 			nodeMemKB, _ = parsePbsMemory(value)
 		case "resources_available.ngpus":
 			fmt.Sscanf(value, "%d", &nodeGpus)
-		case "resources_available.gpu_model", "gpu_type":
-			nodeGpuType = value
 		}
 	}
 	flushNode()

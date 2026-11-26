@@ -237,7 +237,8 @@ class TermView {
 
 /* ── Helpers / Start section ─────────────── */
 let _helperSavedConfig = {}; // saved config for the currently selected helper
-let _gpuOptions = [];        // available GPU types from scheduler
+let _gpuOptions = [];        // available GPU types from scheduler, each once
+let _gpuInfo = null;         // /api/gpu-options: {default_partition, gpus: [{type, partition}]}
 let _gpuOptionsLoaded = false;
 let _gpuOptionsLoading = null;
 let _partitionOptionsLoaded = false;
@@ -249,10 +250,11 @@ async function loadGpuOptions(force) {
   if (!force && (_gpuOptionsLoaded || _gpuOptionsLoading)) return _gpuOptionsLoading;
   _gpuOptionsLoading = (async () => {
     try {
-      const opts = await fetch('api/gpu-options').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
-      if (Array.isArray(opts) && opts.length) {
-        _gpuOptions = opts;
-        initCombobox('cfg-gpu', opts, true, null);
+      const info = await fetch('api/gpu-options').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+      if (info && Array.isArray(info.gpus)) {
+        _gpuInfo = info;
+        _gpuOptions = [...new Set(info.gpus.map(g => g.type))];
+        _refreshGpuSuggestions();
       }
       _gpuOptionsLoaded = true;
     } catch {}
@@ -262,6 +264,31 @@ async function loadGpuOptions(force) {
   } finally {
     _gpuOptionsLoading = null;
   }
+}
+
+// gpuSuggestions orders the GPU entries for partition, the one a job will go to ('' when none is named).
+//   - With no default partition, each type is listed once, as a plain name.
+//   - Else the entries of the job's partition come first. The others are dimmed when that partition has GPUs
+//     of its own, and picking one fills the field whose id is field.
+function gpuSuggestions(info, partition, field) {
+  const gpus = (info && info.gpus) || [];
+  if (!info || !info.default_partition) return [...new Set(gpus.map(g => g.type))];
+  const target = partition || info.default_partition;
+  const own  = gpus.filter(g => g.partition === target);
+  const rest = gpus.filter(g => g.partition !== target);
+  return own.concat(rest).map(g => ({
+    value: g.type,
+    hint:  g.partition,
+    dim:   own.length > 0 && g.partition !== target,
+    set:   g.partition !== target ? { id: field, value: g.partition } : null,
+  }));
+}
+
+// _refreshGpuSuggestions rebuilds the GPU list of gpuId for the partition in partitionId: the one typed, else its placeholder.
+function _refreshGpuSuggestions(gpuId = 'cfg-gpu', partitionId = 'cfg-partition') {
+  if (!_gpuInfo) return;
+  const p = gid(partitionId);
+  initCombobox(gpuId, gpuSuggestions(_gpuInfo, p ? (p.value.trim() || p.placeholder) : '', partitionId), true, null);
 }
 
 let _partitionOptionsLoading = null;
@@ -434,6 +461,7 @@ function _applyConfigPlaceholders() {
   gid('cfg-gpu').placeholder       = cfg.gpu       || ph.gpu;
   gid('cfg-account').placeholder   = cfg.account   || ph.account;
   gid('cfg-partition').placeholder = cfg.partition || ph.partition;
+  _refreshGpuSuggestions();
   _helperParamKeys.forEach(key => {
     const el = gid('hparam-' + key);
     if (!el) return;
@@ -519,8 +547,13 @@ function openHelperConfigModal() {
   html += '</div>';
   body.innerHTML = html;
 
-  if (_gpuOptions.length) initCombobox('hcfg-gpu', _gpuOptions, true, null);
   if (_partitionOptions.length) initCombobox('hcfg-partition', _partitionOptions, true, null);
+  // A saved GPU is used on every start, so it is suggested where it can run, as on the start form.
+  if (_gpuOptions.length) {
+    const refresh = () => _refreshGpuSuggestions('hcfg-gpu', 'hcfg-partition');
+    refresh();
+    ['input', 'change'].forEach(ev => gid('hcfg-partition').addEventListener(ev, refresh));
+  }
   paramComputed.forEach(({ p, opts, isOpen }) => {
     if (opts.length) initCombobox('hcfg-' + p.key, opts, isOpen, null);
   });
@@ -567,6 +600,7 @@ function resetStartForm(helper) {
   gid('cfg-gpu').value       = '';
   gid('cfg-account').value   = '';
   gid('cfg-partition').value = '';
+  _refreshGpuSuggestions();
   gid('cfg-no-project').checked = false;
   _setCwd('');
   gid('cfg-cwd').dispatchEvent(new Event('input'));
@@ -774,6 +808,7 @@ function selectHelper(name, overrides) {
         _setVal('cfg-gpu',   overrides.gpu   != null ? overrides.gpu   : (d.gpu      || ''));
         _setVal('cfg-account',   overrides.account   || '');
         _setVal('cfg-partition', overrides.partition || '');
+        _refreshGpuSuggestions();
       } else {
         // Script defaults loaded — re-apply placeholders (saved config may already be set).
         _applyConfigPlaceholders();
@@ -1359,45 +1394,68 @@ function makeComboboxHtml(id, defVal, placeholder) {
   '</div>';
 }
 
+// initCombobox makes the input id a combobox of options.
+//   - An option is a string, or {value, hint, dim, set}: hint shows muted on the right, dim greys the entry,
+//     and set is {id, value}, another field to fill when the entry is picked.
+//   - A second call on the same input replaces its options and onChange, and adds no listeners.
 function initCombobox(id, options, isOpen, onChange) {
   const input = gid(id);
   const list  = gid('combo-list-' + id);
   if (!input || !list) return;
+  input._combo = { options, isOpen, onChange };
+  input.dataset.value = input.value;
+  if (input._comboReady) return;
+  input._comboReady = true;
 
+  let shown = [];
+  // renderList fills the list and reports whether it has anything to show, so an empty list stays closed.
   function renderList(filter) {
     const f = filter.toLowerCase();
-    const matches = options.filter(o => o.toLowerCase().includes(f));
-    if (!matches.length && !isOpen) {
-      list.innerHTML = '<div class="combo-item combo-empty">No matches</div>';
-    } else {
-      list.innerHTML = matches.map(o =>
-        '<div class="combo-item" data-val="' + escHtml(o) + '">' + escHtml(o) + '</div>'
-      ).join('');
+    const { options, isOpen } = input._combo;
+    shown = options.map(o => typeof o === 'string' ? { value: o } : o)
+      .filter(o => (o.value + ' ' + (o.hint || '')).toLowerCase().includes(f));
+    if (!shown.length) {
+      list.innerHTML = isOpen ? '' : '<div class="combo-item combo-empty">No matches</div>';
+      return !isOpen;
     }
-    list.querySelectorAll('.combo-item[data-val]').forEach(el =>
+    list.innerHTML = shown.map((o, i) =>
+      '<div class="combo-item' + (o.dim ? ' combo-dim' : '') + '" data-i="' + i + '">' +
+        '<span>' + escHtml(o.value) + '</span>' +
+        (o.hint ? '<span class="combo-hint">' + escHtml(o.hint) + '</span>' : '') +
+      '</div>'
+    ).join('');
+    list.querySelectorAll('.combo-item[data-i]').forEach(el =>
       el.addEventListener('mousedown', e => {
         e.preventDefault();
-        setValue(el.dataset.val);
+        pick(shown[+el.dataset.i]);
         list.classList.remove('open');
       })
     );
+    return true;
   }
 
-  function setValue(v) {
-    input.value = v;
-    input.dataset.value = v;
-    if (onChange) onChange();
+  // A 'change' event, not 'input', tells the other field it was filled, so its own list does not open.
+  function pick(o) {
+    input.value = o.value;
+    input.dataset.value = o.value;
+    if (o.set) {
+      const other = gid(o.set.id);
+      if (other) {
+        other.value = o.set.value;
+        other.dataset.value = o.set.value;
+        other.dispatchEvent(new Event('change'));
+      }
+    }
+    if (input._combo.onChange) input._combo.onChange();
   }
 
   input.addEventListener('focus', () => {
-    renderList(input.value);
-    list.classList.add('open');
+    list.classList.toggle('open', renderList(input.value));
   });
   input.addEventListener('input', () => {
     input.dataset.value = input.value;
-    renderList(input.value);
-    list.classList.add('open');
-    if (onChange) onChange();
+    list.classList.toggle('open', renderList(input.value));
+    if (input._combo.onChange) input._combo.onChange();
   });
   input.addEventListener('blur', () => {
     setTimeout(() => list.classList.remove('open'), 150);
@@ -1410,14 +1468,11 @@ function initCombobox(id, options, isOpen, onChange) {
   });
   input.addEventListener('keydown', e => {
     if (e.key === 'Escape') { list.classList.remove('open'); input.blur(); }
-    if (e.key === 'Enter') {
-      const first = list.querySelector('.combo-item[data-val]');
-      if (first) { setValue(first.dataset.val); list.classList.remove('open'); }
+    if (e.key === 'Enter' && shown.length && list.querySelector('.combo-item[data-i]')) {
+      pick(shown[0]);
+      list.classList.remove('open');
     }
   });
-
-  // Initialize data-value
-  input.dataset.value = input.value;
 }
 
 /* ── Shared busy state ───────────────────── */
@@ -1756,6 +1811,7 @@ async function createProject() {
 
 gid('cfg-cwd').addEventListener('input', () => renderModuleChips());
 gid('cfg-no-project').addEventListener('change', () => renderModuleChips());
+['input', 'change'].forEach(ev => gid('cfg-partition').addEventListener(ev, () => _refreshGpuSuggestions()));
 
 /* ── Module chips ────────────────────────── */
 function renderModuleChips() {

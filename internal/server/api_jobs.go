@@ -325,13 +325,12 @@ func (s *srv) handleHelpersClearFinished(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]int{"removed": n})
 }
 
-// handleGpuOptions serves GET /api/gpu-options — returns unique GPU type names from the active scheduler.
-// An empty list means no scheduler; a failed query is a 503 so the client can retry.
+// handleGpuOptions serves GET /api/gpu-options: the GPU types of the active scheduler, as gpuOptionsOf gives them.
+// No scheduler gives no GPUs; a failed query is a 503 so the client can retry.
 func (s *srv) handleGpuOptions(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 	sched := scheduler.ActiveScheduler()
 	if sched == nil {
-		json.NewEncoder(w).Encode([]string{}) //nolint:errcheck
+		writeJSON(w, gpuOptions{GPUs: []gpuOption{}})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
@@ -341,18 +340,57 @@ func (s *srv) handleGpuOptions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "scheduler query failed", http.StatusServiceUnavailable)
 		return
 	}
-	seen := make(map[string]bool)
-	for _, g := range info.AvailableGpus {
-		if g.Type != "" && g.Type != "gpu" {
-			seen[g.Type] = true
+	writeJSON(w, gpuOptionsOf(info, sched.GetType()))
+}
+
+// gpuOptions is what the start form suggests for its GPU field.
+type gpuOptions struct {
+	// DefaultPartition is set only on Slurm with a default partition. Each GPU then names its partition.
+	DefaultPartition string      `json:"default_partition,omitempty"`
+	GPUs             []gpuOption `json:"gpus"`
+}
+
+type gpuOption struct {
+	Type      string `json:"type"`
+	Partition string `json:"partition,omitempty"`
+}
+
+// gpuOptionsOf lists the named GPU types of a cluster, sorted.
+//   - On Slurm with a default partition, a type is listed once for each partition that has it. A job sent without a partition goes to the default, so the form must show where each type is.
+//   - Elsewhere a type is listed once. A site with no default partition routes jobs itself.
+//   - A scheduler that names no model, as PBS and HTCondor, reports the generic gpu, which is left out: its request is a count.
+func gpuOptionsOf(info *scheduler.ClusterInfo, kind scheduler.SchedulerType) gpuOptions {
+	out := gpuOptions{GPUs: []gpuOption{}}
+	if kind == scheduler.SchedulerSLURM {
+		for _, l := range info.Limits {
+			if l.Default {
+				out.DefaultPartition = l.Partition
+				break
+			}
 		}
 	}
-	opts := make([]string, 0, len(seen))
-	for t := range seen {
-		opts = append(opts, t)
+	seen := make(map[gpuOption]bool)
+	for _, g := range info.AvailableGpus {
+		if g.Type == "" || g.Type == "gpu" {
+			continue
+		}
+		o := gpuOption{Type: g.Type}
+		if out.DefaultPartition != "" {
+			o.Partition = g.Partition
+		}
+		if !seen[o] {
+			seen[o] = true
+			out.GPUs = append(out.GPUs, o)
+		}
 	}
-	sort.Strings(opts)
-	json.NewEncoder(w).Encode(opts) //nolint:errcheck
+	sort.Slice(out.GPUs, func(i, j int) bool {
+		a, b := out.GPUs[i], out.GPUs[j]
+		if a.Type != b.Type {
+			return a.Type < b.Type
+		}
+		return a.Partition < b.Partition
+	})
+	return out
 }
 
 // handlePartitions serves GET /api/partitions — returns the partition/queue names of the active scheduler.

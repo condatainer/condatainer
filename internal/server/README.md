@@ -66,3 +66,15 @@ The dashboard HTTP server and the reverse proxy to helper services.
   - The cursor still works when the run it names was removed.
 - `X-Total-Count` is the number of finished runs that match. The page uses it to tell whether more remain.
 - How many runs the disk keeps is `helper.history_limit`. Paging only changes how many are sent at once.
+
+## GPU suggestions
+
+The start form suggests a GPU type only where the job request carries one.
+
+- Slurm: each type is listed.
+  - With a default partition, a type is listed once for each partition that has it. A job sent without a partition goes to the default, and a type that partition lacks fails at submit.
+  - Picking a type from another partition fills the partition field, so the pick can run.
+  - With no default partition, the site routes jobs itself, so each type is listed once, with no partition.
+- LSF: each type is listed once. The request names the model, and LSF does not report which queue has it.
+- PBS: nothing is listed. The request carries a count alone, so every GPU is the generic `gpu`, which is left out.
+- HTCondor: nothing is listed, for the same reason.

@@ -215,7 +215,7 @@ func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime
 			fmt.Fprintf(w, "echo \"%s %d\"\n", cpuLabel, rs.CpusPerTask)
 		}
 		if memPerTaskMB := rs.GetMemPerTaskMB(); memPerTaskMB > 0 {
-			fmt.Fprintf(w, "echo \"%s %s\"\n", memLabel, utils.FormatMemoryMB(memPerTaskMB))
+			fmt.Fprintf(w, "echo \"%s %s\"\n", memLabel, utils.FormatSizeInput(memPerTaskMB))
 		}
 		if rs.Time > 0 && formatTime != nil {
 			fmt.Fprintf(w, "echo \"Time:       %s\"\n", formatTime(rs.Time))
@@ -285,10 +285,11 @@ func writeArrayBlock(w io.Writer, taskIDVar, inputFile, logDir, jobName string,
 	fmt.Fprintln(w)
 }
 
-// parseMemoryMB converts memory strings like "8G", "1024M", "512K" to MB.
-// Delegates to utils.ParseMemoryMB; wraps error with ErrInvalidMemoryFormat sentinel.
+// parseMemoryMB reads a memory a scheduler wrote, such as "8G", "1024M" or "512K", in MB.
+//   - A bare number is MB, as in a scheduler's own directives and output. What a person types is read by utils.ParseSizeInput.
+//   - An error wraps ErrInvalidMemoryFormat.
 func parseMemoryMB(memStr string) (int64, error) {
-	mb, err := utils.ParseMemoryMB(memStr)
+	mb, err := utils.ParseMemoryMBWithDefault(memStr, "MB")
 	if err != nil {
 		return 0, fmt.Errorf("%w: %s", ErrInvalidMemoryFormat, memStr)
 	}

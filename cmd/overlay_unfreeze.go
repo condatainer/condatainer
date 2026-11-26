@@ -46,11 +46,11 @@ var overlayUnfreezeCmd = &cobra.Command{
 
 		sizeMB := 0
 		if unfreezeSize != "" {
-			parsed, err := utils.ParseSizeToMB(unfreezeSize)
+			parsed, err := utils.ParseSizeInput(unfreezeSize)
 			if err != nil {
 				ExitWithError("%v", err)
 			}
-			sizeMB = parsed
+			sizeMB = int(parsed)
 		}
 
 		res, err := freeze.Unfreeze(ctx, freeze.UnfreezeOptions{
@@ -97,6 +97,6 @@ func reportUnfreeze(res freeze.UnfreezeResult) {
 
 func init() {
 	f := overlayUnfreezeCmd.Flags()
-	f.StringVarP(&unfreezeSize, "size", "s", "", "Size of the resulting overlay (default: payload plus headroom)")
+	f.StringVarP(&unfreezeSize, "size", "s", "", "Size; a bare number is GiB (default: payload plus room)")
 	f.BoolVarP(&unfreezeSparse, "sparse", "S", false, "Create a sparse overlay image (no pre-allocation)")
 }

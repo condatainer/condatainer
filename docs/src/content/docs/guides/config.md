@@ -19,6 +19,7 @@ condatainer config remove build.ncpu  # Go back to the default
 - `config init -l <layer>` creates the file of a specific [layer](#choose-the-layer).
 - `config list --origin` tags each value with the layer or environment variable that sets it, or `[default]`.
 - `config set` prints the value it replaced.
+- A time or memory setting, such as `scheduler.time` or `scheduler.mem`, takes the forms in [Memory and Time Values](scheduler.mdx#memory-and-time-values). It is saved with its unit: `config set scheduler.time 4` saves `4h`.
 
 ## Choose the layer
 

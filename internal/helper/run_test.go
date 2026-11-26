@@ -346,3 +346,26 @@ func TestRunUsesACopyOfTheScript(t *testing.T) {
 		t.Errorf("a script with an unsupported interpreter line: %v", err)
 	}
 }
+
+func TestNewHelperRunRecordsAccountAndPartitionOfSchedulerRuns(t *testing.T) {
+	opts := RunOptions{Account: "lab", Partition: "gpu"}
+	for _, runner := range []string{"SLURM", "PBS"} {
+		run := newHelperRun("id", "code-server", "42", "/cwd", time.Hour, opts, nil, nil, nil, "pending", runner)
+		if run.Account != "lab" || run.Partition != "gpu" {
+			t.Errorf("%s run recorded %q/%q, want lab/gpu", runner, run.Account, run.Partition)
+		}
+	}
+	run := newHelperRun("id", "code-server", "", "/cwd", time.Hour, opts, nil, nil, nil, "starting", "local")
+	if run.Account != "" || run.Partition != "" {
+		t.Errorf("a headless run recorded %q/%q, want none", run.Account, run.Partition)
+	}
+}
+
+func TestNewHelperRunRecordsNoProject(t *testing.T) {
+	for _, noProject := range []bool{true, false} {
+		run := newHelperRun("id", "igv", "", "/cwd", time.Hour, RunOptions{NoProject: noProject}, nil, nil, nil, "starting", "local")
+		if run.NoProject != noProject {
+			t.Errorf("NoProject = %v, want %v", run.NoProject, noProject)
+		}
+	}
+}

@@ -228,7 +228,7 @@ func (l *LsfScheduler) parseResourceSpec(directives []string) (*ResourceSpec, []
 			_, parseErr = flagScanInt(flag, &rawN, "-n")
 			hasN = true
 		case flagMatches(flag, "-W"):
-			_, parseErr = flagScan(flag, &rs.Time, utils.ParseHMSTime, "-W")
+			_, parseErr = flagScan(flag, &rs.Time, parseLsfRunLimit, "-W")
 		case flagMatches(flag, "-gpu"):
 			gpuStr, _ := flagValue(flag, "-gpu")
 			gpuStr = strings.Trim(gpuStr, "\"'")
@@ -1056,6 +1056,21 @@ func parseLshostsGpu(output string) []GpuInfo {
 		gpus[i].Available++ // LSF does not report how many are in use here
 	}
 	return gpus
+}
+
+// parseLsfRunLimit reads the value of bsub -W: [hours:]minutes. "90" is 90 minutes, "1:30" is 1 hour 30 minutes.
+func parseLsfRunLimit(s string) (time.Duration, error) {
+	bad := fmt.Errorf("%q is not an LSF run limit: use [hours:]minutes", s)
+	hours, mins, found := strings.Cut(strings.TrimSpace(s), ":")
+	if !found {
+		hours, mins = "0", hours
+	}
+	h, errH := strconv.ParseInt(hours, 10, 64)
+	m, errM := strconv.ParseInt(mins, 10, 64)
+	if errH != nil || errM != nil || h < 0 || m < 0 {
+		return 0, bad
+	}
+	return time.Duration(h)*time.Hour + time.Duration(m)*time.Minute, nil
 }
 
 // parseLsfHostMemoryMB reads an lshosts memory figure such as "31.9G", "65536M" or "262144".

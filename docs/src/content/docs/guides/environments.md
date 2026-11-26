@@ -37,6 +37,7 @@ condatainer overlay create big.img -s 40G -p large  # Few, large files
 condatainer overlay create tmp.img -s 20G --sparse  # Take disk space only as it fills
 ```
 
+- `-s` takes a size such as `20G` or `512M`. A plain number is in GiB, and [Memory and Time Values](scheduler.mdx#memory-and-time-values) lists every form.
 - `--sparse` does not allocate the whole size in advance. The file takes disk space only as it fills.
 - An overlay holds a fixed number of files, set when it is created. A file or directory uses one **inode**. `-p` picks how many the overlay gets for its size:
 

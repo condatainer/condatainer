@@ -18,14 +18,14 @@ var configSetCmd = &cobra.Command{
 
 An array key takes one or more values and they replace the whole list.
 
-Time format (for build.time):
-  - Go style:  2h, 30m, 1h30m, 90s
-  - HPC style: 02:00:00, 2:30:00, 1:30 (HH:MM:SS or HH:MM)
+A time or a memory is saved with its unit: build.time 4 saves 4h.
+  - Time: 4 (hours), 1.5, 12:30, 12:30:15, 1-12:00:00, 2h30m, 90m
+  - Memory: 16 (GiB), 1.5G, 512M, 2T
 
 ` + configLayersHelp,
 	Example: `  condatainer config set host_apptainer /usr/bin/apptainer
   condatainer config set build.ncpu 8
-  condatainer config set build.time 02:00:00
+  condatainer config set build.time 4
   condatainer config set scheduler.submit_job false
   condatainer config set scheduler.exclude_nodes node1 node2`,
 	Args:              cobra.MinimumNArgs(2),

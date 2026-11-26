@@ -90,7 +90,7 @@ input,button,select{font-family:inherit;font-size:inherit;}
   border-bottom:1px solid var(--border);font-weight:700;font-size:14px;
   white-space:nowrap;overflow:hidden;flex-shrink:0;
 }
-.sb-logo-icon{width:18px;height:18px;flex-shrink:0;display:block;object-fit:contain;}
+.sb-logo-icon{width:21px;height:21px;flex-shrink:0;display:block;object-fit:contain;}
 .sb-logo-text{transition:opacity 150ms;display:inline-flex;align-items:baseline;}
 .sb-logo-conda{color:#07b843;}
 .sb-logo-tainer{color:#3084c3;}
@@ -278,7 +278,9 @@ input,button,select{font-family:inherit;font-size:inherit;}
 .combo-wrap{position:relative;}
 .combo-list{display:none;position:absolute;top:100%;left:0;right:0;z-index:10;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:0 4px 12px rgba(0,0,0,.2);max-height:160px;overflow-y:auto;margin-top:2px;}
 .combo-list.open{display:block;}
-.combo-item{padding:5px 10px;font-family:var(--mono);font-size:13px;cursor:pointer;}
+.combo-item{display:flex;gap:12px;padding:5px 10px;font-family:var(--mono);font-size:13px;cursor:pointer;}
+.combo-hint{margin-left:auto;color:var(--muted);}
+.combo-dim{opacity:.5;}
 .combo-item:hover{background:var(--hover);}
 .combo-empty{color:var(--muted);cursor:default;}
 .combo-input.combo-invalid,.field-input.combo-invalid{border-color:color-mix(in srgb,var(--term-err) 50%,transparent);}
@@ -529,6 +531,7 @@ th.file-actions-cell{width:112px;} /* fits the 3 buttons of a folder row (star, 
 .project-line{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;}
 .project-label{color:var(--muted);min-width:52px;}
 .project-path{flex:1;word-break:break-all;}
+.project-actions{display:flex;align-items:center;gap:12px;margin-left:auto;}
 .module-chip-name{font-family:var(--mono);flex:1;}
 .module-chip-label{font-family:var(--mono);color:var(--muted);}
 .module-chip .btn-ghost{padding:0 4px;}

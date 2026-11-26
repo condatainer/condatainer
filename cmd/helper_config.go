@@ -117,7 +117,7 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 				cpuDef = fmt.Sprintf("%d", spec.CpusPerTask)
 			}
 			if mb := spec.GetMemPerNodeMB(); mb > 0 {
-				memDef = utils.FormatMemoryMB(mb)
+				memDef = utils.FormatSizeInput(mb)
 			}
 			if spec.Time > 0 {
 				timeDef = utils.FormatDuration(spec.Time)

@@ -107,3 +107,34 @@ func TestProjectInfoResolvesOptionalNames(t *testing.T) {
 		t.Errorf("required = %+v, want none", info.Required)
 	}
 }
+
+// no_project answers as a launch with --no-project does, but still says a project stands there.
+func TestProjectInfoNoProjectHidesTheProject(t *testing.T) {
+	root := t.TempDir()
+	if err := lock.Publish(root, lock.New()); err != nil {
+		t.Fatal(err)
+	}
+	get := func(query url.Values) projectInfo {
+		rec := httptest.NewRecorder()
+		(&srv{}).handleProject(rec, httptest.NewRequest(http.MethodGet, "/api/project?"+query.Encode(), nil))
+		var info projectInfo
+		if err := json.Unmarshal(rec.Body.Bytes(), &info); err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+
+	if info := get(url.Values{"cwd": {root}}); info.Root != root || !info.HasProject {
+		t.Errorf("in a project: root = %q, has_project = %v", info.Root, info.HasProject)
+	}
+	info := get(url.Values{"cwd": {root}, "no_project": {"1"}})
+	if info.Root != "" || !info.HasProject {
+		t.Errorf("with no_project: root = %q, has_project = %v, want no root and a project", info.Root, info.HasProject)
+	}
+	if want := config.ResolvedDefaultDistro(); info.Distro != want {
+		t.Errorf("with no_project: distro = %q, want the configured %q", info.Distro, want)
+	}
+	if info := get(url.Values{"cwd": {t.TempDir()}}); info.HasProject {
+		t.Error("outside a project: has_project = true")
+	}
+}

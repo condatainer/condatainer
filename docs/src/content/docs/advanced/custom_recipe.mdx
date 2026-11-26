@@ -186,7 +186,7 @@ Headers are directive lines written as `#KEY: value` at the top of the recipe. T
 | `#LICENSE:` | SPDX license identifier (e.g., `MIT`), recorded in the overlay metadata. |
 | `#REDISTRIBUTE:` | `yes` or `no`: determines whether the overlay can be published to a public registry (see [Publish Prebuilt Overlays](custom_source.mdx#publish-prebuilt-overlays)). |
 | `#PH:` | Declares placeholder variables for templates (see [Custom Recipe Source](custom_source.mdx#recipe-path-and-target)). |
-| `#NCPU:`, `#MEM:`, `#TIME:`, `#GPU:` | Resources the build asks for, such as `16`, `24G`, `2h` and `a100:2`. A bare `#MEM:` number is in GB, and a bare `#TIME:` number is in hours. |
+| `#NCPU:`, `#MEM:`, `#TIME:`, `#GPU:` | Resources the build asks for, such as `16`, `24G`, `2h` and `a100:2`. A bare `#MEM:` number is in GiB, and a bare `#TIME:` number is in hours. Every form is in [Memory and Time Values](../guides/scheduler.mdx#memory-and-time-values). |
 
 - A header key is upper case, written straight after the `#`.
 - Headers are read from the comment lines at the top of the recipe, before its first command. A header below the first command, such as one inside a heredoc, is ignored.

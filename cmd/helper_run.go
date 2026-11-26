@@ -368,14 +368,14 @@ func runHelperRun(cmd *cobra.Command, args []string) error {
 			overrides.CpusPerTask = postFlags.cpus
 		}
 		if postFlags.memSet {
-			mb, parseErr := utils.ParseMemoryMB(postFlags.mem)
+			mb, parseErr := utils.ParseSizeInput(postFlags.mem)
 			if parseErr != nil {
 				return fmt.Errorf("invalid --mem value %q: %w", postFlags.mem, parseErr)
 			}
 			overrides.MemPerNodeMB = mb
 		}
 		if postFlags.timeSet {
-			d, parseErr := utils.ParseWalltime(postFlags.time)
+			d, parseErr := utils.ParseTimeInput(postFlags.time)
 			if parseErr != nil {
 				return fmt.Errorf("invalid --time value %q: %w", postFlags.time, parseErr)
 			}

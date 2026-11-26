@@ -15,6 +15,8 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 - Headers are read by `utils.ScanAnnotations`, as in a recipe, and resources by `scheduler.ParseResourceHeaders`. A resource header or `#SINGLETON:` value that does not parse refuses the run and names its line.
 - Headers a helper has no use for are not read.
 - Account and partition resolve the same way on every entry point: flag or dashboard field, then config.
+  - A rerun from history fills them as a typed flag does, so they win over the saved config.
+  - A scheduler run records them in its history. A headless run ignores them, so it records neither.
   - They are applied once, in `buildHelperScriptSpecs`.
   - There is no script-header tier. `#NCPU:` and `#MEM:` describe what the workload needs. Account and partition describe the user's own cluster access, which a script cannot know.
 
@@ -130,12 +132,14 @@ Runs the lifecycle of a helper service job: resolve params, check overlays, subm
 - History keeps the newest `helper.history_limit` finished runs, counted in file order. `0` keeps all.
   - A run that finishes prunes the file, and removes the state folder of each run it drops.
   - A pending, starting or running run is never pruned and never counts.
+- `no_project` is set when the run ignored the project. A rerun ignores it again, since the overlays it recorded were solved without the project.
 - `slots` maps each bound slot to the exact overlay name it mounted. A reuse restores the slots the script still declares, and drops one it no longer declares or a strict slot no longer takes. The exact name keeps a newer overlay from changing what a reused run mounts.
 
 ## Shared history
 
 - It records which overlay combinations a project's helpers ran with, so the next person does not rediscover them.
 - It lives in the project's `cnt-lock/.helper-history/`, one file per combination.
+- A launch with `--no-project` records nothing here. The project did not solve it, so it is not a combination the project's users should be offered.
 - It is used only inside an existing project. It never runs `project init` to make a place for itself.
   - A project's presence already changes overlay resolution, so creating one could break the launch.
 - Dedup is by content and recency is the file mtime. A repeat bumps the mtime.

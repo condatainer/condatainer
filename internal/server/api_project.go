@@ -28,17 +28,20 @@ type requiredResolution struct {
 }
 
 type projectInfo struct {
-	Root     string               `json:"root"`
-	CWD      string               `json:"cwd"`
-	Distro   string               `json:"distro"`
-	Required []requiredResolution `json:"required"`
+	Root string `json:"root"`
+	// HasProject is true when a project stands at the cwd, even when no_project hides it from the rest of the answer.
+	HasProject bool                 `json:"has_project"`
+	CWD        string               `json:"cwd"`
+	Distro     string               `json:"distro"`
+	Required   []requiredResolution `json:"required"`
 	// Optional resolves the optional names the same way. An empty Resolved means the launch skips it.
 	Optional []requiredResolution `json:"optional"`
 }
 
-// handleProject serves GET /api/project?cwd=&name=...&optional=...
+// handleProject serves GET /api/project?cwd=&name=...&optional=...&no_project=1
 //   - (root, distro and how each required and optional overlay name resolves) and POST /api/project (create cnt-lock/ at cwd).
 //   - Reading resolves only what is already on disk.
+//   - no_project answers as a launch with --no-project does: no root, the configured distro, names by installed overlay.
 func (s *srv) handleProject(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -67,7 +70,11 @@ func (s *srv) handleProjectInfo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	info := projectInfo{CWD: cwd, Distro: config.ResolvedDefaultDistro(), Required: []requiredResolution{}, Optional: []requiredResolution{}}
+	hasProject := standing != nil
+	if q.Get("no_project") != "" {
+		standing = nil
+	}
+	info := projectInfo{HasProject: hasProject, CWD: cwd, Distro: config.ResolvedDefaultDistro(), Required: []requiredResolution{}, Optional: []requiredResolution{}}
 	if standing != nil {
 		info.Root = standing.Root
 		if d := standing.SelectedDistro(); d != "" {

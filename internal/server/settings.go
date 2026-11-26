@@ -4,7 +4,7 @@ import "github.com/condatainer/condatainer/internal/settings"
 
 var (
 	keyDownloadWarnSize = settings.MemoryMB("server.download_warn_size",
-		settings.Default(5120), settings.Order(1),
+		settings.Default("5G"), settings.Order(1),
 		settings.Help("The dashboard asks before downloading a zip larger than this."),
 		settings.Suggest("1g", "5g", "20g", "100g"))
 

@@ -538,7 +538,7 @@ func (s *SlurmScheduler) parseResourceSpec(directives []string) (*ResourceSpec, 
 
 	// 6. Time (independent).
 	if timeStr != "" {
-		t, err := utils.ParseDHMSTime(timeStr)
+		t, err := readSlurmTime(timeStr)
 		if err != nil {
 			logParseWarning("SLURM: invalid --time value %q: %v; resource directives not parsed", timeStr, err)
 			return nil, directives
@@ -1057,17 +1057,24 @@ func parseSlurmMaxNodes(s string) int {
 	return n
 }
 
-// parseSlurmTime reads a SLURM time: "minutes", "minutes:seconds", "hours:minutes:seconds",
-// "days-hours", "days-hours:minutes" or "days-hours:minutes:seconds".
-// "15:00" is 15 minutes, not 15 hours. "infinite" and anything unreadable give 0.
+// parseSlurmTime reads a SLURM time as readSlurmTime does. "infinite" and anything unreadable give 0.
 func parseSlurmTime(s string) time.Duration {
+	d, _ := readSlurmTime(s)
+	return d
+}
+
+// readSlurmTime reads a SLURM time: "minutes", "minutes:seconds", "hours:minutes:seconds",
+// "days-hours", "days-hours:minutes" or "days-hours:minutes:seconds".
+// "15:00" is 15 minutes, not 15 hours, and "2-12" is 2 days 12 hours.
+func readSlurmTime(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
+	bad := fmt.Errorf("%q is not a SLURM time", s)
 	var days int64
 	hasDays := false
 	if before, after, found := strings.Cut(s, "-"); found {
 		n, err := strconv.ParseInt(before, 10, 64)
 		if err != nil {
-			return 0
+			return 0, bad
 		}
 		days, s, hasDays = n, after, true
 	}
@@ -1077,7 +1084,7 @@ func parseSlurmTime(s string) time.Duration {
 	for i, p := range parts {
 		n, err := strconv.ParseInt(p, 10, 64)
 		if err != nil || n < 0 {
-			return 0
+			return 0, bad
 		}
 		nums[i] = n
 	}
@@ -1095,9 +1102,9 @@ func parseSlurmTime(s string) time.Duration {
 	case !hasDays && len(nums) == 1:
 		m = nums[0]
 	default:
-		return 0
+		return 0, bad
 	}
-	return time.Duration(days*86400+h*3600+m*60+sec) * time.Second
+	return time.Duration(days*86400+h*3600+m*60+sec) * time.Second, nil
 }
 
 // parseSlurmGpu parses a SLURM GPU spec:

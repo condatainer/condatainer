@@ -50,7 +50,7 @@ var (
 
 	keyMem = settings.MemoryMB("scheduler.mem",
 		settings.Order(7),
-		settings.Default(2048),
+		settings.Default("2G"),
 		settings.Help("Memory for a job or a run when the script does not set it."),
 		settings.Suggest("2g", "4g", "8g", "16g"))
 

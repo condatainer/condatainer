@@ -87,6 +87,23 @@ function fmtTimeDetail(secs) {
   const clock = p(Math.floor(rest / 3600)) + ':' + p(Math.floor(rest % 3600 / 60)) + ':' + p(rest % 60);
   return days ? days + '-' + clock : clock;
 }
+// fieldGiB writes MB as the plain number a field labelled (GiB) holds: 16384 → "16", 1536 → "1.5".
+// A size that is not exact in two decimals keeps its unit: 1000 → "1000M".
+function fieldGiB(mb) {
+  if (!mb) return '';
+  const gb = mb / 1024, two = Math.round(gb * 100) / 100;
+  return Math.abs(two - gb) < 1e-9 ? String(two) : mb + 'M';
+}
+// fieldHours writes seconds as the plain number a field labelled (hours) holds: 43200 → "12", 5400 → "1.5".
+// A time that is not exact in two decimals is H:MM, with :SS when it has seconds: 4800 → "1:20".
+function fieldHours(secs) {
+  if (!secs) return '';
+  const h = secs / 3600, two = Math.round(h * 100) / 100;
+  if (Math.abs(two - h) < 1e-9) return String(two);
+  const p = n => String(n).padStart(2, '0');
+  const ss = secs % 60;
+  return Math.floor(secs / 3600) + ':' + p(Math.floor(secs % 3600 / 60)) + (ss ? ':' + p(ss) : '');
+}
 function calcDuration(startIso, endIso, status, walltimeStr) {
   if (!startIso) return '—';
   if (!endIso && status === 'done') return walltimeStr || '—';

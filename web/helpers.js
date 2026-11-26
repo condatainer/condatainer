@@ -237,7 +237,9 @@ class TermView {
 
 /* ── Helpers / Start section ─────────────── */
 let _helperSavedConfig = {}; // saved config for the currently selected helper
-let _gpuOptions = [];        // available GPU types from scheduler
+let _helperSavedNums = {};   // its mem and time as numbers: {mem_mb, time_secs}
+let _gpuOptions = [];        // available GPU types from scheduler, each once
+let _gpuInfo = null;         // /api/gpu-options: {default_partition, gpus: [{type, partition}]}
 let _gpuOptionsLoaded = false;
 let _gpuOptionsLoading = null;
 let _partitionOptionsLoaded = false;
@@ -249,10 +251,11 @@ async function loadGpuOptions(force) {
   if (!force && (_gpuOptionsLoaded || _gpuOptionsLoading)) return _gpuOptionsLoading;
   _gpuOptionsLoading = (async () => {
     try {
-      const opts = await fetch('api/gpu-options').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
-      if (Array.isArray(opts) && opts.length) {
-        _gpuOptions = opts;
-        initCombobox('cfg-gpu', opts, true, null);
+      const info = await fetch('api/gpu-options').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+      if (info && Array.isArray(info.gpus)) {
+        _gpuInfo = info;
+        _gpuOptions = [...new Set(info.gpus.map(g => g.type))];
+        _refreshGpuSuggestions();
       }
       _gpuOptionsLoaded = true;
     } catch {}
@@ -262,6 +265,31 @@ async function loadGpuOptions(force) {
   } finally {
     _gpuOptionsLoading = null;
   }
+}
+
+// gpuSuggestions orders the GPU entries for partition, the one a job will go to ('' when none is named).
+//   - With no default partition, each type is listed once, as a plain name.
+//   - Else the entries of the job's partition come first. The others are dimmed when that partition has GPUs
+//     of its own, and picking one fills the field whose id is field.
+function gpuSuggestions(info, partition, field) {
+  const gpus = (info && info.gpus) || [];
+  if (!info || !info.default_partition) return [...new Set(gpus.map(g => g.type))];
+  const target = partition || info.default_partition;
+  const own  = gpus.filter(g => g.partition === target);
+  const rest = gpus.filter(g => g.partition !== target);
+  return own.concat(rest).map(g => ({
+    value: g.type,
+    hint:  g.partition,
+    dim:   own.length > 0 && g.partition !== target,
+    set:   g.partition !== target ? { id: field, value: g.partition } : null,
+  }));
+}
+
+// _refreshGpuSuggestions rebuilds the GPU list of gpuId for the partition in partitionId: the one typed, else its placeholder.
+function _refreshGpuSuggestions(gpuId = 'cfg-gpu', partitionId = 'cfg-partition') {
+  if (!_gpuInfo) return;
+  const p = gid(partitionId);
+  initCombobox(gpuId, gpuSuggestions(_gpuInfo, p ? (p.value.trim() || p.placeholder) : '', partitionId), true, null);
 }
 
 let _partitionOptionsLoading = null;
@@ -346,6 +374,9 @@ async function refreshStartHelpers() {
   try {
     _helpersLoaded = false;
     await loadHelpers(true);
+    _projectKey = '';
+    renderModuleChips();
+    checkProjectReuse();
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -407,8 +438,8 @@ function _computeParams(params, pv) {
 function _rdPh(rd) {
   return {
     cpu:       rd.cpu       ? String(rd.cpu) : '',
-    mem:       rd.mem       || '',
-    time:      rd.walltime  || '',
+    mem:       fieldGiB(rd.mem_mb),
+    time:      fieldHours(rd.walltime_secs),
     gpu:       rd.gpu       || '',
     account:   rd.account   || '',
     partition: rd.partition || '',
@@ -426,11 +457,12 @@ function _applyConfigPlaceholders() {
   const cfg = _helperSavedConfig;
   const ph  = _rdPh((selectedHelper && selectedHelper.resource_defaults) || {});
   gid('cfg-cpu').placeholder       = cfg.cpu       || ph.cpu;
-  gid('cfg-mem').placeholder       = cfg.mem       || ph.mem;
-  gid('cfg-wall').placeholder      = cfg.time      || ph.time;
+  gid('cfg-mem').placeholder       = fieldGiB(_helperSavedNums.mem_mb)       || ph.mem;
+  gid('cfg-wall').placeholder      = fieldHours(_helperSavedNums.time_secs) || ph.time;
   gid('cfg-gpu').placeholder       = cfg.gpu       || ph.gpu;
   gid('cfg-account').placeholder   = cfg.account   || ph.account;
   gid('cfg-partition').placeholder = cfg.partition || ph.partition;
+  _refreshGpuSuggestions();
   _helperParamKeys.forEach(key => {
     const el = gid('hparam-' + key);
     if (!el) return;
@@ -462,8 +494,8 @@ function openHelperConfigModal() {
   const rph = _rdPh(rd);
   const resRows = [
     { key: 'cpu',       label: 'CPUs',          ph: rph.cpu },
-    { key: 'mem',       label: 'Memory',        ph: rph.mem  },
-    { key: 'time',      label: 'Walltime',      ph: rph.time },
+    { key: 'mem',       label: 'Memory (GiB)',     ph: rph.mem  },
+    { key: 'time',      label: 'Walltime (hours)', ph: rph.time },
     { key: 'gpu',       label: 'GPU (optional)', ph: rph.gpu },
     { key: 'account',   label: 'Account',       ph: rph.account },
     { key: 'partition', label: 'Partition',     ph: rph.partition },
@@ -473,8 +505,10 @@ function openHelperConfigModal() {
 
   let html = '<div class="param-grid">';
 
+  // A saved mem or time is shown as a plain number, as on the start form.
+  const savedField = { mem: fieldGiB(_helperSavedNums.mem_mb), time: fieldHours(_helperSavedNums.time_secs) };
   resRows.forEach(({ key, label, ph }) => {
-    const saved = _helperSavedConfig[key] || '';
+    const saved = key in savedField ? savedField[key] : (_helperSavedConfig[key] || '');
     const useCombo = (key === 'gpu' && _gpuOptions.length > 0) ||
                      (key === 'partition' && _partitionOptions.length > 0);
     html += '<span class="param-name">' + escHtml(label) + '</span>' +
@@ -516,8 +550,13 @@ function openHelperConfigModal() {
   html += '</div>';
   body.innerHTML = html;
 
-  if (_gpuOptions.length) initCombobox('hcfg-gpu', _gpuOptions, true, null);
   if (_partitionOptions.length) initCombobox('hcfg-partition', _partitionOptions, true, null);
+  // A saved GPU is used on every start, so it is suggested where it can run, as on the start form.
+  if (_gpuOptions.length) {
+    const refresh = () => _refreshGpuSuggestions('hcfg-gpu', 'hcfg-partition');
+    refresh();
+    ['input', 'change'].forEach(ev => gid('hcfg-partition').addEventListener(ev, refresh));
+  }
   paramComputed.forEach(({ p, opts, isOpen }) => {
     if (opts.length) initCombobox('hcfg-' + p.key, opts, isOpen, null);
   });
@@ -543,8 +582,10 @@ async function saveHelperConfigModal() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    if (!r.ok) return;
-    _helperSavedConfig = await r.json();
+    if (!r.ok) { showProgressError('Saving defaults', await r.text()); return; }
+    const reply = await r.json();
+    _helperSavedConfig = reply.values || {};
+    _helperSavedNums   = reply;
     _applyConfigPlaceholders();
     closeModal('hcfg-modal');
   } catch {}
@@ -564,6 +605,8 @@ function resetStartForm(helper) {
   gid('cfg-gpu').value       = '';
   gid('cfg-account').value   = '';
   gid('cfg-partition').value = '';
+  _refreshGpuSuggestions();
+  gid('cfg-no-project').checked = false;
   _setCwd('');
   gid('cfg-cwd').dispatchEvent(new Event('input'));
   _setVal('cfg-overlay', '');
@@ -765,9 +808,12 @@ function selectHelper(name, overrides) {
       selectedHelper.resource_defaults = d || {};
       if (overrides) {
         _setVal('cfg-cpu',   overrides.cpu   != null ? overrides.cpu   : (d.cpu   || ''));
-        _setVal('cfg-mem',   overrides.mem   || d.mem      || '');
-        _setVal('cfg-wall',  overrides.wall  || d.walltime || '');
+        _setVal('cfg-mem',   overrides.mem   || fieldGiB(d.mem_mb));
+        _setVal('cfg-wall',  overrides.wall  || fieldHours(d.walltime_secs));
         _setVal('cfg-gpu',   overrides.gpu   != null ? overrides.gpu   : (d.gpu      || ''));
+        _setVal('cfg-account',   overrides.account   || '');
+        _setVal('cfg-partition', overrides.partition || '');
+        _refreshGpuSuggestions();
       } else {
         // Script defaults loaded — re-apply placeholders (saved config may already be set).
         _applyConfigPlaceholders();
@@ -776,12 +822,14 @@ function selectHelper(name, overrides) {
 
   // Load saved config; apply resource + param values and render the gear button.
   _helperSavedConfig = {};
+  _helperSavedNums = {};
   _renderHelperConfigWrap();
   fetch('api/helpers/' + encodeURIComponent(name) + '/config')
     .then(r => r.json())
     .then(cfg => {
       if (!selectedHelper || selectedHelper.name !== name) return;
-      _helperSavedConfig = cfg || {};
+      _helperSavedConfig = (cfg && cfg.values) || {};
+      _helperSavedNums   = cfg || {};
       if (!overrides) {
         _applyConfigPlaceholders();
       }
@@ -796,6 +844,7 @@ function selectHelper(name, overrides) {
 
   // When rerunning, apply saved cwd/overlay directly and skip auto-resolution.
   if (overrides) {
+    gid('cfg-no-project').checked = !!overrides.noProject;
     _setCwd(overrides.cwd || '');
     let overlayPath = overrides.overlay || '';
     if (overlayPath && !overlayPath.startsWith('/')) {
@@ -1352,45 +1401,68 @@ function makeComboboxHtml(id, defVal, placeholder) {
   '</div>';
 }
 
+// initCombobox makes the input id a combobox of options.
+//   - An option is a string, or {value, hint, dim, set}: hint shows muted on the right, dim greys the entry,
+//     and set is {id, value}, another field to fill when the entry is picked.
+//   - A second call on the same input replaces its options and onChange, and adds no listeners.
 function initCombobox(id, options, isOpen, onChange) {
   const input = gid(id);
   const list  = gid('combo-list-' + id);
   if (!input || !list) return;
+  input._combo = { options, isOpen, onChange };
+  input.dataset.value = input.value;
+  if (input._comboReady) return;
+  input._comboReady = true;
 
+  let shown = [];
+  // renderList fills the list and reports whether it has anything to show, so an empty list stays closed.
   function renderList(filter) {
     const f = filter.toLowerCase();
-    const matches = options.filter(o => o.toLowerCase().includes(f));
-    if (!matches.length && !isOpen) {
-      list.innerHTML = '<div class="combo-item combo-empty">No matches</div>';
-    } else {
-      list.innerHTML = matches.map(o =>
-        '<div class="combo-item" data-val="' + escHtml(o) + '">' + escHtml(o) + '</div>'
-      ).join('');
+    const { options, isOpen } = input._combo;
+    shown = options.map(o => typeof o === 'string' ? { value: o } : o)
+      .filter(o => (o.value + ' ' + (o.hint || '')).toLowerCase().includes(f));
+    if (!shown.length) {
+      list.innerHTML = isOpen ? '' : '<div class="combo-item combo-empty">No matches</div>';
+      return !isOpen;
     }
-    list.querySelectorAll('.combo-item[data-val]').forEach(el =>
+    list.innerHTML = shown.map((o, i) =>
+      '<div class="combo-item' + (o.dim ? ' combo-dim' : '') + '" data-i="' + i + '">' +
+        '<span>' + escHtml(o.value) + '</span>' +
+        (o.hint ? '<span class="combo-hint">' + escHtml(o.hint) + '</span>' : '') +
+      '</div>'
+    ).join('');
+    list.querySelectorAll('.combo-item[data-i]').forEach(el =>
       el.addEventListener('mousedown', e => {
         e.preventDefault();
-        setValue(el.dataset.val);
+        pick(shown[+el.dataset.i]);
         list.classList.remove('open');
       })
     );
+    return true;
   }
 
-  function setValue(v) {
-    input.value = v;
-    input.dataset.value = v;
-    if (onChange) onChange();
+  // A 'change' event, not 'input', tells the other field it was filled, so its own list does not open.
+  function pick(o) {
+    input.value = o.value;
+    input.dataset.value = o.value;
+    if (o.set) {
+      const other = gid(o.set.id);
+      if (other) {
+        other.value = o.set.value;
+        other.dataset.value = o.set.value;
+        other.dispatchEvent(new Event('change'));
+      }
+    }
+    if (input._combo.onChange) input._combo.onChange();
   }
 
   input.addEventListener('focus', () => {
-    renderList(input.value);
-    list.classList.add('open');
+    list.classList.toggle('open', renderList(input.value));
   });
   input.addEventListener('input', () => {
     input.dataset.value = input.value;
-    renderList(input.value);
-    list.classList.add('open');
-    if (onChange) onChange();
+    list.classList.toggle('open', renderList(input.value));
+    if (input._combo.onChange) input._combo.onChange();
   });
   input.addEventListener('blur', () => {
     setTimeout(() => list.classList.remove('open'), 150);
@@ -1403,14 +1475,11 @@ function initCombobox(id, options, isOpen, onChange) {
   });
   input.addEventListener('keydown', e => {
     if (e.key === 'Escape') { list.classList.remove('open'); input.blur(); }
-    if (e.key === 'Enter') {
-      const first = list.querySelector('.combo-item[data-val]');
-      if (first) { setValue(first.dataset.val); list.classList.remove('open'); }
+    if (e.key === 'Enter' && shown.length && list.querySelector('.combo-item[data-i]')) {
+      pick(shown[0]);
+      list.classList.remove('open');
     }
   });
-
-  // Initialize data-value
-  input.dataset.value = input.value;
 }
 
 /* ── Shared busy state ───────────────────── */
@@ -1563,13 +1632,12 @@ async function startHelper() {
     if (empty) hasEmpty = true;
   });
   if (hasEmpty) return;
+  // Memory and walltime go as typed; the server reads a plain number as GB or hours.
   const _rv  = id => { const e = gid(id); return e.value.trim() || e.placeholder; };
-  const _mem  = v => /^\d+$/.test(v) ? v + 'G' : v;
-  const _wall = v => /^\d+$/.test(v) ? v + ':00:00' : /^\d+:\d+$/.test(v) ? v + ':00' : v;
   const body = {
     cpu:     parseInt(_rv('cfg-cpu')) || 0,
-    mem:     _mem(_rv('cfg-mem'))  || '',
-    time:    _wall(_rv('cfg-wall')) || '',
+    mem:     _rv('cfg-mem'),
+    time:    _rv('cfg-wall'),
     gpu:     gid('cfg-gpu').value.trim() || gid('cfg-gpu').placeholder || '',
     account: _rv('cfg-account'),
     partition: _rv('cfg-partition'),
@@ -1579,6 +1647,7 @@ async function startHelper() {
     params:  _collectParams(),
     slots:   _collectSlots(),
     no_submit: gid('cfg-no-submit').checked,
+    no_project: _noProject(),
   };
 
   const term = openStreamLogProgress('Starting ' + selectedHelper.name);
@@ -1594,8 +1663,11 @@ async function startHelper() {
     });
 
     if (!r.ok) {
-      const e = await r.json().catch(() => ({}));
-      let msg = 'Server error (' + r.status + ')';
+      // An error is JSON with a code, or the plain text of a refused value such as a walltime.
+      const raw = await r.text().catch(() => '');
+      let e = {};
+      try { e = JSON.parse(raw); } catch {}
+      let msg = raw.trim() || 'Server error (' + r.status + ')';
       if (e.error === 'env_in_use') {
         msg = 'Env overlay is currently in use by another running instance. Stop it first, or choose a different overlay.';
       } else if (e.error === 'singleton_running') {
@@ -1682,7 +1754,7 @@ function _optionalChip(name) {
 
 function _syncProjectInfo(names, optional) {
   const cwd = gid('cfg-cwd')?.value || '';
-  const key = cwd + '\n' + names.join('\n') + '\n--\n' + optional.join('\n');
+  const key = cwd + '\n' + names.join('\n') + '\n--\n' + optional.join('\n') + '\n' + _noProject();
   if (key === _projectKey) return;
   _projectKey = key;
   loadProjectInfo(cwd, names, optional);
@@ -1695,11 +1767,13 @@ async function loadProjectInfo(cwd, names, optional) {
     const qs = new URLSearchParams({ cwd });
     names.forEach(n => qs.append('name', n));
     optional.forEach(n => qs.append('optional', n));
+    if (_noProject()) qs.append('no_project', '1');
     try { info = await fetch('api/project?' + qs).then(r => r.ok ? r.json() : null); } catch { info = null; }
   }
   if (req !== _projectReq) return;
   _projectInfo = info;
   _renderProjectLine();
+  _renderNoProject();
   renderModuleChips();
 }
 
@@ -1714,6 +1788,19 @@ function _renderProjectLine() {
   gid('project-path').textContent = info.root || 'none';
   gid('project-distro').textContent = info.distro || '';
   gid('project-create-btn').disabled = info.root === info.cwd;
+}
+
+// "Ignore project" is shown where a project stands, and is cleared where none does.
+function _renderNoProject() {
+  const row = gid('no-project-row');
+  if (!row) return;
+  const has = !!(_projectInfo && _projectInfo.has_project);
+  row.hidden = !has;
+  if (!has) gid('cfg-no-project').checked = false;
+}
+
+function _noProject() {
+  return !!gid('cfg-no-project')?.checked;
 }
 
 async function createProject() {
@@ -1732,6 +1819,8 @@ async function createProject() {
 }
 
 gid('cfg-cwd').addEventListener('input', () => renderModuleChips());
+gid('cfg-no-project').addEventListener('change', () => renderModuleChips());
+['input', 'change'].forEach(ev => gid('cfg-partition').addEventListener(ev, () => _refreshGpuSuggestions()));
 
 /* ── Module chips ────────────────────────── */
 function renderModuleChips() {

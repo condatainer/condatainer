@@ -888,6 +888,7 @@ func newHelperRun(id, name, jobID, cwd string, walltime time.Duration,
 		CWD:          cwd,
 		WalltimeSecs: int64(walltime.Seconds()),
 		GPU:          FormatGpuSpec(spec),
+		NoProject:    opts.NoProject,
 		EnvOverlay:   normalizeOverlayForHistory(opts.EnvImg, cwd),
 		Overlays:     normalizedOverlays,
 		Params:       params,
@@ -895,10 +896,13 @@ func newHelperRun(id, name, jobID, cwd string, walltime time.Duration,
 		Status:       status,
 		Connect:      Connect(),
 	}
+	if runner != "local" {
+		run.Account, run.Partition = opts.Account, opts.Partition
+	}
 	if spec != nil {
 		run.CPU = spec.CpusPerTask
 		if mb := spec.GetMemPerNodeMB(); mb > 0 {
-			run.Mem = utils.FormatMemoryMB(mb)
+			run.Mem = utils.FormatSizeInput(mb)
 		}
 	}
 	return run

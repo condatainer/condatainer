@@ -6,88 +6,6 @@ import (
 	"time"
 )
 
-func TestParseMemoryMB(t *testing.T) {
-	tests := []struct {
-		input  string
-		wantMB int64
-	}{
-		{"8G", 8 * 1024},
-		{"8GB", 8 * 1024},
-		{"1024M", 1024},
-		{"1024MB", 1024},
-		{"4096K", 4},
-		{"4096KB", 4},
-		{"1T", 1024 * 1024},
-		{"1TB", 1024 * 1024},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			mb, err := ParseMemoryMB(tt.input)
-			if err != nil {
-				t.Errorf("ParseMemoryMB(%q) error: %v", tt.input, err)
-				return
-			}
-			if mb != tt.wantMB {
-				t.Errorf("ParseMemoryMB(%q) = %d MB; want %d MB", tt.input, mb, tt.wantMB)
-			}
-		})
-	}
-}
-
-func TestParseWalltime(t *testing.T) {
-	hour := time.Hour
-	min := time.Minute
-	sec := time.Second
-	day := 24 * time.Hour
-
-	tests := []struct {
-		input   string
-		want    time.Duration
-		wantErr bool
-	}{
-		// Compound: Go-style with optional integer days
-		{"4d12h", 4*day + 12*hour, false},
-		{"2h30m", 2*hour + 30*min, false},
-		{"3h", 3 * hour, false},
-		{"3H", 3 * hour, false}, // case-insensitive
-		{"90m", 90 * min, false},
-		{"1.5h", 90 * min, false},
-		{"1d2h30m45s", day + 2*hour + 30*min + 45*sec, false},
-		{"4d", 4 * day, false},
-		{"", 0, false},
-		// Colon-separated
-		{"01:30:00", hour + 30*min, false},
-		{"1:30", hour + 30*min, false},
-		{"02:30:00", 2*hour + 30*min, false},
-		{"90", 90 * min, false}, // minutes only
-		// D-HH:MM:SS
-		{"1-12:00:00", day + 12*hour, false},
-		{"2-06:00:00", 2*day + 6*hour, false},
-		// Errors
-		{"abc", 0, true},      // no valid unit letters
-		{"1.5d", 0, true},     // fractional days not supported (integer only)
-		{"bad:time", 0, true}, // letters in colon-separated path
-	}
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			dur, err := ParseWalltime(tt.input)
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("ParseWalltime(%q): expected error, got %v", tt.input, dur)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("ParseWalltime(%q) unexpected error: %v", tt.input, err)
-			}
-			if dur != tt.want {
-				t.Errorf("ParseWalltime(%q) = %v; want %v", tt.input, dur, tt.want)
-			}
-		})
-	}
-}
-
 func TestStripInlineComment(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -238,13 +156,81 @@ func TestFormatMemoryDetail(t *testing.T) {
 	}
 }
 
-func TestFormatMemoryMB(t *testing.T) {
+func TestFormatSizeInput(t *testing.T) {
 	for mb, want := range map[int64]string{512: "512M", 1536: "1536M", 8192: "8G", 32768: "32G"} {
-		if got := FormatMemoryMB(mb); got != want {
-			t.Errorf("FormatMemoryMB(%d) = %q, want %q", mb, got, want)
+		if got := FormatSizeInput(mb); got != want {
+			t.Errorf("FormatSizeInput(%d) = %q, want %q", mb, got, want)
 		}
-		if back, err := ParseMemoryMB(FormatMemoryMB(mb)); err != nil || back != mb {
-			t.Errorf("FormatMemoryMB(%d) = %q reads back as %d, %v", mb, FormatMemoryMB(mb), back, err)
+		if back, err := ParseSizeInput(FormatSizeInput(mb)); err != nil || back != mb {
+			t.Errorf("FormatSizeInput(%d) = %q reads back as %d, %v", mb, FormatSizeInput(mb), back, err)
+		}
+	}
+}
+
+// The first number of a typed time is hours, after an optional day count.
+func TestParseTimeInput(t *testing.T) {
+	h, m, s := time.Hour, time.Minute, time.Second
+	for in, want := range map[string]time.Duration{
+		"":           0,
+		"12":         12 * h,
+		" 12 ":       12 * h,
+		"36":         36 * h,
+		"1.5":        h + 30*m,
+		"0.25":       15 * m,
+		"12:30":      12*h + 30*m,
+		"0:30":       30 * m,
+		"12:30:15":   12*h + 30*m + 15*s,
+		"1-12":       36 * h,
+		"1-12:30":    36*h + 30*m,
+		"1-12:30:15": 36*h + 30*m + 15*s,
+		"7-00:00:00": 168 * h,
+		"4d12h":      108 * h,
+		"2h30m":      2*h + 30*m,
+		"90m":        90 * m,
+		"1.5h":       h + 30*m,
+		"2H":         2 * h,
+	} {
+		got, err := ParseTimeInput(in)
+		if err != nil || got != want {
+			t.Errorf("ParseTimeInput(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"0", "0:00", "-2", "-2h", "12:60", "12:30:60", "1-1.5", "1.5:30", "2-", "1:2:3:4", "soon", "2 h", "1.5d"} {
+		if got, err := ParseTimeInput(in); err == nil {
+			t.Errorf("ParseTimeInput(%q) = %v, want an error", in, got)
+		}
+	}
+}
+
+// A typed size with no unit is GiB, every unit is binary in any spelling, and a decimal rounds up to whole MB.
+func TestParseSizeInput(t *testing.T) {
+	for in, want := range map[string]int64{
+		"":         0,
+		"16":       16 * 1024,
+		"1.5":      1536,
+		"16G":      16 * 1024,
+		"16g":      16 * 1024,
+		"16GB":     16 * 1024,
+		"16gib":    16 * 1024,
+		"16 GiB":   16 * 1024,
+		"31.2 GiB": 31949,
+		"0.3G":     308,
+		"512M":     512,
+		"512mib":   512,
+		"1.5M":     2,
+		"2T":       2 << 20,
+		"1536K":    2,
+		"1024KB":   1,
+		"1k":       1,
+	} {
+		got, err := ParseSizeInput(in)
+		if err != nil || got != want {
+			t.Errorf("ParseSizeInput(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"0", "0G", "-1", "-1G", "16Gi", "16 GBs", "16P", "G", "1.5.5G", "lots"} {
+		if got, err := ParseSizeInput(in); err == nil {
+			t.Errorf("ParseSizeInput(%q) = %d, want an error", in, got)
 		}
 	}
 }

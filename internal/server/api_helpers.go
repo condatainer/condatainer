@@ -343,12 +343,12 @@ func (s *srv) handleHelperResources(w http.ResponseWriter, r *http.Request, name
 			overrides.CpusPerTask = cpus
 		}
 		if memStr != "" {
-			if mb, err := utils.ParseMemoryMB(memStr); err == nil {
+			if mb, err := utils.ParseSizeInput(memStr); err == nil {
 				overrides.MemPerNodeMB = mb
 			}
 		}
 		if timeStr != "" {
-			if d, err := utils.ParseWalltime(timeStr); err == nil {
+			if d, err := utils.ParseTimeInput(timeStr); err == nil {
 				overrides.Time = d
 			}
 		}
@@ -360,24 +360,18 @@ func (s *srv) handleHelperResources(w http.ResponseWriter, r *http.Request, name
 	}
 	spec := helper.ResolveResources(r.Context(), scriptPath, overrides)
 	type resp struct {
-		CPU       int    `json:"cpu"`
-		MemMB     int64  `json:"mem_mb"`
-		Mem       string `json:"mem"`
-		Walltime  string `json:"walltime"`
-		GPU       string `json:"gpu,omitempty"`
-		Account   string `json:"account,omitempty"`
-		Partition string `json:"partition,omitempty"`
+		CPU          int    `json:"cpu"`
+		MemMB        int64  `json:"mem_mb"`
+		WalltimeSecs int64  `json:"walltime_secs"`
+		GPU          string `json:"gpu,omitempty"`
+		Account      string `json:"account,omitempty"`
+		Partition    string `json:"partition,omitempty"`
 	}
 	out := resp{}
 	if spec != nil {
 		out.CPU = spec.GetNtasks() * spec.CpusPerTask
 		out.MemMB = spec.GetMemPerNodeMB()
-		if out.MemMB > 0 {
-			out.Mem = utils.FormatMemoryMB(out.MemMB)
-		}
-		if spec.Time > 0 {
-			out.Walltime = utils.FormatDuration(spec.Time)
-		}
+		out.WalltimeSecs = int64(spec.Time.Seconds())
 		out.GPU = helper.FormatGpuSpec(spec)
 	}
 	// No script-header tier for account/partition (unlike cpu/mem/time/gpu) —
@@ -387,9 +381,25 @@ func (s *srv) handleHelperResources(w http.ResponseWriter, r *http.Request, name
 	writeJSON(w, out)
 }
 
+// helperConfigReply is a helper's saved config, with its mem and time also as numbers, which the page formats.
+type helperConfigReply struct {
+	Values   map[string]string `json:"values"`
+	MemMB    int64             `json:"mem_mb,omitempty"`
+	TimeSecs int64             `json:"time_secs,omitempty"`
+}
+
+func helperConfigReplyOf(cfg map[string]string) helperConfigReply {
+	out := helperConfigReply{Values: cfg}
+	out.MemMB, _ = utils.ParseSizeInput(cfg["mem"])
+	if d, err := utils.ParseTimeInput(cfg["time"]); err == nil {
+		out.TimeSecs = int64(d.Seconds())
+	}
+	return out
+}
+
 // handleHelperConfig serves GET/POST /api/helpers/{name}/config.
-//   - GET returns the saved per-helper key=value config as JSON.
-//   - POST accepts a JSON object of updates; empty string value deletes the key.
+//   - GET returns the saved per-helper key=value config, as helperConfigReply.
+//   - POST accepts a JSON object of updates; empty string value deletes the key. A mem or time is stored with its unit, and one that does not parse is a 400.
 func (s *srv) handleHelperConfig(w http.ResponseWriter, r *http.Request, name string) {
 	switch r.Method {
 	case http.MethodGet:
@@ -397,7 +407,7 @@ func (s *srv) handleHelperConfig(w http.ResponseWriter, r *http.Request, name st
 		if cfg == nil {
 			cfg = map[string]string{}
 		}
-		writeJSON(w, cfg)
+		writeJSON(w, helperConfigReplyOf(cfg))
 	case http.MethodPost:
 		var updates map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
@@ -412,15 +422,20 @@ func (s *srv) handleHelperConfig(w http.ResponseWriter, r *http.Request, name st
 			lk := strings.ToLower(k)
 			if v == "" {
 				delete(cfg, lk)
-			} else {
-				cfg[lk] = v
+				continue
 			}
+			stored, err := helper.NormalizeConfigValue(lk, v)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			cfg[lk] = stored
 		}
 		if err := helper.SaveHelperConfig(name, cfg); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, cfg)
+		writeJSON(w, helperConfigReplyOf(cfg))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -516,16 +531,18 @@ func (s *srv) handleHelperStart(w http.ResponseWriter, r *http.Request, name str
 		if req.CPU > 0 {
 			startOverrides.CpusPerTask = req.CPU
 		}
-		if req.Mem != "" {
-			if mb, err := utils.ParseMemoryMB(req.Mem); err == nil {
-				startOverrides.MemPerNodeMB = mb
-			}
+		mb, err := utils.ParseSizeInput(req.Mem)
+		if err != nil {
+			http.Error(w, "invalid memory: "+err.Error(), http.StatusBadRequest)
+			return
 		}
-		if req.Time != "" {
-			if d, err := utils.ParseWalltime(req.Time); err == nil {
-				startOverrides.Time = d
-			}
+		startOverrides.MemPerNodeMB = mb
+		d, err := utils.ParseTimeInput(req.Time)
+		if err != nil {
+			http.Error(w, "invalid walltime: "+err.Error(), http.StatusBadRequest)
+			return
 		}
+		startOverrides.Time = d
 		if req.GPU != "" {
 			gpu, err := scheduler.ParseGPU(req.GPU)
 			if err != nil {
@@ -656,11 +673,12 @@ func (s *srv) handleOverlayCreate(w http.ResponseWriter, r *http.Request) {
 	if sizeStr == "" {
 		sizeStr = ext3.DefaultSize
 	}
-	sizeMB, err := utils.ParseSizeToMB(sizeStr)
+	sizeMB64, err := utils.ParseSizeInput(sizeStr)
 	if err != nil {
 		http.Error(w, "invalid size: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	sizeMB := int(sizeMB64)
 
 	allPkgs := strings.Fields(req.BasePackages)
 	if req.ExtraPackages != "" {

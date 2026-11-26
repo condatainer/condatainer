@@ -57,7 +57,9 @@ func (s *srv) handleOverlayEdit(w http.ResponseWriter, r *http.Request) {
 	var newSizeMB int
 	if req.Size != "" {
 		var err error
-		newSizeMB, err = utils.ParseSizeToMB(req.Size)
+		var mb int64
+		mb, err = utils.ParseSizeInput(req.Size)
+		newSizeMB = int(mb)
 		if err != nil {
 			http.Error(w, "invalid size: "+err.Error(), http.StatusBadRequest)
 			return

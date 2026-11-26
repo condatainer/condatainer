@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/condatainer/condatainer/internal/image/ext3"
@@ -31,10 +32,14 @@ var resizeCmd = &cobra.Command{
 		}
 
 		// 2. Parse Size
-		sizeMB, err := utils.ParseSizeToMB(sizeStr)
-		if err != nil {
-			ExitWithError("Invalid size format '%s': %v", sizeStr, err)
+		sizeMB64, err := utils.ParseSizeInput(sizeStr)
+		if err == nil && sizeMB64 == 0 {
+			err = fmt.Errorf("a size is required")
 		}
+		if err != nil {
+			ExitWithError("%v", err)
+		}
+		sizeMB := int(sizeMB64)
 
 		sparse, _ := cmd.Flags().GetBool("sparse")
 
@@ -46,7 +51,7 @@ var resizeCmd = &cobra.Command{
 }
 
 func init() {
-	resizeCmd.Flags().StringP("size", "s", "", "New size (e.g., 20g, 2048M)")
+	resizeCmd.Flags().StringP("size", "s", "", "New size; a bare number is GiB (e.g. 20, 512M)")
 	resizeCmd.Flags().BoolP("sparse", "S", false, "Leave the overlay sparse (no pre-allocation)")
 	_ = resizeCmd.MarkFlagRequired("size")
 }

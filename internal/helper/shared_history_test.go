@@ -41,3 +41,23 @@ func TestListReusableOffersSlotsTheHelperStillTakes(t *testing.T) {
 		t.Errorf("an overlay outside the strict choices was offered: %+v", got)
 	}
 }
+
+// A launch that ignored the project is not a combination the project solved, so the shared history does not take it.
+func TestRecordSharedUsageSkipsALaunchThatIgnoredTheProject(t *testing.T) {
+	root := t.TempDir()
+	if err := lock.Publish(root, lock.New()); err != nil {
+		t.Fatal(err)
+	}
+	launch := func(noProject bool) {
+		plan := &RunPlan{Options: RunOptions{ScriptName: "igv", NoProject: noProject}}
+		recordSharedUsage(root, plan, []string{"a/b/1"})
+	}
+	launch(true)
+	if got, _ := ListReusable(root, "igv", ".", nil, nil); len(got) != 0 {
+		t.Fatalf("a no-project launch was recorded: %+v", got)
+	}
+	launch(false)
+	if got, _ := ListReusable(root, "igv", ".", nil, nil); len(got) != 1 {
+		t.Fatalf("a launch in the project was not recorded: %+v", got)
+	}
+}

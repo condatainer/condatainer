@@ -139,9 +139,9 @@ func init() {
 	runCmd.Flags().StringArrayVar(&runSlots, "slot", nil, "Bind a #SLOT: to an overlay, SLOT=OVERLAY, once per slot")
 	runCmd.Flags().StringSliceVar(&runBindPaths, "bind", nil, "Bind mount HOST:CONTAINER (repeatable)")
 	runCmd.Flags().BoolVarP(&runFakeroot, "fakeroot", "f", false, "Run with fakeroot privileges")
-	runCmd.Flags().IntVarP(&runCPU, "cpu", "c", 0, "Override CPUs, per rank in an MPI job (e.g. 4)")
-	runCmd.Flags().StringVarP(&runMem, "mem", "m", "", "Override memory, per rank in an MPI job (e.g. 4G, 8192M)")
-	runCmd.Flags().StringVarP(&runTime, "time", "t", "", "Override walltime (e.g. 4d12h, 2h30m, 01:30:00)")
+	runCmd.Flags().IntVarP(&runCPU, "cpu", "c", 0, "Override CPUs per rank in an MPI job (e.g. 4)")
+	runCmd.Flags().StringVarP(&runMem, "mem", "m", "", "Override memory per rank; a bare number is GiB")
+	runCmd.Flags().StringVarP(&runTime, "time", "t", "", "Override walltime; a bare number is hours")
 	runCmd.Flags().StringVarP(&runGPU, "gpu", "g", "", "Override GPUs per node (e.g. 1, a100:2, a100)")
 	runCmd.Flags().StringVarP(&runAccount, "account", "A", "", "Override billing/allocation account")
 	runCmd.Flags().StringVarP(&runPartition, "partition", "p", "", "Override partition/queue")
@@ -551,14 +551,14 @@ func parseResourceFlags(fs *pflag.FlagSet) (resourceFlags, error) {
 		f.cpus = runCPU
 	}
 	if runMem != "" {
-		mb, err := utils.ParseMemoryMB(runMem)
+		mb, err := utils.ParseSizeInput(runMem)
 		if err != nil {
 			return f, fmt.Errorf("--mem %q: %v", runMem, err)
 		}
 		f.memMB = mb
 	}
 	if runTime != "" {
-		d, err := utils.ParseWalltime(runTime)
+		d, err := utils.ParseTimeInput(runTime)
 		if err != nil {
 			return f, fmt.Errorf("--time %q: %v", runTime, err)
 		}
@@ -1124,7 +1124,7 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 			if !isMPI {
 				memLabel = "Mem:       "
 			}
-			fmt.Printf("  %s %s\n", memLabel, utils.FormatMemoryMB(memPerTaskMB))
+			fmt.Printf("  %s %s\n", memLabel, utils.FormatSizeInput(memPerTaskMB))
 			if warning := memoryGuessWarning(specs); warning != "" {
 				utils.PrintWarning("%s", warning)
 			}

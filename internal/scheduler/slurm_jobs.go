@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // slurmJobIDRe is a job ID `jobs` takes: a job, or one task of an array.
@@ -246,7 +244,7 @@ func parseSlurmTRES(tres string) (cpus int, memMB int64, nodes int, gpus []JobGp
 		case key == "cpu":
 			cpus, _ = strconv.Atoi(value)
 		case key == "mem":
-			memMB, _ = utils.ParseMemoryMB(value)
+			memMB, _ = parseMemoryMB(value)
 		case key == "node":
 			nodes, _ = strconv.Atoi(value)
 		case key == "gres/gpu":

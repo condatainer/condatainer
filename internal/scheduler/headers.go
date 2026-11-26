@@ -83,7 +83,7 @@ func ParseResourceHeaders(annotations []utils.Annotation) (ResourceHeaders, erro
 
 // ParseResourceHeadersFor reads the resource and job headers, choosing among conditional lines by the slots in subjects.
 //   - An empty value is the same as no header.
-//   - #MEM: with a bare number is in GB, and #TIME: with a bare number is in hours.
+//   - #MEM: with a bare number is in GiB, and #TIME: with a bare number is in hours.
 //   - A value that does not parse, or an unconditional key written twice, is an error naming its line.
 //   - What did parse is returned with the error.
 //   - A resource header may carry a slot as an option: `#MEM: 56G genome=grch38`. The first conditional line whose slots all match wins, and the unconditional line is used when none does.
@@ -266,19 +266,15 @@ func (h *ResourceHeaders) set(a utils.Annotation) error {
 		}
 		h.CpusPerTask = n
 	case "#MEM":
-		mb, err := utils.ParseMemoryMBWithDefault(a.Value, "GB")
+		mb, err := utils.ParseSizeInput(a.Value)
 		if err != nil || mb <= 0 {
-			return reject("a memory size such as 8G")
+			return reject("a memory size such as 16 (GiB) or 8G")
 		}
 		h.MemPerNodeMB = mb
 	case "#TIME":
-		raw := a.Value
-		if _, err := strconv.Atoi(raw); err == nil {
-			raw += "h"
-		}
-		d, err := utils.ParseWalltime(raw)
+		d, err := utils.ParseTimeInput(a.Value)
 		if err != nil || d <= 0 {
-			return reject("a walltime such as 4h or 01:30:00")
+			return reject("a walltime such as 4 (hours), 4h or 01:30:00")
 		}
 		h.Time = d
 	case "#GPU":

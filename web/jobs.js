@@ -410,8 +410,8 @@ async function rerunJob(jobOrId) {
   await ensureOverlaysLoaded();
   queueStartSelection(job.name, {
     cpu:     job.cpu,
-    mem:     job.mem,
-    wall:    fmtTimeDetail(job.walltime_secs),
+    mem:     fieldGiB(job.mem_mb),
+    wall:    fieldHours(job.walltime_secs),
     gpu:     job.gpu     || '',
     account:   job.account   || '',
     partition: job.partition || '',

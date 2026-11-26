@@ -179,7 +179,7 @@ func ApplyHistoryRun(opts *helper.RunOptions, r *helper.HelperRun) {
 			opts.Resources.CpusPerTask = r.CPU
 		}
 		if r.Mem != "" {
-			if mb, err := utils.ParseMemoryMB(r.Mem); err == nil {
+			if mb, err := utils.ParseSizeInput(r.Mem); err == nil {
 				opts.Resources.MemPerNodeMB = mb
 			}
 		}
@@ -312,14 +312,14 @@ func PromptSettings(ctx context.Context,
 	}
 	if memMB == 0 {
 		if v, ok := saved["mem"]; ok {
-			if mb, err := utils.ParseMemoryMB(v); err == nil && mb > 0 {
+			if mb, err := utils.ParseSizeInput(v); err == nil && mb > 0 {
 				memMB = mb
 			}
 		}
 	}
 	if walltime == 0 {
 		if v, ok := saved["time"]; ok {
-			if d, err := utils.ParseWalltime(v); err == nil && d > 0 {
+			if d, err := utils.ParseTimeInput(v); err == nil && d > 0 {
 				walltime = d
 			}
 		}
@@ -347,7 +347,7 @@ func PromptSettings(ctx context.Context,
 	if cpus == 0 {
 		cpuDisp = "(none)"
 	}
-	memDisp := utils.FormatMemoryMB(memMB)
+	memDisp := utils.FormatSizeInput(memMB)
 	if memMB == 0 {
 		memDisp = "(none)"
 	}
@@ -501,15 +501,15 @@ func PromptSettings(ctx context.Context,
 				opts.Resources.CpusPerTask = n
 				confirm = fmt.Sprintf("%d", n)
 			case "m", "mem", "memory":
-				mb, err := utils.ParseMemoryMB(v)
+				mb, err := utils.ParseSizeInput(v)
 				if err != nil {
 					fmt.Printf("[?] Invalid memory %q — try again: ", v)
 					continue
 				}
 				opts.Resources.MemPerNodeMB = mb
-				confirm = utils.FormatMemoryMB(mb)
+				confirm = utils.FormatSizeInput(mb)
 			case "t", "time", "walltime":
-				d, err := utils.ParseWalltime(v)
+				d, err := utils.ParseTimeInput(v)
 				if err != nil {
 					fmt.Printf("[?] Invalid walltime %q — try again: ", v)
 					continue
@@ -638,7 +638,7 @@ func PrintLaunchSpec(plan *helper.RunPlan) {
 			utils.PrintMessage("  CPUs:     %d", spec.CpusPerTask)
 		}
 		if mb := spec.GetMemPerNodeMB(); mb > 0 {
-			utils.PrintMessage("  Memory:   %s", utils.FormatMemoryMB(mb))
+			utils.PrintMessage("  Memory:   %s", utils.FormatSizeInput(mb))
 		}
 		if spec.Time > 0 {
 			utils.PrintMessage("  Walltime: %s", utils.FormatDuration(spec.Time))
@@ -726,10 +726,14 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 	if err != nil {
 		return "", err
 	}
-	sizeMB, err := utils.ParseSizeToMB(sizeStr)
-	if err != nil {
-		return "", fmt.Errorf("invalid size %q: %w", sizeStr, err)
+	sizeMB64, err := utils.ParseSizeInput(sizeStr)
+	if err == nil && sizeMB64 == 0 {
+		err = fmt.Errorf("a size is required")
 	}
+	if err != nil {
+		return "", err
+	}
+	sizeMB := int(sizeMB64)
 	creationVars, err := promptCreationTokens(ctx, meta.EnvPackages, params, versions)
 	if err != nil {
 		return "", err

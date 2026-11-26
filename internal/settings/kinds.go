@@ -72,35 +72,38 @@ var daysKind = kind{
 	show: func(stored string) string { return stored + "d" },
 }
 
+// memoryKind stores a size with its unit, as FormatSizeInput writes it, so a stored value never depends on what a bare number means.
 var memoryKind = kind{
 	name: "memory",
 	parse: func(_ *Key, text string) (string, error) {
-		mb, err := utils.ParseMemoryMB(text)
+		mb, err := utils.ParseSizeInput(text)
 		if err != nil || mb <= 0 {
-			return "", fmt.Errorf("%q is not a memory size: use 8g, 16384MB or 8192", text)
+			return "", fmt.Errorf("%q is not a size: use 16 (GiB), 1.5G or 512M", text)
 		}
-		return text, nil
+		return utils.FormatSizeInput(mb), nil
 	},
-	accepts: func(*Key) string { return "a size such as 8g, 16384MB or 8192 (MB)" },
+	accepts: func(*Key) string { return "a size such as 16 (GiB), 1.5G or 512M" },
 	suggest: noSuggest,
 	show: func(stored string) string {
-		mb, _ := utils.ParseMemoryMB(stored)
-		return utils.FormatMemoryMB(mb)
+		mb, _ := utils.ParseSizeInput(stored)
+		return utils.FormatSizeInput(mb)
 	},
 }
 
+// walltimeKind stores a time with its units, as FormatDuration writes it, so a stored value never depends on what a bare number means.
 var walltimeKind = kind{
 	name: "walltime",
 	parse: func(_ *Key, text string) (string, error) {
-		if _, err := utils.ParseWalltime(text); err != nil {
-			return "", fmt.Errorf("%q is not a time: use 2h, 01:30:00 or 4d12h", text)
+		d, err := utils.ParseTimeInput(text)
+		if err != nil || d <= 0 {
+			return "", fmt.Errorf("%q is not a time: use 12 (hours), 12:30, 1-12:00:00 or 2h30m", text)
 		}
-		return text, nil
+		return utils.FormatDuration(d), nil
 	},
-	accepts: func(*Key) string { return "a time such as 2h, 01:30:00 or 4d12h" },
+	accepts: func(*Key) string { return "a time such as 12 (hours), 12:30, 1-12:00:00 or 2h30m" },
 	suggest: noSuggest,
 	show: func(stored string) string {
-		d, _ := utils.ParseWalltime(stored)
+		d, _ := utils.ParseTimeInput(stored)
 		return utils.FormatDuration(d)
 	},
 }

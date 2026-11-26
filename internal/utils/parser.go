@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"math/big"
 	"regexp"
 	"sort"
 	"strconv"
@@ -18,17 +19,10 @@ func StripInlineComment(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// ParseMemoryMB parses memory strings like "8G", "1024M", "512K", "1T" into MB (int64).
-//   - Default unit is MB when no suffix is given.
-//   - MB is MiB, here and everywhere.
-func ParseMemoryMB(memStr string) (int64, error) {
-	return ParseMemoryMBWithDefault(memStr, "MB")
-}
-
-// FormatMemoryMB writes a MB value as text the memory parser reads back, with a one-letter unit.
+// FormatSizeInput writes a size in MB as text ParseSizeInput reads back, with a one-letter unit.
 //   - It uses "G" when divisible by 1024, otherwise "M".
 //   - Examples: 8192 → "8G", 1536 → "1536M".
-func FormatMemoryMB(mb int64) string {
+func FormatSizeInput(mb int64) string {
 	if mb%1024 == 0 {
 		return fmt.Sprintf("%dG", mb/1024)
 	}
@@ -139,9 +133,10 @@ func FormatDuration(d time.Duration) string {
 	return strings.Join(parts, "")
 }
 
-// ParseMemoryMBWithDefault parses a memory string into MB.
+// ParseMemoryMBWithDefault reads a memory a scheduler wrote into MB, with that scheduler's unit for a bare number.
 //   - When the string has an explicit unit suffix (G/GB/M/MB/K/KB/T/TB) it is used directly.
 //   - For bare numbers the provided defaultUnit is applied (e.g. "KB", "MB", "GB").
+//   - What a person types is read by ParseSizeInput.
 func ParseMemoryMBWithDefault(memStr, defaultUnit string) (int64, error) {
 	memStr = strings.ToUpper(strings.TrimSpace(memStr))
 
@@ -171,61 +166,6 @@ func ParseMemoryMBWithDefault(memStr, defaultUnit string) (int64, error) {
 	}
 }
 
-// ParseSizeToMB converts strings like "10G", "500M", "1024" into Megabytes (int).
-//   - Default unit is MB if no suffix is provided.
-//   - Delegates to ParseMemoryMB.
-func ParseSizeToMB(sizeStr string) (int, error) {
-	mb, err := ParseMemoryMB(sizeStr)
-	if err != nil {
-		return 0, fmt.Errorf("invalid size format: %s (expected '10G', '500M', etc.)", sizeStr)
-	}
-	return int(mb), nil
-}
-
-// ParseHMSTime parses colon-separated walltime "HH:MM:SS", "HH:MM", or "MM" (bare minutes).
-func ParseHMSTime(timeStr string) (time.Duration, error) {
-	timeStr = strings.TrimSpace(timeStr)
-	if timeStr == "" {
-		return 0, nil
-	}
-
-	parts := strings.Split(timeStr, ":")
-	var hours, minutes, seconds int64
-
-	switch len(parts) {
-	case 3:
-		hours, _ = strconv.ParseInt(parts[0], 10, 64)
-		minutes, _ = strconv.ParseInt(parts[1], 10, 64)
-		seconds, _ = strconv.ParseInt(parts[2], 10, 64)
-	case 2:
-		hours, _ = strconv.ParseInt(parts[0], 10, 64)
-		minutes, _ = strconv.ParseInt(parts[1], 10, 64)
-	case 1:
-		minutes, _ = strconv.ParseInt(parts[0], 10, 64)
-	default:
-		return 0, fmt.Errorf("invalid time format: %s", timeStr)
-	}
-
-	return time.Duration(hours*3600+minutes*60+seconds) * time.Second, nil
-}
-
-// ParseDHMSTime handles colon-separated and D-HH:MM:SS walltime formats.
-func ParseDHMSTime(timeStr string) (time.Duration, error) {
-	var days int64
-	rest := timeStr
-	if before, after, found := strings.Cut(timeStr, "-"); found {
-		if d, err := strconv.ParseInt(before, 10, 64); err == nil {
-			days = d
-			rest = after
-		}
-	}
-	dur, err := ParseHMSTime(rest)
-	if err != nil {
-		return 0, err
-	}
-	return time.Duration(days)*24*time.Hour + dur, nil
-}
-
 // parseCompoundDuration parses Go-style duration strings with an optional integer days prefix.
 //   - Converts "Nd" to "N*24h" and delegates to time.ParseDuration.
 //   - Examples: "4d12h" → 108h, "2h30m", "1.5h", "1d2h30m45s".
@@ -248,26 +188,86 @@ func parseCompoundDuration(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// ParseWalltime parses a walltime string into a duration.
-//   - Supported formats:
-//   - Compound (Go-style, with int day): 4d12h, 2h30m, 3h, 90m, 1d2h30m45s, 1.5h
-//   - Colon-separated: D-HH:MM:SS, HH:MM:SS, HH:MM, MM
-func ParseWalltime(timeStr string) (time.Duration, error) {
-	timeStr = strings.TrimSpace(timeStr)
-	if timeStr == "" {
+// timeInput is a time a person typed as numbers: an optional day count, then hours, minutes and seconds.
+var timeInput = regexp.MustCompile(`^(?:(\d+)-)?(\d+)(?:\.(\d+))?(?::(\d+))?(?::(\d+))?$`)
+
+// ParseTimeInput reads a job time a person typed. The first number is hours, after an optional D- for days.
+//   - 12 is 12 h, 12:30 is 12 h 30 m, 12:30:15 adds seconds; 1-12, 1-12:30 and 1-12:30:15 add a day.
+//   - A bare number may have a decimal: 1.5 is 1 h 30 m. Words work too: 4d12h, 2h30m, 90m, 1.5h.
+//   - Empty is 0, unset. Zero, a negative time, minutes or seconds of 60 and over, and anything else are refused.
+func ParseTimeInput(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
 		return 0, nil
 	}
-	// Compound duration: contains letters (d/h/m/s) with no colon
-	if strings.ContainsAny(strings.ToLower(timeStr), "dhms") && !strings.Contains(timeStr, ":") {
-		return parseCompoundDuration(timeStr)
-	}
-	// Colon-separated or D-HH:MM:SS: must contain only digits, colons, and dashes
-	for _, c := range timeStr {
-		if (c < '0' || c > '9') && c != ':' && c != '-' {
-			return 0, fmt.Errorf("invalid time format: %s", timeStr)
+	refuse := fmt.Errorf("%q is not a time: use 12 (hours), 12:30, 1-12:00:00 or 2h30m", s)
+	var d time.Duration
+	if m := timeInput.FindStringSubmatch(s); m != nil {
+		days, hours, frac, mins, secs := m[1], m[2], m[3], m[4], m[5]
+		if frac != "" && (mins != "" || days != "") {
+			return 0, refuse
 		}
+		n := func(v string) int64 { x, _ := strconv.ParseInt(v, 10, 64); return x }
+		if n(mins) >= 60 || n(secs) >= 60 {
+			return 0, refuse
+		}
+		h, _ := strconv.ParseFloat(hours+"."+frac+"0", 64)
+		d = time.Duration(n(days))*24*time.Hour + (time.Duration(h * float64(time.Hour))).Round(time.Second) +
+			time.Duration(n(mins))*time.Minute + time.Duration(n(secs))*time.Second
+	} else if strings.ContainsAny(strings.ToLower(s), "dhms") && !strings.ContainsAny(s, ":-") {
+		var err error
+		if d, err = parseCompoundDuration(s); err != nil {
+			return 0, refuse
+		}
+	} else {
+		return 0, refuse
 	}
-	return ParseDHMSTime(timeStr)
+	if d <= 0 {
+		return 0, refuse
+	}
+	return d, nil
+}
+
+// sizeInput is a size a person typed: a number with an optional decimal, then an optional unit.
+var sizeInput = regexp.MustCompile(`^(\d+(?:\.\d+)?)\s*([a-z]*)$`)
+
+// sizeUnitMB is how many MB one of each unit is. Every unit is binary, and the written forms are equal.
+var sizeUnitMB = map[string]*big.Rat{
+	"":  big.NewRat(1024, 1),
+	"k": big.NewRat(1, 1024), "kb": big.NewRat(1, 1024), "kib": big.NewRat(1, 1024),
+	"m": big.NewRat(1, 1), "mb": big.NewRat(1, 1), "mib": big.NewRat(1, 1),
+	"g": big.NewRat(1024, 1), "gb": big.NewRat(1024, 1), "gib": big.NewRat(1024, 1),
+	"t": big.NewRat(1<<20, 1), "tb": big.NewRat(1<<20, 1), "tib": big.NewRat(1<<20, 1),
+}
+
+// ParseSizeInput reads a size a person typed, such as a job's memory or an overlay's size, in MB. A bare number is GiB.
+//   - A unit is K, M, G or T, also written with B or iB, in any case, after an optional space. Each is binary: G is 1024 MB.
+//   - A decimal is allowed. The result is rounded up to whole MB, so 1.5 is 1536 and 0.3G is 308.
+//   - Empty is 0, unset. Zero, a negative size and any other unit are refused.
+func ParseSizeInput(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	refuse := fmt.Errorf("%q is not a size: use 16 (GiB), 1.5G, 512M or 2T", s)
+	m := sizeInput.FindStringSubmatch(strings.ToLower(s))
+	if m == nil {
+		return 0, refuse
+	}
+	unit, ok := sizeUnitMB[m[2]]
+	value, okValue := new(big.Rat).SetString(m[1])
+	if !ok || !okValue {
+		return 0, refuse
+	}
+	mb := value.Mul(value, unit)
+	whole := new(big.Int).Quo(mb.Num(), mb.Denom())
+	if new(big.Rat).SetInt(whole).Cmp(mb) < 0 {
+		whole.Add(whole, big.NewInt(1))
+	}
+	if whole.Sign() <= 0 || !whole.IsInt64() {
+		return 0, refuse
+	}
+	return whole.Int64(), nil
 }
 
 // SortVersionsDescending sorts version strings in descending natural order.

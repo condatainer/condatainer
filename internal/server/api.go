@@ -22,6 +22,8 @@ type helperListEntry struct {
 	AccessURL   string `json:"access_url,omitempty"`
 	EndsAtMs    int64  `json:"ends_at_ms,omitempty"`
 	LastMessage string `json:"last_message,omitempty"`
+	// MemMB is the recorded memory as a number, which the page formats.
+	MemMB int64 `json:"mem_mb,omitempty"`
 }
 
 // fmtUptime formats the duration since t as a human-readable string.
@@ -68,6 +70,7 @@ func (s *srv) enrichRun(run *helper.HelperRun, port int) helperListEntry {
 		e.EndsAtMs = est.UnixMilli()
 	}
 	e.LastMessage = s.watcher.LastMsg(run.ID)
+	e.MemMB, _ = utils.ParseSizeInput(run.Mem)
 	return e
 }
 

@@ -237,6 +237,7 @@ class TermView {
 
 /* ── Helpers / Start section ─────────────── */
 let _helperSavedConfig = {}; // saved config for the currently selected helper
+let _helperSavedNums = {};   // its mem and time as numbers: {mem_mb, time_secs}
 let _gpuOptions = [];        // available GPU types from scheduler, each once
 let _gpuInfo = null;         // /api/gpu-options: {default_partition, gpus: [{type, partition}]}
 let _gpuOptionsLoaded = false;
@@ -437,8 +438,8 @@ function _computeParams(params, pv) {
 function _rdPh(rd) {
   return {
     cpu:       rd.cpu       ? String(rd.cpu) : '',
-    mem:       rd.mem       || '',
-    time:      rd.walltime  || '',
+    mem:       fieldGiB(rd.mem_mb),
+    time:      fieldHours(rd.walltime_secs),
     gpu:       rd.gpu       || '',
     account:   rd.account   || '',
     partition: rd.partition || '',
@@ -456,8 +457,8 @@ function _applyConfigPlaceholders() {
   const cfg = _helperSavedConfig;
   const ph  = _rdPh((selectedHelper && selectedHelper.resource_defaults) || {});
   gid('cfg-cpu').placeholder       = cfg.cpu       || ph.cpu;
-  gid('cfg-mem').placeholder       = cfg.mem       || ph.mem;
-  gid('cfg-wall').placeholder      = cfg.time      || ph.time;
+  gid('cfg-mem').placeholder       = fieldGiB(_helperSavedNums.mem_mb)       || ph.mem;
+  gid('cfg-wall').placeholder      = fieldHours(_helperSavedNums.time_secs) || ph.time;
   gid('cfg-gpu').placeholder       = cfg.gpu       || ph.gpu;
   gid('cfg-account').placeholder   = cfg.account   || ph.account;
   gid('cfg-partition').placeholder = cfg.partition || ph.partition;
@@ -493,8 +494,8 @@ function openHelperConfigModal() {
   const rph = _rdPh(rd);
   const resRows = [
     { key: 'cpu',       label: 'CPUs',          ph: rph.cpu },
-    { key: 'mem',       label: 'Memory',        ph: rph.mem  },
-    { key: 'time',      label: 'Walltime',      ph: rph.time },
+    { key: 'mem',       label: 'Memory (GiB)',     ph: rph.mem  },
+    { key: 'time',      label: 'Walltime (hours)', ph: rph.time },
     { key: 'gpu',       label: 'GPU (optional)', ph: rph.gpu },
     { key: 'account',   label: 'Account',       ph: rph.account },
     { key: 'partition', label: 'Partition',     ph: rph.partition },
@@ -504,8 +505,10 @@ function openHelperConfigModal() {
 
   let html = '<div class="param-grid">';
 
+  // A saved mem or time is shown as a plain number, as on the start form.
+  const savedField = { mem: fieldGiB(_helperSavedNums.mem_mb), time: fieldHours(_helperSavedNums.time_secs) };
   resRows.forEach(({ key, label, ph }) => {
-    const saved = _helperSavedConfig[key] || '';
+    const saved = key in savedField ? savedField[key] : (_helperSavedConfig[key] || '');
     const useCombo = (key === 'gpu' && _gpuOptions.length > 0) ||
                      (key === 'partition' && _partitionOptions.length > 0);
     html += '<span class="param-name">' + escHtml(label) + '</span>' +
@@ -579,8 +582,10 @@ async function saveHelperConfigModal() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    if (!r.ok) return;
-    _helperSavedConfig = await r.json();
+    if (!r.ok) { showProgressError('Saving defaults', await r.text()); return; }
+    const reply = await r.json();
+    _helperSavedConfig = reply.values || {};
+    _helperSavedNums   = reply;
     _applyConfigPlaceholders();
     closeModal('hcfg-modal');
   } catch {}
@@ -803,8 +808,8 @@ function selectHelper(name, overrides) {
       selectedHelper.resource_defaults = d || {};
       if (overrides) {
         _setVal('cfg-cpu',   overrides.cpu   != null ? overrides.cpu   : (d.cpu   || ''));
-        _setVal('cfg-mem',   overrides.mem   || d.mem      || '');
-        _setVal('cfg-wall',  overrides.wall  || d.walltime || '');
+        _setVal('cfg-mem',   overrides.mem   || fieldGiB(d.mem_mb));
+        _setVal('cfg-wall',  overrides.wall  || fieldHours(d.walltime_secs));
         _setVal('cfg-gpu',   overrides.gpu   != null ? overrides.gpu   : (d.gpu      || ''));
         _setVal('cfg-account',   overrides.account   || '');
         _setVal('cfg-partition', overrides.partition || '');
@@ -817,12 +822,14 @@ function selectHelper(name, overrides) {
 
   // Load saved config; apply resource + param values and render the gear button.
   _helperSavedConfig = {};
+  _helperSavedNums = {};
   _renderHelperConfigWrap();
   fetch('api/helpers/' + encodeURIComponent(name) + '/config')
     .then(r => r.json())
     .then(cfg => {
       if (!selectedHelper || selectedHelper.name !== name) return;
-      _helperSavedConfig = cfg || {};
+      _helperSavedConfig = (cfg && cfg.values) || {};
+      _helperSavedNums   = cfg || {};
       if (!overrides) {
         _applyConfigPlaceholders();
       }
@@ -1625,13 +1632,12 @@ async function startHelper() {
     if (empty) hasEmpty = true;
   });
   if (hasEmpty) return;
+  // Memory and walltime go as typed; the server reads a plain number as GB or hours.
   const _rv  = id => { const e = gid(id); return e.value.trim() || e.placeholder; };
-  const _mem  = v => /^\d+$/.test(v) ? v + 'G' : v;
-  const _wall = v => /^\d+$/.test(v) ? v + ':00:00' : /^\d+:\d+$/.test(v) ? v + ':00' : v;
   const body = {
     cpu:     parseInt(_rv('cfg-cpu')) || 0,
-    mem:     _mem(_rv('cfg-mem'))  || '',
-    time:    _wall(_rv('cfg-wall')) || '',
+    mem:     _rv('cfg-mem'),
+    time:    _rv('cfg-wall'),
     gpu:     gid('cfg-gpu').value.trim() || gid('cfg-gpu').placeholder || '',
     account: _rv('cfg-account'),
     partition: _rv('cfg-partition'),
@@ -1657,8 +1663,11 @@ async function startHelper() {
     });
 
     if (!r.ok) {
-      const e = await r.json().catch(() => ({}));
-      let msg = 'Server error (' + r.status + ')';
+      // An error is JSON with a code, or the plain text of a refused value such as a walltime.
+      const raw = await r.text().catch(() => '');
+      let e = {};
+      try { e = JSON.parse(raw); } catch {}
+      let msg = raw.trim() || 'Server error (' + r.status + ')';
       if (e.error === 'env_in_use') {
         msg = 'Env overlay is currently in use by another running instance. Stop it first, or choose a different overlay.';
       } else if (e.error === 'singleton_running') {

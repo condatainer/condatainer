@@ -91,10 +91,14 @@ func runOverlayCreate(cmd *cobra.Command, args []string) {
 		ExitWithError("Cannot use -f/--file and inline packages (--) at the same time.")
 	}
 
-	sizeMB, err := utils.ParseSizeToMB(sizeStr)
-	if err != nil {
-		ExitWithError("Invalid size format '%s': %v", sizeStr, err)
+	sizeMB64, err := utils.ParseSizeInput(sizeStr)
+	if err == nil && sizeMB64 == 0 {
+		err = fmt.Errorf("a size is required")
 	}
+	if err != nil {
+		ExitWithError("%v", err)
+	}
+	sizeMB := int(sizeMB64)
 
 	// Unknown profile names fall back to balanced, but warn so a typo is visible.
 	resolvedProfile, err := ext3.ParseProfile(profile)

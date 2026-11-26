@@ -54,8 +54,8 @@ Headers are written one per line as `#KEY: value`, in the comment lines at the t
 | Header | Meaning |
 |---|---|
 | `#NCPU:` | CPUs, such as `4`. |
-| `#MEM:` | Memory, such as `16G`. A bare number is in GB. |
-| `#TIME:` | Walltime, such as `12:00:00`, `12h`. A bare number is in hours. |
+| `#MEM:` | Memory, such as `16G`. A bare number is in GiB. Every form is in [Memory and Time Values](../guides/scheduler.mdx#memory-and-time-values). |
+| `#TIME:` | Walltime, such as `12:00:00`, `12h`. A bare number is in hours. Every form is in [Memory and Time Values](../guides/scheduler.mdx#memory-and-time-values). |
 | `#GPU:` | GPUs, as a count such as `2`. The count is at least 1. |
 
 These headers set default resource requests for the helper. They can be overwritten using `-c`, `-m`, `-t`, and `-g`.

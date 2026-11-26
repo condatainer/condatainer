@@ -260,3 +260,26 @@ func TestGpuOptionsOf(t *testing.T) {
 		t.Error("no GPUs must be an empty list, not null")
 	}
 }
+
+// A saved mem or time is stored with its unit, comes back as a number too, and one that does not parse is refused.
+func TestHelperConfigStoresUnitsAndGivesNumbers(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	s := &srv{}
+	post := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		s.handleHelperConfig(rec, httptest.NewRequest("POST", "/api/helpers/igv/config", strings.NewReader(body)), "igv")
+		return rec
+	}
+	rec := post(`{"mem":"16","time":"1:30","partition":"gpu"}`)
+	var got helperConfigReply
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("%d %s: %v", rec.Code, rec.Body, err)
+	}
+	if got.Values["mem"] != "16G" || got.Values["time"] != "1h30m" || got.Values["partition"] != "gpu" ||
+		got.MemMB != 16*1024 || got.TimeSecs != 5400 {
+		t.Errorf("reply = %+v", got)
+	}
+	if rec := post(`{"time":"soon"}`); rec.Code != 400 {
+		t.Errorf("a time that does not parse gave %d, want 400", rec.Code)
+	}
+}

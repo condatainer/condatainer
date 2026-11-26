@@ -1696,3 +1696,17 @@ func TestParseLsfHostMemoryMB(t *testing.T) {
 		t.Errorf("bare number with LSF_UNIT_FOR_LIMITS=M = %d, want 4096", got)
 	}
 }
+
+// bsub -W is [hours:]minutes.
+func TestParseLsfRunLimit(t *testing.T) {
+	for in, want := range map[string]time.Duration{"90": 90 * time.Minute, "1:30": 90 * time.Minute, "02:00": 2 * time.Hour} {
+		if got, err := parseLsfRunLimit(in); err != nil || got != want {
+			t.Errorf("parseLsfRunLimit(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "1:2:3", "2h", "-5"} {
+		if _, err := parseLsfRunLimit(in); err == nil {
+			t.Errorf("parseLsfRunLimit(%q) is not an error", in)
+		}
+	}
+}

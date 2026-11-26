@@ -125,7 +125,7 @@ func PrintRunFlags(w io.Writer, spec *scheduler.ResourceSpec) {
 	if spec != nil {
 		cpus = fmt.Sprint(spec.CpusPerTask)
 		if mb := spec.GetMemPerNodeMB(); mb > 0 {
-			mem = utils.FormatMemoryMB(mb)
+			mem = utils.FormatSizeInput(mb)
 		}
 		if spec.Time > 0 {
 			timeStr = utils.FormatDuration(spec.Time)
@@ -133,8 +133,8 @@ func PrintRunFlags(w io.Writer, spec *scheduler.ResourceSpec) {
 	}
 	fmt.Fprintln(w, "Run Flags:")
 	fmt.Fprintf(w, "  -c, --cpu         CPUs per job%s\n", def(cpus))
-	fmt.Fprintf(w, "  -m, --mem         Memory%s\n", def(mem))
-	fmt.Fprintf(w, "  -t, --time        Walltime%s\n", def(timeStr))
+	fmt.Fprintf(w, "  -m, --mem         Memory; a bare number is GiB%s\n", def(mem))
+	fmt.Fprintf(w, "  -t, --time        Walltime; a bare number is hours%s\n", def(timeStr))
 	fmt.Fprintln(w, "  -g, --gpu         GPU spec (e.g. a100:1)")
 	fmt.Fprintln(w, "  -e, --env-img     Writable overlay (.img)")
 	fmt.Fprintln(w, "  -o, --overlay     Additional read-only overlay (repeatable)")

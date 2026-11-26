@@ -41,7 +41,7 @@ var (
 		settings.Suggest("4", "8", "16", "32"))
 
 	keyMem = settings.MemoryMB("build.mem",
-		settings.Default(12288), settings.Order(5),
+		settings.Default("12G"), settings.Order(5),
 		settings.Help("Memory for a build job."),
 		settings.Suggest("4g", "8g", "16g", "32g"))
 

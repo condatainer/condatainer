@@ -36,14 +36,40 @@ func GetHelperConfigKey(name, key string) (string, bool) {
 }
 
 // SetHelperConfigKey updates or inserts a single key in the per-helper config,
-// preserving all other existing keys. Keys are normalized to lowercase.
+// preserving all other existing keys. Keys are normalized to lowercase, and a value as NormalizeConfigValue writes it.
 func SetHelperConfigKey(name, key, value string) error {
+	key = strings.ToLower(key)
+	value, err := NormalizeConfigValue(key, value)
+	if err != nil {
+		return err
+	}
 	cfg, err := LoadHelperConfig(name)
 	if err != nil {
 		cfg = map[string]string{}
 	}
-	cfg[strings.ToLower(key)] = value
+	cfg[key] = value
 	return SaveHelperConfig(name, cfg)
+}
+
+// NormalizeConfigValue is the form a saved value is stored in.
+//   - mem and time are read as a person types them and stored with their unit, "16G" or "1h30m", so a stored value never depends on what a bare number means.
+//   - Any other key is stored as given.
+func NormalizeConfigValue(key, value string) (string, error) {
+	switch strings.ToLower(key) {
+	case "mem":
+		mb, err := utils.ParseSizeInput(value)
+		if err != nil || mb == 0 {
+			return "", fmt.Errorf("mem: %q is not a size: use 16 (GiB), 1.5G or 512M", value)
+		}
+		return utils.FormatSizeInput(mb), nil
+	case "time":
+		d, err := utils.ParseTimeInput(value)
+		if err != nil || d == 0 {
+			return "", fmt.Errorf("time: %q is not a time: use 12 (hours), 12:30 or 2h30m", value)
+		}
+		return utils.FormatDuration(d), nil
+	}
+	return value, nil
 }
 
 // LoadHelperConfig reads the saved KEY=value config for a helper.

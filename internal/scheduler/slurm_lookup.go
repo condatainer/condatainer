@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // slurmFailures is why a job that SLURM reports as failed failed.
@@ -195,7 +193,7 @@ func parseSacctJobs(output string) []JobInfo {
 			continue
 		}
 		if job, _, isStep := strings.Cut(id, "."); isStep {
-			if mb, err := utils.ParseMemoryMB(row["MaxRSS"]); err == nil && mb > peak[job] {
+			if mb, err := parseMemoryMB(row["MaxRSS"]); err == nil && mb > peak[job] {
 				peak[job] = mb
 			}
 			continue

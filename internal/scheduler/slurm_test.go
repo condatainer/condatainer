@@ -15,7 +15,6 @@ import (
 
 	"github.com/condatainer/condatainer/internal/settings/settingstest"
 	"github.com/condatainer/condatainer/internal/testenv"
-	"github.com/condatainer/condatainer/internal/utils"
 )
 
 // newTestSlurmScheduler creates a SLURM scheduler instance for testing
@@ -496,6 +495,19 @@ func TestSlurmResourceParsing(t *testing.T) {
 			wantTime: 36 * time.Hour,
 		},
 		{
+			// SLURM reads two fields as minutes:seconds, and days-hours as days and hours.
+			name:     "time in minutes and seconds",
+			lines:    []string{"#!/bin/bash", "#SBATCH --time=30:00"},
+			wantCpus: 1,
+			wantTime: 30 * time.Minute,
+		},
+		{
+			name:     "time in days and hours",
+			lines:    []string{"#!/bin/bash", "#SBATCH --time=2-12"},
+			wantCpus: 1,
+			wantTime: 60 * time.Hour,
+		},
+		{
 			name: "full job script",
 			lines: []string{
 				"#!/bin/bash",
@@ -698,35 +710,25 @@ func TestSlurmNtasksParsing(t *testing.T) {
 	}
 }
 
-func TestSlurmTimeParsing(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		wantDur time.Duration
-		wantErr bool
-	}{
-		{"HH:MM:SS", "02:30:00", 2*time.Hour + 30*time.Minute, false},
-		{"HH:MM", "10:30", 10*time.Hour + 30*time.Minute, false},
-		{"minutes only", "90", 90 * time.Minute, false},
-		{"with days", "1-12:00:00", 36 * time.Hour, false},
-		{"with seconds", "01:00:30", time.Hour + 30*time.Second, false},
-		{"empty string", "", 0, false},
-		{"large walltime", "7-00:00:00", 168 * time.Hour, false},
+// A SLURM time is read with SLURM's meaning: two fields are minutes and seconds, days-hours is days and hours.
+func TestReadSlurmTime(t *testing.T) {
+	for in, want := range map[string]time.Duration{
+		"02:30:00":   2*time.Hour + 30*time.Minute,
+		"10:30":      10*time.Minute + 30*time.Second,
+		"90":         90 * time.Minute,
+		"1-12:00:00": 36 * time.Hour,
+		"2-12":       60 * time.Hour,
+		"2-12:30":    60*time.Hour + 30*time.Minute,
+		"7-00:00:00": 168 * time.Hour,
+	} {
+		if got, err := readSlurmTime(in); err != nil || got != want {
+			t.Errorf("readSlurmTime(%q) = %v, %v; want %v", in, got, err, want)
+		}
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dur, err := utils.ParseDHMSTime(tt.input)
-			if tt.wantErr && err == nil {
-				t.Error("Expected error, got nil")
-			}
-			if !tt.wantErr && err != nil {
-				t.Errorf("Unexpected error: %v", err)
-			}
-			if dur != tt.wantDur {
-				t.Errorf("utils.ParseDHMSTime(%q) = %v; want %v", tt.input, dur, tt.wantDur)
-			}
-		})
+	for _, in := range []string{"", "infinite", "1:2:3:4", "x-1"} {
+		if _, err := readSlurmTime(in); err == nil {
+			t.Errorf("readSlurmTime(%q) is not an error", in)
+		}
 	}
 }
 

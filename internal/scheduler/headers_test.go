@@ -45,6 +45,12 @@ func TestParseResourceHeaders(t *testing.T) {
 		t.Errorf("lines = %v", h.Lines)
 	}
 
+	// A header is read as a person types it: the first number of a time is hours, a bare size is GiB.
+	h, err = ParseResourceHeaders(utils.ScanAnnotations([]byte("#MEM: 1.5\n#TIME: 1-12\n")))
+	if err != nil || h.MemPerNodeMB != 1536 || h.Time != 36*time.Hour {
+		t.Errorf("headers = %+v, %v; want 1536 MB and 36 h", h, err)
+	}
+
 	text = "#NCPU: many\n#MEM: 4G\n#TIME: soon\n#GPU: a100:0\n#NCPU: 2\n#MEM:\n"
 	h, err = ParseResourceHeaders(utils.ScanAnnotations([]byte(text)))
 	if err == nil {

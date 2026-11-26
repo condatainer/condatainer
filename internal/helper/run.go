@@ -902,7 +902,7 @@ func newHelperRun(id, name, jobID, cwd string, walltime time.Duration,
 	if spec != nil {
 		run.CPU = spec.CpusPerTask
 		if mb := spec.GetMemPerNodeMB(); mb > 0 {
-			run.Mem = utils.FormatMemoryMB(mb)
+			run.Mem = utils.FormatSizeInput(mb)
 		}
 	}
 	return run

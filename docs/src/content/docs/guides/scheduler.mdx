@@ -69,8 +69,40 @@ condatainer run -g a100:2 gpu_job.sh
 ```
 
 - A flag replaces the value in the script for this run only.
+- A plain number for `-m` is in GiB, and for `-t` in hours: `-m 16 -t 12` asks for 16 GiB for 12 hours. [Memory and Time Values](#memory-and-time-values) lists every form.
+- A `#SBATCH`, `#PBS` or `#BSUB` line in the script keeps the scheduler's own meaning. In `#SBATCH --time=30:00`, Slurm reads 30 minutes.
 - What neither the script nor a flag sets comes from the `scheduler.ncpu`, `scheduler.mem` and `scheduler.time` [settings](config.md) unless you changed them.
 - Inside a job, it already has resources. `-c`, `-m`, `-t` and `-g` are ignored with a warning.
+
+### Memory and Time Values
+
+`-m`, `-t`, the `#MEM:` and `#TIME:` headers, the `scheduler.mem` and `scheduler.time` settings, the Memory and Walltime fields of the dashboard, and an overlay's size (`-s`) all read a value the same way.
+
+| Memory or size | Means |
+|---|---|
+| `16` | 16 GiB: a plain number is in GiB |
+| `1.5` | 1.5 GiB |
+| `512M` | 512 MiB |
+| `16G` | 16 GiB |
+| `2T` | 2 TiB |
+
+- A unit is `K`, `M`, `G` or `T`. Each may also be written with `B` or `iB`, in upper or lower case, with or without a space: `16G`, `16gb` and `16 GiB` are the same.
+- Every unit counts in 1024s: 1 GiB is 1024 MiB, which most clusters call a GB.
+- A size with a decimal is rounded up to a whole MiB.
+
+| Time | Means |
+|---|---|
+| `12` | 12 hours: a plain number is in hours |
+| `1.5` | 1 hour 30 minutes |
+| `12:30` | 12 hours 30 minutes |
+| `12:30:15` | 12 hours 30 minutes 15 seconds |
+| `1-12` | 1 day 12 hours |
+| `1-12:30` | 1 day 12 hours 30 minutes |
+| `1-12:30:15` | 1 day 12 hours 30 minutes 15 seconds |
+| `4d12h`, `2h30m`, `90m`, `1.5h` | as written: `d` days, `h` hours, `m` minutes, `s` seconds |
+
+- The first number is always hours, so `30:00` is 30 hours.
+- Zero, a negative value, and minutes or seconds of 60 or more are refused.
 
 ### Important Resource Flags
 
@@ -131,7 +163,7 @@ Each scheduler uses different directive syntax, but `condatainer run` standardiz
     | Stdout | `#OUTPUT: quant.log` | `-o quant.log` |
     | Stderr | `#ERROR: quant.err` | `-e quant.err` |
 
-    - A bare `#MEM:` number is in GB, and a bare `#TIME:` number is in hours. `#TIME:` also reads `01:30:00`.
+    - `#MEM:` and `#TIME:` take the forms in [Memory and Time Values](#memory-and-time-values): a bare `#MEM:` number is in GiB, and a bare `#TIME:` number is in hours.
     - `#GPU:` takes a count (`2`), a type (`a100`) or both (`a100:2`). PBS ignores the type.
     - A relative `#OUTPUT:` or `#ERROR:` path starts from the directory you submit from.
     - Write the headers in the comment lines at the top of the script. If this cluster's scheduler directives in the same script set resources, the `#NCPU:`, `#MEM:`, `#TIME:` and `#GPU:` headers are ignored, and a warning names their lines.

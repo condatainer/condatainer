@@ -26,7 +26,7 @@ type HelperRun struct {
 	CWD          string            `json:"cwd"`           // working directory
 	WalltimeSecs int64             `json:"walltime_secs"` // from #TIME: / -t flag, in seconds
 	CPU          int               `json:"cpu,omitempty"`
-	Mem          string            `json:"mem,omitempty"`         // e.g. "32G", "1536M" — via utils.FormatMemoryMB
+	Mem          string            `json:"mem,omitempty"`         // e.g. "32G", "1536M" — via utils.FormatSizeInput
 	GPU          string            `json:"gpu,omitempty"`         // e.g. "a100:1"
 	Account      string            `json:"account,omitempty"`     // scheduler account; a headless run has none
 	Partition    string            `json:"partition,omitempty"`   // scheduler partition; a headless run has none

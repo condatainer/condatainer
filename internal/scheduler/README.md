@@ -92,7 +92,7 @@ Both sides.
 
 - `#NCPU:`, `#MEM:`, `#TIME:` and `#GPU:` ask for resources without naming a scheduler.
 - One reader serves every script type, so a value means the same everywhere.
-- A bare `#MEM:` number is GB and a bare `#TIME:` number is hours.
+- A bare `#MEM:` number is GiB and a bare `#TIME:` number is hours.
 - A GPU request is `N`, `TYPE` or `TYPE:N`. A bare count has no type, and the type is lower case.
 - An empty value is the same as no header.
 - A value that does not parse, or a header written twice, is an error naming its line. What did parse is still returned.

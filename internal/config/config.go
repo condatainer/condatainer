@@ -19,7 +19,7 @@ const ExitCodeJobsSubmitted = 3
 
 // Version is a variable so tagged release builds can set it with -ldflags -X
 // without modifying tracked source before compilation.
-var Version = "0.1.2"
+var Version = "0.1.3"
 
 const GitHubRepo = "condatainer/condatainer"
 

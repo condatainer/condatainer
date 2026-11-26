@@ -90,7 +90,7 @@ input,button,select{font-family:inherit;font-size:inherit;}
   border-bottom:1px solid var(--border);font-weight:700;font-size:14px;
   white-space:nowrap;overflow:hidden;flex-shrink:0;
 }
-.sb-logo-icon{width:18px;height:18px;flex-shrink:0;display:block;object-fit:contain;}
+.sb-logo-icon{width:21px;height:21px;flex-shrink:0;display:block;object-fit:contain;}
 .sb-logo-text{transition:opacity 150ms;display:inline-flex;align-items:baseline;}
 .sb-logo-conda{color:#07b843;}
 .sb-logo-tainer{color:#3084c3;}

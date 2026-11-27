@@ -31,10 +31,6 @@ type Bin struct {
 	Env  []string // Added to the environment of every launch, ahead of the launch's own
 }
 
-// ErrNeedsHost reports an action that needs the host's apptainer: a container
-// has no setuid starter to escalate with.
-var ErrNeedsHost = errors.New("must run on the host, not inside a container")
-
 // insideContainer is config.IsInsideContainer, replaceable by tests.
 var insideContainer = config.IsInsideContainer
 
@@ -100,13 +96,9 @@ type Need struct {
 
 // Resolve returns the apptainer Selected names, checked for the launch's need.
 //   - Overlays refuses a host apptainer below the zstd floor.
-//   - Fakeroot is refused inside a container with ErrNeedsHost.
-//     A non-setuid host apptainer that ships its own fakeroot is replaced by libexec's, when installed, with a warning.
+//   - Fakeroot: a non-setuid host apptainer that ships its own fakeroot is replaced by libexec's, when installed, with a warning.
 //     The toolchain's fakeroot goes first on PATH, carried in Bin.Env.
 func Resolve(need Need) (Bin, error) {
-	if need.Fakeroot && insideContainer() {
-		return Bin{}, fmt.Errorf("--fakeroot and definition builds %w", ErrNeedsHost)
-	}
 	if bad := toolpath.InvalidHostApptainer(); bad != "" && !insideContainer() {
 		return Bin{}, fmt.Errorf("%w: %q is not an executable file or a command on PATH. Fix it, or remove it with `condatainer config remove host_apptainer`", ErrHostApptainerUnusable, bad)
 	}

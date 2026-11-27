@@ -14,17 +14,19 @@ import (
 
 // ExecOptions contains options for executing commands in a container
 type ExecOptions struct {
-	Bin        Bin       // The apptainer to run, from Normal or Fakeroot
-	Bind       []string  // Bind mounts (format: "/host/path:/container/path")
-	DropBinds  []string  // Container paths whose binds a nested launch inherits and must not keep
-	Overlay    []string  // Overlay images to use
-	Fakeroot   bool      // Run with fakeroot
-	Env        []string  // Environment variables to set (format: "KEY=VALUE")
-	UnsetEnv   []string  // Host variable names removed from apptainer's environment, so the container never sees them
-	Additional []string  // Additional flags to pass to apptainer exec
-	Stdin      io.Reader // Custom stdin reader (optional, defaults to os.Stdin)
-	Stdout     io.Writer // Redirect stdout (optional; nil = discard)
-	Stderr     io.Writer // Redirect stderr (optional; nil = discard)
+	Bin       Bin      // The apptainer to run, from Normal or Fakeroot
+	Bind      []string // Bind mounts (format: "/host/path:/container/path")
+	DropBinds []string // Container paths whose binds a nested launch inherits and must not keep
+	// NoInheritedBinds drops every bind the environment carries, for a launch that binds all it needs.
+	NoInheritedBinds bool
+	Overlay          []string  // Overlay images to use
+	Fakeroot         bool      // Run with fakeroot
+	Env              []string  // Environment variables to set (format: "KEY=VALUE")
+	UnsetEnv         []string  // Host variable names removed from apptainer's environment, so the container never sees them
+	Additional       []string  // Additional flags to pass to apptainer exec
+	Stdin            io.Reader // Custom stdin reader (optional, defaults to os.Stdin)
+	Stdout           io.Writer // Redirect stdout (optional; nil = discard)
+	Stderr           io.Writer // Redirect stderr (optional; nil = discard)
 	// StopGrace is how long apptainer gets to exit after a cancel's SIGTERM
 	// before it is killed. Zero keeps the default.
 	StopGrace time.Duration
@@ -60,11 +62,21 @@ func Exec(ctx context.Context, imagePath string, command []string, opts *ExecOpt
 
 	logging.FromContext(ctx).Debug("executing in container", "image", imagePath, "command", strings.Join(command, " "))
 
-	setEnv, unsetEnv := nestedBindEnv(slices.Concat(opts.Bind, opts.DropBinds))
+	setEnv, unsetEnv := bindEnv(opts)
 	procEnv := append(envPrefixed(opts.Bin, opts.Env), setEnv...)
 	unsetEnv = append(slices.Clone(opts.UnsetEnv), unsetEnv...)
 
 	return runApptainerWithOutput(ctx, opts.Bin, "exec", imagePath, false, opts.Stdin, opts.Stdout, opts.Stderr, procEnv, unsetEnv, opts.StopGrace, args...)
+}
+
+// bindEnv returns the bind variables a launch sets, and the ones it unsets.
+//   - NoInheritedBinds unsets all of them, inside a container or not.
+//   - Otherwise a nested launch drops the inherited entries it passes itself, as nestedBindEnv says.
+func bindEnv(opts *ExecOptions) (set, unset []string) {
+	if opts.NoInheritedBinds {
+		return nil, slices.Clone(inheritedBindVars)
+	}
+	return nestedBindEnv(slices.Concat(opts.Bind, opts.DropBinds))
 }
 
 // inheritedBindVars are the variables apptainer reads binds from. A container's apptainer exports its binds under them.

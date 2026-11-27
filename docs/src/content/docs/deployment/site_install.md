@@ -11,6 +11,7 @@ A **site install** provides CondaTainer cluster-wide to all users from a central
 ## Prerequisites
 
 Before installing CondaTainer cluster-wide, ensure that the compute and login nodes satisfy:
+- **A recent enough system:** RHEL 8, Ubuntu 20.04 or Debian 10, or newer, or another distribution as recent. The toolchain needs glibc 2.28 and Linux 4.18 or newer.
 - **Unprivileged user namespaces:** Required by container runtimes for unprivileged execution. Ubuntu 24.04 and later blocks them by default, see [Ubuntu 24.04 and later](#ubuntu-2404-and-later).
 - **FUSE support:** The `/dev/fuse` device must be available with read/write permissions for unprivileged users.
 
@@ -81,7 +82,7 @@ condatainer config set host_apptainer /usr/bin/apptainer -l r
 If the cluster provides a curated Apptainer installation (or module), setting `host_apptainer` makes it run containers and build `.def` files in place of the unprivileged binary in `libexec/`. Unset, no Apptainer outside `libexec/` is used.
 
 - It must be Apptainer 1.4 or newer.
-- A build uses the fakeroot from `libexec/`, which runs in images of any age.
+- A build uses the fakeroot from `libexec/`, which runs in glibc images of any age.
 - A non-setuid Apptainer that ships its own fakeroot cannot take it, so its builds use the one in `libexec/` and print a warning.
 
 Individual users can override any site setting in their own `~/.config/condatainer/config.yaml`.

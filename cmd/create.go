@@ -752,7 +752,13 @@ func scriptTarget(file string) string {
 // filename is the address and has to be the name's. The basename is spelled as
 // the name it reads as (my--env and my=1 are name/version spellings), and
 // note says so when that differs from what was typed.
+// A trailing .sqf is dropped, since the build adds it: out/x.sqf and out/x name one file.
+// A prefix that is only .sqf names no file, and is refused.
 func resolvePrefix(prefix, name, file string) (resolved, note string, err error) {
+	if filepath.Base(prefix) == ".sqf" {
+		return prefix, "", fmt.Errorf("--prefix %s has no file name before .sqf", prefix)
+	}
+	prefix = strings.TrimSuffix(prefix, ".sqf")
 	if name == "" {
 		name = scriptTarget(file)
 	}
@@ -780,7 +786,7 @@ func checkImageDirPrefix(prefix, name string) error {
 		return nil
 	}
 	dir := filepath.Dir(abs)
-	base := strings.TrimSuffix(filepath.Base(abs), ".sqf")
+	base := filepath.Base(abs)
 	want := image.EncodeArtifactName(name)
 	for _, d := range config.GetImageSearchPaths() {
 		if filepath.Clean(d) == dir && base != want {

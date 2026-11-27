@@ -13,10 +13,13 @@
 - libexec's apptainer is the one that ships its own `fuse2fs`, `squashfuse_ll`, `fuse-overlayfs` and fakeroot. A run behaves the same on every host that has it.
   - The host's apptainer mounts a writable `.img` with the `fuse2fs` in its own tool directory, else on `PATH`. The guard checks that one, not the toolchain's.
   - A refusal says to unset `host_apptainer`, since the toolchain's apptainer ships a fixed one.
-- `Fakeroot` is refused at once inside a container with `ErrNeedsHost`.
-  - The refusal is a choice, not a measured limit. A plain fakeroot launch ran in a container in a root-mapped namespace, but a writable `.img` mounted in that nested namespace was not tried, and sites differ.
-  - A clear refusal at launch is better than a failure after a mount or a queue wait. It can become an attempt if a real use appears.
+- `Fakeroot` runs inside a container as it does on the host.
   - libexec's apptainer is not setuid. It fakeroots in a root-mapped user namespace, with its bundled `fakeroot-sysv` for the owner changes that namespace cannot make.
+  - `fakeroot-sysv` is a glibc program, so every fakeroot launch on a musl image such as Alpine fails: a run, and a `.def` build at `%post`. Apptainer skips it only for a user with a subuid range, which a cluster rarely gives.
+  - That is accepted as a limit. A musl image runs without fakeroot, and a `.def` build uses a glibc base.
+  - A nested launch needs only the user namespace a plain nested launch already needs, so a site that allows one allows the other.
+  - A `.def` build running `apt`, a read-only launch, and a writable `.img` made with `overlay create --fakeroot` all ran nested.
+  - A writable `.img` owned by the user fails with fakeroot on the host and nested alike, since its `upper` must be owned by root.
 - A `.def` build needs `Fakeroot` and no `Overlays`: the output is a sandbox, and `#DEP:` is data-only, so no zstd artifact is mounted during the build.
   - Packing the sandbox runs `mksquashfs` on the host, never in a container.
 - Every launch with `Fakeroot` has the same fakeroot rules, in one place.
@@ -73,6 +76,7 @@
   - A container sees the host's `/tmp` and every temporary directory the job names, at their own paths. `TMPDIR` is kept, so a program that follows it writes to the scheduler's node-local scratch.
   - A private `/tmp` and `/var/tmp` per container hides the host's. That is a site's decision, made by exporting `APPTAINER_WORKDIR`.
 - Build operations unset all four bind variables (`APPTAINER_BIND`, `SINGULARITY_BIND` and the two `*_BINDPATH`), to avoid `%post` mount conflicts.
+- A launch with `NoInheritedBinds` unsets them too. The freeze job binds all it needs, and its bare root has no mount point for a file an outer container binds.
 - A launch from a container removes the inherited bind entries it passes itself, from all four bind variables.
   - The outer apptainer exports its binds under those variables, so a repeat is a duplicate-mount warning.
   - Entries it does not pass, such as a site's, are kept.

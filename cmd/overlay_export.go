@@ -40,17 +40,33 @@ func resolveOverlayArg(arg string) (string, error) {
 }
 
 // openExportOutput returns a writer, a close func, and a destination label.
-// Empty prefix writes to stdout; otherwise to <prefix><ext>.
+// Empty prefix writes to stdout; otherwise to exportPath(prefix, ext).
 func openExportOutput(prefix, ext string) (io.Writer, func() error, string, error) {
 	if prefix == "" {
 		return os.Stdout, func() error { return nil }, "stdout", nil
 	}
-	path := prefix + ext
+	path, err := exportPath(prefix, ext)
+	if err != nil {
+		return nil, nil, "", err
+	}
 	f, err := utils.CreateFileWritable(path)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("failed to create %s: %w", path, err)
 	}
 	return f, f.Close, path, nil
+}
+
+// exportPath is <prefix><ext>, or prefix itself when it already ends in ext.
+// A prefix with no file name before ext, such as ./ or .yml, is refused.
+func exportPath(prefix, ext string) (string, error) {
+	path := prefix
+	if !strings.HasSuffix(path, ext) {
+		path += ext
+	}
+	if strings.HasSuffix(prefix, "/") || filepath.Base(path) == ext {
+		return "", fmt.Errorf("--prefix %s has no file name before %s", prefix, ext)
+	}
+	return path, nil
 }
 
 // reorderChannelBlock rewrites a conda env YAML's `channels:` block into the given priority order, fixing micromamba's alphabetical sort which can break re-solve.

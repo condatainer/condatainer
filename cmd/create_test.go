@@ -227,6 +227,9 @@ func TestResolvePrefix(t *testing.T) {
 		note, err   bool
 	}{
 		{"plain basename", filepath.Join(elsewhere, "custom"), "", "", "", false, false},
+		{"a trailing .sqf names the same file", filepath.Join(elsewhere, "custom.sqf"), "", "", filepath.Join(elsewhere, "custom"), false, false},
+		{"only .sqf names no file", filepath.Join(elsewhere, ".sqf"), "", "", "", false, true},
+		{"a trailing .sqf in an images dir", filepath.Join(images, "star--2.7.sqf"), "star/2.7", "", filepath.Join(images, "star--2.7"), false, false},
 		{"-- is read as /", filepath.Join(elsewhere, "a--b"), "", "", "", true, false},
 		{"= is spelled as the file it names", filepath.Join(elsewhere, "foo=1"), "", "", filepath.Join(elsewhere, "foo--1"), true, false},
 		{"a name leaves the path alone", filepath.Join(elsewhere, "foo=1"), "star/2.7", "", "", false, false},

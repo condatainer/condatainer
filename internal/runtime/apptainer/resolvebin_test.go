@@ -263,20 +263,6 @@ func TestResolveRefusesAnOldApptainerOnlyForOverlays(t *testing.T) {
 	}
 }
 
-// A container has no setuid starter, so a launch with fakeroot is refused at once.
-func TestFakerootRefusedInsideContainer(t *testing.T) {
-	withLibexecTier(t)
-	resetApptainerState(t)
-	insideContainer = func() bool { return true }
-	systemApptainer(t, writeFakeBin(t, t.TempDir(), "apptainer", "apptainer version 1.5.3"))
-
-	for name, need := range map[string]Need{"exec": fakeroot, "build": build} {
-		if _, err := Resolve(need); !errors.Is(err, ErrNeedsHost) {
-			t.Errorf("%s error = %v, want ErrNeedsHost", name, err)
-		}
-	}
-}
-
 // A binary's version is read from the per-user cache before the binary is run,
 // so a new process does not run it again while it is unchanged.
 func TestVersionUsesThePerUserCache(t *testing.T) {

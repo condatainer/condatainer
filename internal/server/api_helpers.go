@@ -29,6 +29,7 @@ import (
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/slot"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 const helperInstalledCacheTTL = 30 * time.Second
@@ -343,12 +344,12 @@ func (s *srv) handleHelperResources(w http.ResponseWriter, r *http.Request, name
 			overrides.CpusPerTask = cpus
 		}
 		if memStr != "" {
-			if mb, err := utils.ParseSizeInput(memStr); err == nil {
+			if mb, err := units.ParseSizeInput(memStr); err == nil {
 				overrides.MemPerNodeMB = mb
 			}
 		}
 		if timeStr != "" {
-			if d, err := utils.ParseTimeInput(timeStr); err == nil {
+			if d, err := units.ParseTimeInput(timeStr); err == nil {
 				overrides.Time = d
 			}
 		}
@@ -390,8 +391,8 @@ type helperConfigReply struct {
 
 func helperConfigReplyOf(cfg map[string]string) helperConfigReply {
 	out := helperConfigReply{Values: cfg}
-	out.MemMB, _ = utils.ParseSizeInput(cfg["mem"])
-	if d, err := utils.ParseTimeInput(cfg["time"]); err == nil {
+	out.MemMB, _ = units.ParseSizeInput(cfg["mem"])
+	if d, err := units.ParseTimeInput(cfg["time"]); err == nil {
 		out.TimeSecs = int64(d.Seconds())
 	}
 	return out
@@ -531,13 +532,13 @@ func (s *srv) handleHelperStart(w http.ResponseWriter, r *http.Request, name str
 		if req.CPU > 0 {
 			startOverrides.CpusPerTask = req.CPU
 		}
-		mb, err := utils.ParseSizeInput(req.Mem)
+		mb, err := units.ParseSizeInput(req.Mem)
 		if err != nil {
 			http.Error(w, "invalid memory: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		startOverrides.MemPerNodeMB = mb
-		d, err := utils.ParseTimeInput(req.Time)
+		d, err := units.ParseTimeInput(req.Time)
 		if err != nil {
 			http.Error(w, "invalid walltime: "+err.Error(), http.StatusBadRequest)
 			return
@@ -673,7 +674,7 @@ func (s *srv) handleOverlayCreate(w http.ResponseWriter, r *http.Request) {
 	if sizeStr == "" {
 		sizeStr = ext3.DefaultSize
 	}
-	sizeMB64, err := utils.ParseSizeInput(sizeStr)
+	sizeMB64, err := units.ParseSizeInput(sizeStr)
 	if err != nil {
 		http.Error(w, "invalid size: "+err.Error(), http.StatusBadRequest)
 		return

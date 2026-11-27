@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // partitionColumns are the columns of the partition table. Numbers align right.
@@ -136,7 +137,7 @@ func partitionRows(l ResourceLimits, fallbackGpus []GpuInfo) [][]string {
 	case l.TimeUnlimited:
 		maxTime = "inf"
 	case l.MaxTime > 0:
-		maxTime = utils.FormatTimeTable(l.MaxTime)
+		maxTime = units.FormatTimeTable(l.MaxTime)
 	}
 	maxNodes := "-"
 	if l.MaxNodes > 0 {
@@ -162,7 +163,7 @@ func partitionRows(l ResourceLimits, fallbackGpus []GpuInfo) [][]string {
 			}
 		}
 		if t.MemMB > 0 {
-			mem = utils.FormatMemoryTable(t.MemMB)
+			mem = units.FormatMemoryTable(t.MemMB)
 			if t.MemLowerBound {
 				mem += "+"
 			}
@@ -330,7 +331,7 @@ var jobColumns = []jobColumn{
 	{header: "STATE", cell: func(j JobInfo) string { return string(j.State) }},
 	{header: "CPUS", right: true, cell: func(j JobInfo) string { return orDash(j.Cpus, strconv.Itoa(j.Cpus)) }},
 	{header: "GPUS", cell: jobGpus},
-	{header: "MEM", right: true, cell: func(j JobInfo) string { return orDash(int(j.MemMB), utils.FormatMemoryTable(j.MemMB)) }},
+	{header: "MEM", right: true, cell: func(j JobInfo) string { return orDash(int(j.MemMB), units.FormatMemoryTable(j.MemMB)) }},
 	{header: "TIME", cell: jobTime},
 	{header: "NODE", minWidth: minNodeWidth, cell: jobNode},
 	{header: "NOTE", minWidth: minFlexWidth, cell: jobNote},
@@ -357,22 +358,22 @@ func jobGpus(j JobInfo) string {
 }
 
 // jobTime is the limit of a job that waits, elapsed over limit for one that runs, and elapsed for one that ended.
-// An array shows its per-task limit only. Every time is utils.FormatTimeTable.
+// An array shows its per-task limit only. Every time is units.FormatTimeTable.
 func jobTime(j JobInfo) string {
 	limit := "-"
 	switch {
 	case j.TimeUnlimited:
 		limit = "inf"
 	case j.TimeLimit > 0:
-		limit = utils.FormatTimeTable(j.TimeLimit)
+		limit = units.FormatTimeTable(j.TimeLimit)
 	}
 	switch {
 	case j.IsArray():
 		return limit
 	case j.State == JobRunning:
-		return utils.FormatTimeTable(j.Elapsed) + "/" + limit
+		return units.FormatTimeTable(j.Elapsed) + "/" + limit
 	case ended(j.State) && j.Elapsed > 0:
-		return utils.FormatTimeTable(j.Elapsed)
+		return units.FormatTimeTable(j.Elapsed)
 	case ended(j.State):
 		return "-"
 	}

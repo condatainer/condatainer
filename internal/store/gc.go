@@ -16,6 +16,7 @@ import (
 	"github.com/condatainer/condatainer/internal/image"
 	"github.com/condatainer/condatainer/internal/image/producer"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // ErrUnscoped reports a destructive GC that named no store to act on.
@@ -163,7 +164,7 @@ func judge(path, root string, verified map[string]Candidate, grace time.Duration
 	age, basis := ageOf(info, now)
 	if age < window {
 		return nil, &Retained{Path: path,
-			Reason: fmt.Sprintf("%s is %s old, within the %s grace", basis, utils.FormatDuration(age), utils.FormatDuration(window))}
+			Reason: fmt.Sprintf("%s is %s old, within the %s grace", basis, units.FormatDuration(age), units.FormatDuration(window))}
 	}
 
 	candidate, known := verified[path]

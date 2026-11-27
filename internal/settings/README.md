@@ -6,7 +6,7 @@ The registry of config keys. A package declares the keys it reads, and reads the
 
 - A key is declared in the package that reads it, so adding one is one declaration there.
   - This package holds the machinery and declares no key.
-- It imports only `utils`.
+- It imports only `utils` and its subpackages.
   - `config` imports it to feed the layer files in, and every owner imports it to declare keys.
   - `config` cannot be imported by `catalog` or `scheduler`, so the registry cannot live in it.
 - A default is text parsed by the key's kind, so it cannot disagree with what `config set` accepts.

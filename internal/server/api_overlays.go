@@ -24,6 +24,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	cntexec "github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // handleOverlayEdit serves POST /api/overlay/edit — resize, remove, or add packages
@@ -58,7 +59,7 @@ func (s *srv) handleOverlayEdit(w http.ResponseWriter, r *http.Request) {
 	if req.Size != "" {
 		var err error
 		var mb int64
-		mb, err = utils.ParseSizeInput(req.Size)
+		mb, err = units.ParseSizeInput(req.Size)
 		newSizeMB = int(mb)
 		if err != nil {
 			http.Error(w, "invalid size: "+err.Error(), http.StatusBadRequest)

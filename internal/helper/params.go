@@ -9,6 +9,7 @@ import (
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/slot"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // ApplyParamFlags scans raw CLI args for flags defined by params.
@@ -125,10 +126,10 @@ func PrintRunFlags(w io.Writer, spec *scheduler.ResourceSpec) {
 	if spec != nil {
 		cpus = fmt.Sprint(spec.CpusPerTask)
 		if mb := spec.GetMemPerNodeMB(); mb > 0 {
-			mem = utils.FormatSizeInput(mb)
+			mem = units.FormatSizeInput(mb)
 		}
 		if spec.Time > 0 {
-			timeStr = utils.FormatDuration(spec.Time)
+			timeStr = units.FormatDuration(spec.Time)
 		}
 	}
 	fmt.Fprintln(w, "Run Flags:")
@@ -174,7 +175,7 @@ func PrintHelperUsage(scriptName string, params []HelperParam, slots []slot.Decl
 			choicesStr := ""
 			if versions != nil {
 				if vlist := versions[p.Key]; len(vlist) > 0 {
-					choicesStr = "  " + utils.StyleDim(utils.FormatChoicesInline(vlist))
+					choicesStr = "  " + utils.StyleDim(FormatChoicesInline(vlist))
 				}
 			}
 			if flags != "" {
@@ -221,4 +222,36 @@ func printSlots(w io.Writer, slots []slot.Decl) {
 			fmt.Fprintf(w, "  %-12s needs: %s\n", "", strings.Join(needs, ", "))
 		}
 	}
+}
+
+// FormatChoicesInline formats a value list for single-line display.
+//   - Version lists (entries containing a dot) are grouped by minor version with the patch shown in dim parentheses: "3.13(.2), 3.12(.10), 3.11(.12)".
+//   - Option lists are joined with " | ": "github | microsoft".
+func FormatChoicesInline(vlist []string) string {
+	if len(vlist) == 0 {
+		return ""
+	}
+	// Detect version list: first entry must have at least one dot.
+	if !strings.Contains(vlist[0], ".") {
+		return strings.Join(vlist, " | ")
+	}
+	seen := map[string]bool{}
+	var parts []string
+	for _, v := range vlist {
+		segs := strings.SplitN(v, ".", 3)
+		if len(segs) < 2 {
+			continue
+		}
+		minor := segs[0] + "." + segs[1]
+		if seen[minor] {
+			continue
+		}
+		seen[minor] = true
+		entry := minor
+		if len(segs) == 3 {
+			entry += "(." + segs[2] + ")"
+		}
+		parts = append(parts, entry)
+	}
+	return strings.Join(parts, ", ")
 }

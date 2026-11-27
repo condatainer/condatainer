@@ -1,23 +1,14 @@
-package utils
+// Package units reads and writes the memory sizes, durations and transfer speeds that configs, headers and output share.
+package units
 
 import (
 	"fmt"
 	"math/big"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
-
-// StripInlineComment removes everything after the first '#' character (inline comment).
-// Returns the trimmed string without the comment.
-func StripInlineComment(s string) string {
-	if idx := strings.Index(s, "#"); idx >= 0 {
-		s = s[:idx]
-	}
-	return strings.TrimSpace(s)
-}
 
 // FormatSizeInput writes a size in MB as text ParseSizeInput reads back, with a one-letter unit.
 //   - It uses "G" when divisible by 1024, otherwise "M".
@@ -268,116 +259,4 @@ func ParseSizeInput(s string) (int64, error) {
 		return 0, refuse
 	}
 	return whole.Int64(), nil
-}
-
-// SortVersionsDescending sorts version strings in descending natural order.
-//   - Segments are split on ".", "-", or "_" and compared numerically when both segments are integers, otherwise lexicographically.
-//   - The highest version comes first.
-func SortVersionsDescending(values []string) []string {
-	result := make([]string, len(values))
-	copy(result, values)
-	sort.Slice(result, func(i, j int) bool {
-		return CompareVersions(result[i], result[j]) > 0
-	})
-	return result
-}
-
-// envPackageTokenRe matches {KEY} tokens in an #ENV_PACKAGES: template.
-var envPackageTokenRe = regexp.MustCompile(`\{([A-Z][A-Z0-9_]*)\}`)
-
-// ExtractEnvPackageTokens returns the unique {KEY} token names from an #ENV_PACKAGES: template.
-func ExtractEnvPackageTokens(envPackages string) []string {
-	matches := envPackageTokenRe.FindAllStringSubmatch(envPackages, -1)
-	seen := map[string]bool{}
-	var result []string
-	for _, m := range matches {
-		if !seen[m[1]] {
-			seen[m[1]] = true
-			result = append(result, m[1])
-		}
-	}
-	return result
-}
-
-// MatchVersion does a partial version match against a list sorted newest-first.
-//   - Input "3.12" matches the first entry beginning with "3.12." (latest patch).
-//   - Exact match always takes priority.
-//   - Returns input unchanged if nothing matches.
-func MatchVersion(input string, versions []string) string {
-	for _, v := range versions {
-		if v == input {
-			return v
-		}
-	}
-	prefix := input + "."
-	for _, v := range versions {
-		if strings.HasPrefix(v, prefix) {
-			return v
-		}
-	}
-	return input
-}
-
-// LatestVersion returns the first (newest) entry in a versions list, or "" if empty.
-func LatestVersion(versions []string) string {
-	if len(versions) == 0 {
-		return ""
-	}
-	return versions[0]
-}
-
-// VersionChoicesDisplay formats a newest-first full-patch list into grouped minor
-// version summary strings: ["3.13.2","3.12.10","3.11.12"] →
-// ["3.13(.2)", "3.12(.10)", "3.11(.12)"].
-func VersionChoicesDisplay(versions []string) []string {
-	seen := map[string]bool{}
-	var result []string
-	for _, v := range versions {
-		parts := strings.SplitN(v, ".", 3)
-		if len(parts) < 2 {
-			continue
-		}
-		minor := parts[0] + "." + parts[1]
-		if !seen[minor] {
-			seen[minor] = true
-			if len(parts) == 3 {
-				result = append(result, fmt.Sprintf("%s(.%s)", minor, parts[2]))
-			} else {
-				result = append(result, minor)
-			}
-		}
-	}
-	return result
-}
-
-// FormatChoicesInline formats a value list for single-line display.
-//   - Version lists (entries containing a dot) are grouped by minor version with the patch shown in dim parentheses: "3.13(.2), 3.12(.10), 3.11(.12)".
-//   - Option lists are joined with " | ": "github | microsoft".
-func FormatChoicesInline(vlist []string) string {
-	if len(vlist) == 0 {
-		return ""
-	}
-	// Detect version list: first entry must have at least one dot.
-	if !strings.Contains(vlist[0], ".") {
-		return strings.Join(vlist, " | ")
-	}
-	seen := map[string]bool{}
-	var parts []string
-	for _, v := range vlist {
-		segs := strings.SplitN(v, ".", 3)
-		if len(segs) < 2 {
-			continue
-		}
-		minor := segs[0] + "." + segs[1]
-		if seen[minor] {
-			continue
-		}
-		seen[minor] = true
-		entry := minor
-		if len(segs) == 3 {
-			entry += "(." + segs[2] + ")"
-		}
-		parts = append(parts, entry)
-	}
-	return strings.Join(parts, ", ")
 }

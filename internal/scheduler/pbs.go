@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // pbsChunkSpec holds the parsed resource values for a single PBS select chunk.
@@ -256,7 +257,7 @@ func (p *PbsScheduler) extractDirectives(lines []string) []string {
 	var out []string
 	for _, line := range lines {
 		if m := p.directiveRe.FindStringSubmatch(line); m != nil {
-			out = append(out, utils.StripInlineComment(m[1]))
+			out = append(out, stripInlineComment(m[1]))
 		}
 	}
 	return out
@@ -756,7 +757,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 		}
 
 		if rs.Time > 0 {
-			fmt.Fprintf(writer, "#PBS -l walltime=%s\n", utils.FormatHMS(rs.Time))
+			fmt.Fprintf(writer, "#PBS -l walltime=%s\n", units.FormatHMS(rs.Time))
 		}
 		if rs.Exclusive {
 			fmt.Fprintln(writer, "#PBS -l place=excl")
@@ -815,7 +816,7 @@ func (p *PbsScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	}
 
 	// Print job information at start
-	writeJobHeader(writer, "$PBS_JOBID", specs, utils.FormatTimeDetail, jobSpec.Metadata)
+	writeJobHeader(writer, "$PBS_JOBID", specs, units.FormatTimeDetail, jobSpec.Metadata)
 	fmt.Fprintln(writer, "")
 
 	// Write the command and capture exit code

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // LsfScheduler implements the Scheduler interface for IBM Spectrum LSF
@@ -145,7 +146,7 @@ func (l *LsfScheduler) extractDirectives(lines []string) []string {
 	directives := make([]string, 0)
 	for _, line := range lines {
 		if matches := l.directiveRe.FindStringSubmatch(line); matches != nil {
-			flag := utils.StripInlineComment(matches[1])
+			flag := stripInlineComment(matches[1])
 			directives = append(directives, flag)
 		}
 	}
@@ -740,7 +741,7 @@ func (l *LsfScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string) 
 	}
 
 	// Print job information at start
-	writeJobHeader(writer, "$LSB_JOBID", specs, utils.FormatTimeDetail, jobSpec.Metadata)
+	writeJobHeader(writer, "$LSB_JOBID", specs, units.FormatTimeDetail, jobSpec.Metadata)
 	fmt.Fprintln(writer, "")
 
 	// Write the command and capture exit code
@@ -1112,7 +1113,7 @@ func parseLsfMemoryWithUnits(memStr string) (int64, error) {
 	if defaultUnit == "" {
 		defaultUnit = "MB" // rusage[mem=] and select[mem=] default to MB per LSF docs
 	}
-	result, err := utils.ParseMemoryMBWithDefault(memStr, defaultUnit)
+	result, err := units.ParseMemoryMBWithDefault(memStr, defaultUnit)
 	if err != nil {
 		return 0, fmt.Errorf("%w: %s", ErrInvalidMemoryFormat, memStr)
 	}

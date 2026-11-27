@@ -26,7 +26,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - `catalog/`: recipe sources and their index. Resolves what a person typed to a recipe.
 - `conda/`: the Conda environment mounted at `/cnt_env`.
 - `config/`: layered config (flags > env > user > extra-root > cnt-root > defaults) and data directory search.
-- `settings/`: the registry of config keys. A package declares the keys it reads and reads them through typed handles. Imports only `utils`.
+- `settings/`: the registry of config keys. A package declares the keys it reads and reads them through typed handles. Imports only `utils` and its subpackages.
 - `credential/`: per-layer `credentials.json` for registry logins and recipe-source tokens. Lookup and file permissions.
 - `helper/`, `helperhistory/`: helper service jobs and their shared run history.
 - `image/`: overlay CRUD (ext3, SquashFS, sif), freeze, resize, locking.
@@ -39,7 +39,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - `scheduler/`: SLURM, PBS, LSF, HTCondor. Detection, directives, translation.
 - `shell/`: the setup in a user's rc files: `PATH`, completion and the `mm` hook, as a marked block.
 - `server/`: dashboard HTTP server. `store/`: immutable overflow store, addressed by name plus key.
-- `toolpath/`: finds a runnable path for a host tool. `utils/`: console output, files, downloads, duration, memory and version parsing, and the `#KEY: value ## note` header and `name/version` module name parsers. Imports no other condatainer package.
+- `toolpath/`: finds a runnable path for a host tool. `utils/`: console output, files, downloads, version parsing, and the `#KEY: value ## note` header and `name/version` module name parsers. `utils/units`: duration and memory size parsing and formatting. Neither imports another condatainer package.
 
 ## Domain rules
 

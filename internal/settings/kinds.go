@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // kind owns how text is parsed and normalized for one type of key.
@@ -76,17 +76,17 @@ var daysKind = kind{
 var memoryKind = kind{
 	name: "memory",
 	parse: func(_ *Key, text string) (string, error) {
-		mb, err := utils.ParseSizeInput(text)
+		mb, err := units.ParseSizeInput(text)
 		if err != nil || mb <= 0 {
 			return "", fmt.Errorf("%q is not a size: use 16 (GiB), 1.5G or 512M", text)
 		}
-		return utils.FormatSizeInput(mb), nil
+		return units.FormatSizeInput(mb), nil
 	},
 	accepts: func(*Key) string { return "a size such as 16 (GiB), 1.5G or 512M" },
 	suggest: noSuggest,
 	show: func(stored string) string {
-		mb, _ := utils.ParseSizeInput(stored)
-		return utils.FormatSizeInput(mb)
+		mb, _ := units.ParseSizeInput(stored)
+		return units.FormatSizeInput(mb)
 	},
 }
 
@@ -94,17 +94,17 @@ var memoryKind = kind{
 var walltimeKind = kind{
 	name: "walltime",
 	parse: func(_ *Key, text string) (string, error) {
-		d, err := utils.ParseTimeInput(text)
+		d, err := units.ParseTimeInput(text)
 		if err != nil || d <= 0 {
 			return "", fmt.Errorf("%q is not a time: use 12 (hours), 12:30, 1-12:00:00 or 2h30m", text)
 		}
-		return utils.FormatDuration(d), nil
+		return units.FormatDuration(d), nil
 	},
 	accepts: func(*Key) string { return "a time such as 12 (hours), 12:30, 1-12:00:00 or 2h30m" },
 	suggest: noSuggest,
 	show: func(stored string) string {
-		d, _ := utils.ParseTimeInput(stored)
-		return utils.FormatDuration(d)
+		d, _ := units.ParseTimeInput(stored)
+		return units.FormatDuration(d)
 	},
 }
 

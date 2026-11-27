@@ -1,6 +1,9 @@
 package utils
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // CompareVersions orders two versions naturally: digit runs compare as numbers, the
 // runs between them as text. It returns -1, 0 or 1. A prefix sorts below what extends
@@ -71,3 +74,15 @@ func compareDigits(a, b string) int {
 
 func isDigit(c byte) bool  { return c >= '0' && c <= '9' }
 func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
+
+// SortVersionsDescending sorts version strings in descending natural order.
+//   - Segments are split on ".", "-", or "_" and compared numerically when both segments are integers, otherwise lexicographically.
+//   - The highest version comes first.
+func SortVersionsDescending(values []string) []string {
+	result := make([]string, len(values))
+	copy(result, values)
+	sort.Slice(result, func(i, j int) bool {
+		return CompareVersions(result[i], result[j]) > 0
+	})
+	return result
+}

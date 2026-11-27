@@ -20,6 +20,7 @@ import (
 	"github.com/condatainer/condatainer/internal/server"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -368,14 +369,14 @@ func runHelperRun(cmd *cobra.Command, args []string) error {
 			overrides.CpusPerTask = postFlags.cpus
 		}
 		if postFlags.memSet {
-			mb, parseErr := utils.ParseSizeInput(postFlags.mem)
+			mb, parseErr := units.ParseSizeInput(postFlags.mem)
 			if parseErr != nil {
 				return fmt.Errorf("invalid --mem value %q: %w", postFlags.mem, parseErr)
 			}
 			overrides.MemPerNodeMB = mb
 		}
 		if postFlags.timeSet {
-			d, parseErr := utils.ParseTimeInput(postFlags.time)
+			d, parseErr := units.ParseTimeInput(postFlags.time)
 			if parseErr != nil {
 				return fmt.Errorf("invalid --time value %q: %w", postFlags.time, parseErr)
 			}

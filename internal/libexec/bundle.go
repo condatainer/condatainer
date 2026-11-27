@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // bundleAPI is where the bundle releases are described, replaceable by tests.
@@ -111,7 +112,7 @@ func installBundle(ctx context.Context, target, version string, force bool) erro
 		return nil
 	}
 	if size := rel.assetSize(archive); size > 0 {
-		utils.PrintMessage("Downloading apptainer %s (%s) ...", apptainerVersion, utils.FormatSize(size))
+		utils.PrintMessage("Downloading apptainer %s (%s) ...", apptainerVersion, units.FormatSize(size))
 	} else {
 		utils.PrintMessage("Downloading apptainer %s ...", apptainerVersion)
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/slot/subject"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // ResourceHeaders is what the resource and job headers of a script ask for.
@@ -266,13 +267,13 @@ func (h *ResourceHeaders) set(a utils.Annotation) error {
 		}
 		h.CpusPerTask = n
 	case "#MEM":
-		mb, err := utils.ParseSizeInput(a.Value)
+		mb, err := units.ParseSizeInput(a.Value)
 		if err != nil || mb <= 0 {
 			return reject("a memory size such as 16 (GiB) or 8G")
 		}
 		h.MemPerNodeMB = mb
 	case "#TIME":
-		d, err := utils.ParseTimeInput(a.Value)
+		d, err := units.ParseTimeInput(a.Value)
 		if err != nil || d <= 0 {
 			return reject("a walltime such as 4 (hours), 4h or 01:30:00")
 		}

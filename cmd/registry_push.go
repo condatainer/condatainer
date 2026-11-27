@@ -14,6 +14,7 @@ import (
 	"github.com/condatainer/condatainer/internal/registry"
 	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 	"github.com/spf13/cobra"
 )
 
@@ -236,12 +237,12 @@ func findRegistryArtifact(arg string) (registryArtifact, error) {
 
 // confirmPush shows what a push is about to do and asks to go on. -y answers yes.
 func confirmPush(cmd *cobra.Command, plan registry.PublishPlan) bool {
-	utils.PrintMessage("Publish %s (%s)", plan.Name, utils.FormatSize(plan.Size))
+	utils.PrintMessage("Publish %s (%s)", plan.Name, units.FormatSize(plan.Size))
 	utils.PrintMessage("  to %s (%s)", plan.Reference, plan.Audience)
 	if plan.Existing {
 		utils.PrintMessage("  already published: nothing is uploaded")
 	} else {
-		utils.PrintMessage("  %d layer(s) of up to %s", plan.Layers, utils.FormatSize(plan.LayerSize))
+		utils.PrintMessage("  %d layer(s) of up to %s", plan.Layers, units.FormatSize(plan.LayerSize))
 	}
 	if len(plan.Tags) > 1 {
 		utils.PrintMessage("  tags %s", strings.Join(plan.Tags, ", "))

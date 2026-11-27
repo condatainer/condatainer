@@ -14,6 +14,7 @@ import (
 	"github.com/condatainer/condatainer/internal/helper"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // helperListEntry wraps HelperRun with server-computed fields for the API response.
@@ -70,7 +71,7 @@ func (s *srv) enrichRun(run *helper.HelperRun, port int) helperListEntry {
 		e.EndsAtMs = est.UnixMilli()
 	}
 	e.LastMessage = s.watcher.LastMsg(run.ID)
-	e.MemMB, _ = utils.ParseSizeInput(run.Mem)
+	e.MemMB, _ = units.ParseSizeInput(run.Mem)
 	return e
 }
 

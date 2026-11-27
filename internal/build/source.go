@@ -21,6 +21,7 @@ import (
 	"github.com/condatainer/condatainer/internal/catalog"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // SourcePath is where fetched #SOURCE: inputs appear inside the container. It is
@@ -338,15 +339,15 @@ func (p *sourceProgress) report(final bool) {
 	if p.log == nil {
 		return
 	}
-	args := []any{"kind", "progress", "done", utils.FormatSize(p.done)}
+	args := []any{"kind", "progress", "done", units.FormatSize(p.done)}
 	if p.total >= 0 {
-		args = append(args, "total", utils.FormatSize(p.total))
+		args = append(args, "total", units.FormatSize(p.total))
 	}
 	bytes, since := p.done-p.lastDone, p.lastReport
 	if final {
 		bytes, since = p.done, p.start
 	}
-	if speed, ok := utils.FormatSpeed(bytes, time.Since(since)); ok {
+	if speed, ok := units.FormatSpeed(bytes, time.Since(since)); ok {
 		args = append(args, "speed", speed)
 	}
 	args = append(args, "final", final, "last", final)

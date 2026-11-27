@@ -15,6 +15,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 var emitMem = settings.Bool("scheduler.slurm.emit_mem",
@@ -174,7 +175,7 @@ func (s *SlurmScheduler) extractDirectives(lines []string) []string {
 	var out []string
 	for _, line := range lines {
 		if m := s.directiveRe.FindStringSubmatch(line); m != nil {
-			out = append(out, utils.StripInlineComment(m[1]))
+			out = append(out, stripInlineComment(m[1]))
 		}
 	}
 	return out
@@ -729,7 +730,7 @@ func (s *SlurmScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir string
 	if jobSpec.Array != nil {
 		jobIDVar = "$SLURM_ARRAY_JOB_ID"
 	}
-	writeJobHeader(writer, jobIDVar, specs, utils.FormatTimeDetail, jobSpec.Metadata)
+	writeJobHeader(writer, jobIDVar, specs, units.FormatTimeDetail, jobSpec.Metadata)
 	fmt.Fprintln(writer, "")
 
 	// Write the command and capture exit code
@@ -1186,9 +1187,9 @@ func formatSlurmTimeSpec(d time.Duration) string {
 	days := int64(d.Hours()) / 24
 	if days > 0 {
 		rem := d - time.Duration(days*24)*time.Hour
-		return fmt.Sprintf("%d-%s", days, utils.FormatHMS(rem))
+		return fmt.Sprintf("%d-%s", days, units.FormatHMS(rem))
 	}
-	return utils.FormatHMS(d)
+	return units.FormatHMS(d)
 }
 
 // GetJobResources reads allocated resources from SLURM environment variables.

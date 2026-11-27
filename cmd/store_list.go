@@ -12,6 +12,7 @@ import (
 	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 	"github.com/spf13/cobra"
 )
 
@@ -102,7 +103,7 @@ func printStoreReport(scanned store.Report, detail bool) error {
 		}
 		for _, candidate := range byRoot[root] {
 			fmt.Fprintf(os.Stdout, "%-34s %-6s %9s  %s\n", storeAddress(candidate),
-				candidate.Layout, utils.FormatSize(candidate.Size),
+				candidate.Layout, units.FormatSize(candidate.Size),
 				relativeTo(root, candidate.Path))
 		}
 	}

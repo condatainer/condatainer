@@ -13,6 +13,7 @@ import (
 	"log/slog"
 
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // logParseWarning logs a parser diagnostic warning, except in a job.
@@ -215,7 +216,7 @@ func writeJobHeader(w io.Writer, jobIDVar string, specs *ScriptSpecs, formatTime
 			fmt.Fprintf(w, "echo \"%s %d\"\n", cpuLabel, rs.CpusPerTask)
 		}
 		if memPerTaskMB := rs.GetMemPerTaskMB(); memPerTaskMB > 0 {
-			fmt.Fprintf(w, "echo \"%s %s\"\n", memLabel, utils.FormatSizeInput(memPerTaskMB))
+			fmt.Fprintf(w, "echo \"%s %s\"\n", memLabel, units.FormatSizeInput(memPerTaskMB))
 		}
 		if rs.Time > 0 && formatTime != nil {
 			fmt.Fprintf(w, "echo \"Time:       %s\"\n", formatTime(rs.Time))
@@ -286,12 +287,21 @@ func writeArrayBlock(w io.Writer, taskIDVar, inputFile, logDir, jobName string,
 }
 
 // parseMemoryMB reads a memory a scheduler wrote, such as "8G", "1024M" or "512K", in MB.
-//   - A bare number is MB, as in a scheduler's own directives and output. What a person types is read by utils.ParseSizeInput.
+//   - A bare number is MB, as in a scheduler's own directives and output. What a person types is read by units.ParseSizeInput.
 //   - An error wraps ErrInvalidMemoryFormat.
 func parseMemoryMB(memStr string) (int64, error) {
-	mb, err := utils.ParseMemoryMBWithDefault(memStr, "MB")
+	mb, err := units.ParseMemoryMBWithDefault(memStr, "MB")
 	if err != nil {
 		return 0, fmt.Errorf("%w: %s", ErrInvalidMemoryFormat, memStr)
 	}
 	return mb, nil
+}
+
+// stripInlineComment removes everything after the first '#' character (inline comment).
+// Returns the trimmed string without the comment.
+func stripInlineComment(s string) string {
+	if idx := strings.Index(s, "#"); idx >= 0 {
+		s = s[:idx]
+	}
+	return strings.TrimSpace(s)
 }

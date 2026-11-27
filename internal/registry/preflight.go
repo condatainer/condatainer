@@ -17,7 +17,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/condatainer/condatainer/internal/logging"
-	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // What a push is checked against before it spends an hour finding out.
@@ -101,8 +101,8 @@ func preflightUpload(ctx context.Context, artifactPath, repository string, tags 
 
 	log := logging.FromContext(ctx)
 	log.Info("Upload plan",
-		"size", utils.FormatSize(plan.Size),
-		"layer-size", fmt.Sprintf("%s (%s)", utils.FormatSize(plan.LayerSize), plan.Reason),
+		"size", units.FormatSize(plan.Size),
+		"layer-size", fmt.Sprintf("%s (%s)", units.FormatSize(plan.LayerSize), plan.Reason),
 		"layers", plan.Layers,
 		"requests", "~"+fmt.Sprint(plan.Requests),
 		"registry", registryHost(repository))
@@ -233,7 +233,7 @@ func estimateRequests(layers int) int {
 func checkManifestFits(layers int) error {
 	if estimate := int64(layers) * descriptorBytes; estimate > maxManifestBytes {
 		return fmt.Errorf("%d layers need about %s of manifest, past the %s registries are expected to accept",
-			layers, utils.FormatSize(estimate), utils.FormatSize(maxManifestBytes))
+			layers, units.FormatSize(estimate), units.FormatSize(maxManifestBytes))
 	}
 	return nil
 }

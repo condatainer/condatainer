@@ -25,6 +25,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 	"github.com/spf13/cobra"
 )
 
@@ -272,7 +273,7 @@ func displayImageInfo(overlayPath string) error {
 	fmt.Printf("  %-14s %s\n", "Name:", filepath.Base(overlayPath))
 	displayDescription(description)
 	fmt.Printf("  %-14s %s\n", "Path:", overlayPath)
-	fmt.Printf("  %-14s %s\n", "Size:", utils.FormatSize(fileInfo.Size()))
+	fmt.Printf("  %-14s %s\n", "Size:", units.FormatSize(fileInfo.Size()))
 	fmt.Printf("  %-14s %s (Read-Only)\n", "Type:", typeLabel(typ))
 	if typ == artifact.TypeOS {
 		if osInfo := squashfs.GetOSInfoAt(overlayPath, offset); osInfo != nil {
@@ -293,7 +294,7 @@ func displayImageInfo(overlayPath string) error {
 			comprStr = fmt.Sprintf("%s (level %d)", sqStats.Compression, sqStats.CompressionLevel)
 		}
 		fmt.Printf("  %-14s %s\n", "Compression:", comprStr)
-		fmt.Printf("  %-14s %s\n", "Block Size:", utils.FormatSize(sqStats.BlockSize))
+		fmt.Printf("  %-14s %s\n", "Block Size:", units.FormatSize(sqStats.BlockSize))
 		fmt.Printf("  %-14s %d\n", "Inodes:", sqStats.NumInodes)
 		fmt.Printf("  %-14s %d\n", "Fragments:", sqStats.NumFragments)
 		if sqStats.DuplicatesRemoved {
@@ -417,11 +418,11 @@ func displayImgInfo(overlayPath string) error {
 	fmt.Printf("  %-14s %s\n", "Name:", filepath.Base(overlayPath))
 	displayDescription(description)
 	fmt.Printf("  %-14s %s\n", "Path:", overlayPath)
-	fmt.Printf("  %-14s %s\n", "Size:", utils.FormatSize(stats.FileSizeBytes))
+	fmt.Printf("  %-14s %s\n", "Size:", units.FormatSize(stats.FileSizeBytes))
 	// Not a recipe type: an .img is a mutable working overlay, never built from a
 	// recipe, so it carries no embedded metadata to take a type from.
 	if stats.IsSparse {
-		fmt.Printf("  %-14s %s (Writable; %s on disk)\n", "Type:", "environment", utils.FormatSize(stats.FileBlocksUsed))
+		fmt.Printf("  %-14s %s (Writable; %s on disk)\n", "Type:", "environment", units.FormatSize(stats.FileBlocksUsed))
 	} else {
 		fmt.Printf("  %-14s %s (Writable)\n", "Type:", "environment")
 	}
@@ -452,14 +453,14 @@ func displayImgInfo(overlayPath string) error {
 	// Disk Usage section
 	fmt.Println(utils.StyleTitle("Disk Usage"))
 	fmt.Printf("  %-14s %s / %s (%.2f%%)\n", "Used:",
-		utils.FormatSize(usedBytes),
-		utils.FormatSize(totalBytes),
+		units.FormatSize(usedBytes),
+		units.FormatSize(totalBytes),
 		diskPct)
 	if stats.ReservedBlocks > 0 {
 		reservedPct := float64(stats.ReservedBlocks) / float64(stats.TotalBlocks) * 100
-		fmt.Printf("  %-14s %s (%.1f%% for root)\n", "Reserved:", utils.FormatSize(reservedBytes), reservedPct)
+		fmt.Printf("  %-14s %s (%.1f%% for root)\n", "Reserved:", units.FormatSize(reservedBytes), reservedPct)
 	}
-	fmt.Printf("  %-14s %s\n", "Free:", utils.FormatSize(freeBytes))
+	fmt.Printf("  %-14s %s\n", "Free:", units.FormatSize(freeBytes))
 
 	// Inode Usage section
 	fmt.Println(utils.StyleTitle("Inode Usage"))

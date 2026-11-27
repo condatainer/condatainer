@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 )
@@ -92,5 +93,28 @@ func TestPreReleaseLadder(t *testing.T) {
 	slices.SortFunc(shuffled, CompareVersions)
 	if !slices.Equal(shuffled, ladder) {
 		t.Errorf("ascending = %v, want %v", shuffled, ladder)
+	}
+}
+
+func TestSortVersionsDescending(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []string
+		want  []string
+	}{
+		{"integers", []string{"22", "26", "23", "25", "24"}, []string{"26", "25", "24", "23", "22"}},
+		{"semver", []string{"2.7.11a", "2.7.11b", "2.7.10"}, []string{"2.7.11b", "2.7.11a", "2.7.10"}},
+		{"semver-mixed-suffix", []string{"2.7.9a", "2.7.11b", "2.7.10"}, []string{"2.7.11b", "2.7.10", "2.7.9a"}},
+		{"mixed", []string{"101", "75", "151"}, []string{"151", "101", "75"}},
+		{"single", []string{"1.0"}, []string{"1.0"}},
+		{"empty", []string{}, []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SortVersionsDescending(tt.input)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("SortVersionsDescending(%v) = %v; want %v", tt.input, got, tt.want)
+			}
+		})
 	}
 }

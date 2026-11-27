@@ -17,6 +17,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 	"github.com/spf13/cobra"
 )
 
@@ -291,7 +292,7 @@ func copyFile(src, dst string) error {
 	}
 	defer in.Close() //nolint:errcheck
 	if info, err := in.Stat(); err == nil {
-		utils.PrintMessage("Copying %s to %s (%s)", src, dst, utils.FormatSize(info.Size()))
+		utils.PrintMessage("Copying %s to %s (%s)", src, dst, units.FormatSize(info.Size()))
 	}
 	part := dst + producer.PreparedSuffix
 	out, err := utils.CreateFileWritable(part)

@@ -8,6 +8,7 @@ import (
 	"github.com/condatainer/condatainer/internal/helper"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 	"github.com/spf13/cobra"
 )
 
@@ -117,10 +118,10 @@ func runHelperConfig(name, scriptPath string, args []string) error {
 				cpuDef = fmt.Sprintf("%d", spec.CpusPerTask)
 			}
 			if mb := spec.GetMemPerNodeMB(); mb > 0 {
-				memDef = utils.FormatSizeInput(mb)
+				memDef = units.FormatSizeInput(mb)
 			}
 			if spec.Time > 0 {
-				timeDef = utils.FormatDuration(spec.Time)
+				timeDef = units.FormatDuration(spec.Time)
 			}
 		}
 		rows = append(rows,

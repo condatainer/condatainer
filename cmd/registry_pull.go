@@ -107,8 +107,12 @@ func writePullStep(cmd *cobra.Command, found resolvedRegistryArtifact, repositor
 // images directory.
 func registryPullDestination(prefix, name, title string) (string, error) {
 	if prefix != "" {
-		if !utils.IsSqf(filepath.Base(prefix)) {
-			prefix += pullExt
+		base := filepath.Base(prefix)
+		if !utils.IsSqf(base) {
+			return prefix + pullExt, nil
+		}
+		if strings.TrimSuffix(base, filepath.Ext(base)) == "" {
+			return "", fmt.Errorf("--prefix %s has no file name before %s", prefix, filepath.Ext(base))
 		}
 		return prefix, nil
 	}

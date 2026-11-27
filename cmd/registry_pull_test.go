@@ -27,6 +27,13 @@ func TestRegistryPullDestination(t *testing.T) {
 	if err != nil || filepath.Base(dest) != "custom.v1.sqf" {
 		t.Errorf("extensionless dotted prefix = (%q, %v)", dest, err)
 	}
+	dest, err = registryPullDestination(filepath.Join(t.TempDir(), "custom.sqf"), "hello/1.0", "")
+	if err != nil || filepath.Base(dest) != "custom.sqf" {
+		t.Errorf("a prefix with the extension = (%q, %v)", dest, err)
+	}
+	if _, err := registryPullDestination(filepath.Join(t.TempDir(), ".sqf"), "hello/1.0", ""); err == nil {
+		t.Error("a prefix that is only .sqf named a hidden file")
+	}
 	dest, err = registryPullDestination("", "", "hello/1.0")
 	if err != nil || dest != filepath.Join(images, "hello--1.0.sqf") {
 		t.Fatalf("destination from the published title = (%q, %v)", dest, err)

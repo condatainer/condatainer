@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // How the guard decides a layer will not finish in time.
@@ -80,7 +80,7 @@ func (g *throughputGuard) check(bytes int64) error {
 	needed := float64(bytes) / g.budget.Seconds()
 	return fmt.Errorf(
 		"this link cannot carry a %s layer inside the registry's upload budget: measured %s/s, need %s/s to finish in %s (projected %s)",
-		utils.FormatSize(bytes), utils.FormatSize(int64(rate)), utils.FormatSize(int64(needed)),
+		units.FormatSize(bytes), units.FormatSize(int64(rate)), units.FormatSize(int64(needed)),
 		g.budget.Round(time.Second), projected.Round(time.Second))
 }
 

@@ -1,58 +1,9 @@
-package utils
+package units
 
 import (
-	"reflect"
 	"testing"
 	"time"
 )
-
-func TestStripInlineComment(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"No comment", "--cpus-per-task=8", "--cpus-per-task=8"},
-		{"With comment", "--cpus-per-task=8  # This is a comment", "--cpus-per-task=8"},
-		{"Comment only", "# Just a comment", ""},
-		{"Multiple hashes", "--mem=16G # First # Second", "--mem=16G"},
-		{"Hash in value needs escaping", "foo=bar#baz", "foo=bar"},
-		{"Whitespace around comment", "--time=02:00:00   #   Time limit  ", "--time=02:00:00"},
-		{"Empty after hash", "value #", "value"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := StripInlineComment(tt.input)
-			if got != tt.want {
-				t.Errorf("StripInlineComment(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestSortVersionsDescending(t *testing.T) {
-	tests := []struct {
-		name  string
-		input []string
-		want  []string
-	}{
-		{"integers", []string{"22", "26", "23", "25", "24"}, []string{"26", "25", "24", "23", "22"}},
-		{"semver", []string{"2.7.11a", "2.7.11b", "2.7.10"}, []string{"2.7.11b", "2.7.11a", "2.7.10"}},
-		{"semver-mixed-suffix", []string{"2.7.9a", "2.7.11b", "2.7.10"}, []string{"2.7.11b", "2.7.10", "2.7.9a"}},
-		{"mixed", []string{"101", "75", "151"}, []string{"151", "101", "75"}},
-		{"single", []string{"1.0"}, []string{"1.0"}},
-		{"empty", []string{}, []string{}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := SortVersionsDescending(tt.input)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("SortVersionsDescending(%v) = %v; want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
 
 func TestFormatSpeed(t *testing.T) {
 	tests := []struct {

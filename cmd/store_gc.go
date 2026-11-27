@@ -12,6 +12,7 @@ import (
 	"github.com/condatainer/condatainer/internal/report"
 	"github.com/condatainer/condatainer/internal/store"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 	"github.com/spf13/cobra"
 )
 
@@ -151,7 +152,7 @@ func newStoreGCCmd() *cobra.Command {
 				return err
 			}
 			utils.PrintSuccess("Removed %s, %s freed%s.",
-				entryCount(len(removed.Collectable)), utils.FormatSize(removed.Reclaimable), config.LayerNote(collectablePaths(removed)...))
+				entryCount(len(removed.Collectable)), units.FormatSize(removed.Reclaimable), config.LayerNote(collectablePaths(removed)...))
 			return nil
 		},
 	}
@@ -187,19 +188,19 @@ func printGCReport(found *store.GCReport) {
 			label = "abandoned staging file"
 		}
 		fmt.Fprintf(os.Stdout, "  %-10s %-28s %8s  %s (%s)\n", "collectable", label,
-			utils.FormatSize(entry.Size), entry.Path,
-			fmt.Sprintf("%s %s", entry.Basis, utils.FormatDuration(entry.Age)))
+			units.FormatSize(entry.Size), entry.Path,
+			fmt.Sprintf("%s %s", entry.Basis, units.FormatDuration(entry.Age)))
 	}
 	for _, entry := range found.Retained {
 		utils.PrintDebug("kept %s: %s", entry.Path, entry.Reason)
 	}
 	if len(found.Collectable) == 0 {
 		utils.PrintSuccess("Nothing to collect (%s kept, grace %s).",
-			entryCount(len(found.Retained)), utils.FormatDuration(found.Grace))
+			entryCount(len(found.Retained)), units.FormatDuration(found.Grace))
 		return
 	}
 	utils.PrintSuccess("%s collectable, %s reclaimable%s.",
-		entryCount(len(found.Collectable)), utils.FormatSize(found.Reclaimable), config.LayerNote(collectablePaths(found)...))
+		entryCount(len(found.Collectable)), units.FormatSize(found.Reclaimable), config.LayerNote(collectablePaths(found)...))
 }
 
 // entryCount words a number of store entries, such as "1 entry" or "3 entries".

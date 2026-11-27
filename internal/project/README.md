@@ -73,6 +73,14 @@
   - What a slot lists is `slot.Decl.Listed()`. `create --needed-by` installs the same set.
   - A slot follows its script in a project. An overlay no pin covers, such as one a `strict=false` slot is bound to or one the lock was not rebuilt for, resolves from what is installed, is not recorded, and `run` says it is not pinned.
 
+### Reading `.gitignore`
+
+- The `.gitignore` reader reads the `.gitignore` pattern syntax with no library and no `git`, so the answer is the same for a directory owned by another user and a project outside a repository.
+- A matcher answers for one path, relative to the directory its file lives in. Layering several files is the caller's.
+- It does not test a path's parents. A walker skips an ignored directory, so git's rule that an ignored directory cannot be re-included holds.
+- `**` is special only as a whole component. Beside other text it reads as `*`.
+- A line that cannot compile is skipped, as git skips it.
+
 ## Manual pins
 
 - `Pins` is a projection of the scan. Reconcile deletes every key the scan does not produce, so the map can be rebuilt from nothing.

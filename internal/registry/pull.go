@@ -22,6 +22,7 @@ import (
 	"github.com/condatainer/condatainer/internal/image/producer"
 	"github.com/condatainer/condatainer/internal/logging"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // Pull downloads the artifact at desc and installs it at destPath.
@@ -376,7 +377,7 @@ func requireFreeSpace(dir string, required int64) error {
 	}
 	if available := int64(stat.Bavail) * int64(stat.Bsize); available < required {
 		return fmt.Errorf("not enough space in %s: need %s, %s available",
-			dir, utils.FormatSize(required), utils.FormatSize(available))
+			dir, units.FormatSize(required), units.FormatSize(available))
 	}
 	return nil
 }

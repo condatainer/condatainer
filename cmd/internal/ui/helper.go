@@ -22,6 +22,7 @@ import (
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/server"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // OfferRecentSessions shows active instances and recent history together, deduplicated by CWD.
@@ -179,7 +180,7 @@ func ApplyHistoryRun(opts *helper.RunOptions, r *helper.HelperRun) {
 			opts.Resources.CpusPerTask = r.CPU
 		}
 		if r.Mem != "" {
-			if mb, err := utils.ParseSizeInput(r.Mem); err == nil {
+			if mb, err := units.ParseSizeInput(r.Mem); err == nil {
 				opts.Resources.MemPerNodeMB = mb
 			}
 		}
@@ -273,12 +274,12 @@ func PromptSettings(ctx context.Context,
 		}
 		if flagVal, fromFlag := values[p.Key]; fromFlag && len(vlist) > 0 {
 			// Validate flag-provided value against known versions; resolve partials.
-			matched := utils.MatchVersion(flagVal, vlist)
+			matched := matchVersion(flagVal, vlist)
 			if matched != flagVal {
 				result[p.Key] = matched // silently resolve partial (e.g. "4.4" → "4.4.3")
 			} else if !slices.Contains(vlist, flagVal) {
 				return nil, fmt.Errorf("invalid value %q for --%s: not in known versions (%s)",
-					flagVal, strings.TrimPrefix(p.LongFlag, "--"), utils.FormatChoicesInline(vlist))
+					flagVal, strings.TrimPrefix(p.LongFlag, "--"), helper.FormatChoicesInline(vlist))
 			}
 		} else if _, ok := result[p.Key]; !ok {
 			result[p.Key] = defVal
@@ -312,14 +313,14 @@ func PromptSettings(ctx context.Context,
 	}
 	if memMB == 0 {
 		if v, ok := saved["mem"]; ok {
-			if mb, err := utils.ParseSizeInput(v); err == nil && mb > 0 {
+			if mb, err := units.ParseSizeInput(v); err == nil && mb > 0 {
 				memMB = mb
 			}
 		}
 	}
 	if walltime == 0 {
 		if v, ok := saved["time"]; ok {
-			if d, err := utils.ParseTimeInput(v); err == nil && d > 0 {
+			if d, err := units.ParseTimeInput(v); err == nil && d > 0 {
 				walltime = d
 			}
 		}
@@ -347,11 +348,11 @@ func PromptSettings(ctx context.Context,
 	if cpus == 0 {
 		cpuDisp = "(none)"
 	}
-	memDisp := utils.FormatSizeInput(memMB)
+	memDisp := units.FormatSizeInput(memMB)
 	if memMB == 0 {
 		memDisp = "(none)"
 	}
-	timeDisp := utils.FormatDuration(walltime)
+	timeDisp := units.FormatDuration(walltime)
 	if walltime == 0 {
 		timeDisp = "(none)"
 	}
@@ -455,7 +456,7 @@ func PromptSettings(ctx context.Context,
 		}
 		choices := ""
 		if len(e.versionList) > 0 {
-			choices = utils.FormatChoicesInline(e.versionList)
+			choices = helper.FormatChoicesInline(e.versionList)
 		}
 		printRow(e.displayKey, rawVal, e.p.Description, choices)
 	}
@@ -501,21 +502,21 @@ func PromptSettings(ctx context.Context,
 				opts.Resources.CpusPerTask = n
 				confirm = fmt.Sprintf("%d", n)
 			case "m", "mem", "memory":
-				mb, err := utils.ParseSizeInput(v)
+				mb, err := units.ParseSizeInput(v)
 				if err != nil {
 					fmt.Printf("[?] Invalid memory %q — try again: ", v)
 					continue
 				}
 				opts.Resources.MemPerNodeMB = mb
-				confirm = utils.FormatSizeInput(mb)
+				confirm = units.FormatSizeInput(mb)
 			case "t", "time", "walltime":
-				d, err := utils.ParseTimeInput(v)
+				d, err := units.ParseTimeInput(v)
 				if err != nil {
 					fmt.Printf("[?] Invalid walltime %q — try again: ", v)
 					continue
 				}
 				opts.Resources.Time = d
-				confirm = utils.FormatDuration(d)
+				confirm = units.FormatDuration(d)
 			case "g", "gpu":
 				gpu, err := scheduler.ParseGPU(v)
 				if err != nil {
@@ -604,12 +605,12 @@ func PromptSettings(ctx context.Context,
 		}
 		e := paramEntries[idx]
 		if len(e.versionList) > 0 {
-			matched := utils.MatchVersion(v, e.versionList)
+			matched := matchVersion(v, e.versionList)
 			if matched != v {
 				fmt.Printf("  → resolved to %s\n", matched)
 				v = matched
 			} else if !slices.Contains(e.versionList, v) {
-				fmt.Printf("[?] %q is not a valid value (%s) — try again: ", v, utils.FormatChoicesInline(e.versionList))
+				fmt.Printf("[?] %q is not a valid value (%s) — try again: ", v, helper.FormatChoicesInline(e.versionList))
 				continue
 			}
 		}
@@ -638,10 +639,10 @@ func PrintLaunchSpec(plan *helper.RunPlan) {
 			utils.PrintMessage("  CPUs:     %d", spec.CpusPerTask)
 		}
 		if mb := spec.GetMemPerNodeMB(); mb > 0 {
-			utils.PrintMessage("  Memory:   %s", utils.FormatSizeInput(mb))
+			utils.PrintMessage("  Memory:   %s", units.FormatSizeInput(mb))
 		}
 		if spec.Time > 0 {
-			utils.PrintMessage("  Walltime: %s", utils.FormatDuration(spec.Time))
+			utils.PrintMessage("  Walltime: %s", units.FormatDuration(spec.Time))
 		}
 	}
 	if gpu := helper.FormatGpuSpec(plan.Spec); gpu != "" {
@@ -726,7 +727,7 @@ func GuidedOverlayCreate(ctx context.Context, helperName string, meta helper.Hel
 	if err != nil {
 		return "", err
 	}
-	sizeMB64, err := utils.ParseSizeInput(sizeStr)
+	sizeMB64, err := units.ParseSizeInput(sizeStr)
 	if err == nil && sizeMB64 == 0 {
 		err = fmt.Errorf("a size is required")
 	}
@@ -797,15 +798,15 @@ func GuidedInstallMissing(ctx context.Context, e *helper.ErrMissingPackages) err
 	// Build pkgVersion (package name → chosen version) to inject into the install spec.
 	pkgVersion := make(map[string]string)
 	for pkg, vlist := range e.VersionChoices {
-		choices := utils.VersionChoicesDisplay(vlist)
+		choices := versionChoicesDisplay(vlist)
 		utils.PrintMessage("Available %s: %s", pkg, strings.Join(choices, ", "))
 		label := strings.ToUpper(pkg[:1]) + pkg[1:] + " version"
-		val, err := promptDefault(ctx, "[?] "+label, utils.LatestVersion(vlist))
+		val, err := promptDefault(ctx, "[?] "+label, latestVersion(vlist))
 		if err != nil {
 			return err
 		}
 		if val != "" {
-			matched := utils.MatchVersion(val, vlist)
+			matched := matchVersion(val, vlist)
 			if matched != val {
 				utils.PrintMessage("  → resolved to %s", matched)
 				val = matched
@@ -999,7 +1000,7 @@ func formatRunResources(r *helper.HelperRun) string {
 		parts = append(parts, r.Mem)
 	}
 	if r.WalltimeSecs > 0 {
-		parts = append(parts, utils.FormatDuration(r.Walltime()))
+		parts = append(parts, units.FormatDuration(r.Walltime()))
 	}
 	if r.GPU != "" {
 		parts = append(parts, r.GPU)
@@ -1025,14 +1026,14 @@ func promptDefault(ctx context.Context, prompt, defaultVal string) (string, erro
 
 func promptCreationTokens(ctx context.Context, imgPackages string, params map[string]string, versions map[string][]string) (map[string]string, error) {
 	result := make(map[string]string)
-	for _, tok := range utils.ExtractEnvPackageTokens(imgPackages) {
+	for _, tok := range extractEnvPackageTokens(imgPackages) {
 		if _, ok := params[tok]; ok {
 			continue
 		}
 		vlist := versions[tok]
-		defVal := utils.LatestVersion(vlist)
+		defVal := latestVersion(vlist)
 		if len(vlist) > 0 {
-			choices := utils.VersionChoicesDisplay(vlist)
+			choices := versionChoicesDisplay(vlist)
 			utils.PrintMessage("Available %s: %s", tok, strings.Join(choices, ", "))
 		}
 		label := formatTokenLabel(tok)
@@ -1041,7 +1042,7 @@ func promptCreationTokens(ctx context.Context, imgPackages string, params map[st
 			return nil, err
 		}
 		if len(vlist) > 0 && val != "" {
-			matched := utils.MatchVersion(val, vlist)
+			matched := matchVersion(val, vlist)
 			if matched != val {
 				utils.PrintMessage("  → resolved to %s", matched)
 				val = matched

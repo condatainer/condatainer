@@ -27,12 +27,12 @@ func IgnorePath(root string) string { return filepath.Join(Dir(root), IgnoreFile
 type members struct {
 	root  string
 	skip  map[string]bool
-	git   map[string]*utils.Ignore
-	extra *utils.Ignore
+	git   map[string]*gitIgnore
+	extra *gitIgnore
 }
 
 func newMembers(root string, excludeDirs []string) (*members, error) {
-	m := &members{root: root, skip: map[string]bool{DirName: true}, git: map[string]*utils.Ignore{}}
+	m := &members{root: root, skip: map[string]bool{DirName: true}, git: map[string]*gitIgnore{}}
 	for _, dir := range excludeDirs {
 		if dir = strings.TrimSpace(dir); dir != "" {
 			m.skip[dir] = true
@@ -41,11 +41,11 @@ func newMembers(root string, excludeDirs []string) (*members, error) {
 	text, err := os.ReadFile(IgnorePath(root))
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		m.extra = utils.ParseIgnore(nil)
+		m.extra = parseIgnore(nil)
 	case err != nil:
 		return nil, err
 	default:
-		m.extra = utils.ParseIgnore(text)
+		m.extra = parseIgnore(text)
 		if lines := m.extra.Negations(); len(lines) > 0 {
 			return nil, fmt.Errorf("%s line %d: %w: a file `.gitignore` ignores is not part of the project, so edit `.gitignore` to bring it back",
 				IgnorePath(root), lines[0], ErrIgnoreNegation)
@@ -59,7 +59,7 @@ func (m *members) ignores(rel string, isDir bool) bool {
 	if isDir && (m.skip[path.Base(rel)] || strings.HasPrefix(path.Base(rel), ".")) {
 		return true
 	}
-	return m.gitIgnored(rel, isDir) || m.extra.Match(rel, isDir) == utils.IgnoreYes
+	return m.gitIgnored(rel, isDir) || m.extra.Match(rel, isDir) == ignoreYes
 }
 
 // gitIgnored applies the `.gitignore` of the path's directory and of each parent; the deepest file that has a verdict decides.
@@ -69,8 +69,8 @@ func (m *members) gitIgnored(rel string, isDir bool) bool {
 			dir = ""
 		}
 		sub := strings.TrimPrefix(strings.TrimPrefix(rel, dir), "/")
-		if verdict := m.gitignore(dir).Match(sub, isDir); verdict != utils.IgnoreNone {
-			return verdict == utils.IgnoreYes
+		if verdict := m.gitignore(dir).Match(sub, isDir); verdict != ignoreNone {
+			return verdict == ignoreYes
 		}
 		if dir == "" {
 			return false
@@ -79,12 +79,12 @@ func (m *members) gitIgnored(rel string, isDir bool) bool {
 }
 
 // gitignore returns the rules of one directory's `.gitignore`, read once.
-func (m *members) gitignore(dir string) *utils.Ignore {
+func (m *members) gitignore(dir string) *gitIgnore {
 	if ig, ok := m.git[dir]; ok {
 		return ig
 	}
 	text, _ := os.ReadFile(filepath.Join(m.root, filepath.FromSlash(dir), ".gitignore"))
-	ig := utils.ParseIgnore(text)
+	ig := parseIgnore(text)
 	m.git[dir] = ig
 	return ig
 }

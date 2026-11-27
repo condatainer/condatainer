@@ -6,6 +6,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/image/ext3"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +33,7 @@ var resizeCmd = &cobra.Command{
 		}
 
 		// 2. Parse Size
-		sizeMB64, err := utils.ParseSizeInput(sizeStr)
+		sizeMB64, err := units.ParseSizeInput(sizeStr)
 		if err == nil && sizeMB64 == 0 {
 			err = fmt.Errorf("a size is required")
 		}

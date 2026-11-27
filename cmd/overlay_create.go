@@ -12,6 +12,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/container"
 	"github.com/condatainer/condatainer/internal/runtime/exec"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 	"github.com/spf13/cobra"
 )
 
@@ -91,7 +92,7 @@ func runOverlayCreate(cmd *cobra.Command, args []string) {
 		ExitWithError("Cannot use -f/--file and inline packages (--) at the same time.")
 	}
 
-	sizeMB64, err := utils.ParseSizeInput(sizeStr)
+	sizeMB64, err := units.ParseSizeInput(sizeStr)
 	if err == nil && sizeMB64 == 0 {
 		err = fmt.Errorf("a size is required")
 	}

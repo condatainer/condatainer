@@ -6,6 +6,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/image/freeze"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 	"github.com/spf13/cobra"
 )
 
@@ -46,7 +47,7 @@ var overlayUnfreezeCmd = &cobra.Command{
 
 		sizeMB := 0
 		if unfreezeSize != "" {
-			parsed, err := utils.ParseSizeInput(unfreezeSize)
+			parsed, err := units.ParseSizeInput(unfreezeSize)
 			if err != nil {
 				ExitWithError("%v", err)
 			}

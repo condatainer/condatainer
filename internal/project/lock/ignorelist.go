@@ -139,13 +139,13 @@ func ScriptsMatching(root, line string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	m.extra = utils.ParseIgnore(nil)
-	pattern := utils.ParseIgnore([]byte(line))
+	m.extra = parseIgnore(nil)
+	pattern := parseIgnore([]byte(line))
 	var scripts []string
 	err = walkScripts(root, m, func(_, rel string) error {
 		parts := strings.Split(rel, "/")
 		for i := range parts {
-			if pattern.Match(strings.Join(parts[:i+1], "/"), i < len(parts)-1) == utils.IgnoreYes {
+			if pattern.Match(strings.Join(parts[:i+1], "/"), i < len(parts)-1) == ignoreYes {
 				scripts = append(scripts, rel)
 				return nil
 			}

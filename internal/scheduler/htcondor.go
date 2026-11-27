@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // HTCondorScheduler implements the Scheduler interface for HTCondor
@@ -482,7 +483,7 @@ func (h *HTCondorScheduler) CreateScriptWithSpec(jobSpec *JobSpec, outputDir str
 	}
 
 	// Print job information at start
-	writeJobHeader(shWriter, jobAdLabelExpr, specs, utils.FormatTimeDetail, jobSpec.Metadata)
+	writeJobHeader(shWriter, jobAdLabelExpr, specs, units.FormatTimeDetail, jobSpec.Metadata)
 	fmt.Fprintln(shWriter, "")
 
 	// Write the command and capture exit code

@@ -9,6 +9,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/config"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // HelperConfigPath returns the path to the per-helper saved config file.
@@ -57,17 +58,17 @@ func SetHelperConfigKey(name, key, value string) error {
 func NormalizeConfigValue(key, value string) (string, error) {
 	switch strings.ToLower(key) {
 	case "mem":
-		mb, err := utils.ParseSizeInput(value)
+		mb, err := units.ParseSizeInput(value)
 		if err != nil || mb == 0 {
 			return "", fmt.Errorf("mem: %q is not a size: use 16 (GiB), 1.5G or 512M", value)
 		}
-		return utils.FormatSizeInput(mb), nil
+		return units.FormatSizeInput(mb), nil
 	case "time":
-		d, err := utils.ParseTimeInput(value)
+		d, err := units.ParseTimeInput(value)
 		if err != nil || d == 0 {
 			return "", fmt.Errorf("time: %q is not a time: use 12 (hours), 12:30 or 2h30m", value)
 		}
-		return utils.FormatDuration(d), nil
+		return units.FormatDuration(d), nil
 	}
 	return value, nil
 }

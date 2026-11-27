@@ -23,6 +23,7 @@ import (
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -551,14 +552,14 @@ func parseResourceFlags(fs *pflag.FlagSet) (resourceFlags, error) {
 		f.cpus = runCPU
 	}
 	if runMem != "" {
-		mb, err := utils.ParseSizeInput(runMem)
+		mb, err := units.ParseSizeInput(runMem)
 		if err != nil {
 			return f, fmt.Errorf("--mem %q: %v", runMem, err)
 		}
 		f.memMB = mb
 	}
 	if runTime != "" {
-		d, err := utils.ParseTimeInput(runTime)
+		d, err := units.ParseTimeInput(runTime)
 		if err != nil {
 			return f, fmt.Errorf("--time %q: %v", runTime, err)
 		}
@@ -1124,14 +1125,14 @@ func printDryRunSummary(ctx context.Context, contentScript, originScript string,
 			if !isMPI {
 				memLabel = "Mem:       "
 			}
-			fmt.Printf("  %s %s\n", memLabel, utils.FormatSizeInput(memPerTaskMB))
+			fmt.Printf("  %s %s\n", memLabel, units.FormatSizeInput(memPerTaskMB))
 			if warning := memoryGuessWarning(specs); warning != "" {
 				utils.PrintWarning("%s", warning)
 			}
 		}
 		// Only a submitted job has a time. A run neither enforces nor exports one.
 		if rs.Time > 0 && willSubmitRun(specs) {
-			fmt.Printf("  Time:       %s\n", utils.FormatTimeDetail(rs.Time))
+			fmt.Printf("  Time:       %s\n", units.FormatTimeDetail(rs.Time))
 		}
 		if rs.Gpu != nil {
 			if rs.Gpu.Type != "" {

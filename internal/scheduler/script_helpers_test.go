@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 func TestResourceEnvVars(t *testing.T) {
@@ -260,14 +260,14 @@ func TestCreateScriptFileUnique(t *testing.T) {
 	}
 }
 
-// The Elapsed line of a job log writes a time as utils.FormatTimeDetail does: HH:MM:SS under a day, D-HH:MM:SS from a day.
+// The Elapsed line of a job log writes a time as units.FormatTimeDetail does: HH:MM:SS under a day, D-HH:MM:SS from a day.
 func TestJobFooterTimeMatchesTimeDetail(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash is not installed")
 	}
 	var header strings.Builder
-	writeJobHeader(&header, "$JOB", nil, utils.FormatTimeDetail, nil)
+	writeJobHeader(&header, "$JOB", nil, units.FormatTimeDetail, nil)
 	var definition string
 	for _, line := range strings.Split(header.String(), "\n") {
 		if strings.HasPrefix(line, "_format_time()") {
@@ -282,8 +282,33 @@ func TestJobFooterTimeMatchesTimeDetail(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%d seconds: %v", seconds, err)
 		}
-		if want := utils.FormatTimeDetail(time.Duration(seconds) * time.Second); string(out) != want {
+		if want := units.FormatTimeDetail(time.Duration(seconds) * time.Second); string(out) != want {
 			t.Errorf("_format_time %d = %q, want %q", seconds, out, want)
 		}
+	}
+}
+
+func TestStripInlineComment(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"No comment", "--cpus-per-task=8", "--cpus-per-task=8"},
+		{"With comment", "--cpus-per-task=8  # This is a comment", "--cpus-per-task=8"},
+		{"Comment only", "# Just a comment", ""},
+		{"Multiple hashes", "--mem=16G # First # Second", "--mem=16G"},
+		{"Hash in value needs escaping", "foo=bar#baz", "foo=bar"},
+		{"Whitespace around comment", "--time=02:00:00   #   Time limit  ", "--time=02:00:00"},
+		{"Empty after hash", "value #", "value"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripInlineComment(tt.input)
+			if got != tt.want {
+				t.Errorf("stripInlineComment(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }

@@ -75,9 +75,6 @@ func StyleSuccess(msg string) string { return green(msg) }
 // StyleWarning formats non-critical warnings (Yellow).
 func StyleWarning(msg string) string { return yellow(msg) }
 
-// StyleDebug formats the debug-line prefix (Gray).
-func StyleDebug(msg string) string { return gray(msg) }
-
 // StyleDim formats secondary text a reader can skip (Gray).
 func StyleDim(msg string) string { return gray(msg) }
 

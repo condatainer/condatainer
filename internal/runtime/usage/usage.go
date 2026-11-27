@@ -12,6 +12,7 @@ import (
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // The job kinds record_usage names, and the launch kind of a helper.
@@ -147,13 +148,13 @@ func Finish() {
 //   - It says what the process used. The cores figure is CPU time over wall time.
 //   - A platform with no usage figures gives the wall time alone.
 func Line(r Result) string {
-	parts := []string{"wall=" + utils.FormatTimeDetail(r.Wall)}
+	parts := []string{"wall=" + units.FormatTimeDetail(r.Wall)}
 	if r.CPU > 0 || r.PeakMB > 0 {
-		cpu := "cpu=" + utils.FormatTimeDetail(r.CPU)
+		cpu := "cpu=" + units.FormatTimeDetail(r.CPU)
 		if r.Wall > 0 {
 			cpu += fmt.Sprintf(" (%.1f cores)", r.CPU.Seconds()/r.Wall.Seconds())
 		}
-		parts = append(parts, cpu, "peak_mem="+utils.FormatMemoryDetail(r.PeakMB))
+		parts = append(parts, cpu, "peak_mem="+units.FormatMemoryDetail(r.PeakMB))
 	}
 	return "Resource usage: " + strings.Join(parts, " ")
 }

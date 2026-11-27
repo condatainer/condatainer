@@ -12,6 +12,7 @@ import (
 
 	"github.com/condatainer/condatainer/internal/settings"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 var (
@@ -91,7 +92,7 @@ func init() {
 		if stored == "0" {
 			return "0 (disabled)"
 		}
-		return utils.FormatDuration(CommandTimeout())
+		return units.FormatDuration(CommandTimeout())
 	})
 }
 

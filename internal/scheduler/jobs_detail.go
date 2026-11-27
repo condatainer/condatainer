@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // maxListedTasks is how many task IDs one line of the detail block lists.
@@ -59,10 +60,10 @@ func WriteJobDetail(w io.Writer, j JobInfo) {
 	case j.TimeUnlimited:
 		add("time limit", "unlimited")
 	case j.TimeLimit > 0:
-		add("time limit", utils.FormatTimeDetail(j.TimeLimit))
+		add("time limit", units.FormatTimeDetail(j.TimeLimit))
 	}
 	if !j.IsArray() && !j.StartTime.IsZero() {
-		add("elapsed", utils.FormatTimeDetail(j.Elapsed))
+		add("elapsed", units.FormatTimeDetail(j.Elapsed))
 	}
 	add("usage", usageText(j))
 	if j.IsArray() {
@@ -72,7 +73,7 @@ func WriteJobDetail(w io.Writer, j JobInfo) {
 	add("start time", timeOf(j.StartTime))
 	add("end time", timeOf(j.EndTime))
 	if !j.StartTime.IsZero() && !j.SubmitTime.IsZero() {
-		add("queued", utils.FormatTimeDetail(j.StartTime.Sub(j.SubmitTime)))
+		add("queued", units.FormatTimeDetail(j.StartTime.Sub(j.SubmitTime)))
 	}
 	add("stdout", j.Stdout)
 	if j.Stderr != j.Stdout {
@@ -116,7 +117,7 @@ func resourcesText(j JobInfo) string {
 		parts = append(parts, plural(j.Cpus, "cpu"))
 	}
 	if j.MemMB > 0 {
-		parts = append(parts, utils.FormatMemoryDetail(j.MemMB))
+		parts = append(parts, units.FormatMemoryDetail(j.MemMB))
 	}
 	for _, g := range j.Gpus {
 		parts = append(parts, strconv.Itoa(g.Count)+" "+g.Type)
@@ -167,10 +168,10 @@ func plural(n int, word string) string {
 func usageText(j JobInfo) string {
 	var parts []string
 	if j.CpuTime != nil {
-		parts = append(parts, "cpu time "+utils.FormatTimeDetail(*j.CpuTime))
+		parts = append(parts, "cpu time "+units.FormatTimeDetail(*j.CpuTime))
 	}
 	if j.PeakMemMB > 0 {
-		parts = append(parts, "peak mem "+utils.FormatMemoryDetail(j.PeakMemMB))
+		parts = append(parts, "peak mem "+units.FormatMemoryDetail(j.PeakMemMB))
 	}
 	return strings.Join(parts, ", ")
 }

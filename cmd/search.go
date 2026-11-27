@@ -57,7 +57,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		channels = searchChannels
 	}
 
-	results, capped, err := utils.SearchCondaPackages(query, channels, searchFuzzy, searchLimit)
+	results, capped, err := conda.SearchCondaPackages(query, channels, searchFuzzy, searchLimit)
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return enc.Encode(results)
 	}
 
-	currentPlatform := utils.CurrentCondaPlatform()
+	currentPlatform := conda.CurrentCondaPlatform()
 	for i, r := range results {
 		if i > 0 {
 			fmt.Println()

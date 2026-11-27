@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/condatainer/condatainer/internal/logging"
-	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // When a transfer is worth narrating. Below progressMinSize a blob is gone
@@ -108,7 +108,7 @@ func (d *downloadProgress) interrupted() {
 		return
 	}
 	d.log.Warn(verbDownload+" cancelled",
-		"done", utils.FormatSize(done), "total", utils.FormatSize(d.total))
+		"done", units.FormatSize(done), "total", units.FormatSize(d.total))
 }
 
 // finish reports completion once, whatever the last layer's size was: the final
@@ -136,8 +136,8 @@ func (d *downloadProgress) report(final bool) {
 	d.sampleAt, d.sampleDone = now, done
 	d.mu.Unlock()
 
-	attrs := []any{"kind", "progress", "done", utils.FormatSize(done), "total", utils.FormatSize(d.total)}
-	if speed, ok := utils.FormatSpeed(done-from, now.Sub(since)); ok && !since.IsZero() {
+	attrs := []any{"kind", "progress", "done", units.FormatSize(done), "total", units.FormatSize(d.total)}
+	if speed, ok := units.FormatSpeed(done-from, now.Sub(since)); ok && !since.IsZero() {
 		attrs = append(attrs, "speed", speed)
 	}
 	d.log.Info(verbDownload+" progress", append(attrs, "final", final, "last", final)...)
@@ -233,14 +233,14 @@ func (r *progressReader) report(final bool) {
 	if r.log == nil {
 		return
 	}
-	attrs := []any{"kind", "progress", "done", utils.FormatSize(r.done), "total", utils.FormatSize(r.total)}
+	attrs := []any{"kind", "progress", "done", units.FormatSize(r.done), "total", units.FormatSize(r.total)}
 	now := time.Now()
 	from, since := r.sampleDone, r.sampleAt
 	if final {
 		from, since = 0, r.start
 	}
 	r.sampleAt, r.sampleDone = now, r.done
-	if speed, ok := utils.FormatSpeed(r.done-from, now.Sub(since)); ok && !since.IsZero() {
+	if speed, ok := units.FormatSpeed(r.done-from, now.Sub(since)); ok && !since.IsZero() {
 		attrs = append(attrs, "speed", speed)
 	}
 	if r.layers > 0 {

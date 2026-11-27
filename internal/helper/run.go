@@ -27,6 +27,7 @@ import (
 	"github.com/condatainer/condatainer/internal/runtime/hostrun"
 	"github.com/condatainer/condatainer/internal/scheduler"
 	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // RunOptions holds all resolved options for running a helper.
@@ -899,7 +900,7 @@ func newHelperRun(id, name, jobID, cwd string, walltime time.Duration,
 	if spec != nil {
 		run.CPU = spec.CpusPerTask
 		if mb := spec.GetMemPerNodeMB(); mb > 0 {
-			run.Mem = utils.FormatSizeInput(mb)
+			run.Mem = units.FormatSizeInput(mb)
 		}
 	}
 	return run

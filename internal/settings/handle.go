@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/condatainer/condatainer/internal/utils"
+	"github.com/condatainer/condatainer/internal/utils/units"
 )
 
 // Handle reads one registered key as a Go type. Before any config is loaded it returns the default.
@@ -58,12 +58,12 @@ func Days(name string, opts ...Option) *Handle[time.Duration] {
 
 // MemoryMB declares a memory size, read in megabytes.
 func MemoryMB(name string, opts ...Option) *Handle[int64] {
-	return handle(name, memoryKind, opts, func(r Resolution) int64 { mb, _ := utils.ParseSizeInput(r.Value); return mb })
+	return handle(name, memoryKind, opts, func(r Resolution) int64 { mb, _ := units.ParseSizeInput(r.Value); return mb })
 }
 
 // Walltime declares a time limit, read as a duration.
 func Walltime(name string, opts ...Option) *Handle[time.Duration] {
-	return handle(name, walltimeKind, opts, func(r Resolution) time.Duration { d, _ := utils.ParseTimeInput(r.Value); return d })
+	return handle(name, walltimeKind, opts, func(r Resolution) time.Duration { d, _ := units.ParseTimeInput(r.Value); return d })
 }
 
 // Enum declares a key that takes one of Values.

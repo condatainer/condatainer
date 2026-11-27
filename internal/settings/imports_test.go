@@ -12,8 +12,8 @@ func TestImportsOnlyUtils(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, imp := range pkg.Imports {
-		if strings.HasPrefix(imp, "github.com/condatainer/condatainer/") && !strings.HasSuffix(imp, "/internal/utils") {
-			t.Errorf("settings imports %s; it may import only utils", imp)
+		if strings.HasPrefix(imp, "github.com/condatainer/condatainer/") && !strings.HasSuffix(imp, "/internal/utils") && !strings.Contains(imp, "/internal/utils/") {
+			t.Errorf("settings imports %s; it may import only utils and its subpackages", imp)
 		}
 	}
 }

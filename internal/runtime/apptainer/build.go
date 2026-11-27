@@ -85,7 +85,7 @@ func explainFakeroot(err error) error {
 	if !errors.As(err, &failure) || !tooNewFakeroot.MatchString(failure.Output) {
 		return err
 	}
-	hint := "run `condatainer update --libexec`, which installs a fakeroot that runs in any image"
+	hint := "run `condatainer update --libexec`, which installs a fakeroot that runs in any glibc image"
 	if _, ok := libexec.Path("fakeroot-sysv"); ok {
 		hint = "unset host_apptainer to build with the toolchain's apptainer"
 	}

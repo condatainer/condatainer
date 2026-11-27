@@ -5,6 +5,8 @@ description: Install CondaTainer once in a shared directory, for a whole group.
 
 A group installs CondaTainer once, in a directory every member can reach. Each member runs one command to set up their shell, and overlays built there serve the whole group.
 
+The machines must meet the [prerequisites](../get_started/installation.md#prerequisites) of a personal install.
+
 ## 1. Pick a directory
 
 The directory must be:

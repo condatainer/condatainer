@@ -1,6 +1,6 @@
 ---
 title: Running Issues
-description: Fix a container, freeze or build that fails because the system blocks user namespaces, or because a build's fakeroot needs a newer glibc.
+description: Fix a container, freeze or build that fails because the system blocks user namespaces, or because fakeroot cannot run in the image.
 ---
 
 ## Cannot create a user namespace
@@ -130,10 +130,22 @@ fakeroot: error while starting the `faked' daemon.
 
 Building an operating-system overlay from a `.def` file runs `fakeroot`, a tool that lets the build act as root without being root. Apptainer copies it into the build. If the copy comes from a system newer than the image being built, the image's C library cannot run it.
 
-- Run `condatainer update --libexec`. The toolchain carries a fakeroot that runs in any image, and builds use it.
+- Run `condatainer update --libexec`. The toolchain carries a fakeroot that runs in any glibc image, and builds use it.
 - If the toolchain is installed, unset `host_apptainer` with `condatainer config remove host_apptainer`, so builds use the toolchain's Apptainer.
 - CondaTainer then ends with this message, which gives the same advice:
 
 ```text
-[CNT✗] the fakeroot bound into the build needs a newer glibc than the image has: run `condatainer update --libexec`, which installs a fakeroot that runs in any image
+[CNT✗] the fakeroot bound into the build needs a newer glibc than the image has: run `condatainer update --libexec`, which installs a fakeroot that runs in any glibc image
 ```
+
+## Fakeroot fails on an Alpine image
+
+```text
+/.singularity.d/libs/faked: not found
+fakeroot: error while starting the `faked' daemon.
+```
+
+Alpine uses musl, a different C library from the glibc of most Linux systems. The fakeroot that Apptainer copies into the container needs glibc, so it cannot start in an Alpine image.
+
+- To run an Alpine image, leave out `--fakeroot`. It runs normally without it.
+- To build from a `.def` file, start from a glibc distribution such as Ubuntu, or pull the Alpine image prebuilt.

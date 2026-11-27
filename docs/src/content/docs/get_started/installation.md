@@ -5,7 +5,7 @@ description: Install CondaTainer for personal use on Linux.
 
 ## Prerequisites
 
-- **Linux** on amd64 (x86_64) or arm64 (aarch64).
+- **Linux** on amd64 (x86_64) or arm64 (aarch64): RHEL 8, Ubuntu 20.04, Debian 10 or newer, or another distribution as recent.
 - **Unprivileged user namespaces**: a kernel feature that lets a normal user run a container without root. Most current HPC systems enable it. On Ubuntu 24.04 and later, see [Running Issues](../troubleshooting/running.md#cannot-create-a-user-namespace).
 - **FUSE**: a kernel feature that lets a normal user mount an image file. It needs `/dev/fuse` to be readable and writable by users, which is the usual default.
 

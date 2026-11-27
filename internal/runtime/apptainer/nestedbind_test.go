@@ -47,3 +47,17 @@ func TestNestedBindEnvDropsAPathWithNoReplacement(t *testing.T) {
 		t.Errorf("unset = %v, want %v", unset, want)
 	}
 }
+
+// A launch that binds all it needs drops every inherited bind variable, inside a container or not.
+func TestBindEnvWithNoInheritedBinds(t *testing.T) {
+	prev := insideContainer
+	t.Cleanup(func() { insideContainer = prev })
+	t.Setenv("APPTAINER_BIND", "/tmp,/exe:/.condatainer/bin/condatainer")
+	for _, inside := range []bool{true, false} {
+		insideContainer = func() bool { return inside }
+		set, unset := bindEnv(&ExecOptions{Bind: []string{"/usr"}, NoInheritedBinds: true})
+		if set != nil || !slices.Equal(unset, inheritedBindVars) {
+			t.Errorf("inside=%v: set=%v unset=%v, want every bind variable unset", inside, set, unset)
+		}
+	}
+}

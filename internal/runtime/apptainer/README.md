@@ -73,6 +73,7 @@
   - A container sees the host's `/tmp` and every temporary directory the job names, at their own paths. `TMPDIR` is kept, so a program that follows it writes to the scheduler's node-local scratch.
   - A private `/tmp` and `/var/tmp` per container hides the host's. That is a site's decision, made by exporting `APPTAINER_WORKDIR`.
 - Build operations unset all four bind variables (`APPTAINER_BIND`, `SINGULARITY_BIND` and the two `*_BINDPATH`), to avoid `%post` mount conflicts.
+- A launch with `NoInheritedBinds` unsets them too. The freeze job binds all it needs, and its bare root has no mount point for a file an outer container binds.
 - A launch from a container removes the inherited bind entries it passes itself, from all four bind variables.
   - The outer apptainer exports its binds under those variables, so a repeat is a duplicate-mount warning.
   - Entries it does not pass, such as a site's, are kept.

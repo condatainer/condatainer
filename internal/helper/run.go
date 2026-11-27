@@ -200,9 +200,6 @@ func buildCondatainerCmd(opts RunOptions, spec *scheduler.ResourceSpec) (string,
 		parts = append(parts, "--load-gpu")
 	}
 
-	// Bind condatainer binary so helpers can call _helper ready and _helper message inside.
-	parts = append(parts, "--bind", shellQuote(exe+":/usr/local/bin/condatainer"))
-
 	// Extra binds from #BIND: headers. The wrapper's shell expands $VAR (e.g. $CNT_HELPER_STATE_DIR, $HOME) on the node.
 	for _, b := range opts.ExtraBinds {
 		parts = append(parts, "--bind", shellQuoteVars(b))

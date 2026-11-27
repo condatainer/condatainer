@@ -225,6 +225,7 @@ func bindEntry(p string, keepFile bool) (string, bool, error) {
 // RunJob runs the job a specification file describes: one apptainer launch with the mounts as --fusemount.
 // It is the body of the hidden `_mount_job` command.
 //   - The job's own warnings are dropped, since the root is a bare directory and apptainer complains about what it lacks.
+//   - It drops every inherited bind. It binds all it needs, and its bare root has no mount point for a file a container binds.
 //   - A cancel stops the apptainer, which ends the FUSE servers and the work with it.
 func RunJob(ctx context.Context, specPath string) error {
 	data, err := os.ReadFile(specPath)
@@ -248,7 +249,7 @@ func RunJob(ctx context.Context, specPath string) error {
 	defer stderr.Flush()
 
 	return apptainer.Exec(ctx, spec.Root, []string{"/bin/bash", spec.Work}, &apptainer.ExecOptions{
-		Bin: bin, Bind: spec.Binds, Additional: flags,
+		Bin: bin, Bind: spec.Binds, NoInheritedBinds: true, Additional: flags,
 		Stdin: os.Stdin, Stdout: os.Stdout, Stderr: stderr, StopGrace: jobStopGrace,
 	})
 }

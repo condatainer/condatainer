@@ -31,6 +31,9 @@ The dashboard HTTP server and the reverse proxy to helper services.
   - A helper origin has its own cookie jar, so the dashboard's sign-in does not reach it. The ticket signs it in without the page holding the token.
   - A ticket works once, for 30 seconds, and only for the host it was minted for. It lives in this process, so it works against the node that minted it.
   - `/go` refuses any link that is not `http://{label}.localhost:{port}/...` on the port the dashboard was reached on.
+  - The helper origin answers the ticket with a page that goes on to the link, not a redirect.
+  - A redirect chain that starts on the dashboard stays cross-site to the browser, even through the helper's own redirects. VS Code `serve-web` refuses its cookie on a cross-site request without `tkn`.
+  - `/go` adds a ticket with the token off too, so the hop still happens.
 - A command prints a link with the token, and the dashboard never does. `TokenLink` is called only from the places a command prints, so task output and the API stay plain.
 - The proxy removes the server's cookies from a request before the helper sees it.
 - `server.require_token` off lets every request through and creates no file.

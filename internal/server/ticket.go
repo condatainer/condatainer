@@ -3,6 +3,9 @@ package server
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -60,7 +63,7 @@ func (ts *ticketStore) redeem(id, host string, now time.Time) bool {
 // handleGo serves GET /go?url=<helper link>, for a click on a helper link in the dashboard.
 //   - The link must be http://{label}.localhost:{port}/... on the port the browser used for the dashboard.
 //   - The answer is a redirect to the link with a one-time ticket, which the helper's origin trades for its own cookie.
-//   - With the token off the redirect goes to the link as it is.
+//   - The ticket is added with the token off too, so the helper origin still answers the hop page.
 func (s *srv) handleGo(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("url")
 	u, err := url.Parse(raw)
@@ -68,19 +71,30 @@ func (s *srv) handleGo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not a helper link of this server", http.StatusBadRequest)
 		return
 	}
-	target := raw
-	if keyRequireToken.Get() {
-		id, err := s.tickets.mint(u.Host, time.Now())
-		if err != nil {
-			http.Error(w, "cannot make a ticket", http.StatusInternalServerError)
-			return
-		}
-		target = addQueryParam(raw, ticketParam, id)
+	id, err := s.tickets.mint(u.Host, time.Now())
+	if err != nil {
+		http.Error(w, "cannot make a ticket", http.StatusInternalServerError)
+		return
 	}
-	w.Header().Set("Location", target)
+	w.Header().Set("Location", addQueryParam(raw, ticketParam, id))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.WriteHeader(http.StatusFound)
+}
+
+// serveHop answers a page that goes on to loc, the request's own URL without the ticket, from the helper origin.
+//   - The browser marks every request of a redirect chain that started on the dashboard as cross-site, and a helper app may refuse its own cookie on one.
+//   - A navigation started by this page is same-origin, and so are the helper's own redirects after it.
+//   - The page keeps the fragment of its own URL, which a browser carries through the redirect from /go.
+func serveHop(w http.ResponseWriter, loc string) {
+	js, _ := json.Marshal(loc)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>Opening…</title>`+
+		`<script>location.replace(%s + location.hash)</script>`+
+		`<noscript><a href="%s">Continue</a></noscript>`+"\n", js, html.EscapeString(loc))
 }
 
 // hostPort is the port of a URL, 80 when it names none.

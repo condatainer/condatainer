@@ -30,26 +30,33 @@ func tokenCookieName(port int) string {
 }
 
 // requireToken lets a request through only when it carries the token, for every route and every helper.
+//   - A request with ?cnt_ticket= redeems the ticket, sets the sign-in cookie of its host and answers the hop page to the same URL without the parameter.
 //   - A request with ?cnt_token= sets the sign-in cookie of its host and redirects to the same URL without the parameter.
 //   - Any other request needs the cookie. Without it the answer is 401.
-//   - With server.require_token off every request passes.
+//   - With server.require_token off every request passes, and a ticket is only dropped through the hop page.
 func (s *srv) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !keyRequireToken.Get() {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if err := s.tokens.ensure(); err != nil {
-			logging.FromContext(s.ctx).Error("server: token unavailable", "error", err)
-			http.Error(w, "the server token is not available: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if id, rest, ok := splitQueryParam(r.URL.RawQuery, ticketParam); ok {
-			if !s.tickets.redeem(id, r.Host, time.Now()) {
-				denySignIn(w)
+		required := keyRequireToken.Get()
+		if required {
+			if err := s.tokens.ensure(); err != nil {
+				logging.FromContext(s.ctx).Error("server: token unavailable", "error", err)
+				http.Error(w, "the server token is not available: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
-			s.signIn(w, r, s.tokens.current(), rest)
+		}
+		if id, rest, ok := splitQueryParam(r.URL.RawQuery, ticketParam); ok {
+			if required {
+				if !s.tickets.redeem(id, r.Host, time.Now()) {
+					denySignIn(w)
+					return
+				}
+				s.setSignInCookie(w, r, s.tokens.current())
+			}
+			serveHop(w, selfLocation(r, rest))
+			return
+		}
+		if !required {
+			next.ServeHTTP(w, r)
 			return
 		}
 		if candidate, rest, ok := splitQueryParam(r.URL.RawQuery, tokenParam); ok {
@@ -57,7 +64,11 @@ func (s *srv) requireToken(next http.Handler) http.Handler {
 				denySignIn(w)
 				return
 			}
-			s.signIn(w, r, candidate, rest)
+			s.setSignInCookie(w, r, candidate)
+			w.Header().Set("Location", selfLocation(r, rest))
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			w.WriteHeader(http.StatusFound)
 			return
 		}
 		if c, err := r.Cookie(tokenCookieName(s.requestPort(r))); err == nil && s.tokens.check(c.Value) {
@@ -76,10 +87,8 @@ func denySignIn(w http.ResponseWriter) {
 	w.Write([]byte(signInRequired)) //nolint:errcheck
 }
 
-// signIn sets the sign-in cookie and redirects to the request's own URL with the remaining query.
-//   - The redirect carries no Referer, so the token in the first URL goes no further.
-//   - Leading slashes of the path collapse to one, so the Location is never read as another host.
-func (s *srv) signIn(w http.ResponseWriter, r *http.Request, token, rest string) {
+// setSignInCookie sets the sign-in cookie of the request's host.
+func (s *srv) setSignInCookie(w http.ResponseWriter, r *http.Request, token string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     tokenCookieName(s.requestPort(r)),
 		Value:    token,
@@ -88,14 +97,16 @@ func (s *srv) signIn(w http.ResponseWriter, r *http.Request, token, rest string)
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// selfLocation is the request's own path with the query rest, for a sign-in to go on to.
+// Leading slashes of the path collapse to one, so the location is never read as another host.
+func selfLocation(r *http.Request, rest string) string {
 	loc := "/" + strings.TrimLeft(r.URL.EscapedPath(), "/")
 	if rest != "" {
 		loc += "?" + rest
 	}
-	w.Header().Set("Location", loc)
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.WriteHeader(http.StatusFound)
+	return loc
 }
 
 // tokenCookieLife is how long the sign-in cookie of host lives.

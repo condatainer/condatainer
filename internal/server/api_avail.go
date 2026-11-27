@@ -159,16 +159,16 @@ func (s *srv) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, _, err := utils.SearchCondaPackages(q, conda.Channels(), false, 0)
+	results, _, err := conda.SearchCondaPackages(q, conda.Channels(), false, 0)
 	if err != nil {
 		http.Error(w, "conda search failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	if results == nil {
-		results = []utils.CondaSearchResult{}
+		results = []conda.CondaSearchResult{}
 	}
 	writeJSON(w, map[string]interface{}{
 		"results":  results,
-		"platform": utils.CurrentCondaPlatform(),
+		"platform": conda.CurrentCondaPlatform(),
 	})
 }

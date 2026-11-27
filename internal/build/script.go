@@ -373,5 +373,5 @@ func (b *BuildObject) describeCondaPackage() {
 	if b.packageName == "" || b.buildSource != "" || b.spec.Image.Description != "" {
 		return
 	}
-	b.spec.Image.Description = utils.FetchCondaSummary(b.packageName, conda.Channels())
+	b.spec.Image.Description = conda.FetchCondaSummary(b.packageName, conda.Channels())
 }

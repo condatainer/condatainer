@@ -24,7 +24,7 @@ go test -v ./internal/build -run TestParseScriptMetadata
 - `internal/artifact/`: what an image embeds. Identity, manifests, equivalence comparison. The root holds the payload `Type`.
 - `build/`: name/version to a Conda, Script or Def build. Dependency graphs, remote scripts, the `#TYPE:` and `#TARGET:` readers, and the rules a build's `#DEP:` answers to.
 - `catalog/`: recipe sources and their index. Resolves what a person typed to a recipe.
-- `conda/`: the Conda environment mounted at `/cnt_env`.
+- `conda/`: the Conda environment mounted at `/cnt_env`, and package search.
 - `config/`: layered config (flags > env > user > extra-root > cnt-root > defaults) and data directory search.
 - `settings/`: the registry of config keys. A package declares the keys it reads and reads them through typed handles. Imports only `utils` and its subpackages.
 - `credential/`: per-layer `credentials.json` for registry logins and recipe-source tokens. Lookup and file permissions.

@@ -634,7 +634,7 @@ func solveCondaName(name string) (string, error) {
 	if err != nil {
 		return "", nil
 	}
-	results, _, err := utils.SearchCondaPackages(dep.Name, conda.Channels(), false, 0)
+	results, _, err := conda.SearchCondaPackages(dep.Name, conda.Channels(), false, 0)
 	if err != nil {
 		return "", nil
 	}

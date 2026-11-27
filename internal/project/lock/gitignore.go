@@ -1,4 +1,4 @@
-package utils
+package lock
 
 import (
 	"bytes"
@@ -7,20 +7,20 @@ import (
 	"strings"
 )
 
-// IgnoreMatch is what a list of ignore patterns says about one path.
-type IgnoreMatch int
+// ignoreMatch is what a list of ignore patterns says about one path.
+type ignoreMatch int
 
 const (
-	// IgnoreNone means no pattern matches the path.
-	IgnoreNone IgnoreMatch = iota
-	// IgnoreYes means the last matching pattern ignores the path.
-	IgnoreYes
-	// IgnoreNo means the last matching pattern is a `!` pattern, which includes the path.
-	IgnoreNo
+	// ignoreNone means no pattern matches the path.
+	ignoreNone ignoreMatch = iota
+	// ignoreYes means the last matching pattern ignores the path.
+	ignoreYes
+	// ignoreNo means the last matching pattern is a `!` pattern, which includes the path.
+	ignoreNo
 )
 
-// Ignore is an ordered list of ignore patterns in the `.gitignore` syntax.
-type Ignore struct {
+// gitIgnore is an ordered list of ignore patterns in the `.gitignore` syntax.
+type gitIgnore struct {
 	rules []ignoreRule
 }
 
@@ -31,11 +31,11 @@ type ignoreRule struct {
 	re      *regexp.Regexp
 }
 
-// ParseIgnore reads the patterns of one ignore file.
+// parseIgnore reads the patterns of one ignore file.
 //   - A blank line, a `#` comment and a pattern that cannot be compiled are skipped.
 //   - Trailing spaces are dropped unless escaped with a backslash.
-func ParseIgnore(text []byte) *Ignore {
-	ig := &Ignore{}
+func parseIgnore(text []byte) *gitIgnore {
+	ig := &gitIgnore{}
 	for i, line := range bytes.Split(text, []byte("\n")) {
 		if rule, ok := parseIgnoreLine(strings.TrimSuffix(string(line), "\r")); ok {
 			rule.line = i + 1
@@ -48,16 +48,16 @@ func ParseIgnore(text []byte) *Ignore {
 // Match answers for one slash-separated path relative to the directory the patterns belong to.
 //   - The last matching pattern wins.
 //   - Only the path itself is tested. A caller that walks a tree skips an ignored directory, so nothing inside it is asked about.
-func (ig *Ignore) Match(rel string, isDir bool) IgnoreMatch {
-	result := IgnoreNone
+func (ig *gitIgnore) Match(rel string, isDir bool) ignoreMatch {
+	result := ignoreNone
 	for _, rule := range ig.rules {
 		if rule.dirOnly && !isDir {
 			continue
 		}
 		if rule.re.MatchString(rel) {
-			result = IgnoreYes
+			result = ignoreYes
 			if rule.negate {
-				result = IgnoreNo
+				result = ignoreNo
 			}
 		}
 	}
@@ -65,7 +65,7 @@ func (ig *Ignore) Match(rel string, isDir bool) IgnoreMatch {
 }
 
 // Negations lists the 1-based lines that hold a `!` pattern.
-func (ig *Ignore) Negations() []int {
+func (ig *gitIgnore) Negations() []int {
 	var lines []int
 	for _, rule := range ig.rules {
 		if rule.negate {

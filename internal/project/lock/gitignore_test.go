@@ -1,4 +1,4 @@
-package utils
+package lock
 
 import (
 	"reflect"
@@ -9,55 +9,55 @@ func TestIgnoreMatch(t *testing.T) {
 	type probe struct {
 		path  string
 		isDir bool
-		want  IgnoreMatch
+		want  ignoreMatch
 	}
 	for name, tc := range map[string]struct {
 		patterns string
 		probes   []probe
 	}{
 		"a bare name matches at any depth": {"venv", []probe{
-			{"venv", true, IgnoreYes}, {"src/venv", true, IgnoreYes}, {"src/venv.py", false, IgnoreNone}}},
+			{"venv", true, ignoreYes}, {"src/venv", true, ignoreYes}, {"src/venv.py", false, ignoreNone}}},
 		"a trailing slash matches directories only": {"build/", []probe{
-			{"build", true, IgnoreYes}, {"build", false, IgnoreNone}, {"a/build", true, IgnoreYes}}},
+			{"build", true, ignoreYes}, {"build", false, ignoreNone}, {"a/build", true, ignoreYes}}},
 		"a leading slash anchors at the root": {"/tmp", []probe{
-			{"tmp", true, IgnoreYes}, {"src/tmp", true, IgnoreNone}}},
+			{"tmp", true, ignoreYes}, {"src/tmp", true, ignoreNone}}},
 		"a slash inside anchors at the root": {"src/tmp", []probe{
-			{"src/tmp", false, IgnoreYes}, {"a/src/tmp", false, IgnoreNone}}},
+			{"src/tmp", false, ignoreYes}, {"a/src/tmp", false, ignoreNone}}},
 		"star stays inside a component": {"*.py", []probe{
-			{"a.py", false, IgnoreYes}, {"x/y/a.py", false, IgnoreYes}, {"a.pyc", false, IgnoreNone}}},
+			{"a.py", false, ignoreYes}, {"x/y/a.py", false, ignoreYes}, {"a.pyc", false, ignoreNone}}},
 		"star in an anchored pattern": {"src/*.py", []probe{
-			{"src/a.py", false, IgnoreYes}, {"src/x/a.py", false, IgnoreNone}}},
+			{"src/a.py", false, ignoreYes}, {"src/x/a.py", false, ignoreNone}}},
 		"question mark is one character": {"a?.sh", []probe{
-			{"ab.sh", false, IgnoreYes}, {"a.sh", false, IgnoreNone}, {"a/.sh", false, IgnoreNone}}},
+			{"ab.sh", false, ignoreYes}, {"a.sh", false, ignoreNone}, {"a/.sh", false, ignoreNone}}},
 		"a class and a range": {"[a-c]1.[!x]", []probe{
-			{"b1.y", false, IgnoreYes}, {"d1.y", false, IgnoreNone}, {"b1.x", false, IgnoreNone}}},
+			{"b1.y", false, ignoreYes}, {"d1.y", false, ignoreNone}, {"b1.x", false, ignoreNone}}},
 		"a named class": {"[[:digit:]].sh", []probe{
-			{"7.sh", false, IgnoreYes}, {"a.sh", false, IgnoreNone}}},
+			{"7.sh", false, ignoreYes}, {"a.sh", false, ignoreNone}}},
 		"a bracket with no closing is literal": {"a[b", []probe{
-			{"a[b", false, IgnoreYes}, {"ab", false, IgnoreNone}}},
+			{"a[b", false, ignoreYes}, {"ab", false, ignoreNone}}},
 		"a leading double star": {"**/logs", []probe{
-			{"logs", true, IgnoreYes}, {"a/b/logs", true, IgnoreYes}}},
+			{"logs", true, ignoreYes}, {"a/b/logs", true, ignoreYes}}},
 		"an inner double star matches zero or more directories": {"a/**/z", []probe{
-			{"a/z", false, IgnoreYes}, {"a/b/c/z", false, IgnoreYes}, {"b/a/z", false, IgnoreNone}}},
+			{"a/z", false, ignoreYes}, {"a/b/c/z", false, ignoreYes}, {"b/a/z", false, ignoreNone}}},
 		"a trailing double star matches what is inside": {"out/**", []probe{
-			{"out/a", false, IgnoreYes}, {"out/a/b", false, IgnoreYes}, {"out", true, IgnoreNone}}},
+			{"out/a", false, ignoreYes}, {"out/a/b", false, ignoreYes}, {"out", true, ignoreNone}}},
 		"a double star beside text reads as a star": {"a**b", []probe{
-			{"axxb", false, IgnoreYes}, {"a/b", false, IgnoreNone}}},
+			{"axxb", false, ignoreYes}, {"a/b", false, ignoreNone}}},
 		"a later pattern wins": {"*.py\n!keep.py\n", []probe{
-			{"a.py", false, IgnoreYes}, {"keep.py", false, IgnoreNo}}},
+			{"a.py", false, ignoreYes}, {"keep.py", false, ignoreNo}}},
 		"the last of several matches wins": {"!keep.py\n*.py\n", []probe{
-			{"keep.py", false, IgnoreYes}}},
+			{"keep.py", false, ignoreYes}}},
 		"comments and blanks are skipped": {"# venv\n\n   \nreal\n", []probe{
-			{"venv", false, IgnoreNone}, {"real", false, IgnoreYes}}},
+			{"venv", false, ignoreNone}, {"real", false, ignoreYes}}},
 		"backslash escapes a leading hash and a bang": {"\\#a\n\\!b\n", []probe{
-			{"#a", false, IgnoreYes}, {"!b", false, IgnoreYes}}},
+			{"#a", false, ignoreYes}, {"!b", false, ignoreYes}}},
 		"trailing spaces are dropped unless escaped": {"a  \nb\\ \n", []probe{
-			{"a", false, IgnoreYes}, {"b ", false, IgnoreYes}, {"b", false, IgnoreNone}}},
-		"carriage returns are dropped": {"a\r\n", []probe{{"a", false, IgnoreYes}}},
+			{"a", false, ignoreYes}, {"b ", false, ignoreYes}, {"b", false, ignoreNone}}},
+		"carriage returns are dropped": {"a\r\n", []probe{{"a", false, ignoreYes}}},
 		"a range that runs backwards matches nothing": {"[z-a]", []probe{
-			{"a", false, IgnoreNone}, {"z", false, IgnoreNone}}},
+			{"a", false, ignoreNone}, {"z", false, ignoreNone}}},
 	} {
-		ig := ParseIgnore([]byte(tc.patterns))
+		ig := parseIgnore([]byte(tc.patterns))
 		for _, p := range tc.probes {
 			if got := ig.Match(p.path, p.isDir); got != p.want {
 				t.Errorf("%s: %q dir=%v: got %v, want %v", name, p.path, p.isDir, got, p.want)
@@ -67,7 +67,7 @@ func TestIgnoreMatch(t *testing.T) {
 }
 
 func TestIgnoreNegations(t *testing.T) {
-	ig := ParseIgnore([]byte("a\n# c\n!b\n\n!d\n"))
+	ig := parseIgnore([]byte("a\n# c\n!b\n\n!d\n"))
 	if got, want := ig.Negations(), []int{3, 5}; !reflect.DeepEqual(got, want) {
 		t.Errorf("negations %v, want %v", got, want)
 	}

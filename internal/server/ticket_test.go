@@ -1,7 +1,9 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -66,10 +68,13 @@ func TestGoSignsTheBrowserInToTheHelperOrigin(t *testing.T) {
 	}
 	u, _ := url.Parse(loc)
 
-	// The helper origin has no cookie. The ticket signs it in and goes away.
+	// The helper origin has no cookie. The ticket signs it in and goes away through the hop page.
 	rec = a.do(u.Host, u.RequestURI())
-	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/lab?token=jup" {
-		t.Fatalf("exchange: status %d, Location %q; want 302 to the clean link with the helper's own token", rec.Code, rec.Header().Get("Location"))
+	if rec.Code != http.StatusOK || hopTarget(rec) != "/lab?token=jup" {
+		t.Fatalf("exchange: status %d, hop to %q; want 200 going on to the clean link with the helper's own token", rec.Code, hopTarget(rec))
+	}
+	if rec.Header().Get("Referrer-Policy") != "no-referrer" || strings.Contains(rec.Body.String(), a.token) {
+		t.Error("the hop page leaks a Referer or carries the token")
 	}
 	cookies := rec.Result().Cookies()
 	if len(cookies) != 1 || cookies[0].Name != "cnt_token_44449" || cookies[0].Value != a.token {
@@ -112,14 +117,47 @@ func TestGoRefusesAnythingButAHelperLinkOfThisServer(t *testing.T) {
 	}
 }
 
-func TestGoWithTheTokenOffRedirectsToTheLinkItself(t *testing.T) {
+func TestGoWithTheTokenOffStillHopsAndSetsNoCookie(t *testing.T) {
 	a := newAuthServer(t)
 	settingstest.Override(t, "server.require_token", "false")
 	link := "http://code.localhost:44449/x?a=1#f"
 	rec := a.do("localhost:44449", "/go?url="+url.QueryEscape(link))
-	if rec.Code != http.StatusFound || rec.Header().Get("Location") != link {
-		t.Errorf("status %d, Location %q; want 302 to %q", rec.Code, rec.Header().Get("Location"), link)
+	loc := rec.Header().Get("Location")
+	if rec.Code != http.StatusFound || !strings.HasPrefix(loc, "http://code.localhost:44449/x?a=1&cnt_ticket=") || !strings.HasSuffix(loc, "#f") {
+		t.Fatalf("/go: status %d, Location %q; want 302 to the link with a ticket", rec.Code, loc)
 	}
+	u, _ := url.Parse(loc)
+	rec = a.do(u.Host, u.RequestURI())
+	if rec.Code != http.StatusOK || hopTarget(rec) != "/x?a=1" || len(rec.Result().Cookies()) != 0 {
+		t.Errorf("helper origin: status %d, hop to %q, cookies %v; want 200 going on to /x?a=1 with no cookie", rec.Code, hopTarget(rec), rec.Result().Cookies())
+	}
+}
+
+func TestHopPageEscapesTheLocation(t *testing.T) {
+	rec := httptest.NewRecorder()
+	serveHop(rec, `/x?a=</script><b>"&c`)
+	body := rec.Body.String()
+	if strings.Contains(body, "</script><b>") || strings.Contains(body, `<b>"`) {
+		t.Errorf("the location reaches the page unescaped: %s", body)
+	}
+	if hopTarget(rec) != `/x?a=</script><b>"&c` {
+		t.Errorf("hop to %q", hopTarget(rec))
+	}
+}
+
+// hopTarget is the location a hop page goes on to, or "" when the body is not one.
+func hopTarget(rec *httptest.ResponseRecorder) string {
+	body := rec.Body.String()
+	const pre = "location.replace("
+	i := strings.Index(body, pre)
+	if i < 0 {
+		return ""
+	}
+	var loc string
+	if err := json.NewDecoder(strings.NewReader(body[i+len(pre):])).Decode(&loc); err != nil {
+		return ""
+	}
+	return loc
 }
 
 func TestAddQueryParamKeepsTheFragmentAndTheRest(t *testing.T) {
